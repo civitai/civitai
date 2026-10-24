@@ -1,5 +1,6 @@
 import { isDev } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
+import { pageViewBeaconSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 
@@ -30,13 +31,23 @@ export default PublicEndpoint(
     // correct — but a malformed/empty body throws SyntaxError. Invalid input →
     // 400 (was an unguarded raw 500). NOTE: only the parse is guarded; a genuine
     // failure in the tracker.pageView path below still surfaces normally.
-    let body: { ads?: boolean; duration: number; path: string; windowWidth?: number; windowHeight?: number };
+    let parsed: unknown;
     try {
-      body = JSON.parse(req.body);
+      parsed = JSON.parse(req.body);
     } catch {
       return res.status(400).send('invalid request');
     }
-    const { ads, duration, path, windowWidth, windowHeight } = body;
+
+    // The parse above yields `any`, and this handler used to TYPE-assert its
+    // shape and pass the fields straight through — so nothing was checked at
+    // runtime and three things went wrong silently. See pageViewBeaconSchema for
+    // the full account; in short it COERCES-AND-DEFAULTS every optional field
+    // (so a body that already wrote a row still writes one) and REQUIRES only
+    // `path`, which has no meaningful default and throws downstream when absent
+    // or non-string — the same unguarded-raw-500 class as the two guards above.
+    const result = pageViewBeaconSchema.safeParse(parsed);
+    if (!result.success) return res.status(400).send('invalid request');
+    const { ads, duration, path, windowWidth, windowHeight } = result.data;
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
     const match = getMatchingPathname(path);
@@ -48,13 +59,14 @@ export default PublicEndpoint(
       path,
       host,
       country,
-      ads: ads ?? false,
+      // The schema guarantees `ads` is a real boolean and the three numeric
+      // fields are finite numbers, so the old `?? false` / `?? 0` fallbacks are
+      // gone. The downstream per-column clamp still runs on the numeric three —
+      // it enforces the column WIDTH, which the schema deliberately does not.
+      ads,
       duration: Math.floor(duration),
-      // pageView requires number; a malformed body (the case we now tolerate) may
-      // omit these — 0 is a safe fallback (the client always sends them, so the
-      // legit path is unchanged).
-      windowWidth: windowWidth ?? 0,
-      windowHeight: windowHeight ?? 0,
+      windowWidth,
+      windowHeight,
     });
 
     return res.status(200).end();

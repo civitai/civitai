@@ -2,6 +2,7 @@ import { Button, Divider, Group, Stack } from '@mantine/core';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { CategoryFilterButtons } from '~/components/Apps/CategoryFilterButtons';
 import { KindFilterButtons } from '~/components/Apps/KindFilterButtons';
+import { LISTING_FACET_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   APPS_STORE_DEFAULTS,
   countActiveAppsStoreFilters,
@@ -56,7 +57,7 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
           {/* `Divider label=` is the /models panel's section-header idiom — a
               labelled rule rather than a heading, so the panel doesn't inject
               h3s into the page's heading outline. */}
-          <Divider label="Type" className="text-sm font-bold" />
+          <Divider label={LISTING_FACET_LABELS.kind} className="text-sm font-bold" />
           <KindFilterButtons value={filters.kind} onChange={(kind) => onChange({ kind })} />
         </Stack>
 

@@ -1,8 +1,12 @@
+import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -15,42 +19,53 @@ import { CacheTTL } from '~/server/common/constants';
 import type {
   ArticleCursor,
   ArticleMetadata,
-  CreateArticleRatingReviewInput,
-  GetArticleRatingReviewsInput,
   GetInfiniteArticlesSchema,
-  GetModeratorArticlesSchema,
-  ResolveArticleRatingReviewInput,
+  SetArticleOfficialInput,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
-import { articleWhereSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import {
-  browsingLevels,
-  getBrowsingLevelLabel,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { OFFICIAL_ARTICLE_TAG } from '~/shared/constants/article.constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   deleteImageById,
   enqueueImageIngestion,
   resolveIngestionError,
 } from '~/server/services/image.service';
-import { getCategoryTags } from '~/server/services/system-cache';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForArticle,
+} from '~/server/services/collection-media-index';
+import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
@@ -74,7 +89,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { postgresSlugify, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
@@ -83,13 +98,13 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { ReportStatus } from '~/shared/utils/prisma/enums';
 import {
-  AutoResolveRaceLost,
-  autoResolveArticleRatingReview,
+  articleAwaitsTextVerdict,
+  isPublicArticle,
+} from '~/server/services/text-scan/public-content';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import {
   computeArticleDerivedNsfwLevel,
-  evaluateAutoApproveGate,
   maybeAutoResolveDisputeAfterScan,
   shouldRestampOverrideBasis,
 } from '~/server/services/article-rating-review.helpers';
@@ -105,6 +120,7 @@ type ArticleRaw = {
   availability: Availability;
   userId: number | null;
   status: ArticleStatus;
+  isOfficial: boolean;
   tags: {
     tag: {
       id: number;
@@ -129,7 +145,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 const getArticleStatsObject = async (data: { id: number }[]) => {
@@ -178,9 +194,13 @@ export const getArticles = async ({
   browsingLevel,
   include,
   forceHidePrivate,
+  eventDecorationViewer,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // When true, `availability = Private` articles are ALWAYS dropped, even when a
   // `username`/`collectionId`/etc. filter is set (which normally expands the result
   // set to include the caller's private articles). Used by the public REST surface
@@ -194,14 +214,17 @@ export const getArticles = async ({
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
-    const isOwnerRequest =
-      !!sessionUser?.username &&
-      postgresSlugify(sessionUser.username) === postgresSlugify(username);
+    let isOwnerRequest = false;
     const hidePrivateArticles =
       forceHidePrivate ||
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
 
     const AND: Prisma.Sql[] = [];
+    let collectionJoin = Prisma.empty;
+
+    if (sort === ArticleSort.RecentlyAdded && !collectionId) {
+      throw throwBadRequestError('Recently Added sort requires a collectionId');
+    }
 
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
@@ -246,6 +269,7 @@ export const getArticles = async ({
 
       if (!targetUser) throw throwNotFoundError('User not found');
 
+      isOwnerRequest = !!userId && targetUser.id === userId;
       AND.push(Prisma.sql`u.id = ${targetUser.id}`);
     }
 
@@ -264,13 +288,22 @@ export const getArticles = async ({
         userId: sessionUser?.id,
       });
 
-      AND.push(
-        Prisma.sql`EXISTS (
+      // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_article_idx
+      // is unique on ("collectionId", "articleId"), so the join cannot multiply rows.
+      // schema.full.prisma does not declare it — see containers/db/docker-init/02_all_dll.sql.
+      if (sort === ArticleSort.RecentlyAdded) {
+        collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."articleId" = a."id"
+          AND ci."collectionId" = ${collectionId}
+          AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')}`;
+      } else {
+        AND.push(
+          Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."articleId" = a."id"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
-      );
+        );
+      }
     }
 
     if (!isOwnerRequest) {
@@ -385,6 +418,10 @@ export const getArticles = async ({
         sortExpr = `extract(epoch from a."updatedAt")`;
         sortDir = 'DESC';
         break;
+      case ArticleSort.RecentlyAdded:
+        sortExpr = `ci."id"`;
+        sortDir = 'DESC';
+        break;
       case ArticleSort.Newest:
       default:
         sortExpr = `extract(epoch from a."publishedAt")`;
@@ -411,6 +448,7 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`
@@ -429,6 +467,7 @@ export const getArticles = async ({
         a."availability",
         a."userId",
         a.status,
+        a."isOfficial",
         (
           SELECT COALESCE(
             jsonb_agg(
@@ -498,9 +537,16 @@ export const getArticles = async ({
       : [];
 
     const articleCategories = await getCategoryTags('article');
-    const cosmetics = includeCosmetics
-      ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
-      : {};
+    const [cosmetics, eventDecorations] = includeCosmetics
+      ? await Promise.all([
+          getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' }),
+          getEventDecorationsForEntity({
+            ids: articles.map((x) => x.id),
+            entity: 'Article',
+            viewer: eventDecorationViewer,
+          }),
+        ])
+      : [{}, {}];
 
     // Fetch article stats separately
     const articleStats = await getArticleStatsObject(articles);
@@ -555,14 +601,16 @@ export const getArticles = async ({
               }
             : undefined,
           cosmetic: cosmetics[article.id] ?? null,
+          eventDecoration: eventDecorations[article.id] ?? null,
         };
       });
 
     return {
       nextCursor,
       items: items as Array<
-        Omit<(typeof items)[number], 'cosmetic'> & {
-          cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        Omit<(typeof items)[number], 'cosmetic' | 'eventDecoration'> & {
+          cosmetic?: ContentDecorationCosmetic | null;
+          eventDecoration?: EventDecorationCosmetic | null;
         }
       >,
     };
@@ -641,24 +689,37 @@ export const getCivitaiNews = async () => {
   return { articles, pressMentions };
 };
 
-export const getCivitaiEvents = async () => {
-  const collection = await dbRead.collection.findFirst({
-    where: { name: 'Events', userId: -1 },
-    select: { id: true },
+/**
+ * Ingestion state of an article that is published for everyone, or null if it is not published at
+ * all. Callers apply their own policy to it — the two that exist disagree, deliberately.
+ *
+ * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so a published
+ * article throws NOT_FOUND to the public until its images finish scanning. An edit to a live
+ * article re-enters that window (upsert sets `Rescan`), so it is not publish-only.
+ *
+ * SSR asks "could this ever render?" and holds its 200 for anything that might still resolve,
+ * because a 404 on an indexed URL is not a state to enter transiently. The viewer-facing
+ * procedure asks the narrower "is it resolving right now?" — `Error` may recover on a retry but
+ * has no bounded wait to promise a reader, and `Blocked` never resolves.
+ */
+export const getPublishedArticleIngestion = async (
+  id: number
+): Promise<ArticleIngestionStatus | null> => {
+  const db = await getDbWithoutLag('article', id);
+  const article = await db.article.findFirst({
+    where: { id, publishedAt: { not: null }, status: ArticleStatus.Published },
+    select: { ingestion: true },
   });
-  if (!collection) throw new Error('Events collection not found');
 
-  const input = articleWhereSchema.parse({
-    collectionId: collection.id,
-    sort: ArticleSort.Newest,
-  });
-  const events = await getArticles({
-    ...input,
-    limit: 100,
-    sessionUser: undefined,
-    browsingLevel: publicBrowsingLevelsFlag,
-  });
-  return events;
+  return article?.ingestion ?? null;
+};
+
+/** Is the article inside the transient scan window that hides it from non-owners? */
+export const isArticleProcessing = async ({ id }: GetByIdInput) => {
+  const ingestion = await getPublishedArticleIngestion(id);
+  return (
+    ingestion === ArticleIngestionStatus.Pending || ingestion === ArticleIngestionStatus.Rescan
+  );
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
@@ -687,7 +748,12 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true },
+      select: {
+        ...articleDetailSelect,
+        moderatorNsfwLevel: true,
+        scheduledAt: true,
+        reactions: viewerReactionsSelect(userId),
+      },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -756,14 +822,18 @@ export const getArticleById = async ({
   }
 };
 
+const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
+  'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
+
 export const upsertArticle = async ({
   id,
   userId,
-  tags,
+  tags: inputTags,
   attachments,
   coverImage,
   isModerator,
   scanContent,
+  scheduledAt,
   ...data
 }: UpsertArticleInput & {
   userId: number;
@@ -771,8 +841,16 @@ export const upsertArticle = async ({
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
+  // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
+  let writingNeverPublishedDraft = false;
+  let writingWithoutViolationStatus = false;
   try {
-    await throwOnBlockedLinkDomain(data.content);
+    const officialTag = await getOfficialArticleTag();
+    const tags = withoutOfficialArticleTag(inputTags, officialTag);
+    await throwOnBlockedUserContent(
+      [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+      { isModerator, surface: 'article' }
+    );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level
@@ -820,6 +898,23 @@ export const upsertArticle = async ({
       storedLockedProperties: article?.lockedProperties,
       isModerator,
     });
+
+    // Scheduling stays a plain Draft (publishedAt NULL). Publishing now, or an explicit null, clears
+    // the schedule.
+    const scheduling = !!scheduledAt;
+    let scheduledAtWrite: Date | null | undefined;
+    if (scheduledAt) {
+      const scheduleError = getArticleScheduleError(article, scheduledAt, new Date());
+      if (scheduleError) throw throwBadRequestError(scheduleError);
+      data.status = ArticleStatus.Draft;
+      scheduledAtWrite = scheduledAt;
+    } else if (
+      scheduledAt === null ||
+      data.status === ArticleStatus.Published ||
+      data.status === ArticleStatus.Processing
+    ) {
+      scheduledAtWrite = null;
+    }
     if (!isModerator) {
       // moderatorNsfwLevel is a mod-only field. Silently strip it from
       // non-moderator payloads rather than throwing: the form never exposes
@@ -827,6 +922,25 @@ export const upsertArticle = async ({
       // stale client or an attempt to forge the override — either way, drop.
       delete data.moderatorNsfwLevel;
     }
+
+    // Re-expanded from the owner's rows rather than trusted from the client, and before
+    // the write so what is stored is what the blurb actually says. Keyed on the OWNER,
+    // not the actor: a moderator saving someone else's article resolves none of their
+    // blurbs and would strip every span.
+    const restrictToBlurbIds =
+      article && article.userId !== userId
+        ? () => getReferencedBlurbIds({ entityType: 'Article', entityId: article.id })
+        : undefined;
+    const expansion = await expandBlurbs({
+      userId: article?.userId ?? userId,
+      html: data.content,
+      restrictToBlurbIds,
+    });
+    data.content = expansion.html;
+
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
+    // spliced in above, so the string about to be written is one it never checked.
+    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -872,6 +986,7 @@ export const upsertArticle = async ({
           data: {
             ...data,
             publishedAt,
+            scheduledAt: scheduledAtWrite,
             coverId,
             userId,
             tags: tags
@@ -891,6 +1006,13 @@ export const upsertArticle = async ({
               : undefined,
           },
         });
+        if (article.isOfficial && officialTag)
+          await writeOfficialArticleTag({
+            articleId: article.id,
+            tagId: officialTag.id,
+            isOfficial: true,
+            db: tx,
+          });
 
         if (attachments) {
           await tx.file.createMany({
@@ -901,6 +1023,14 @@ export const upsertArticle = async ({
             })),
           });
         }
+
+        if (expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Article',
+            entityId: article.id,
+            uses: expansion.uses,
+            tx,
+          });
 
         return article;
       });
@@ -918,6 +1048,7 @@ export const upsertArticle = async ({
             articleId: result.id,
             content: result.content,
             userId,
+            ownerId: result.userId,
             coverId: result.coverId,
           });
 
@@ -941,16 +1072,22 @@ export const upsertArticle = async ({
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
-      if (result.content) {
+      if (result.content && isPublicArticle(result)) {
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
-        submitTextModeration({
+        submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
-          content: textForModeration,
-          labels: ['nsfw'],
-          recordForReview: true,
+          xguard: () =>
+            submitTextModeration({
+              entityType: 'Article',
+              entityId: result.id,
+              content: textForModeration,
+              labels: ['nsfw'],
+              recordForReview: true,
+              rearmRetries: true,
+            }),
         }).catch((e) => {
           logToAxiom({
             type: 'error',
@@ -976,21 +1113,20 @@ export const upsertArticle = async ({
     // user's original choice instead of being permanently anchored by a
     // prior clamp.
 
-    // Prevent owners from re-publishing articles unpublished for ToS violations
     if (
+      !isModerator &&
       article.status === ArticleStatus.UnpublishedViolation &&
-      data.status === ArticleStatus.Published &&
-      !isModerator
+      data.status &&
+      data.status !== article.status
     ) {
-      throw throwBadRequestError(
-        'This article was unpublished for violating Terms of Service and cannot be republished. Please contact support if you believe this was in error.'
-      );
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     }
 
     // SECURITY: Validate image scan status before allowing publish
     // Prevent publishing articles with blocked or failed images
     // Note: Pending images are allowed - article will remain in Processing status until scan completes
-    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
+    // Scheduling is a publish decided now, so it is refused on the same images.
+    if (!isModerator && (data.status === ArticleStatus.Published || scheduling) && scanContent) {
       const scanStatus = await getArticleScanStatus({ id });
       const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
 
@@ -1086,14 +1222,28 @@ export const upsertArticle = async ({
       publishedAt = article.publishedAt;
     }
 
+    // Guarded: the job may have taken this draft live since the read, and an unguarded write would
+    // revert it to Draft and re-fire the go-live side effects on the next publish.
+    writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    // A removal landing between the read and this write must not be overwritten by the owner.
+    writingWithoutViolationStatus =
+      !writingNeverPublishedDraft &&
+      !isModerator &&
+      article.status !== ArticleStatus.UnpublishedViolation;
+    const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
+      ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : writingWithoutViolationStatus
+      ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
+      : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
-        where: { id },
+        where: updateWhere,
         data: {
           ...data,
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           metadata: { ...prevMetadata, ...data.metadata },
           publishedAt,
+          scheduledAt: scheduledAtWrite,
           coverId,
           tags: tags
             ? {
@@ -1122,6 +1272,14 @@ export const upsertArticle = async ({
         },
       });
       if (!updated) return null;
+      // A tag rewrite above drops the official row like any other; the column restores it.
+      if (officialTag && (tags || data.isOfficial !== undefined))
+        await writeOfficialArticleTag({
+          articleId: updated.id,
+          tagId: officialTag.id,
+          isOfficial: updated.isOfficial,
+          db: tx,
+        });
 
       if (attachments) {
         // Delete any attachments that were removed.
@@ -1145,16 +1303,23 @@ export const upsertArticle = async ({
         });
       }
 
+      if (expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'Article',
+          entityId: updated.id,
+          uses: expansion.uses,
+          tx,
+        });
+
       return updated;
     });
+    writingNeverPublishedDraft = false;
+    writingWithoutViolationStatus = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
-
-    await preventReplicationLag('article', result.id);
-    await preventReplicationLag('userArticles', result.userId);
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
@@ -1164,102 +1329,19 @@ export const upsertArticle = async ({
       }
     }
 
-    // Link content images (creates Image entities and ImageConnections)
-    if (data.content) {
-      // OPTIMIZATION: Only process images if content actually changed
-      const hasContentChanged = article.content !== data.content;
-
-      if (hasContentChanged) {
-        try {
-          const { orphanedImageIds } = await linkArticleContentImages({
-            articleId: id,
-            content: data.content,
-            userId,
-            coverId: coverId ?? article.coverId,
-            cleanupOnly: !scanContent,
-          });
-
-          // Delete truly orphaned images (DB + S3 + cache) post-transaction
-          for (const imageId of orphanedImageIds) {
-            await deleteImageById({ id: imageId }).catch((error) => {
-              handleLogError(error, 'article-orphaned-image-cleanup', {
-                articleId: id,
-                imageId,
-              });
-            });
-          }
-
-          if (scanContent) {
-            // Content changed and images need re-scanning — use Rescan to distinguish
-            // user-edit-triggered rescans from initial pending scans.
-            await dbWrite.article.update({
-              where: { id },
-              data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
-            });
-          }
-        } catch (e) {
-          // Non-blocking: continue even if image linking fails, but log the error
-          const error = e as Error;
-          logToAxiom({
-            type: 'error',
-            name: 'article-image-linking',
-            message: error.message,
-            cause: error.cause,
-            stack: error.stack,
-            articleId: id,
-          }).catch();
-        }
-      }
-    }
-
-    // Submit for text moderation (non-blocking). `submitTextModeration` →
-    // `createXGuardModerationRequest` handles contentHash dedup internally,
-    // so a save that doesn't change `title` or `content` is a no-op
-    // orchestrator-wise. If the article's text was emptied out entirely,
-    // drop any stale EntityModeration row — otherwise the retry cron would
-    // keep re-submitting and `recomputeArticleIngestion` could still read
-    // the old blocked/error state.
-    {
-      const currentTitle = data.title ?? article.title ?? '';
-      const currentContent = data.content ?? article.content ?? '';
-      const hasText = articleHasText(currentTitle, currentContent);
-
-      if (!hasText) {
-        await dbWrite.entityModeration.deleteMany({
-          where: { entityType: 'Article', entityId: id },
-        });
-      } else {
-        const textForModeration = [currentTitle, removeTags(currentContent)]
-          .filter(Boolean)
-          .join(' ');
-
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: id,
-          content: textForModeration,
-          labels: ['nsfw'],
-          recordForReview: true,
-        }).catch((e) => {
-          logToAxiom({
-            type: 'error',
-            name: 'article-text-moderation',
-            message: (e as Error).message,
-            articleId: id,
-          }).catch();
-        });
-      }
-    }
-
-    // Lock ingestion state, recompute nsfwLevel from current cover/content
-    // signals, and queue the search-index update. Running the full
-    // `updateArticleImageScanStatus` (rather than bare `recomputeArticleIngestion`)
-    // guarantees that any edit or publish/republish re-derives
-    // `Article.nsfwLevel` from ground truth — otherwise a cover whose scan
-    // finished between save and republish would leak at its stale
-    // author-declared level. Dispatches the search-index update internally.
-    await updateArticleImageScanStatus([id]).catch((e) =>
-      handleLogError(e, 'article-update-recompute', { articleId: id })
-    );
+    await applyArticleContentChange({
+      id,
+      userId,
+      content: data.content,
+      scanContent: !!scanContent,
+      context: {
+        ownerId: result.userId,
+        title: data.title ?? article.title ?? '',
+        previousContent: article.content,
+        coverId: coverId ?? article.coverId,
+        publication: { status: result.status, scheduledAt: result.scheduledAt },
+      },
+    });
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
@@ -1281,9 +1363,309 @@ export const upsertArticle = async ({
     return { ...result, hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      writingNeverPublishedDraft &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(
+        'This article was published while you were editing it. Reload it and save again.'
+      );
+    if (
+      writingWithoutViolationStatus &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     throw throwDbError(error);
   }
 };
+
+type ArticleContentChangeContext = {
+  ownerId: number;
+  title: string | null;
+  previousContent: string | null;
+  coverId: number | null;
+  publication: { status: ArticleStatus; scheduledAt: Date | null };
+};
+
+/**
+ * The one path for "an article's body changed": the column write plus the follow-up
+ * work that change implies. `upsertArticle` calls it, and so does the blurb fan-out —
+ * which is what stops the two drifting.
+ *
+ * Deliberately narrow. The full upsert is form-shaped, so a caller holding only new
+ * HTML cannot use it without clearing title, tags, attachments and cover.
+ */
+export async function applyArticleContentChange({
+  id,
+  userId,
+  content,
+  scanContent = true,
+  context,
+  expectedContent,
+}: {
+  id: number;
+  userId: number;
+  content: string;
+  scanContent?: boolean;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedContent?: string;
+  /**
+   * A caller that has ALREADY written this body passes its pre-write snapshot here. Delete
+   * it from such a call site and the re-read below runs after that caller's own commit, so
+   * `previousContent` is the new content, `hasContentChanged` is false, and article images
+   * silently stop being linked and ingested on every save.
+   */
+  context?: ArticleContentChangeContext;
+}) {
+  await throwOnBlockedUserContent(content, { surface: 'article' });
+
+  let resolved = context;
+  if (!resolved) {
+    const stored = await dbWrite.article.findUnique({
+      where: { id },
+      select: {
+        userId: true,
+        title: true,
+        content: true,
+        coverId: true,
+        status: true,
+        scheduledAt: true,
+      },
+    });
+    if (!stored) throw throwNotFoundError(`No article with id ${id}`);
+    resolved = {
+      ownerId: stored.userId,
+      title: stored.title,
+      previousContent: stored.content,
+      coverId: stored.coverId,
+      publication: { status: stored.status, scheduledAt: stored.scheduledAt },
+    };
+  }
+  const { ownerId, title, previousContent, coverId, publication } = resolved;
+
+  // A caller holding the pre-write snapshot has already written this body itself. Replaying
+  // it would reinstate the older body over a save that committed in between.
+  if (!context) {
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a user edit: it must not reorder the "Recently Updated"
+    // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}${
+        expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
+      }`;
+    if (expectedContent !== undefined && !affected) return false;
+  }
+
+  await preventReplicationLag('article', id);
+  await preventReplicationLag('userArticles', ownerId);
+
+  // Interactive saves only. A fan-out rewrite replaces blurb-span interiors, and
+  // BLURB_INTERIOR_ALLOWED_TAGS admits no `img` or `edge-media`, so the body's image set is
+  // unchanged by construction — while the `article.update` below would re-stamp the `updatedAt`
+  // the raw write above exists to keep off it.
+  if (context && content) {
+    const hasContentChanged = previousContent !== content;
+
+    if (hasContentChanged) {
+      try {
+        const { orphanedImageIds } = await linkArticleContentImages({
+          articleId: id,
+          content,
+          userId,
+          ownerId,
+          coverId,
+          cleanupOnly: !scanContent,
+        });
+
+        // Delete truly orphaned images (DB + S3 + cache)
+        for (const imageId of orphanedImageIds) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(error, 'article-orphaned-image-cleanup', {
+              articleId: id,
+              imageId,
+            });
+          });
+        }
+
+        if (scanContent) {
+          // Content changed and images need re-scanning — use Rescan to distinguish a
+          // rescan of existing content from an initial pending scan.
+          await dbWrite.article.update({
+            where: { id },
+            data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
+          });
+        }
+      } catch (e) {
+        // Non-blocking: continue even if image linking fails, but log the error
+        const error = e as Error;
+        logToAxiom({
+          type: 'error',
+          name: 'article-image-linking',
+          message: error.message,
+          cause: error.cause,
+          stack: error.stack,
+          articleId: id,
+        }).catch();
+      }
+    }
+  }
+
+  // Submit for text moderation (non-blocking). `submitTextModeration` →
+  // `createXGuardModerationRequest` handles contentHash dedup internally,
+  // so a save that doesn't change `title` or `content` is a no-op
+  // orchestrator-wise. If the article's text was emptied out entirely,
+  // drop any stale EntityModeration row — otherwise the retry cron would
+  // keep re-submitting and `recomputeArticleIngestion` could still read
+  // the old blocked/error state. A draft waits for the save that makes it public: the
+  // author may still edit it.
+  {
+    const currentTitle = title ?? '';
+    const hasText = articleHasText(currentTitle, content);
+
+    if (!hasText) {
+      await dbWrite.entityModeration.deleteMany({
+        where: { entityType: 'Article', entityId: id },
+      });
+    } else if (isPublicArticle(publication)) {
+      const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
+
+      const submitted = submitTextModerationOrScan({
+        entityType: 'Article',
+        entityId: id,
+        xguard: () =>
+          submitTextModeration({
+            entityType: 'Article',
+            entityId: id,
+            content: textForModeration,
+            labels: ['nsfw'],
+            recordForReview: true,
+            rearmRetries: true,
+          }),
+      }).catch((e) => {
+        logToAxiom({
+          type: 'error',
+          name: 'article-text-moderation',
+          message: (e as Error).message,
+          articleId: id,
+        }).catch();
+      });
+      // Otherwise the recompute below can count a verdict for older text and take it live.
+      if (articleAwaitsTextVerdict(publication)) await submitted;
+    }
+  }
+
+  // Lock ingestion state, recompute nsfwLevel from current cover/content
+  // signals, and queue the search-index update. Running the full
+  // `updateArticleImageScanStatus` (rather than bare `recomputeArticleIngestion`)
+  // guarantees that any edit or publish/republish re-derives
+  // `Article.nsfwLevel` from ground truth — otherwise a cover whose scan
+  // finished between save and republish would leak at its stale
+  // author-declared level. Dispatches the search-index update internally.
+  await updateArticleImageScanStatus([id]).catch((e) =>
+    handleLogError(e, 'article-update-recompute', { articleId: id })
+  );
+
+  return true;
+}
+
+/**
+ * An image an article's cleanup may delete: the author's own, in no post, and shown nowhere else.
+ * Most of these relations null out on delete, so a missed one silently blanks that surface:
+ * a new relation that displays an image belongs here. An image that is reported, awaiting review
+ * or blocked is kept too: moderation decides what happens to it, not an article edit.
+ */
+export const unusedAuthorImage = (ownerId: number) =>
+  ({
+    userId: ownerId,
+    postId: null,
+    needsReview: null,
+    ingestion: { not: ImageIngestionStatus.Blocked },
+    nsfwLevel: { not: NsfwLevel.Blocked },
+    blockedFor: null,
+    reports: { none: {} },
+    article: { is: null },
+    assignedUser: { is: null },
+    connections: { none: {} },
+    collectionItems: { none: {} },
+    collections: { none: {} },
+    UserProfile: { none: {} },
+    userProfileSfwCover: { none: {} },
+    announcementCovers: { none: {} },
+    clubCover: { none: {} },
+    clubHeader: { none: {} },
+    clubAvatar: { none: {} },
+    clubTierCover: { none: {} },
+    clubPostCoverImage: { none: {} },
+    purchasableRewards: { none: {} },
+    CosmeticShopSection: { none: {} },
+    comicPanels: { none: {} },
+    comicReferenceImages: { none: {} },
+    comicProjectCover: { none: {} },
+    comicProjectHero: { none: {} },
+    challengesCover: { none: {} },
+    challengeWins: { none: {} },
+    challengeEventCovers: { none: {} },
+    model3dThumbnails: { none: {} },
+    model3dSources: { none: {} },
+    appListingIcons: { none: {} },
+    appListingCovers: { none: {} },
+    appListingScreenshots: { none: {} },
+    appSubListingImages: { none: {} },
+    appSubListingPendingImages: { none: {} },
+    crucibles: { none: {} },
+    crucibleHeroes: { none: {} },
+    crucibleEntries: { none: {} },
+    storylineCovers: { none: {} },
+    storylineHeroes: { none: {} },
+  } satisfies Prisma.ImageWhereInput);
+
+/**
+ * Drops images used as a service offering's cover. That column has no Prisma relation, so
+ * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
+ */
+async function withoutOfferingCovers(
+  db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
+  imageIds: number[]
+) {
+  if (!imageIds.length) return imageIds;
+  const covers = await db.serviceOffering.findMany({
+    where: { coverImageId: { in: imageIds } },
+    select: { coverImageId: true },
+  });
+  const used = new Set(covers.map((offering) => offering.coverImageId));
+  return imageIds.filter((id) => !used.has(id));
+}
+
+/**
+ * An owner with a safety report on file, or under any legal hold, keeps every image: the review
+ * needs them. Held when the hold cannot be read. Read outside any transaction: a failed read would
+ * abort it.
+ */
+export async function ownerUnderSafetyReport(
+  db: Pick<Prisma.TransactionClient, 'csamReport' | '$queryRaw'>,
+  ownerId: number
+) {
+  try {
+    if ((await db.csamReport.count({ where: { userId: ownerId } })) > 0) return true;
+    const owner = Prisma.sql`${ownerId}::int`;
+    const [row] =
+      (await db.$queryRaw<{ held: unknown }[]>`
+        SELECT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, true)}) AS held
+      `) ?? [];
+    return row?.held !== false;
+  } catch (error) {
+    handleLogError(error as Error, 'article-image-cleanup-hold-read', { ownerId });
+    return true;
+  }
+}
 
 export const deleteArticleById = async ({
   id,
@@ -1306,6 +1688,9 @@ export const deleteArticleById = async ({
       select: { imageId: true },
     });
 
+    // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
+    const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
+
     const deleted = await dbWrite.$transaction(async (tx) => {
       const article = await tx.article.delete({
         where: { id },
@@ -1320,29 +1705,47 @@ export const deleteArticleById = async ({
       return article;
     });
 
-    // Delete cover image (DB + S3 + cache)
-    if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
+    // Immediately after the commit: the steps below can reject, and the article row is
+    // already gone, so the pre-delete snapshot is the only record left.
+    await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    // Only delete images that have no remaining connections to ANY entity
-    const contentImageIds = contentImageConnections
-      .map((conn) => conn.imageId)
-      .filter((imageId) => imageId !== deleted.coverId);
+    // The cover goes through the same checks as the content images: it can be someone else's
+    // upload, or still shown elsewhere.
+    const imageIds = [
+      ...new Set([
+        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...contentImageConnections.map((conn) => conn.imageId),
+      ]),
+    ];
 
-    if (contentImageIds.length > 0) {
-      const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, connections: { none: {} } },
-        select: { id: true },
-      });
-
-      for (const { id: imageId } of trulyOrphanedImages) {
-        await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(error, 'article-content-image-cleanup', {
-            articleId: id,
-            imageId,
-          });
+    // The article is already gone, so a failed cleanup is logged rather than reported as a failed
+    // delete, and it must not skip the articles-index `Delete` below.
+    try {
+      if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
+        const trulyOrphanedImages = await dbWrite.image.findMany({
+          where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
+          select: { id: true },
         });
+
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          trulyOrphanedImages.map((img) => img.id)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(
+              error,
+              imageId === deleted.coverId
+                ? 'article-cover-image-cleanup'
+                : 'article-content-image-cleanup',
+              { articleId: id, imageId }
+            );
+          });
+        }
       }
+    } catch (error) {
+      handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
@@ -1378,6 +1781,7 @@ export const getDraftArticlesByUserId = async ({
         createdAt: true,
         updatedAt: true,
         status: true,
+        scheduledAt: true,
         tags: {
           where: { tag: { isCategory: true } },
           select: { tag: { select: { id: true, name: true } } },
@@ -1471,125 +1875,8 @@ export async function unpublishArticleById({
   return updated;
 }
 
-export async function restoreArticleById({ id, userId }: { id: number; userId: number }) {
-  const db = await getDbWithoutLag('article', id);
-  const article = await db.article.findUnique({
-    where: { id },
-    select: {
-      userId: true,
-      status: true,
-      metadata: true,
-      publishedAt: true,
-    },
-  });
-
-  if (!article) throw throwNotFoundError(`No article with id ${id}`);
-
-  // Can only restore unpublished articles
-  if (
-    ![ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation].some(
-      (s) => s === article.status
-    )
-  ) {
-    throw throwBadRequestError('Article is not unpublished');
-  }
-
-  const updated = await dbWrite.$transaction(
-    async (tx) => {
-      const metadata = (article.metadata as ArticleMetadata) || {};
-
-      // Clear unpublish metadata
-      const updatedMetadata = {
-        ...metadata,
-        unpublishedReason: undefined,
-        customMessage: undefined,
-        unpublishedAt: undefined,
-        unpublishedBy: undefined,
-      };
-
-      return await tx.article.update({
-        where: { id },
-        data: {
-          status: ArticleStatus.Published,
-          // Preserve the original publishedAt so mod-restoring an
-          // Unpublished/UnpublishedViolation article doesn't surface it at
-          // the top of the Newest feed (which sorts by publishedAt). Fresh
-          // `new Date()` is the fallback only for the edge case of restoring
-          // a row that was never publishedAt-stamped — same anti-bump shape
-          // used by recomputeArticleIngestion's flipPublishedAt.
-          publishedAt: article.publishedAt ?? new Date(),
-          metadata: updatedMetadata,
-        },
-      });
-    },
-    { timeout: 30000, maxWait: 10000 }
-  );
-
-  // Re-derive ingestion state AND nsfwLevel (also queues the search index
-  // update internally). Handles the case where the article was sitting at
-  // Pending before being unpublished and now needs to be re-evaluated against
-  // current image/text state. Using `updateArticleImageScanStatus` rather
-  // than bare `recomputeArticleIngestion` guarantees `Article.nsfwLevel` is
-  // re-derived from the current cover/content image ratings — otherwise a
-  // cover that was raised to R/X/XXX while the article sat unpublished would
-  // leak into the SFW feed the moment we flip status back to Published.
-  await updateArticleImageScanStatus([id]).catch((e) =>
-    handleLogError(e, 'article-restore-recompute', { articleId: id })
-  );
-
-  await userArticleCountCache.refresh(article.userId);
-  await preventReplicationLag('article', id);
-  await preventReplicationLag('userArticles', article.userId);
-
-  return updated;
-}
-
-export async function getModeratorArticles({
-  limit,
-  cursor,
-  username,
-  status,
-}: GetModeratorArticlesSchema & { limit: number }) {
-  const AND: Prisma.ArticleWhereInput[] = [
-    {
-      status: {
-        in: status ? [status] : [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation],
-      },
-    },
-  ];
-
-  if (username) {
-    AND.push({
-      user: {
-        username: { contains: username, mode: 'insensitive' },
-      },
-    });
-  }
-
-  const items = await dbRead.article.findMany({
-    take: limit + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: { AND },
-    // Mod-only list — safe to surface the moderator override value alongside
-    // the regular detail fields. See note on `articleDetailSelect`.
-    select: { ...articleDetailSelect, moderatorNsfwLevel: true },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  let nextCursor: number | undefined;
-  if (items.length > limit) {
-    const nextItem = items.pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return {
-    nextCursor,
-    items: items.map((article) => ({
-      ...article,
-      metadata: article.metadata as ArticleMetadata | null,
-    })),
-  };
-}
+// NOTE(moderator-migration): restoreArticleById removed — article restore is now a moderator-app action
+// (apps/moderator, Kysely; see article-moderation.ts). See docs/moderator-app/context-menu-mod-actions.md.
 
 // --- Article Image Scanning Functions ---
 
@@ -1602,17 +1889,21 @@ export async function getModeratorArticles({
  * @param articleId - Article ID to link images to
  * @param content - Article HTML content
  * @param userId - User ID for image ownership
+ * @param ownerId - The article's author: only their own images, used nowhere else, are returned
+ *   as orphans to delete.
  */
 export async function linkArticleContentImages({
   articleId,
   content,
   userId,
+  ownerId,
   coverId,
   cleanupOnly,
 }: {
   articleId: number;
   content: string;
   userId: number;
+  ownerId: number;
   coverId?: number | null;
   cleanupOnly?: boolean;
 }): Promise<{ orphanedImageIds: number[] }> {
@@ -1726,21 +2017,26 @@ export async function linkArticleContentImages({
       });
     }
 
-    // Find truly orphaned images (no connections to ANY entity)
     let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
-        where: {
-          id: { in: orphanedIds },
-          connections: { none: {} },
-        },
+        where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },
       });
-      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = await withoutOfferingCovers(
+        tx,
+        trulyOrphaned.map((img) => img.id)
+      );
     }
 
     return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
+
+  // After the commit: the hold read must not be able to roll back the edit's image linking.
+  const deletable =
+    orphanedImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, ownerId))
+      ? orphanedImageIds
+      : [];
 
   if (imagesToIngest.length > 0) {
     // TODO.articleImageScan: remove the lowPriority flag
@@ -1752,7 +2048,7 @@ export async function linkArticleContentImages({
     });
   }
 
-  return { orphanedImageIds };
+  return { orphanedImageIds: deletable };
 }
 
 /**
@@ -1762,7 +2058,7 @@ export async function linkArticleContentImages({
  * @returns Object with scan progress counts, completion status, and detailed image lists
  */
 export type ArticleTextModerationStatus = {
-  // True when the article has text to moderate (title or HTML-stripped content).
+  // True when the article is public and has text to moderate (title or HTML-stripped content).
   // When false, the text pipeline is a no-op and textDone is implicitly true.
   required: boolean;
   // null when no EntityModeration row exists yet (either not required or
@@ -1773,7 +2069,7 @@ export type ArticleTextModerationStatus = {
   updatedAt: Date | null;
 };
 
-// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service, scan
+// `scanJobs.error` is stamped by `markImageScanError` (image-scan-pipeline, scan
 // verdicts) and `markImageScanSubmitFailure` (image.service, submit rejections). Both
 // carry the classifier's verdict (transient | permanent | unknown) plus the human reason,
 // letting the scan-status UI render a class-aware cause.
@@ -1841,7 +2137,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
     dbRead.article.findUnique({
       where: { id },
-      select: { title: true, content: true, coverId: true },
+      select: { title: true, content: true, coverId: true, status: true, scheduledAt: true },
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
@@ -1883,7 +2179,14 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       i.ingestion === ImageIngestionStatus.Pending || i.ingestion === ImageIngestionStatus.Rescan
   );
 
-  const required = article ? articleHasText(article.title, article.content) : false;
+  // A draft's text is not scanned until the save that makes it public, so no verdict is coming.
+  // A blocked verdict still counts: it is what moved the article to UnpublishedViolation.
+  const textBlocked =
+    moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
+  const required =
+    !!article &&
+    (isPublicArticle(article) || textBlocked) &&
+    articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
     EntityModerationStatus.Failed,
@@ -2296,8 +2599,44 @@ export async function resolveArticleImageScan({
 const RESCAN_LIMIT = 3;
 const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
 
+const rescanImageSelect = {
+  id: true,
+  url: true,
+  type: true,
+  userId: true,
+  ingestion: true,
+  nsfwLevel: true,
+  nsfwLevelLocked: true,
+  blockedFor: true,
+} as const;
+
 /**
- * Rescan an article: re-queue all content images and re-submit text moderation.
+ * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
+ * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
+ * the block, which only a moderator decides; and an image someone other than the article's author
+ * owns, which the author has no say over.
+ */
+function canRescanArticleImage(
+  image: {
+    userId: number;
+    ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
+    nsfwLevelLocked: boolean;
+    blockedFor: string | null;
+  },
+  articleUserId: number
+) {
+  return (
+    image.userId === articleUserId &&
+    image.ingestion !== ImageIngestionStatus.Pending &&
+    !image.nsfwLevelLocked &&
+    !hasBlockMarker(image)
+  );
+}
+
+/**
+ * Rescan an article: re-queue its content images (see `canRescanArticleImage`) and re-submit
+ * text moderation.
  *
  * Resets ingestion to Rescan, clears contentScannedAt, and lets the normal
  * webhook flow (image scan + text moderation) drive the article back to a
@@ -2326,7 +2665,15 @@ export async function rescanArticle({
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findUnique({
     where: { id },
-    select: { id: true, userId: true, content: true, title: true, coverId: true },
+    select: {
+      id: true,
+      userId: true,
+      content: true,
+      title: true,
+      coverId: true,
+      status: true,
+      scheduledAt: true,
+    },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -2352,16 +2699,18 @@ export async function rescanArticle({
       articleId: id,
       content: article.content,
       userId: article.userId,
+      ownerId: article.userId,
       coverId: article.coverId,
     });
   }
 
   // --- Re-queue already-processed images for rescan ---
-  const connections = await dbRead.imageConnection.findMany({
+  // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
+  const connections = await dbWrite.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
     include: {
       image: {
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       },
     },
   });
@@ -2369,21 +2718,16 @@ export async function rescanArticle({
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
   // cover would never be re-queued without folding it in here.
   const cover = article.coverId
-    ? await dbRead.image.findUnique({
+    ? await dbWrite.image.findUnique({
         where: { id: article.coverId },
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       })
     : null;
 
   const candidates = connections.map((conn) => conn.image);
   if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
 
-  // Never re-scan a locked image: a moderator override sets `nsfwLevelLocked`,
-  // and re-queuing would let a hard-violation rescan overwrite that human
-  // decision, so the override must stay sticky.
-  const imagesToIngest = candidates.filter(
-    (image) => image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked
-  );
+  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
 
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
@@ -2407,18 +2751,25 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content) {
+  if (article.content && isPublicArticle(article)) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');
 
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Article',
       entityId: id,
-      content: textForModeration,
-      labels: ['nsfw'],
-      recordForReview: true,
-      forceRescan: true,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: textForModeration,
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+          rearmRetries: true,
+        }),
     }).catch((e) => {
       logToAxiom({
         type: 'error',
@@ -2507,28 +2858,34 @@ export async function rescanArticleImage({
     }
   }
 
-  const image = await dbRead.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id: imageId },
-    select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+    select: rescanImageSelect,
   });
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // Consistent with rescanArticle: never re-queue an in-flight or locked image.
-  if (image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked) {
-    // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
-    // then reports the article as in-progress (allComplete=false), which resumes
-    // the 15s status poll so the eventual result loads without a manual refresh.
-    await dbWrite.image.update({
-      where: { id: image.id },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-    enqueueImageIngestion({
-      images: [image],
-      name: 'article-rescan-image',
-      userId: article.userId,
-      lowPriority: true,
-    });
+  // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
+  // no attempt.
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw throwBadRequestError(
+      'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
+    );
   }
+
+  // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
+  // then reports the article as in-progress (allComplete=false), which resumes
+  // the 15s status poll so the eventual result loads without a manual refresh.
+  await dbWrite.image.update({
+    where: { id: image.id },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+  });
+  enqueueImageIngestion({
+    images: [image],
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
   attempts.push(Date.now());
@@ -2548,635 +2905,80 @@ export async function rescanArticleImage({
   }).catch();
 }
 
-// =============================================================================
-// Article NSFW level dispute / review
-// =============================================================================
+/** The seeded `civitai official` tag, or undefined until the row exists. */
+export const getOfficialArticleTag = async () => {
+  const systemTags = await getSystemTags();
+  return systemTags.find((tag) => tag.name === OFFICIAL_ARTICLE_TAG.name);
+};
 
-const NSFW_REVIEW_LIMIT = 3;
-const NSFW_REVIEW_WINDOW_SECONDS = CacheTTL.day; // 24 hours
+// Article tags attach by NAME through `connectOrCreate`, so any client can send this string;
+// drop it for every caller.
+const withoutOfficialArticleTag = (
+  tags: UpsertArticleInput['tags'],
+  officialTag: { id: number } | undefined
+) =>
+  tags?.filter(
+    (tag) =>
+      tag.name.toLowerCase().trim() !== OFFICIAL_ARTICLE_TAG.name &&
+      (!officialTag || tag.id !== officialTag.id)
+  ) ?? undefined;
 
-const VALID_NSFW_LEVELS = new Set<number>(browsingLevels);
-
-/**
- * Owner-driven request to re-rate an article. Performs service-layer auth
- * (no router middleware) per project convention.
- *
- * Invariants:
- * - Only the article owner can file a dispute.
- * - `suggestedLevel` must be a single-bit constant from the canonical
- *   set (PG / PG13 / R / X / XXX).
- * - At most one Pending review per article at any time.
- * - Owners are gated by a rate limit (3 / 24h, mods bypass).
- * - If a prior review has resolved, the owner can re-file only if the
- *   article was edited after that resolution (`updatedAt > resolvedAt`).
- */
-export async function createArticleRatingReview({
+// `tagId` is resolved by the caller before its transaction opens: the lookup is a Redis read.
+// Not `tag.service.addTags`/`disableTags`: neither takes a transaction client, and `disableTags`
+// has no article branch.
+const writeOfficialArticleTag = async ({
   articleId,
-  userId,
-  suggestedLevel,
-  userComment,
-  isModerator,
-}: CreateArticleRatingReviewInput & {
-  userId: number;
-  isModerator?: boolean;
-}) {
-  // --- Validate the suggested level against the canonical bitwise set ---
-  if (!VALID_NSFW_LEVELS.has(suggestedLevel)) {
-    throw throwBadRequestError(
-      `Invalid suggested NSFW level. Must be one of: ${[...VALID_NSFW_LEVELS].join(', ')}`
-    );
-  }
-
-  // --- Load article and assert ownership at the service layer ---
-  // Fetch the article + existing-pending + last-resolved reads in parallel —
-  // they're independent and the round-trips dominate latency here.
-  const [article, existingPending, lastResolved] = await Promise.all([
-    dbRead.article.findUnique({
-      where: { id: articleId },
-      select: {
-        id: true,
-        userId: true,
-        nsfwLevel: true,
-        updatedAt: true,
-        // Extra fields powering the auto-approve gate (status / ingestion /
-        // override / coverId) — cheap to fetch alongside the ownership check
-        // so we don't issue a second round-trip on the eligible path.
-        status: true,
-        ingestion: true,
-        moderatorNsfwLevel: true,
-        moderatorNsfwLevelBasis: true,
-        coverId: true,
-        title: true,
-      },
-    }),
-    dbRead.articleRatingReview.findFirst({
-      where: { articleId, status: ReportStatus.Pending },
-      select: { id: true },
-    }),
-    dbRead.articleRatingReview.findFirst({
-      where: {
-        articleId,
-        status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
-        resolvedAt: { not: null },
-      },
-      orderBy: { resolvedAt: 'desc' },
-      select: { id: true, resolvedAt: true },
-    }),
-  ]);
-
-  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.userId !== userId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Only the article owner can submit a rating review',
-    });
-  }
-
-  // --- No-op guard ---
-  // A review that suggests the rating the article already carries can never
-  // change anything, so reject it up front (before the rate-limit gate burns
-  // a slot). The modal also disables the current level, but a stale client or
-  // the mod API could still send it.
-  if (suggestedLevel === article.nsfwLevel) {
-    throw throwBadRequestError(
-      'The suggested rating matches the article’s current rating. Choose a different level.'
-    );
-  }
-
-  // --- One Pending per article ---
-  if (existingPending) {
-    throw throwBadRequestError('A review is already pending for this article');
-  }
-
-  // --- Re-edit gate: if any prior resolved review exists, require the
-  //     article to have been edited since the most recent resolution ---
-  if (
-    lastResolved?.resolvedAt &&
-    (!article.updatedAt || article.updatedAt <= lastResolved.resolvedAt)
-  ) {
-    throw throwBadRequestError(
-      'This article has already been reviewed. Edit the article before requesting another review.'
-    );
-  }
-
-  // --- Rate limit (owners only, mods bypass) ---
-  // Run AFTER the "one Pending per article" and re-edit gates so a request
-  // that's guaranteed to be rejected by either of those doesn't burn a slot.
-  // Atomic INCR + EXPIRE-on-first to avoid the TOCTOU race in the prior
-  // get → check → set → expire dance. Concurrent duplicate Pending inserts
-  // are still prevented by the partial unique index on `ArticleRatingReview`.
-  // `incr` isn't surfaced on the typed redis client, hence the cast.
-  const cacheKey = `${REDIS_KEYS.ARTICLE.RATING_REVIEW_RATE_LIMIT}:${userId}` as const;
-  if (!isModerator) {
-    const count = await (redis as any).incr(cacheKey);
-    if (count === 1) await redis.expire(cacheKey, NSFW_REVIEW_WINDOW_SECONDS);
-    if (count > NSFW_REVIEW_LIMIT) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `You can only submit ${NSFW_REVIEW_LIMIT} rating reviews per day. Please try again later.`,
-      });
-    }
-  }
-
-  // --- Auto-approve branch ---
-  // If the dispute is a down-direction request and the article's rescan
-  // already agrees with the requested level, skip the mod queue entirely:
-  // insert the review directly as Actioned, clear the mod override, and let
-  // the recompute land the effective level at `suggestedLevel`. Moderators
-  // bypass this path — they go through `resolveArticleRatingReview` instead,
-  // so a mod hitting the dispute endpoint as themselves still creates a
-  // normal Pending row for review.
-  if (!isModerator) {
-    const gate = await evaluateAutoApproveGate({
-      article: {
-        id: article.id,
-        status: article.status,
-        ingestion: article.ingestion,
-        nsfwLevel: article.nsfwLevel,
-        moderatorNsfwLevel: article.moderatorNsfwLevel,
-        moderatorNsfwLevelBasis: article.moderatorNsfwLevelBasis,
-        coverId: article.coverId,
-      },
-      suggestedLevel,
-    });
-
-    if (gate.eligible) {
-      // Insert as Pending FIRST so the partial unique index
-      // (`ArticleRatingReview_pending_per_article`, WHERE status='Pending')
-      // serializes concurrent submissions for the same article — the loser of
-      // the race hits P2002 and is rejected here rather than producing a
-      // duplicate Actioned row + duplicate "approved" notification. We then
-      // promote the row via the race-safe resolve-existing path.
-      let pendingId: number;
-      try {
-        const created = await dbWrite.articleRatingReview.create({
-          data: {
-            articleId,
-            userId,
-            currentLevel: article.nsfwLevel,
-            suggestedLevel,
-            userComment,
-            status: ReportStatus.Pending,
-          },
-          select: { id: true },
-        });
-        pendingId = created.id;
-      } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-          throw throwBadRequestError('A review is already pending for this article');
-        }
-        throw e;
-      }
-
-      try {
-        const auto = await autoResolveArticleRatingReview({
-          mode: 'resolve-existing',
-          reviewId: pendingId,
-          articleId,
-          ownerUserId: userId,
-          suggestedLevel,
-          previousLevel: article.nsfwLevel,
-          articleTitle: article.title ?? 'your article',
-        });
-
-        logToAxiom({
-          type: 'info',
-          name: 'article-rating-review-auto-resolved',
-          articleId,
-          reviewId: auto.reviewId,
-          suggestedLevel,
-          derivedLevel: gate.derivedLevel,
-          entryPoint: 'submission',
-        }).catch();
-
-        return auto.review;
-      } catch (e) {
-        // Another resolver (a mod, or the scan-completion retry) won the race
-        // and promoted this row first. Return the row as-is; it is already
-        // resolved and the article mutation stands.
-        if (e instanceof AutoResolveRaceLost) {
-          return dbRead.articleRatingReview.findUniqueOrThrow({ where: { id: pendingId } });
-        }
-        throw e;
-      }
-    }
-  }
-
-  // --- Snapshot the current effective level + insert ---
-  const review = await dbWrite.articleRatingReview.create({
-    data: {
-      articleId,
-      userId,
-      currentLevel: article.nsfwLevel,
-      suggestedLevel,
-      userComment,
-      status: ReportStatus.Pending,
-    },
-  });
-
-  return review;
-}
-
-/**
- * Owner-only fetch of the most recent review row for this article (any
- * status) so the article detail page can render
- * "Submit review / Pending / Approved / Rejected" badges.
- */
-export async function getArticleRatingReviewForOwner({
-  articleId,
-  userId,
+  tagId,
+  isOfficial,
+  db,
 }: {
   articleId: number;
-  userId: number;
-}) {
-  const article = await dbRead.article.findUnique({
-    where: { id: articleId },
-    select: {
-      id: true,
-      userId: true,
-      updatedAt: true,
-      nsfwLevel: true,
-      moderatorNsfwLevel: true,
-      moderatorNsfwLevelBasis: true,
-    },
-  });
-  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.userId !== userId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Only the article owner can view this review',
-    });
-  }
-
-  const review = await dbRead.articleRatingReview.findFirst({
-    where: { articleId },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      status: true,
-      createdAt: true,
-      resolvedAt: true,
-      currentLevel: true,
-      suggestedLevel: true,
-      appliedLevel: true,
-      userComment: true,
-      modComment: true,
-    },
-  });
-
-  // Stale-override signal for the owner banner: only meaningful when an
-  // override is active AND content has genuinely dropped below the basis it was
-  // set against — which is exactly the auto-approve gate's #6 precondition. We
-  // compare derived to `moderatorNsfwLevelBasis` (not to the override itself) so
-  // the banner only advertises a dispute that will actually auto-approve; an
-  // override sitting above the images (basis == derived) won't light it up,
-  // since disputing it would just route to the mod queue.
-  // Skip the derived computation when there's no override (the auto path
-  // already resolves to ground truth) or when the article has no resubmit
-  // option anyway (Pending review blocks it).
-  let derivedLevel: number | null = null;
-  let derivedRatingDroppedBelowOverride = false;
-  if (article.moderatorNsfwLevel != null && review?.status !== ReportStatus.Pending) {
-    derivedLevel = await computeArticleDerivedNsfwLevel(articleId);
-    derivedRatingDroppedBelowOverride =
-      derivedLevel != null &&
-      article.moderatorNsfwLevelBasis != null &&
-      derivedLevel < article.moderatorNsfwLevelBasis;
-  }
-
-  if (!review) {
-    return {
-      review: null,
-      canResubmit: true,
-      derivedLevel,
-      derivedRatingDroppedBelowOverride,
-    };
-  }
-
-  // Compute canResubmit server-side so clock skew can't open or close the
-  // resubmit gate from the client. Mirrors the createArticleRatingReview
-  // re-edit gate: a fresh dispute is allowed only when the article has been
-  // edited after the prior review resolved. Pending reviews block resubmit
-  // outright.
-  const canResubmit =
-    review.status !== ReportStatus.Pending &&
-    review.resolvedAt != null &&
-    article.updatedAt != null &&
-    article.updatedAt > review.resolvedAt;
-
-  return { review, canResubmit, derivedLevel, derivedRatingDroppedBelowOverride };
-}
+  tagId: number;
+  isOfficial: boolean;
+  db: Pick<Prisma.TransactionClient, 'tagsOnArticle'>;
+}) => {
+  if (isOfficial)
+    await db.tagsOnArticle.createMany({ data: [{ articleId, tagId }], skipDuplicates: true });
+  else await db.tagsOnArticle.deleteMany({ where: { articleId, tagId } });
+};
 
 /**
- * Moderator dashboard query. Mirrors getImageRatingRequests shape:
- * keyset cursor on `id`, returns `{ items, nextCursor }`.
- */
-export async function getArticleRatingReviews({
-  cursor,
-  limit,
-  status,
-}: GetArticleRatingReviewsInput) {
-  const rows = await dbRead.articleRatingReview.findMany({
-    where: {
-      status,
-      ...(cursor ? { id: { lt: cursor } } : {}),
-    },
-    orderBy: { id: 'desc' },
-    take: limit + 1,
-    select: {
-      id: true,
-      createdAt: true,
-      resolvedAt: true,
-      status: true,
-      currentLevel: true,
-      suggestedLevel: true,
-      appliedLevel: true,
-      userComment: true,
-      modComment: true,
-      resolvedBy: true,
-      // The moderator who actioned the review (null for auto-approved /
-      // system-resolved rows) — surfaced on the card for audit.
-      resolver: {
-        select: {
-          id: true,
-          username: true,
-          image: true,
-        },
-      },
-      user: {
-        select: {
-          id: true,
-          username: true,
-          image: true,
-        },
-      },
-      article: {
-        select: {
-          id: true,
-          title: true,
-          // Legacy URL column — null for all current articles. Kept only as a
-          // fallback; the live cover is resolved from `coverId` below.
-          cover: true,
-          coverId: true,
-          nsfwLevel: true,
-          userNsfwLevel: true,
-          moderatorNsfwLevel: true,
-          publishedAt: true,
-        },
-      },
-    },
-  });
-
-  let nextCursor: number | undefined;
-  if (rows.length > limit) {
-    const last = rows.pop();
-    nextCursor = last?.id;
-  }
-
-  // Resolve cover images from `coverId` (mirrors the main article feed). The
-  // legacy `Article.cover` string is null for every current article, so the
-  // review cards rendered blank covers until this lookup was added.
-  // Dedupe ids (resolved tabs can hold multiple reviews for the same article)
-  // and index the result by id so the per-row attach below stays linear.
-  const coverIds = [...new Set(rows.map((x) => x.article.coverId).filter(isDefined))];
-  const coverImages = coverIds.length
-    ? await dbRead.image.findMany({
-        where: { id: { in: coverIds } },
-        select: { id: true, url: true, type: true, nsfwLevel: true },
-      })
-    : [];
-  const coverImageById = new Map(coverImages.map((img) => [img.id, img]));
-
-  const items = rows.map((row) => {
-    const coverImage =
-      row.article.coverId != null ? coverImageById.get(row.article.coverId) ?? null : null;
-    return { ...row, article: { ...row.article, coverImage } };
-  });
-
-  return { items, nextCursor };
-}
-
-export async function getArticleRatingReviewCounts() {
-  const grouped = await dbRead.articleRatingReview.groupBy({
-    by: ['status'],
-    _count: { _all: true },
-  });
-
-  // Initialize every ReportStatus so the result is a complete
-  // Record<ReportStatus, number> (empty buckets read as 0). The dashboard only
-  // surfaces Pending/Actioned/Unactioned; Processing is here to satisfy the
-  // type, not because it's a filterable bucket.
-  const counts: Record<ReportStatus, number> = {
-    [ReportStatus.Pending]: 0,
-    [ReportStatus.Processing]: 0,
-    [ReportStatus.Actioned]: 0,
-    [ReportStatus.Unactioned]: 0,
-  };
-  for (const row of grouped) {
-    counts[row.status] = row._count._all;
-  }
-
-  return counts;
-}
-
-/**
- * Moderator resolution. Two paths:
- * - `Actioned` → write `moderatorNsfwLevel` + `nsfwLevel` (both pinned to
- *   the applied level), lock `userNsfwLevel`, close the review row. The
- *   COALESCE in `updateArticleNsfwLevels` makes the override win uncondit-
- *   ionally, so we skip the full CTE recompute and just queue a search
- *   index update.
- * - `Unactioned` → close the review row only; no article mutation.
+ * Mark an article as published by Civitai, or take that mark off.
  *
- * Both paths run their findFirst + updateMany (status-guarded) inside the
- * same write transaction so two moderators racing on the same review can't
- * both pass the Pending check and double-fire notifications.
+ * Mirrors `setModelOfficial` (model.service.ts), down to the moderator check: this is a
+ * provenance claim, so the authority has to be a permission the user cannot give themselves.
+ * Unlike the model, the `civitai official` tag is derived from the column, never the other
+ * way round (see `withoutOfficialArticleTag`).
  *
- * Notification (approved / rejected) fires after commit. Mod activity is
- * tracked for the audit trail.
+ * 🔴 The `isModerator` argument is passed by the caller, so it is only as true as the
+ * caller. The router mounts this on `moderatorProcedure`; keep it there. Do not add a
+ * second caller that computes this flag from anything a request body carries.
  */
-export async function resolveArticleRatingReview({
-  reviewId,
-  moderatorId,
-  appliedLevel,
-  modComment,
-}: ResolveArticleRatingReviewInput & {
-  moderatorId: number;
-}) {
-  // Single-action resolution: every resolve pins the article at `appliedLevel`
-  // (override). Validate the level up front before opening the transaction.
-  if (!VALID_NSFW_LEVELS.has(appliedLevel)) {
-    throw throwBadRequestError(
-      `Invalid applied NSFW level. Must be one of: ${[...VALID_NSFW_LEVELS].join(', ')}`
-    );
-  }
+export const setArticleOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetArticleOfficialInput & { isModerator: boolean }) => {
+  if (!isModerator) throw throwAuthorizationError();
 
-  // All reads + writes go through one transaction so two mods clicking Resolve
-  // simultaneously can't both pass the Pending check. The review row is updated
-  // with a status guard (updateMany + count === 1) so the loser of the race
-  // throws NOT_FOUND rather than double-notifying.
-  //
-  // `status` is no longer a caller input — the dashboard's Approved/Rejected
-  // buckets now mean "was the owner's suggestion granted?". We derive it from
-  // `appliedLevel === suggestedLevel`. Both branches pin the override either
-  // way (see spec: 2026-06-25-article-rating-review-single-action-design.md).
-  const result = await dbWrite.$transaction(async (tx) => {
-    const reviewRow = await tx.articleRatingReview.findFirst({
-      where: { id: reviewId, status: ReportStatus.Pending },
-      select: {
-        id: true,
-        articleId: true,
-        userId: true,
-        currentLevel: true,
-        suggestedLevel: true,
-      },
+  const article = await dbRead.article.findUnique({ where: { id }, select: { id: true } });
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  const officialTag = await getOfficialArticleTag();
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const row = await tx.article.update({
+      where: { id },
+      data: { isOfficial },
+      select: { id: true, isOfficial: true },
     });
-    if (!reviewRow) {
-      throw throwNotFoundError('Review already resolved');
-    }
-
-    const derivedStatus =
-      appliedLevel === reviewRow.suggestedLevel ? ReportStatus.Actioned : ReportStatus.Unactioned;
-
-    const claim = await tx.articleRatingReview.updateMany({
-      where: { id: reviewId, status: ReportStatus.Pending },
-      data: {
-        status: derivedStatus,
-        resolvedAt: new Date(),
-        resolvedBy: moderatorId,
-        appliedLevel,
-        modComment,
-      },
-    });
-    if (claim.count !== 1) {
-      throw throwNotFoundError('Review already resolved');
-    }
-
-    // Mirror the existing override-lock pattern in upsertArticle (see
-    // article.service.ts:1015-1022): when an override is active, pin
-    // `userNsfwLevel` so a subsequent owner save can't drift it.
-    const current = await tx.article.findUnique({
-      where: { id: reviewRow.articleId },
-      select: { lockedProperties: true },
-    });
-    const lockedSet = new Set<string>(current?.lockedProperties ?? []);
-    lockedSet.add('userNsfwLevel');
-
-    // Snapshot the content-derived level at the moment this override is set,
-    // so a later down-direction dispute can only auto-clear it if the content
-    // genuinely drops below this basis (see evaluateAutoApproveGate gate #6).
-    // A mod actioning above the images encodes judgment the scanners can't
-    // reproduce; the basis is what keeps that from being auto-erased.
-    const moderatorNsfwLevelBasis =
-      (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
-
-    // Write `moderatorNsfwLevel` (override signal), `nsfwLevel` (effective
-    // level) and the basis snapshot in a single update. The CTE in
-    // `updateArticleNsfwLevels` resolves to COALESCE(moderatorNsfwLevel,
-    // GREATEST(...)) — so when an override is set, the effective level is
-    // always identical to the override. Writing it directly skips the
-    // full CTE recompute. We still queue a search index update below for
-    // downstream consistency.
-    const updated = await tx.article.update({
-      where: { id: reviewRow.articleId },
-      data: {
-        moderatorNsfwLevel: appliedLevel,
-        moderatorNsfwLevelBasis,
-        nsfwLevel: appliedLevel,
-        lockedProperties: Array.from(lockedSet),
-      },
-      select: { id: true, title: true },
-    });
-
-    return {
-      articleId: reviewRow.articleId,
-      ownerUserId: reviewRow.userId,
-      previousLevel: reviewRow.currentLevel,
-      derivedStatus,
-      title: updated.title,
-    };
+    if (officialTag)
+      await writeOfficialArticleTag({ articleId: id, tagId: officialTag.id, isOfficial, db: tx });
+    return row;
   });
 
-  // Resolution returns:
-  //   articleId  - for downstream notify / tracker
-  //   ownerUserId - the owner who filed the review (for notify)
-  //   articleTitle - pulled from the transactional update
-  //   previousLevel - content-derived snapshot at submission time, for notify copy
-  // The derived status (granted vs overrode-differently) is computed inside the
-  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
-  const articleId = result.articleId;
-  const ownerUserId = result.ownerUserId;
-  const previousLevel = result.previousLevel;
-  const articleTitle = result.title ?? 'your article';
-  const status = result.derivedStatus;
+  // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
+  // a stale document would keep serving the old provenance to search.
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
-  // Defense-in-depth: keep the search index in sync. Cheap and idempotent.
-  await articlesSearchIndex
-    .queueUpdate([{ id: articleId, action: SearchIndexUpdateQueueAction.Update }])
-    .catch((e) => handleLogError(e, 'article-rating-review-search-index', { articleId, reviewId }));
-
-  // Audit trail.
-  await trackModActivity(moderatorId, {
-    entityType: 'article',
-    entityId: articleId,
-    activity: 'ratingReview',
-  }).catch((e) =>
-    handleLogError(e, 'article-rating-review-mod-activity', {
-      articleId,
-      reviewId,
-    })
-  );
-
-  // --- Notify the owner ---
-  const previousLevelLabel = getBrowsingLevelLabel(previousLevel);
-  const appliedLevelLabel = getBrowsingLevelLabel(appliedLevel);
-
-  if (status === ReportStatus.Actioned) {
-    // Granted: applied level matches the owner's suggestion.
-    await createNotification({
-      userId: ownerUserId,
-      type: 'article-rating-review-approved',
-      category: NotificationCategory.System,
-      key: `article-rating-review-approved:${reviewId}`,
-      details: {
-        articleId,
-        articleTitle,
-        previousLevel: previousLevelLabel,
-        newLevel: appliedLevelLabel,
-        modComment: modComment ?? null,
-      },
-    }).catch((e) =>
-      handleLogError(e, 'article-rating-review-approved-notification', {
-        articleId,
-        reviewId,
-      })
-    );
-  } else {
-    // Overrode differently: the owner's suggestion was not granted, but a level
-    // was still applied (the mod's ruling). Copy reflects the applied level.
-    await createNotification({
-      userId: ownerUserId,
-      type: 'article-rating-review-rejected',
-      category: NotificationCategory.System,
-      key: `article-rating-review-rejected:${reviewId}`,
-      details: {
-        articleId,
-        articleTitle,
-        appliedLevel: appliedLevelLabel,
-        modComment: modComment ?? null,
-      },
-    }).catch((e) =>
-      handleLogError(e, 'article-rating-review-rejected-notification', {
-        articleId,
-        reviewId,
-      })
-    );
-  }
-
-  return {
-    reviewId,
-    status,
-    articleId,
-    appliedLevel,
-  };
-}
+  return updated;
+};

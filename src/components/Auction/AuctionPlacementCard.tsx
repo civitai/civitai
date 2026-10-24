@@ -56,7 +56,7 @@ import type {
   GetMyBidsReturn,
   GetMyRecurringBidsReturn,
 } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getHasExplicitBrowsingLevel,
@@ -780,7 +780,7 @@ export const ModelPlacementCard = memo(function ModelPlacementCard({
 }: {
   data: ModelData;
   aboveThreshold: boolean;
-  addBidFn: (r: GenerationResource) => void;
+  addBidFn: (r: GenerationResourceValue) => void;
   searchText: string;
   canBid: boolean;
 }) {
@@ -906,8 +906,7 @@ export const ModelPlacementCard = memo(function ModelPlacementCard({
                             // TODO make a discriminator so we dont have to do this
                             ...data.entityData,
                             strength: -1,
-                            minStrength: -1,
-                            maxStrength: -1,
+                            settings: { strength: { min: -1, max: -1, default: -1 } },
                             trainedWords: [],
                             canGenerate: true,
                             hasAccess: true,

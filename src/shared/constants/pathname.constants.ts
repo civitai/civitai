@@ -23,6 +23,12 @@ export function getMatchingPathname(url: string) {
   return match ?? url;
 }
 
+// ⚠️ Comic routes are deliberately absent, and must stay absent until the comic view backfill has
+// run in prod. `getMatchingPathname` returns the url verbatim when nothing here matches, which is
+// the only reason `pageViews.pageId` holds literal `/comics/<id>/...` paths — and those paths are
+// the entire data source for the comic view backfill (civitai-scripts, backfill/comic-views.js,
+// which fails rather than writing a near-empty result). Adding `/comics/[id]/...`
+// here collapses them to one templated pageId and destroys the history that script reconstructs.
 const pathnamesTokens = [
   '/moderator/test',
   '/404',
@@ -79,7 +85,6 @@ const pathnamesTokens = [
   '/content/[[...slug]]',
   '/discord/link-role',
   '/comments/v2/[id]',
-  '/events',
   '/images/[imageId]',
   '/',
   '/generate',
@@ -117,6 +122,7 @@ const pathnamesTokens = [
   '/user/[username]/collections',
   '/user/[username]',
   '/user/account',
+  '/user/account/[[...section]]',
   '/games/knights-of-new-order',
   '/user/earn-potential',
   '/user/[username]/manage-categories',

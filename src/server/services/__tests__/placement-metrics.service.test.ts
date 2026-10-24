@@ -1,22 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
-const queryRaw = vi.fn();
-const updateMany = vi.fn();
+// The sweep is a write-path job: it claims rows, counts them and releases them, all on the
+// primary. The old fixture supplied `dbWrite` alone, so naming `dbWrite` here keeps the routing
+// it had — and a read that drifted onto the replica would now stop being observed rather than
+// being answered by the same spy.
+const queryRaw = dbMock.dbWrite.$queryRaw;
+const updateMany = dbMock.dbWrite.placement.updateMany;
+// `placement.count` needs no local: nothing here arms or asserts it, and the canonical default
+// already resolves it to 0 — which is exactly what the old fixture spelled out by hand.
+
 const updateEntityMetricDetached = vi.fn();
-const logToAxiom = vi.fn();
+// Nothing in this file asserts on the log; the stub exists so the sweep's error legs perform no
+// I/O. Taking it from the canonical mock also drops a one-key wholesale mock of a seven-export
+// module — the shape that kills an unrelated file the moment some other code path reaches a
+// second export.
+const logToAxiom = loggingMock.logToAxiom;
 const isFlipt = vi.fn();
 
-const count = vi.fn(async () => 0);
-
 vi.mock('~/env/server', () => ({ env: { CLICKHOUSE_TRACKER_URL: 'http://tracker.test' } }));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    placement: { updateMany, count },
-  },
-}));
 
 vi.mock('~/server/flipt/client', () => ({
   isFlipt,
@@ -27,8 +31,6 @@ vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricHelpers>()),
   updateEntityMetricDetached,
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 const { sweepUncountedPlacements } = await import('~/server/services/placement-metrics.service');
 

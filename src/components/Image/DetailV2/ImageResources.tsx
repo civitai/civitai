@@ -1,11 +1,13 @@
-import { ActionIcon, Alert, Badge, Skeleton, Stack, Text } from '@mantine/core';
+import { Alert, Badge, Skeleton, Stack, Text } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ModeratorLookupIcon } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -58,26 +60,21 @@ export function ImageResources({ imageId }: { imageId: number }) {
       ) : (
         <ul className="flex list-none flex-col gap-0.5">
           {(showAll ? resourcesSorted : resourcesSorted.slice(0, LIMIT)).map((resource) => {
-            const href = resource.modelId
-              ? getModelUrl({
-                  modelId: resource.modelId,
-                  modelName: resource.modelName,
-                  modelVersionId: resource.versionId,
-                })
-              : undefined;
             return (
               <li key={`${resource.imageId}_${resource.modelVersionId}`} className="flex flex-col">
                 <div className="flex items-center justify-between gap-3">
-                  <Wrapper resource={resource}>
-                    <Text
-                      lineClamp={1}
-                      className={`${resource.modelId ? 'cursor-pointer underline' : ''}`}
-                    >
-                      {resource.modelName}
-                    </Text>
-                  </Wrapper>
+                  <div className="min-w-0">
+                    <Wrapper resource={resource}>
+                      <Text
+                        lineClamp={1}
+                        className={`${resource.modelId ? 'cursor-pointer underline' : ''}`}
+                      >
+                        {resource.modelName}
+                      </Text>
+                    </Wrapper>
+                  </div>
                   {resource.modelType && (
-                    <div className="flex gap-1">
+                    <div className="flex shrink-0 gap-1">
                       <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
                       {!!resource.strength && (
                         <Badge color="gray" variant="filled">
@@ -85,10 +82,18 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         </Badge>
                       )}
                       {currentUser?.isModerator && (
-                        <RemoveResource
-                          imageId={imageId}
-                          modelVersionId={resource.modelVersionId}
-                        />
+                        <>
+                          {/* Version-scoped, not model-scoped: an image names the exact version that
+                              produced it, and that is the row a report about this image is about. */}
+                          <ModeratorLookupIcon
+                            path={moderatorModelVersionLookupPath(resource.modelVersionId)}
+                            label="Lookup version"
+                          />
+                          <RemoveResource
+                            imageId={imageId}
+                            modelVersionId={resource.modelVersionId}
+                          />
+                        </>
                       )}
                     </div>
                   )}

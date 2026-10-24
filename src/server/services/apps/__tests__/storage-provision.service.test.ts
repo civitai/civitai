@@ -106,6 +106,57 @@ describe('AppStorageProvisioner.provision', () => {
     expect(joined).toContain(`EXECUTE FUNCTION ${S}.kv_quota_trigger()`);
   });
 
+  it('provisions the per-user counter table + its own trigger, bound to kv ONLY', async () => {
+    await AppStorageProvisioner.provision({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+    });
+    const S = '"app_generate_from_model"';
+    const sqls = capturedQueries.map((q) => q.sql);
+    const joined = sqls.join('\n');
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.user_quota`);
+    expect(joined).toContain('PRIMARY KEY (app_block_id, user_id)');
+    expect(joined).toContain(`CREATE OR REPLACE FUNCTION ${S}.kv_user_quota_trigger()`);
+    expect(joined).toContain('CREATE TRIGGER kv_user_quota_trg');
+
+    // 🔴 The per-user function reads NEW/OLD.user_id, and shared_kv carries
+    // author_user_id instead. plpgsql resolves record fields at runtime, so
+    // binding this function to shared_kv would throw on every shared append —
+    // assert the binding, not merely that the trigger exists.
+    const userTrigger = sqls.find((s) => s.includes('CREATE TRIGGER kv_user_quota_trg'));
+    expect(userTrigger).toContain(`ON ${S}.kv`);
+    expect(userTrigger).not.toContain('shared_kv');
+    const sharedTrigger = sqls.find((s) => s.includes('CREATE TRIGGER shared_kv_quota_trg'));
+    expect(sharedTrigger).toContain(`EXECUTE FUNCTION ${S}.kv_quota_trigger()`);
+    expect(sharedTrigger).not.toContain('kv_user_quota_trigger');
+  });
+
+  // Existing app schemas hold rows written before user_quota existed. Re-running
+  // provision (the admin backfill) is the ONLY path that brings them up, so the
+  // seed has to count those rows rather than start everyone at zero.
+  it('seeds the per-user counter from pre-existing kv rows, skipping users already counted', async () => {
+    await AppStorageProvisioner.provision({
+      appBlockId: 'apb_seed_value',
+      slug: 'generate_from_model',
+    });
+    // The trigger function's BODY also contains an `INSERT INTO ….user_quota`,
+    // so match the seed's own aggregate — matching the insert alone reads the
+    // function definition and asserts nothing about the seed.
+    const seed = capturedQueries.find(
+      (q) =>
+        q.sql.includes('INSERT INTO "app_generate_from_model".user_quota') &&
+        q.sql.includes('GROUP BY k.user_id')
+    );
+    expect(seed).toBeDefined();
+    expect(seed?.params).toEqual(['apb_seed_value']);
+    expect(seed?.sql).toContain('sum(k.size_bytes)');
+    expect(seed?.sql).toContain('count(*)');
+    expect(seed?.sql).toContain('GROUP BY k.user_id');
+    // The anti-join is what makes a re-run leave live counters alone.
+    expect(seed?.sql).toContain('WHERE NOT EXISTS');
+    expect(seed?.sql).toContain('ON CONFLICT (app_block_id, user_id) DO NOTHING');
+  });
+
   it('seeds the quota row with the provided appBlockId via a parameterized insert', async () => {
     await AppStorageProvisioner.provision({
       appBlockId: 'apb_seed_value',
@@ -201,15 +252,36 @@ describe('AppStorageProvisioner.provisionReviewPreview (#2831)', () => {
     expect(mockClient.release).toHaveBeenCalledOnce();
   });
 
-  it('FAST-PATHs (no DDL) when the preview schema already exists', async () => {
+  it('provisions the per-user counter in the preview schema too', async () => {
+    await AppStorageProvisioner.provisionReviewPreview({ publishRequestId: 'pubreq_abc' });
+    const joined = capturedQueries.map((q) => q.sql).join('\n');
+    expect(joined).toContain('CREATE TABLE IF NOT EXISTS "apprev_pubreqabc".user_quota');
+    expect(joined).toContain('CREATE TRIGGER kv_user_quota_trg');
+    expect(joined).toContain('"apprev_pubreqabc".kv_user_quota_trigger()');
+  });
+
+  it('FAST-PATHs (no DDL) once the preview schema is at the current shape', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 });
     const { schema } = await AppStorageProvisioner.provisionReviewPreview({
       publishRequestId: 'pubreq_abc',
     });
     expect(schema).toBe('"apprev_pubreqabc"');
-    // Existing schema → the DDL transaction is skipped entirely.
+    // Up-to-date schema → the DDL transaction is skipped entirely.
     expect(mockPool.connect).not.toHaveBeenCalled();
     expect(capturedQueries).toHaveLength(0);
+  });
+
+  // A preview schema provisioned by an earlier build EXISTS but has no per-user
+  // counter. A schema-level probe would fast-path past the upgrade and leave
+  // every write in that still-pending review hitting a missing relation, so the
+  // probe has to key on the newest table.
+  it('probes for user_quota, not merely for the schema, so an older preview upgrades', async () => {
+    await AppStorageProvisioner.provisionReviewPreview({ publishRequestId: 'pubreq_abc' });
+    const probe = String(mockPool.query.mock.calls[0][0]);
+    expect(probe).toContain('information_schema.tables');
+    expect(probe).toContain("table_name = 'user_quota'");
+    expect(probe).not.toContain('information_schema.schemata');
+    expect(mockPool.query.mock.calls[0][1]).toEqual(['apprev_pubreqabc']);
   });
 });
 
@@ -268,5 +340,52 @@ describe('AppStorageProvisioner.getQuota', () => {
       slug: 'generate_from_model',
     });
     expect(result).toEqual({ usedBytes: 12345, rowCount: 7 });
+  });
+});
+
+describe('AppStorageProvisioner.getUserQuota', () => {
+  it('rejects an invalid slug before touching the pool', async () => {
+    await expect(
+      AppStorageProvisioner.getUserQuota({ appBlockId: 'apb_x', slug: 'bad-slug', userId: 42 })
+    ).rejects.toThrow(/invalid slug/);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the app schema has no per-user counter', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ exists: false }], rowCount: 1 });
+    const result = await AppStorageProvisioner.getUserQuota({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+      userId: 42,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns zeroes for a user that has never written', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const result = await AppStorageProvisioner.getUserQuota({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+      userId: 42,
+    });
+    expect(result).toEqual({ usedBytes: 0, rowCount: 0 });
+  });
+
+  it('scopes the read to BOTH the app and the user, and coerces bigint text', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ used_bytes: '4096', row_count: '3' }], rowCount: 1 });
+    const result = await AppStorageProvisioner.getUserQuota({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+      userId: 42,
+    });
+    expect(result).toEqual({ usedBytes: 4096, rowCount: 3 });
+    const read = mockPool.query.mock.calls[1];
+    expect(String(read[0])).toContain('"app_generate_from_model".user_quota');
+    expect(String(read[0])).toContain('app_block_id = $1 AND user_id = $2');
+    expect(read[1]).toEqual(['apb_test', 42]);
   });
 });

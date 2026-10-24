@@ -32,6 +32,8 @@ const V2_TYPES = [
   'new-bounty-comment',
   'new-bounty-entry-comment',
   'new-challenge-comment',
+  'new-crucible-comment',
+  'new-storyline-comment',
   'new-3d-model-comment',
   'new-3d-model-comment-response',
   'new-3d-model-comment-nested',
@@ -64,7 +66,7 @@ describe('comment notifications — shared dedupe key', () => {
   it.each(['new-comment-reply', 'new-thread-response'])(
     '%s only claims the key for a thread threadUrlMap can address',
     (type) => {
-      // Both fall back to threadType 'comment' for an unmapped Thread entity (comicProject, clubPost,
+      // Both fall back to threadType 'comment' for an unmapped Thread entity (clubPost,
       // model3dReview), which renders a dead link. Claiming there would suppress a working owner
       // notification — that is exactly how the mention/challenge regression got in.
       expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
@@ -240,6 +242,26 @@ describe('a type that claims the dedupe key must render', () => {
           {
             ...base,
             mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'comicProject',
+            threadParentId: 3314,
+          },
+          // App-store listing threads claim the key too now, and they are the one shape whose URL
+          // comes from a joined SLUG rather than `threadParentId` — so `threadParentId` is null
+          // here on purpose. A claimant that cannot render is the whole point of this suite.
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
+          {
+            ...base,
+            mentionedIn: 'comment',
             parentType: 'comment',
             parentId: 5,
             modelId: 1,
@@ -250,11 +272,35 @@ describe('a type that claims the dedupe key must render', () => {
       case 'new-thread-response':
         return [
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
+          { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 2, threadId: 7, threadType: 'storyline', threadParentId: 17 },
+          {
+            ...base,
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
           { ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' },
         ];
       // CommentV2 only — its SQL always stamps version 2.
       case 'new-comment-reply':
-        return [{ ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 }];
+        return [
+          { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
+          { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 2, threadId: 7, threadType: 'storyline', threadParentId: 17 },
+          {
+            ...base,
+            version: 2,
+            threadId: 7,
+            threadType: 'appListing',
+            threadParentId: null,
+            appListingSlug: 'pixel-forge',
+          },
+        ];
       case 'new-review-response':
         return [{ ...base, version: 2, reviewId: 3, modelId: 1, modelName: 'M' }];
       case 'new-image-comment':
@@ -265,6 +311,11 @@ describe('a type that claims the dedupe key must render', () => {
           { ...base, version: 2, postId: 6, postTitle: 'P' },
           { ...base, version: 2, postId: 6, postTitle: null },
         ];
+      // SLUG-addressed, so its URL comes from `appListingSlug` rather than any id. Without this
+      // case it falls to the `default:` model3d shape, carries no slug, and renders no URL —
+      // which is precisely what this suite is here to catch.
+      case 'new-app-listing-comment':
+        return [{ ...base, version: 2, appListingSlug: 'pixel-forge', listingName: 'Pixel Forge' }];
       case 'new-article-comment':
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':
@@ -273,6 +324,10 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, bountyEntryId: 9, bountyId: 4, bountyTitle: 'B' }];
       case 'new-challenge-comment':
         return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
+      case 'new-crucible-comment':
+        return [{ ...base, version: 2, crucibleId: 4, crucibleName: 'C' }];
+      case 'new-storyline-comment':
+        return [{ ...base, version: 2, storylineId: 4, storylineTitle: 'S' }];
       case 'new-comment':
       case 'new-comment-response':
       case 'new-comment-nested':
@@ -321,11 +376,21 @@ describe('a type that claims the dedupe key must render', () => {
   it('new-mention resolves the same thread entities as the types it outranks', () => {
     // It suppresses new-thread-response, so anything that one can address, this one must address too.
     const mention = defs['new-mention'].prepareQuery!({ lastSent: '2026-01-01' });
-    for (const entity of ['challengeId', 'model3dId']) {
+    for (const entity of ['challengeId', 'model3dId', 'comicProjectId']) {
       expect(mention, `new-mention resolves ${entity}`).toContain(`t."${entity}"`);
     }
-    // ...and it skips appListing threads for the same reason the reply processors do.
-    expect(mention).toContain('root."appListingId" IS NULL');
-    expect(mention).toContain('t."appListingId" IS NULL');
+    // ...and it ADDRESSES appListing threads, for the same reason the reply processors now do.
+    //
+    // 🔴 INVERTED, deliberately. This used to assert the opposite — that new-mention carried the
+    // same `appListingId IS NULL` exclusion the reply processors did. The parity invariant is
+    // unchanged and is what matters: whatever new-thread-response can address, new-mention must
+    // address too, or a mention silently suppresses a working thread-response. Both sides moved
+    // together, so the pair is asserted together.
+    const threadResponse = defs['new-thread-response'].prepareQuery!({ lastSent: '2026-01-01' });
+    for (const sql of [mention, threadResponse]) {
+      expect(sql).toContain('LEFT JOIN "app_listings" al ON al."serial_id" =');
+      expect(sql).toContain(`WHEN al.slug IS NOT NULL THEN 'appListing'`);
+      expect(sql).toContain(`'appListingSlug', al.slug`);
+    }
   });
 });

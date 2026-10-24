@@ -7,7 +7,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatRewardsBoost, getAccountTypeLabel } from '~/utils/buzz';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -18,6 +18,7 @@ import { trpc } from '~/utils/trpc';
 export function NoCryptoUpsell() {
   const currentUser = useCurrentUser();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   const { data: products = [] } = trpc.subscriptions.getPlans.useQuery(
     { paymentProvider: PaymentProvider.Stripe },

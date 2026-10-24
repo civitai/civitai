@@ -6,10 +6,26 @@ import type { MembershipTier } from '~/shared/utils/subscription-tokens';
  * is which — a surface supplies its own payload and render, and reaches this
  * layer only through the table below.
  */
-export type PlacementSurface = 'sticker' | 'remixGallery';
+export type PlacementSurface =
+  | 'sticker'
+  | 'remixGallery'
+  | 'galleryPromotion'
+  | 'modelPromotion'
+  | 'storyline';
 
-/** Where a space can be configured. Resolution runs image -> post -> account. */
-export type PlacementSpaceEntity = 'image' | 'post' | 'user';
+/**
+ * Where a space can be configured. Resolution runs image -> post -> account,
+ * and storyline -> account for a storyline continuation.
+ */
+export type PlacementSpaceEntity = 'image' | 'post' | 'user' | 'storyline';
+
+/**
+ * What a placement sits on. Not the same set as `PlacementSpaceEntity`: a
+ * gallery promotion sits on a model, but its space is configured on the
+ * owner's account only. A storyline continuation sits on the chapter post it
+ * continues.
+ */
+export type PlacementTargetType = 'image' | 'model' | 'post';
 
 export type PlacementSpaceMode =
   /** Nothing may be placed. */
@@ -73,6 +89,19 @@ export const PLACEMENT_HOLD_KINDS = [
 ] as const satisfies readonly PlacementTransactionKind[];
 
 /**
+ * The legs that pay the content owner: the approval split, and the fee a decline
+ * leaves with them.
+ *
+ * Beside the kinds themselves rather than beside the one reader that sums them,
+ * so adding an owner-directed leg is a change made where the leg is declared. A
+ * hand-typed list at the reader is how an earnings total goes quietly low.
+ */
+export const PLACEMENT_OWNER_PAYOUT_KINDS = [
+  'toOwner',
+  'feeToOwner',
+] as const satisfies readonly PlacementTransactionKind[];
+
+/**
  * Derived from the row, never from the clock.
  *
  * Both existing escrow precedents build `…-${Date.now()}` prefixes, so a retry
@@ -83,6 +112,87 @@ export const PLACEMENT_HOLD_KINDS = [
  */
 export const placementTransactionId = (placementId: number, kind: PlacementTransactionKind) =>
   `placement-${placementId}-${kind}`;
+
+/**
+ * What a placement leg reads as in someone's Buzz history.
+ *
+ * Keyed by surface as well as leg because the two surfaces are different events
+ * to the person reading the row: a sticker is put on your image, a remix is
+ * added to your gallery. The internal leg name is unchanged and still identifies
+ * the leg everywhere it is used to find money — the `PlacementTransaction` row,
+ * the external transaction id, every recovery query.
+ */
+export const PLACEMENT_LEDGER_TEXT: Record<
+  PlacementSurface,
+  Record<PlacementTransactionKind, string>
+> = {
+  sticker: {
+    holdFee: 'Sticker placement fee, held while the creator decides',
+    holdPrincipal: 'Sticker placement, held while the creator decides',
+    toOwner: 'Someone placed a sticker on your image',
+    feeToOwner: 'Fee kept from a sticker you declined',
+    toSeller: 'Someone used your sticker',
+    // Deliberately says nothing about why. One refund path serves a decline, an
+    // expiry, an owner removal and a cosmetic takedown, and a leg cannot tell
+    // them apart — so naming one of them here would be wrong on the other three.
+    principalToPlacer: 'Refund: your sticker placement',
+    feeToPlacer: 'Refund: sticker placement fee',
+    // Neither of these two reaches Buzz — the platform legs keep the money in
+    // escrow and record a receipt instead — so this text is what a row WOULD say
+    // if that ever changes, and nothing renders it today.
+    toPlatform: 'Platform share of a sticker placement',
+    forfeit: 'Forfeited sticker placement',
+  },
+  remixGallery: {
+    holdFee: 'Remix submission fee, held while the creator decides',
+    holdPrincipal: 'Remix submission, held while the creator decides',
+    toOwner: 'Someone added a remix to your gallery',
+    feeToOwner: 'Fee kept from a remix you declined',
+    toSeller: 'Share of a remix submission',
+    principalToPlacer: 'Refund: your remix submission',
+    feeToPlacer: 'Refund: remix submission fee',
+    toPlatform: 'Platform share of a remix submission',
+    forfeit: 'Forfeited remix submission',
+  },
+  galleryPromotion: {
+    holdFee: 'Gallery promotion fee, held while the creator decides',
+    holdPrincipal: 'Gallery promotion, held while the creator decides',
+    toOwner: 'Someone promoted a post in your gallery',
+    feeToOwner: 'Fee kept from a gallery promotion you declined',
+    toSeller: 'Share of a gallery promotion',
+    principalToPlacer: 'Refund: your gallery promotion',
+    feeToPlacer: 'Refund: gallery promotion fee',
+    toPlatform: 'Platform share of a gallery promotion',
+    forfeit: 'Forfeited gallery promotion',
+  },
+  modelPromotion: {
+    holdFee: 'Model promotion fee, held while the creator decides',
+    holdPrincipal: 'Model promotion, held while the creator decides',
+    toOwner: 'Someone promoted a model on your model page',
+    feeToOwner: 'Fee kept from a model promotion you declined',
+    toSeller: 'Share of a model promotion',
+    principalToPlacer: 'Refund: your model promotion',
+    feeToPlacer: 'Refund: model promotion fee',
+    toPlatform: 'Platform share of a model promotion',
+    forfeit: 'Forfeited model promotion',
+  },
+  storyline: {
+    holdFee: 'Storyline continuation fee, held while the creator decides',
+    holdPrincipal: 'Storyline continuation, held while the creator decides',
+    toOwner: 'Someone continued your storyline',
+    feeToOwner: 'Fee kept from a storyline continuation you declined',
+    toSeller: 'Share of a storyline continuation',
+    principalToPlacer: 'Refund: your storyline continuation',
+    feeToPlacer: 'Refund: storyline continuation fee',
+    toPlatform: 'Platform share of a storyline continuation',
+    forfeit: 'Forfeited storyline continuation',
+  },
+};
+
+/** The placement descriptions a Buzz surface may render to a user verbatim. */
+export const PLACEMENT_LEDGER_DESCRIPTIONS: ReadonlySet<string> = new Set(
+  Object.values(PLACEMENT_LEDGER_TEXT).flatMap((byKind) => Object.values(byKind))
+);
 
 /**
  * Everything that varies per surface, in one table — the shape v1's
@@ -103,11 +213,15 @@ export const PLACEMENT_SURFACES = {
     trackMinPrice: 50,
     serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
     defaultSellerShare: 0,
     // The whole payment reaches the space owner, and the place button says so.
     // Changing this makes that copy false — change both or neither.
     defaultPlatformShare: 0,
     expiryHours: 48,
+    defaultFreeSlots: 1,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review', 'auto'],
   },
   remixGallery: {
     label: 'remix galleries',
@@ -131,6 +245,7 @@ export const PLACEMENT_SURFACES = {
     trackMinPrice: 50,
     serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
     defaultSellerShare: 0,
     // Zero for launch: the whole payment reaches the creator. Unlike the sticker
     // surface, no copy hardcodes that — the submit card reads `ownerShare` and
@@ -141,12 +256,98 @@ export const PLACEMENT_SURFACES = {
     // row: `approvalShares.remixGallery.platform`.
     defaultPlatformShare: 0,
     expiryHours: 48,
+    defaultFreeSlots: 1,
+    maxPendingPerOwner: 10,
+    // Never `auto`: a gallery places arbitrary user-uploaded media on someone
+    // else's page, so every entry passes its owner.
+    allowedModes: ['off', 'review'],
+  },
+  /**
+   * A paid post shown in a model's gallery for a fixed run. `price` is per day;
+   * the placement's `amount` is price × run days.
+   */
+  galleryPromotion: {
+    label: 'gallery promotions',
+    targets: ['model'],
+    // On by default and reviewed, like the remix gallery: a host earns only
+    // from what they accept, so opting in costs them nothing.
+    defaultMode: 'review',
+    defaultPrice: 100,
+    trackMinPrice: 50,
+    serverMinPrice: 50,
+    defaultDeclineFeeRate: 0,
+    hostDeclineFeePercent: { min: 0, max: 30 },
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    expiryHours: 48,
+    // Nobody gets a free ad slot.
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review'],
+  },
+  /**
+   * A paid card for another model in a model page's Suggested Resources, for a
+   * fixed run. Priced per day like `galleryPromotion`, and configured apart
+   * from it so a host can price the two slots differently.
+   */
+  modelPromotion: {
+    label: 'model promotions',
+    targets: ['model'],
+    defaultMode: 'review',
+    defaultPrice: 100,
+    trackMinPrice: 50,
+    serverMinPrice: 50,
+    defaultDeclineFeeRate: 0,
+    hostDeclineFeePercent: { min: 0, max: 30 },
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    expiryHours: 48,
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review'],
+  },
+  /**
+   * A continuation of someone's storyline, submitted for the storyline's creator to accept. The one
+   * surface whose price may be zero, so it has no free tier: see `placementSurfaceAllowsZeroPrice`.
+   *
+   * With no price to act as the spam gate, what bounds it instead is the per-owner pending cap
+   * (enforced under a lock, since a spammer pays nothing to race it), the owner's review, and the
+   * storyline's rating ceiling.
+   */
+  storyline: {
+    label: 'storylines',
+    // The chapter post being continued, never one of its images: a chapter is
+    // a post, and forks happen only at its end.
+    targets: ['post'],
+    defaultMode: 'review',
+    // Same decision as the mode, per the sticker note: 0 is a price `setPlacementSpace` accepts on
+    // this surface, so the default is reachable.
+    defaultPrice: 0,
+    trackMinPrice: 0,
+    // 🔴 Zero on THIS surface only, and that is the whole relaxation. Every other
+    // surface keeps its floor because its price is its spam gate; the guard test
+    // `keeps the price floor on every surface that has one` fails if this value
+    // spreads. See the surface note above for what gates a storyline instead.
+    serverMinPrice: 0,
+    // Platform-fixed, like the remix gallery. Only bites on a priced storyline.
+    defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    // Longer than the other surfaces: a creator reads a chapter before answering.
+    expiryHours: 24 * 7,
+    // `createFreePlacement` refuses this surface, so free slots here would do nothing.
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    // Never `auto`: a continuation is user-uploaded media added to someone
+    // else's story. Endorsed collaborators skip review per user, not per space.
+    allowedModes: ['off', 'review'],
   },
 } as const satisfies Record<
   PlacementSurface,
   {
     label: string;
-    targets: readonly PlacementSpaceEntity[];
+    targets: readonly PlacementTargetType[];
     defaultMode: PlacementSpaceMode;
     defaultPrice: number | null;
     /** The bottom of the price slider's track. Presentation only. */
@@ -160,12 +361,49 @@ export const PLACEMENT_SURFACES = {
      * Separate from `trackMinPrice` because the two answer different questions
      * and stickers already answer them differently: its slider starts at 50
      * while prices below that remain chargeable.
+     *
+     * `0` only on a surface with another spam gate, and it changes what the
+     * surface is: see `placementSurfaceAllowsZeroPrice`.
      */
     serverMinPrice: number;
     defaultDeclineFeeRate: number;
+    /**
+     * The whole-percent range a host may set the decline fee to on their own
+     * space, or `null` when the surface's fee is fixed by the platform. A fixed
+     * surface refuses a host value where it is stored AND where it is charged.
+     */
+    hostDeclineFeePercent: { min: number; max: number } | null;
     defaultSellerShare: number;
     defaultPlatformShare: number;
     expiryHours: number;
+    /**
+     * How many free placements a space accepts when its owner has never chosen.
+     *
+     * `1` rather than `0` because free capacity is opt-OUT, the same decision the
+     * gallery's `defaultMode` records: a creator who never opens these settings
+     * takes one free placement, which is what makes the habit reachable at all.
+     * It is still ceilinged by the score/tier cap, so the bottom band's range of
+     * 0-1 makes this both the default and the maximum for a new creator.
+     */
+    defaultFreeSlots: number;
+    /**
+     * How many pending placements one placer may have waiting on one owner.
+     *
+     * A cap on a review queue an owner can work through, not a spam gate — the
+     * owner's remedy for the rest is block, which declines all of them.
+     *
+     * In the table because three call sites enforce it: both paid creation paths
+     * and the free one. It was two constants of the same value in two services
+     * before the free path needed a third.
+     */
+    maxPendingPerOwner: number;
+    /**
+     * Modes this surface may actually be in. A mode outside this list is refused
+     * where it is stored AND where it is acted on — a row written before a rule
+     * existed still reads back, and a listing that filters is not a mutation that
+     * refuses.
+     */
+    allowedModes: readonly PlacementSpaceMode[];
   }
 >;
 
@@ -176,6 +414,16 @@ export const isPlacementSurface = (surface: string): surface is PlacementSurface
 
 export const surfaceAcceptsTarget = (surface: PlacementSurface, target: string) =>
   (PLACEMENT_SURFACES[surface].targets as readonly string[]).includes(target);
+
+/**
+ * Whether a creator may price this surface at zero, which also means it has no free tier.
+ *
+ * Derived from the floor rather than stored beside it, so the two cannot disagree. A zero-priced
+ * placement is an ordinary placement of amount 0 (`free: false`): it holds no slot, spends no
+ * allowance and takes no escrow, and `createFreePlacement` refuses these surfaces.
+ */
+export const placementSurfaceAllowsZeroPrice = (surface: PlacementSurface) =>
+  PLACEMENT_SURFACES[surface].serverMinPrice === 0;
 
 /**
  * Read the copy from the table so a surface that isn't listed cannot be named
@@ -254,13 +502,25 @@ export const placementQueueKeyset = (cursor: PlacementQueueCursor | null) =>
 /**
  * Settings a surface owns and the foundation only carries. Sticker placement
  * keeps a max size in here; a remix gallery will keep something else. Nothing in
- * this layer reads inside it.
+ * this layer reads inside it, except `HOST_DECLINE_FEE_SETTING` on a surface
+ * whose host sets its decline fee.
  */
 export type PlacementSpaceSettings = Record<string, unknown>;
 
 export type PlacementSpaceSetting = {
   mode: PlacementSpaceMode;
   price: number | null;
+  /**
+   * How many free placements this space accepts. `0` is a real answer — the
+   * creator taking none — which is why this replaces an on/off toggle rather
+   * than sitting beside one, and why `null` has to mean "unset" instead.
+   *
+   * A column rather than a key in `settings`. Both surfaces have the same
+   * concept and this layer reads it: `settings` is documented as surface-owned
+   * and never read here, so putting it there would either break that or force
+   * each surface to reimplement the reservation.
+   */
+  freeSlots?: number | null;
   settings?: PlacementSpaceSettings;
 };
 
@@ -275,12 +535,20 @@ export type PlacementSpaceSetting = {
 export function resolvePlacementSpace(
   surface: PlacementSurface,
   levels: {
+    storyline?: PlacementSpaceSetting;
     image?: PlacementSpaceSetting;
     post?: PlacementSpaceSetting;
     user?: PlacementSpaceSetting;
   }
-): PlacementSpaceSetting {
-  const ordered = [levels.image, levels.post, levels.user];
+  // `freeSlots` narrowed to a number: this is the ONE place the surface default
+  // is applied, so callers read it rather than defaulting again. `price` is
+  // nullable here for a real reason — an unpriced space must not be charged for
+  // — where an unset slot count has an unambiguous answer.
+): PlacementSpaceSetting & { freeSlots: number } {
+  // A storyline level only ever arrives without image or post levels beside it
+  // (its target resolves to the storyline and the creator's account), so its
+  // place at the front decides nothing between them; it outranks the account.
+  const ordered = [levels.storyline, levels.image, levels.post, levels.user];
   return {
     mode:
       ordered.find((level) => level?.mode !== undefined)?.mode ??
@@ -288,6 +556,12 @@ export function resolvePlacementSpace(
     price:
       ordered.find((level) => level?.price != null)?.price ??
       PLACEMENT_SURFACES[surface].defaultPrice,
+    // Independently of `mode` and of `price`, for the same reason they are
+    // independent of each other: an owner who set their free capacity once, at
+    // the account level, should keep it on an image they later reprice.
+    freeSlots:
+      ordered.find((level) => level?.freeSlots != null)?.freeSlots ??
+      PLACEMENT_SURFACES[surface].defaultFreeSlots,
     // Merged per key, most specific last, rather than taking the first level
     // that has any settings at all: an owner who set a max size on their account
     // and something unrelated on one image should keep both.
@@ -295,7 +569,8 @@ export function resolvePlacementSpace(
       {},
       levels.user?.settings,
       levels.post?.settings,
-      levels.image?.settings
+      levels.image?.settings,
+      levels.storyline?.settings
     ),
   };
 }
@@ -311,13 +586,14 @@ type PriceCapTier = 'free' | MembershipTier;
  * What a creator may charge, capped by creator score and membership tier. The
  * creator sets the price; this only ceilings it.
  *
- * ⚠️ The numbers are placeholders pending a product decision. The shape is the
+ * ⚠️ The cap values are placeholders pending a product decision; the 10k
+ * threshold on band 2 is decided and published. The shape is the
  * commitment: read at request time, overridable through `KeyValue` without a
  * deploy, and never written to a placement row.
  */
 export const PLACEMENT_PRICE_CAP_TIERS: PlacementPriceTier[] = [
   { minScore: 0, caps: { free: 100, bronze: 200, silver: 300, gold: 500 } },
-  { minScore: 5_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
+  { minScore: 10_000, caps: { free: 250, bronze: 500, silver: 750, gold: 1_000 } },
   { minScore: 25_000, caps: { free: 500, bronze: 1_000, silver: 1_500, gold: 2_500 } },
   { minScore: 100_000, caps: { free: 1_000, bronze: 2_000, silver: 3_000, gold: 5_000 } },
 ];
@@ -383,20 +659,18 @@ export function placementPriceCaption(
 ): { text: string; warning: boolean } | null {
   if (cap == null) return null;
 
-  if (price > cap)
-    return {
-      text: `${payer} pay ${cap} Buzz — your current cap — until your score or membership raises it`,
-      warning: true,
-    };
-
+  // The amount and nothing else. It sits on the slider's own mark row, between
+  // labels pinned left and right, so a second clause is not a wordier caption —
+  // it is one that wraps into them. The explanations it used to carry (the cap,
+  // the grid) live in the alert below, which has room for them.
+  //
+  // A price over the cap quotes the cap, because that is what a placer is
+  // charged; the colour is what says something is off, and it needs no words.
   const track = placementPriceTrack(surface, cap);
-  if (!onPlacementPriceGrid(price, track))
-    return {
-      text: `${payer} pay ${price} Buzz. The slider moves in ${PLACEMENT_PRICE_STEP}s from ${track.min}, so using it will change this price`,
-      warning: true,
-    };
-
-  return { text: `${payer} pay ${price} Buzz`, warning: false };
+  return {
+    text: `${payer} pay ${Math.min(price, cap)} Buzz`,
+    warning: price > cap || !onPlacementPriceGrid(price, track),
+  };
 }
 
 export function placementPriceTrack(surface: PlacementSurface, cap: number | null) {
@@ -450,6 +724,145 @@ export function placementPriceCap(
  */
 export const effectivePlacementPrice = (setPrice: number | null, cap: number) =>
   setPrice == null ? null : Math.max(Math.min(setPrice, cap), PLACEMENT_MIN_PRICE);
+
+// ---------------------------------------------------------------------------
+// Free capacity
+// ---------------------------------------------------------------------------
+
+/**
+ * How many free placements a creator may accept, capped by creator score and
+ * membership tier.
+ *
+ * Deliberately the same table shape, the same resolver (`placementPriceCap`) and
+ * the same `placement:config` override as the price caps above — this is the
+ * same idea applied to a different number, and a second mechanism for it would
+ * be two things to keep in agreement.
+ *
+ * The bottom band is 0-1: a brand-new creator takes one free placement, which is
+ * also `defaultFreeSlots`, so the default and the maximum coincide until they
+ * earn room to raise it. The top is 10, at gold on the highest score band.
+ *
+ * ⚠️ The middle bands are a judgement, not a measurement. The shape is the
+ * commitment: read at request time, overridable without a deploy, never written
+ * to a space or a placement row.
+ */
+export const PLACEMENT_FREE_SLOT_CAP_TIERS: PlacementPriceTier[] = [
+  { minScore: 0, caps: { free: 1, bronze: 2, silver: 3, gold: 4 } },
+  { minScore: 10_000, caps: { free: 2, bronze: 3, silver: 4, gold: 6 } },
+  { minScore: 25_000, caps: { free: 3, bronze: 4, silver: 6, gold: 8 } },
+  { minScore: 100_000, caps: { free: 4, bronze: 6, silver: 8, gold: 10 } },
+];
+
+/**
+ * The most free placements this creator may accept on one space.
+ *
+ * A thin naming of `placementPriceCap` over the free-slot table, not a second
+ * resolver: the band-picking rules (highest band at or below the score, unknown
+ * tier reads as free, a table with no zero band is unusable) are the same rules,
+ * and two copies of them would be free to drift.
+ */
+export const placementFreeSlotCap = (
+  score: number,
+  tier: PriceCapTier,
+  tiers: PlacementPriceTier[] = PLACEMENT_FREE_SLOT_CAP_TIERS
+) => placementPriceCap(score, tier, tiers);
+
+/**
+ * What a space actually accepts, computed at read like the effective price.
+ *
+ * Clamping only. Defaulting an unset count belongs to `resolvePlacementSpace`
+ * and happens there once — this used to re-apply it, which had one read path
+ * defaulting three times with two of them unreachable.
+ *
+ * The floor is not decoration: a misconfigured cap must not let `cap - reserved`
+ * hand out capacity nobody set.
+ */
+export const effectiveFreeSlots = (setSlots: number, cap: number) =>
+  Math.max(Math.min(setSlots, cap), 0);
+
+/**
+ * How many free placements one placer may make in a UTC day, across every
+ * surface. The scarcity is the product: an unbounded free tier is a spam tier,
+ * and the people it costs are the creators who then close their spaces.
+ */
+export const FREE_PLACEMENTS_PER_DAY = 1;
+
+/**
+ * What the daily allowance is shared with, in one clause.
+ *
+ * 🔴 **One constant, because the sharing is the fact people get wrong.** Every
+ * string that mentions the daily free is on one of two surfaces, and each used
+ * to say "today's allowance" as though it were its own — so somebody who spent
+ * it submitting a remix met a sticker surface with no explanation for where it
+ * went, and read a limit as a bug. Said once, both surfaces cannot drift into
+ * describing two different budgets.
+ *
+ * **Here rather than in either surface's module**, beside the rule it describes.
+ * It began life in `~/components/Sticker/free-offer`, which made the remix
+ * gallery import a sticker component module for a fact neither feature owns.
+ *
+ * Written as a clause, with **no terminating full stop**, so it can be appended
+ * to whatever came before it and still have a clause appended to it in turn —
+ * which the sticker tray does, with a ` · ` separator.
+ *
+ * The count is read from `FREE_PLACEMENTS_PER_DAY` rather than written out, for
+ * the same reason the reset time is read from the server rather than restated:
+ * a number spelled into copy is a second copy of a rule, and the two are free to
+ * disagree the day the rule moves. The SURFACE list stays literal — no
+ * derivation of it reads as English — so a guard test fails if a third surface
+ * is ever added to `PLACEMENT_SURFACES`.
+ */
+export const SHARED_ALLOWANCE_NOTE = `${
+  FREE_PLACEMENTS_PER_DAY === 1 ? 'one' : FREE_PLACEMENTS_PER_DAY
+} a day, shared between stickers and remix galleries`;
+
+/**
+ * What a held free slot means, in one clause — shared by every surface that says
+ * it.
+ *
+ * The bar says it before a press and the tray says it beside the paid option;
+ * they described the same state in two voices, and the tray's came from a
+ * post-race sentence ("someone took the last free slot **first**") that is
+ * simply false about a reader who has pressed nothing. One constant, so the two
+ * cannot disagree about a fact that lifts on its own.
+ */
+export const FREE_SLOT_TAKEN_NOTE =
+  'The free slot on this image is taken — it comes back if the creator declines.';
+
+/** Milliseconds in a UTC day. Unix time has no leap seconds, so this is exact. */
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * Midnight UTC for the day containing `at`.
+ *
+ * UTC rather than the placer's local day, so the allowance cannot be refreshed
+ * twice by moving timezone, and so two servers never disagree about which day a
+ * placement fell in.
+ *
+ * **Epoch arithmetic rather than calendar getters, because the calendar version
+ * is not testable where it matters.** Written as
+ * `Date.UTC(at.getUTCFullYear(), …)`, the one-character slip to
+ * `at.getFullYear()` produces a local-day boundary — and on a UTC runner, which
+ * is what CI is with no `TZ` pinned, the two are the *same function*. No test can
+ * separate them there, so a test claiming to would be asserting a property it
+ * cannot fail on. Flooring the epoch has no ambient timezone to read, so there is
+ * no such slip to make and the property is structural instead of hoped for.
+ */
+export const freePlacementDayStart = (at: Date = new Date()) =>
+  new Date(Math.floor(at.getTime() / DAY_MS) * DAY_MS);
+
+/**
+ * Statuses that hold a free slot.
+ *
+ * Pending is in the list and that is the entire point of the feature: without
+ * reservation, fifty people submit into four slots and the creator gets a
+ * fifty-item review queue, which is what the slider exists to prevent. Everything
+ * else — declined, expired, removed — releases the slot, immediately.
+ */
+export const FREE_SLOT_HOLDING_STATUSES = [
+  'pending',
+  'approved',
+] as const satisfies readonly PlacementStatus[];
 
 // ---------------------------------------------------------------------------
 // The split
@@ -582,7 +995,10 @@ export function placementOutcomeFromStatus(
  */
 export function declineFeeAmount(amount: number, rate: number) {
   if (rate <= 0 || amount <= 0) return 0;
-  return Math.min(amount, Math.max(1, Math.floor(amount * rate)));
+  // Rounded before flooring: `100 * 0.29` is 28.999999999999996, so a host's 29%
+  // would keep 28. No fee at 0.3 moves (checked to 1M Buzz).
+  const exact = Math.round(amount * rate * 1e4) / 1e4;
+  return Math.min(amount, Math.max(1, Math.floor(exact)));
 }
 
 /**
@@ -619,3 +1035,46 @@ export const clampDeclineFeeRate = (rate: number | null | undefined, fallback: n
   const value = typeof rate === 'number' && Number.isFinite(rate) ? rate : fallback;
   return Math.min(Math.max(value, MIN_DECLINE_FEE_RATE), MAX_DECLINE_FEE_RATE);
 };
+
+/** The key in a space's `settings` that holds the host's decline fee, in whole percent. */
+export const HOST_DECLINE_FEE_SETTING = 'declineFeePercent';
+
+export const isDeclineFeeHostAdjustable = (surface: PlacementSurface) =>
+  PLACEMENT_SURFACES[surface].hostDeclineFeePercent != null;
+
+/**
+ * Why a host may not save this decline fee, or `null` when they may. `null` as
+ * the value is a reset to the surface default, allowed only where a host has a
+ * setting to reset.
+ */
+export function hostDeclineFeePercentRefusal(surface: PlacementSurface, percent: unknown) {
+  const range = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!range) return `The decline fee on ${placementSurfaceLabel(surface)} is fixed`;
+  if (percent === null) return null;
+  if (
+    typeof percent !== 'number' ||
+    !Number.isSafeInteger(percent) ||
+    percent < range.min ||
+    percent > range.max
+  )
+    return `The decline fee must be a whole percent from ${range.min} to ${range.max}`;
+  return null;
+}
+
+/**
+ * What a host-adjustable space keeps on a decline, in whole percent, from its
+ * resolved settings. Clamped rather than refused: the column is editable by hand,
+ * and a bad stored value must not close the space.
+ */
+export function resolveHostDeclineFeePercent(
+  surface: PlacementSurface,
+  settings: PlacementSpaceSettings | undefined
+) {
+  const range = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!range) throw new Error(`placement: the decline fee on ${surface} is not host-adjustable`);
+
+  const stored = settings?.[HOST_DECLINE_FEE_SETTING];
+  if (typeof stored !== 'number' || !Number.isSafeInteger(stored))
+    return Math.round(PLACEMENT_SURFACES[surface].defaultDeclineFeeRate * 100);
+  return Math.min(Math.max(stored, range.min), range.max);
+}

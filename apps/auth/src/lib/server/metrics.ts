@@ -7,11 +7,7 @@
 // All counters are registered at module load with their full label sets pre-declared, so they export `0`
 // before the first increment (no "metric appears only after the first event" gaps in dashboards).
 
-import {
-  Registry,
-  collectDefaultMetrics,
-  Counter,
-} from 'prom-client';
+import { Registry, collectDefaultMetrics, Counter } from 'prom-client';
 
 // Single default registry for the whole process. `register.metrics()` (in the /metrics route) serializes
 // everything registered here.
@@ -43,11 +39,35 @@ export const emailLoginFailuresTotal = new Counter({
   registers: [register],
 });
 
-/** Turnstile captcha verification outcomes, by result. Not counted when captcha is disabled. */
+/**
+ * Signups refused because the email domain is blocklisted, by which half of the gate refused.
+ * Without this the gate is unobservable: a refusal increments nothing else (`loginsTotal` is past
+ * the OAuth throw, `emailLoginFailuresTotal` counts only server errors), so nobody could tell a gate
+ * that fired ten thousand times from one that never fired, or measure the false-positive rate the
+ * change was justified with.
+ */
+export const blockedEmailDomainSignupsTotal = new Counter({
+  name: 'hub_blocked_email_domain_signups_total',
+  help: 'Signups refused because the email domain is on the blocklist, labeled by login path.',
+  labelNames: ['path'] as const,
+  registers: [register],
+});
+
+/**
+ * Turnstile captcha verification outcomes, by result and by which widget produced the token.
+ * Not counted when captcha is disabled.
+ *
+ * `mode` must be supplied on EVERY inc, `success` included: prom-client silently emits a series with
+ * the label absent rather than throwing, so an omission is invisible until the query returns nothing.
+ *
+ * Read `mode` as CORROBORATED only on `success` — there it required a token that verified against
+ * that widget's secret. On a reject it is the client's own claim about which widget it was using, so
+ * `no_token{mode="managed"}` says a submit ASSERTED the fallback, not that the fallback ever rendered.
+ */
 export const captchaVerificationsTotal = new Counter({
   name: 'hub_captcha_verifications_total',
-  help: 'Turnstile captcha verifications by result (success / reject reason).',
-  labelNames: ['result'] as const,
+  help: 'Turnstile captcha verifications by result (success / reject reason) and widget mode.',
+  labelNames: ['result', 'mode'] as const,
   registers: [register],
 });
 
@@ -55,5 +75,37 @@ export const captchaVerificationsTotal = new Counter({
 export const unhandledErrorsTotal = new Counter({
   name: 'hub_unhandled_errors_total',
   help: 'Unhandled server errors caught by the SvelteKit handleError hook.',
+  registers: [register],
+});
+
+// Every failure mode of the cross-domain hand-off (pending-authz.ts, ClickUp 868kxch09) is SILENT: it falls
+// back to writing the hub session, so a broken deploy still logs people in. Read these together — `issued`
+// should track `matched`; `fell_back` climbing, or `matched` lagging `issued`, means the bug is back.
+
+/**
+ * Outcome of a cross-domain login's attempt to withhold the hub session.
+ *   issued     — record stored, hub session withheld (the fix working)
+ *   fell_back  — record could not be stored (no redis / redis error); hub session written as before
+ */
+export const crossDomainHandoffTotal = new Counter({
+  name: 'hub_cross_domain_handoff_total',
+  help: 'Cross-domain login hand-off attempts, by outcome.',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});
+
+/**
+ * Outcome of consuming that record at /api/auth/oauth/authorize.
+ *   matched          — record spent; the authorization uses the freshly authenticated identity
+ *   domain_mismatch  — record belongs to a different spoke family; left alone, session used instead
+ *   absent           — no usable record (expired, already spent, corrupt, or redis unavailable)
+ * A `matched` count well below `issued` means records are being minted and never redeemed — the hop is
+ * broken (cookie not arriving, or the domains disagree), and every one of those logins silently re-pointed
+ * civitai.com.
+ */
+export const crossDomainHandoffConsumeTotal = new Counter({
+  name: 'hub_cross_domain_handoff_consume_total',
+  help: 'Cross-domain hand-off record consumption at /authorize, by outcome.',
+  labelNames: ['outcome'] as const,
   registers: [register],
 });

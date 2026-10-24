@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AuditModule from '~/utils/metadata/audit';
+import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
 /**
  * The generation gate lets a user proceed past the over-eager regex categories
@@ -12,11 +13,11 @@ const {
   mockModeratePrompt,
   mockProhibited,
   mockSysRedis,
-  mockLogToAxiom,
   mockUpdateUserById,
+  mockApplyPendingReviewMute,
 } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(async () => undefined),
   mockUpdateUserById: vi.fn(async () => undefined),
+  mockApplyPendingReviewMute: vi.fn(async () => undefined),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockProhibited: vi.fn(),
@@ -54,19 +55,28 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: mockUpdateUserById }));
-vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession: vi.fn() }));
+// `refreshSession` is `async`, so the stub must return a PROMISE — a bare `vi.fn()` returns
+// undefined and explodes on any `.then`/`.catch` a caller attaches. Latent here today; the same
+// stub in user.controller.leaderboard-showcase.test.ts broke the moment a `.catch` was added.
+vi.mock('~/server/auth/session-invalidation', () => ({
+  refreshSession: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserRestrictionService>()),
+  applyPendingReviewMute: mockApplyPendingReviewMute,
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
 import type { PromptTrigger, PromptTriggerCategory } from '~/utils/metadata/audit';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // `daughter` is a real soft-tier blocklist entry; `rape` is a real hard-tier one.
 // nsfw_blocklist severity is per matched word, so these are not interchangeable.
@@ -247,5 +257,39 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     await expect(
       auditPromptServer({ ...options, isGreen: true, acknowledgedSoftBlock: true })
     ).rejects.toThrow(/SFW/);
+  });
+});
+
+describe('auditPromptServer — a blocked prompt with no negative prompt', () => {
+  it('records an empty negative prompt, not a placeholder', async () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    await expect(auditPromptServer(options)).rejects.toThrow();
+    expect(mockProhibited).toHaveBeenCalledWith(expect.objectContaining({ negativePrompt: '' }));
+  });
+
+  it('strips the legacy placeholder from cached entries before they become mute triggers', async () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    mockSysRedis.lLen.mockResolvedValueOnce(9);
+    mockSysRedis.lRange.mockResolvedValue([
+      JSON.stringify({ prompt: 'p', negativePrompt: '{error capturing negativePrompt}' }),
+      JSON.stringify({ prompt: 'q', negativePrompt: 'blurry' }),
+    ]);
+
+    await expect(
+      auditPromptServer({
+        ...options,
+        track: { prohibitedRequest: mockProhibited, userActivity: vi.fn() },
+      })
+    ).rejects.toThrow(/muted/);
+
+    expect(mockApplyPendingReviewMute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        triggers: [
+          expect.objectContaining({ prompt: 'p', negativePrompt: '' }),
+          expect.objectContaining({ prompt: 'q', negativePrompt: 'blurry' }),
+        ],
+      })
+    );
+    mockSysRedis.lRange.mockResolvedValue([]);
   });
 });

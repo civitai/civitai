@@ -14,24 +14,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const {
-  mockFindUnique,
   mockGetServerAuthSession,
   mockGetFileForModelVersion,
   mockHasExceededLimit,
   mockIncrement,
   mockLogToAxiom,
 } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
   mockLogToAxiom: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: { keyValue: { findUnique: mockFindUnique } },
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -74,6 +67,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/download/models/[modelVersionId]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// The handler reads the blocklist from the REPLICA only (`dbRead.keyValue.findUnique` in
+// the route). The old fixture aliased dbRead and dbWrite to one spy, so a read routed to
+// the primary would have satisfied it silently; binding dbRead alone makes that
+// distinguishable.
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
 
@@ -82,6 +81,11 @@ const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
  * `URLSearchParams`, then the path params spread OVER it — params win on a
  * collision (`next-server.ts`), which is the precedence the repair must not
  * invert.
+ *
+ * `req.url` is re-serialised the same way, because `normalizeCdnUrl` does that
+ * before the handler runs — the stray `?` arrives percent-encoded while
+ * `req.query` keeps it raw. Handing the route the raw url instead is what let
+ * civitai#3931 pass here while prod kept answering 400.
  */
 function run(url: string, modelVersionId: string) {
   const parsed = new URL(url, 'https://civitai.com');
@@ -89,9 +93,11 @@ function run(url: string, modelVersionId: string) {
   for (const [key, value] of parsed.searchParams) query[key] = value;
   query.modelVersionId = modelVersionId;
 
+  const search = parsed.searchParams.toString();
+
   const req = {
     method: 'GET',
-    url,
+    url: search ? `${parsed.pathname}?${search}` : parsed.pathname,
     query,
     headers: { 'user-agent': 'civitai-downloader/1.0' },
     socket: { remoteAddress: '203.0.113.7' },
@@ -115,6 +121,8 @@ function statuses(res: NextApiResponse) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The sampling tests spy on Math.random; clearAllMocks does not put it back.
+  vi.restoreAllMocks();
   mockFindUnique.mockResolvedValue(null);
   mockGetServerAuthSession.mockResolvedValue({ user: { id: 5 } });
   mockHasExceededLimit.mockResolvedValue(false);
@@ -123,6 +131,9 @@ beforeEach(() => {
   mockGetFileForModelVersion.mockResolvedValue({
     status: 'success',
     url: REDIRECT_URL,
+    // Read by the route's sampled url-expiry log before it redirects.
+    urlExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    sizeKB: 1024,
     metadata: {},
     isDownloadable: true,
     published: true,
@@ -185,13 +196,56 @@ describe('download route — a query split by a stray `?`', () => {
     const { promise } = run(url, '568485');
     await promise;
 
-    const logged = mockLogToAxiom.mock.calls[0][0] as { query: Record<string, unknown> };
+    // Found by type rather than by call index — the repair log now precedes it.
+    const logged = mockLogToAxiom.mock.calls
+      .map((c) => c[0] as { type: string; query: Record<string, unknown> })
+      .find((entry) => entry.type === 'error') as { query: Record<string, unknown> };
     expect(logged.query, 'the caller API key was shipped to Axiom in plaintext').not.toHaveProperty(
       'token'
     );
     expect(logged.query.fileId, 'the rest of the query is still there to debug with').toBe(
       '484398'
     );
+  });
+
+  it('records that the shim fired, so we can tell when it is safe to delete', async () => {
+    const { promise } = run(url, '568485');
+    await promise;
+
+    const repairs = mockLogToAxiom.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((entry) => entry.message === 'split-query-repaired');
+
+    expect(
+      repairs,
+      'a repair that logs nothing cannot tell us the shim is still needed'
+    ).toHaveLength(1);
+    expect(repairs[0].keys).toEqual(expect.arrayContaining(['fileId', 'type', 'token']));
+    expect(
+      JSON.stringify(repairs[0]),
+      'a query VALUE reached Axiom — on this route that includes the caller API key'
+    ).not.toContain('secret-key');
+  });
+
+  it('records a schema rejection by field, without the values', async () => {
+    // Sampled at 1%, so pin the draw rather than relying on it.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const { promise, res } = run('/api/download/models/568485?fileId=nonsense', '568485');
+    await promise;
+
+    expect(statuses(res)).toContain(400);
+    const rejection = mockLogToAxiom.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((entry) => entry.message === 'schema-rejected');
+
+    expect(rejection, 'the 400 returns before any logging, so nothing counts these').toBeDefined();
+    expect(rejection?.fields).toEqual(['fileId']);
+    expect(
+      rejection?.repaired,
+      'a 400 after a repair is a different bug from one it never saw'
+    ).toBe(false);
+    expect(JSON.stringify(rejection)).not.toContain('nonsense');
   });
 
   it('CONTROL: the same request already worked when the client used `&`', async () => {

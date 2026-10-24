@@ -1,0 +1,445 @@
+import type { ModelVersionTerms } from '@civitai/buzz';
+import {
+  MONETIZATION_MIN_CREATOR_SCORE,
+  capTierLabel,
+  exceedsAllowance,
+  feeAllowanceBoost,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
+  gateConversionExceedsAllowance,
+  gateConversionMessage,
+  gatePrices,
+  monthlyPricingAllowance,
+  pricingFloorMessage,
+  pricingLimitFor,
+  pricingLimitMessage,
+  pricingMonthStart,
+} from '@civitai/buzz';
+import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { getClickhouse } from '$lib/server/clickhouse';
+import { getSysRedis } from '$lib/server/redis';
+import { withTimeoutFallback } from '$lib/server/timeout';
+import { dbRead, dbWrite } from '$lib/server/db';
+import { getTotalScore } from '$lib/server/creator-score';
+import { cappedTier, type Membership } from '$lib/server/membership';
+
+// This spoke's direct-SQL writes never reach the main app's service layer, so both pricing rules are
+// enforced here too — a rule not applied here is a rule this spoke can bypass. The rules themselves
+// live in @civitai/buzz.
+
+export type PricingGateResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
+
+export async function unpricedVersionIds(userId: number, versionIds: number[]): Promise<number[]> {
+  return (await versionPriceState(userId, versionIds)).unpriced;
+}
+
+/**
+ * `unpriced`: which of `versionIds` carry NO price yet — no licensing fee and no permanent gate. These
+ * are the ones a write would move from unpriced to priced, and so the only ones that spend eligibility
+ * or allowance. `feeOnly`: those with a licensing fee and no permanent gate, which a gate write converts
+ * without spending a slot.
+ *
+ * The ONE definition of that question for this app: the fee paths and both gate actions read it
+ * through here. Ownership is re-enforced: the ids come from an owner-scoped read, but this decides a
+ * money rule.
+ */
+export async function versionPriceState(
+  userId: number,
+  versionIds: number[]
+): Promise<{ unpriced: number[]; feeOnly: number[] }> {
+  if (versionIds.length === 0) return { unpriced: [], feeOnly: [] };
+  // Primary: this decides whether a write is exempt from the floor and the allowance, and a stale
+  // replica reads an already-priced version as new — refusing an edit the creator is entitled to.
+  const rows = await dbWrite
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'mv.id')
+        .on('pa.entityType', '=', 'ModelVersion')
+        .on('pa.timeframeDays', 'is', null)
+    )
+    .select(['mv.id as id', 'mv.licensingFee as fee', 'pa.entityId as gated'])
+    .where('mv.id', 'in', versionIds)
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null)
+    .execute();
+  const ungated = rows.filter((r) => r.gated == null);
+  return {
+    unpriced: ungated.filter((r) => Number(r.fee ?? 0) <= 0).map((r) => r.id),
+    feeOnly: ungated.filter((r) => Number(r.fee ?? 0) > 0).map((r) => r.id),
+  };
+}
+
+const BOOST_READ_TIMEOUT_MS = 1000;
+
+/**
+ * Mirrors the main app's getFeeAllowanceBoost over the same hash. Fails to 0 so an outage never touches
+ * the tier allowance.
+ */
+export async function getFeeAllowanceBoost(
+  userId: number,
+  now: Date = new Date()
+): Promise<number> {
+  return (await readFeeAllowanceBoost(userId, now)) ?? 0;
+}
+
+const UNREAD = Symbol('unread');
+
+/** `null` when the grant list could not be read. */
+async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number | null> {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  try {
+    const granted = await withTimeoutFallback<string | null | typeof UNREAD>(
+      getSysRedis().hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId)),
+      BOOST_READ_TIMEOUT_MS,
+      UNREAD
+    );
+    if (granted === UNREAD) return null;
+    return feeAllowanceBoost(granted, now);
+  } catch (error) {
+    console.error('fee allowance boost read failed', error);
+    return null;
+  }
+}
+
+/** Slots spent this calendar month. Index-only on (ownerId, createdAt). */
+export async function countPricingSlotsThisMonth(
+  ownerId: number,
+  db: typeof dbRead = dbRead
+): Promise<number> {
+  const row = await db
+    .selectFrom('PricingSlot')
+    .select(({ fn }) => fn.countAll<string>().as('count'))
+    .where('ownerId', '=', ownerId)
+    .where('createdAt', '>=', pricingMonthStart())
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+/**
+ * Record that versions have been priced. Idempotent by primary key — a version that has been priced
+ * before costs nothing. Call it after the write it accompanies succeeds.
+ */
+export async function recordPricingSlots(
+  ownerId: number,
+  versionIds: number[],
+  db: typeof dbWrite = dbWrite
+): Promise<void> {
+  if (versionIds.length === 0) return;
+  await db
+    .insertInto('PricingSlot')
+    .values(
+      versionIds.map((entityId) => ({ entityType: 'ModelVersion' as const, entityId, ownerId }))
+    )
+    .onConflict((oc) => oc.columns(['entityType', 'entityId']).doNothing())
+    .execute();
+}
+
+/**
+ * Of `versionIds`, the ones whose slot may be handed back: currently unpriced, and never transacted
+ * against. Call it AFTER the write that removed the price, so "currently unpriced" is the post-write
+ * answer — the same reason the main app judges a release after its write.
+ *
+ * Same three signals, same order, as versionHasTransacted in the main app's pricing-slot.service —
+ * change both together. Charges are scoped to each slot's own createdAt, so a version that earned
+ * BEFORE it was priced does not hold its slot.
+ */
+export async function releasableVersionIds(
+  userId: number,
+  versionIds: number[]
+): Promise<number[]> {
+  if (versionIds.length === 0) return [];
+  // Primary, not the replica: this runs immediately after the write that cleared the price, and a
+  // replica still showing the old row makes the release refuse — silently costing the creator the
+  // slot it was called to give back. Mirrors releasePricingSlot in the main app.
+  const rows = await dbWrite
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'mv.id')
+        .on('pa.entityType', '=', 'ModelVersion')
+        .on('pa.timeframeDays', 'is', null)
+    )
+    .leftJoin('ModelVersionMetric as mvm', 'mvm.modelVersionId', 'mv.id')
+    .innerJoin('PricingSlot as ps', (join) =>
+      join.onRef('ps.entityId', '=', 'mv.id').on('ps.entityType', '=', 'ModelVersion')
+    )
+    .select(({ eb, selectFrom }) => [
+      'mv.id as id',
+      'mv.licensingFee as fee',
+      'pa.entityId as gated',
+      'mv.initialPublishedAt as initialPublishedAt',
+      'mv.publishedAt as publishedAt',
+      'mvm.earnedAmount as earned',
+      // Bounds the charge lookup: only what was charged while THIS slot was live holds it.
+      'ps.createdAt as slotCreatedAt',
+      eb
+        .exists(
+          selectFrom('EntityAccess as ea')
+            .select('ea.accessToId')
+            .whereRef('ea.accessToId', '=', 'mv.id')
+            .where('ea.accessToType', '=', 'ModelVersion')
+            .where('ea.accessorId', '!=', userId)
+        )
+        .as('sold'),
+    ])
+    .where('mv.id', 'in', versionIds)
+    .where('m.userId', '=', userId)
+    .where('ps.ownerId', '=', userId)
+    .where('m.deletedAt', 'is', null)
+    .execute();
+
+  const candidates = rows.filter((r) => Number(r.fee ?? 0) <= 0 && r.gated == null && !r.sold);
+  const unpublished = candidates.filter((r) => !r.initialPublishedAt && !r.publishedAt);
+  const published = candidates.filter((r) => r.initialPublishedAt || r.publishedAt);
+  if (published.length === 0) return unpublished.map((r) => r.id);
+
+  const chargedAt = await lastLicensingFeeByVersion(
+    published.map((r) => r.id),
+    published.reduce(
+      (min, r) => (r.slotCreatedAt < min ? r.slotCreatedAt : min),
+      published[0].slotCreatedAt
+    )
+  );
+
+  return [
+    ...unpublished.map((r) => r.id),
+    ...published
+      .filter((r) => {
+        // null = ClickHouse could not answer; fall back to the daily mirror rather than to "no".
+        if (chargedAt === null) return Number(r.earned ?? 0) <= 0;
+        const last = chargedAt.get(r.id);
+        // Compared day-to-day, because `date` is a Date column: max(date) for a charge made at any
+        // time on the 24th is the 24th at midnight, which is BEFORE a slot created that afternoon.
+        // Truncating the slot side too makes a same-day charge count — the case this whole lookup
+        // exists for. The main app gets this for free by comparing in SQL against toDate(since).
+        return last === undefined || last < startOfUtcDay(r.slotCreatedAt);
+      })
+      .map((r) => r.id),
+  ];
+}
+
+const startOfUtcDay = (date: Date): Date =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+/**
+ * How long the charge lookup may take before the caller falls back to the daily mirror. A try/catch
+ * cannot catch a hang, and the shared client's `request_timeout` is 300s, so without this a wedged
+ * read would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
+ */
+const CHARGE_LOOKUP_TIMEOUT_MS = 3000;
+
+/**
+ * The most recent licensing fee charged for each version, from `since` onwards. One query for the
+ * whole batch, bounded on `date` — the table's leading sort key — and NOT on `userId`: that column
+ * defaults to 0 for an unknown owner and keeps whatever owner was stamped at charge time, so a model
+ * transfer would make an ownership bound silently miss rows and return a slot that was really spent.
+ *
+ * Returns null when ClickHouse cannot answer, so callers fall back rather than reading "nothing charged".
+ */
+async function lastLicensingFeeByVersion(
+  versionIds: number[],
+  since: Date
+): Promise<Map<number, Date> | null> {
+  if (versionIds.length === 0) return new Map();
+
+  try {
+    const rows = await withTimeoutFallback<
+      { modelVersionId: number | string; last: string }[] | null
+    >(
+      getClickhouse().$query<{ modelVersionId: number | string; last: string }>(
+        `SELECT modelVersionId, max(date) AS last
+       FROM orchestration.resourceCompensations
+       WHERE date >= toDate('${since.toISOString().slice(0, 10)}')
+         AND modelVersionId IN (${versionIds.map((id) => Number(id)).join(',')})
+         AND source = 'licenseFee'
+       GROUP BY modelVersionId`
+      ),
+      CHARGE_LOOKUP_TIMEOUT_MS,
+      null
+    );
+    if (rows === null) return null;
+    return new Map(rows.map((r) => [Number(r.modelVersionId), new Date(r.last)]));
+  } catch (error) {
+    console.error('pricing-slot charge lookup failed', error);
+    return null;
+  }
+}
+
+/**
+ * Hand back the slots those versions spent. Deleting the rows rather than marking them: the allowance
+ * counts rows created this calendar month, so a slot spent and returned in the same month becomes
+ * spendable again, and one returned later changes nothing.
+ */
+export async function releasePricingSlots(
+  ownerId: number,
+  versionIds: number[],
+  db: typeof dbWrite = dbWrite
+): Promise<void> {
+  if (versionIds.length === 0) return;
+  await db
+    .deleteFrom('PricingSlot')
+    .where('entityType', '=', 'ModelVersion')
+    .where('entityId', 'in', versionIds)
+    .where('ownerId', '=', ownerId)
+    .execute();
+}
+
+/**
+ * Refuse licensing fees the creator may not set. `newlyPricedCount` is how many versions this write
+ * moves from unpriced to priced — editing or clearing an existing price is exempt and passes zero.
+ */
+export function assertFeePricingAllowed(
+  userId: number,
+  membership: Membership,
+  newlyPricedCount: number
+): Promise<PricingGateResult> {
+  return assertPricingAllowed(userId, membership, newlyPricedCount, false);
+}
+
+/**
+ * Refuse permanent paid access the creator may not set, given versionPriceState over the versions
+ * written. A gate gets no licensing-fee boost, and `feeOnly` versions are checked too, though they
+ * spend no new slot.
+ */
+export async function assertGatePricingAllowed(
+  userId: number,
+  membership: Membership,
+  { unpriced, feeOnly }: { unpriced: number[]; feeOnly: number[] }
+): Promise<PricingGateResult> {
+  if (unpriced.length === 0 && feeOnly.length > 0) {
+    const tier = cappedTier(membership);
+    const boost = await readFeeAllowanceBoost(userId, new Date());
+    if (boost === 0) return { ok: true };
+    const slotSpentThisMonth = await anySlotSpentThisMonth(feeOnly);
+    const used = await countPricingSlotsThisMonth(userId, dbWrite);
+    if (gateConversionExceedsAllowance({ used, tier, boost, slotSpentThisMonth }))
+      return { ok: false, status: 403, error: gateConversionMessage(used, tier) };
+    return { ok: true };
+  }
+  return assertPricingAllowed(userId, membership, unpriced.length, true);
+}
+
+async function anySlotSpentThisMonth(versionIds: number[]): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('PricingSlot')
+    .select('entityId')
+    .where('entityType', '=', 'ModelVersion')
+    .where('entityId', 'in', versionIds)
+    .where('createdAt', '>=', pricingMonthStart())
+    .limit(1)
+    .executeTakeFirst();
+  return row != null;
+}
+
+async function assertPricingAllowed(
+  userId: number,
+  membership: Membership,
+  newlyPricedCount: number,
+  addsGate: boolean
+): Promise<PricingGateResult> {
+  if (newlyPricedCount <= 0) return { ok: true };
+
+  // The REAL score, not resolveTotalScore: the moderator score simulator moves what this page shows,
+  // never what it enforces. Simulating past a money gate would make the simulator a bypass.
+  const score = await getTotalScore(userId);
+  if (score < MONETIZATION_MIN_CREATOR_SCORE)
+    return { ok: false, status: 403, error: pricingFloorMessage() };
+
+  const tier = cappedTier(membership);
+  if (!Number.isFinite(monthlyPricingAllowance(tier))) return { ok: true };
+
+  const [used, boost] = await Promise.all([
+    countPricingSlotsThisMonth(userId),
+    getFeeAllowanceBoost(userId),
+  ]);
+  const limit = pricingLimitFor({ tier, boost, addsGate });
+  // Counted for the whole batch: a bulk write is all-or-nothing, so it is refused rather than
+  // half-applied. At count=1 this is the same test the single-version paths make.
+  if (exceedsAllowance(used, limit, newlyPricedCount))
+    return {
+      ok: false,
+      status: 403,
+      error: pricingLimitMessage({
+        used,
+        limit,
+        boost,
+        addsGate,
+        tierLabel: capTierLabel(tier),
+      }),
+    };
+
+  return { ok: true };
+}
+
+export type PricingSlotEntry = {
+  entityId: number;
+  createdAt: Date;
+  countsThisMonth: boolean;
+  modelId: number | null;
+  modelName: string | null;
+  /** Both feed civitaiUrl, which picks .com vs .red. */
+  modelNsfw: boolean;
+  modelNsfwLevel: number;
+  versionName: string | null;
+  licensingFee: number | null;
+  accessPrice: number | null;
+  generationPrice: number | null;
+};
+
+/**
+ * The creator's spent slots, newest first. Amounts are what each version charges NOW — `PricingSlot`
+ * stores no amount (see the main app's listPricingSlots).
+ */
+export async function listPricingSlots(ownerId: number, limit = 100): Promise<PricingSlotEntry[]> {
+  const rows = await dbRead
+    .selectFrom('PricingSlot as ps')
+    .leftJoin('ModelVersion as mv', (join) =>
+      join.onRef('mv.id', '=', 'ps.entityId').on('ps.entityType', '=', 'ModelVersion')
+    )
+    .leftJoin('Model as m', 'm.id', 'mv.modelId')
+    // Only a permanent gate is a price — a timed Early Access window must not read as one.
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'ps.entityId')
+        .onRef('pa.entityType', '=', 'ps.entityType')
+        .on('pa.timeframeDays', 'is', null)
+    )
+    .select([
+      'ps.entityId as entityId',
+      'ps.createdAt as createdAt',
+      'mv.name as versionName',
+      'mv.licensingFee as fee',
+      'm.id as modelId',
+      'm.name as modelName',
+      'm.deletedAt as modelDeletedAt',
+      'm.nsfw as modelNsfw',
+      'm.nsfwLevel as modelNsfwLevel',
+      'pa.terms as terms',
+    ])
+    .where('ps.ownerId', '=', ownerId)
+    .orderBy('ps.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+
+  const monthStart = pricingMonthStart();
+  return rows.map((row) => {
+    const prices = gatePrices(row.terms as ModelVersionTerms | null);
+    const fee = Number(row.fee ?? 0);
+    return {
+      entityId: row.entityId,
+      createdAt: row.createdAt,
+      countsThisMonth: row.createdAt >= monthStart,
+      // A soft-deleted model still holds its slot, so the row stays — but it has no page to link to.
+      modelId: row.modelDeletedAt ? null : (row.modelId ?? null),
+      modelName: row.modelName ?? null,
+      modelNsfw: !!row.modelNsfw,
+      modelNsfwLevel: row.modelNsfwLevel ?? 0,
+      versionName: row.versionName ?? null,
+      licensingFee: fee > 0 ? fee : null,
+      accessPrice: row.terms ? prices.download : null,
+      generationPrice: row.terms && prices.generation > 0 ? prices.generation : null,
+    };
+  });
+}

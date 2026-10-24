@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { snippetReferenceSchema } from '~/shared/data-graph/schemas/snippet-schema';
+import { snippetReferenceSchema } from '~/shared/generation/schemas/snippet-schema';
 
 export const promptEnhancementSchema = z.object({
   ecosystem: z.string(),

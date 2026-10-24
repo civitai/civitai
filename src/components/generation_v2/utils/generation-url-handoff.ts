@@ -7,8 +7,10 @@
  * the param and pushes it through `generationGraphStore.setData` as a remix.
  */
 
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { combineResources } from '~/shared/utils/resource.utils';
+import { isMediaHost } from '~/shared/utils/media-host';
+import { env } from '~/env/client';
 
 export const GENERATION_HANDOFF_PARAM = 'gen';
 
@@ -20,7 +22,7 @@ const RESOURCE_KEYS = ['model', 'upscaler', 'vae'] as const;
 
 interface DecodedHandoff {
   params: Record<string, unknown>;
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
 }
 
 /**
@@ -44,10 +46,10 @@ export function encodeGenerationHandoff(
   }
 
   const resources = combineResources({
-    model: snapshot.model as GenerationResource | undefined,
-    upscaler: snapshot.upscaler as GenerationResource | undefined,
-    vae: snapshot.vae as GenerationResource | undefined,
-    resources: (snapshot.resources as GenerationResource[] | undefined) ?? [],
+    model: snapshot.model as GenerationResourceValue | undefined,
+    upscaler: snapshot.upscaler as GenerationResourceValue | undefined,
+    vae: snapshot.vae as GenerationResourceValue | undefined,
+    resources: (snapshot.resources as GenerationResourceValue[] | undefined) ?? [],
   });
 
   if (Object.keys(params).length === 0 && resources.length === 0) return undefined;
@@ -66,19 +68,52 @@ export function decodeGenerationHandoff(value: string | null | undefined): Decod
     if (!parsed || typeof parsed !== 'object') return null;
     if (!parsed.params || typeof parsed.params !== 'object') return null;
     if (!Array.isArray(parsed.resources)) return null;
+    // A `?gen=` link is attacker-controlled input, and the form auto-fetches
+    // source image URLs client-side. Everything else stays permissive (this is
+    // a cross-domain form snapshot, so unknown keys are by design), but
+    // media-URL-valued keys are host-gated the same way the server's meta
+    // propagation is. ClickUp 868maend5.
+    parsed.params = stripForeignMediaUrls(parsed.params, env.NEXT_PUBLIC_IMAGE_LOCATION);
     return parsed;
   } catch {
     return null;
   }
 }
 
+/** Host-gates the media-URL keys of a decoded handoff payload, in place. */
+function stripForeignMediaUrls(
+  params: Record<string, unknown>,
+  imageLocation: string | undefined
+): Record<string, unknown> {
+  const { images, sourceImage, ...rest } = params;
+
+  // The working payload shapes are `images: [{url,...}]` and object `sourceImage`
+  // (string-form sourceImage is inert downstream). Array entries are filtered
+  // per-entry; anything that isn't that shape passes through untouched so the
+  // decode stays permissive for malformed payloads, as before.
+  if (Array.isArray(images)) {
+    const kept = images.filter((img) => isMediaHost(img?.url, imageLocation));
+    if (kept.length > 0) rest.images = kept;
+  } else if ('images' in params) {
+    rest.images = images;
+  }
+
+  if ('sourceImage' in params) {
+    const url = (sourceImage as { url?: unknown } | undefined)?.url;
+    if (isMediaHost(url, imageLocation) || typeof url !== 'string') {
+      rest.sourceImage = sourceImage;
+    }
+    // foreign-host sourceImage: dropped (key omitted)
+  }
+
+  return rest;
+}
+
 // URL-safe base64 — replace +/= with -_ and strip padding so the value
 // survives URL params without escaping.
 function toBase64Url(input: string): string {
   const utf8 = typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(input) : null;
-  const binary = utf8
-    ? String.fromCharCode(...utf8)
-    : unescape(encodeURIComponent(input));
+  const binary = utf8 ? String.fromCharCode(...utf8) : unescape(encodeURIComponent(input));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 

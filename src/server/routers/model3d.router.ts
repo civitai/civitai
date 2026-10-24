@@ -11,7 +11,6 @@ import {
   ensureModel3DFromWorkflowSchema,
   getModel3DByIdSchema,
   getModel3DByPostIdSchema,
-  getModel3DByThumbnailImageIdSchema,
   getModel3DByWorkflowIdSchema,
   getModel3DsInfiniteSchema,
   getModel3DTagsSchema,
@@ -38,7 +37,6 @@ import {
   getModel3DLicenses,
   getModel3DById,
   getModel3DByPostId,
-  getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
   getModel3DGallerySettings,
   getModel3DsInfinite,
@@ -201,10 +199,6 @@ export const model3dRouter = router({
   // Mod-only — used by the image-mod surface to surface a thumbnail-driven
   // affordance against the linked Model3D. Returns ownership info, so guard
   // with `moderatorProcedure` (not feature-flagged — mods always have access).
-  getByThumbnailImageId: moderatorProcedure
-    .input(getModel3DByThumbnailImageIdSchema)
-    .query(({ input }) => getModel3DByThumbnailImageId(input)),
-
   // Per-Model3D gallery moderation. Public read (the masonry needs hidden
   // ids before it can apply them via `useApplyHiddenPreferences`); update is
   // owner-or-mod gated inside the service.

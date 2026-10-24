@@ -1,4 +1,4 @@
-import { type CompiledQuery, CompiledQuery as CompiledQueryClass } from 'kysely';
+import { type CompiledQuery, CompiledQuery as CompiledQueryClass, sql } from 'kysely';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { compileHarness } from './compile-harness';
@@ -27,15 +27,26 @@ export function explainHarness() {
     ? createKyselyClients<DB>({ connectionString: url, singleClient: true, sslNoVerify: true }).db
     : null;
 
-  async function explain(cq: CompiledQuery): Promise<string> {
+  // `disableSeqScan` plans with `SET LOCAL enable_seqscan = off`, so a test can assert an index is
+  // USABLE without depending on table statistics: on a small analysed table Postgres rightly prefers
+  // a Seq Scan even when the predicate is indexable. SET LOCAL scopes it to a throwaway transaction.
+  async function explain(
+    cq: CompiledQuery,
+    options?: { disableSeqScan?: boolean }
+  ): Promise<string> {
     if (!realDb)
       throw new Error('explainHarness: no DB URL (set TEST_DATABASE_URL or DATABASE_URL)');
-    return realDb.connection().execute(async (conn) => {
-      const result = await conn.executeQuery<Record<string, string>>(
-        CompiledQueryClass.raw(`explain ${cq.sql}`, [...cq.parameters])
-      );
-      return result.rows.map((row) => row['QUERY PLAN']).join('\n');
-    });
+    const query = CompiledQueryClass.raw(`explain ${cq.sql}`, [...cq.parameters]);
+    const plan = (rows: Record<string, string>[]) =>
+      rows.map((row) => row['QUERY PLAN']).join('\n');
+    if (options?.disableSeqScan)
+      return realDb.transaction().execute(async (trx) => {
+        await sql`set local enable_seqscan = off`.execute(trx);
+        return plan((await trx.executeQuery<Record<string, string>>(query)).rows);
+      });
+    return realDb
+      .connection()
+      .execute(async (conn) => plan((await conn.executeQuery<Record<string, string>>(query)).rows));
   }
 
   return {
@@ -44,9 +55,9 @@ export function explainHarness() {
     queries: compile.queries,
     hasDb: !!realDb,
     // EXPLAIN the last compiled query; returns the plan text.
-    explainLast: () => explain(compile.lastQuery()),
+    explainLast: (options?: { disableSeqScan?: boolean }) => explain(compile.lastQuery(), options),
     // EXPLAIN every compiled query captured so far (a function may issue several); returns plans in order.
-    explainAll: () => Promise.all(compile.queries.map(explain)),
+    explainAll: () => Promise.all(compile.queries.map((cq) => explain(cq))),
     destroy: () => realDb?.destroy() ?? Promise.resolve(),
   };
 }

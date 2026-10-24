@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
+import type { Tracker } from '~/server/clickhouse/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
   ModelFileCreateInput,
@@ -25,6 +27,9 @@ import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
+import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 type ResolverBackend = 'backblaze' | 'cloudflare';
 
@@ -84,8 +89,8 @@ async function safeRegisterFileLocation(params: {
  *
  * Resolution order:
  *   1. If the URL is recognizable as B2 → backend='backblaze', key from
- *      `parseB2Url`. Prefer the explicit `s3Path` from the upload payload
- *      (stale client bundles may omit it, so the URL parse is a fallback).
+ *      `parseB2Url`, unless a server-side caller passed an explicit `s3Path`
+ *      (the Hugging Face import). Request handlers never pass one.
  *   2. Otherwise, if the URL parses cleanly via `parseKey` and the key is
  *      non-empty → backend='cloudflare' (S3_UPLOAD_ENDPOINT, i.e. R2).
  *   3. Otherwise → null (skip registration; logged upstream).
@@ -110,12 +115,64 @@ function resolveRegistration(args: {
   // R2 / S3_UPLOAD_ENDPOINT path — uses parseKey, which handles both
   // path-style and virtual-host-style URLs against the configured host.
   if (!args.url) return null;
-  // Trust client-provided s3Path when present even for R2 (forward-compat
-  // with future client changes that send it for non-B2 uploads).
   if (args.s3Path) return { backend: 'cloudflare', s3Path: args.s3Path };
   const parsed = parseKey(args.url);
   if (!parsed.key) return null;
   return { backend: 'cloudflare', s3Path: parsed.key };
+}
+
+/**
+ * Submit a new file's scan workflow to the orchestrator. Failures here are non-fatal:
+ * scanFilesFallbackJob retries the file within 5 minutes since scanRequestedAt is still null. We DO
+ * want them in Axiom though — the inline path is the happy case, and a sustained spike here is the
+ * earliest signal the orchestrator is unreachable.
+ */
+async function submitInlineScan({
+  handler,
+  ...file
+}: {
+  fileId: number;
+  modelVersionId: number;
+  modelId: number;
+  modelType: ModelType;
+  baseModel: string;
+  url: string;
+  handler: 'createFileHandler' | 'updateFileHandler';
+}) {
+  await createModelFileScanRequest({
+    ...file,
+    // Skip pre-flight on inline submission: the file just landed and
+    // storage-resolver may not have finished propagating, so the
+    // pre-flight's 60s retry would block the upload response. If the
+    // file truly is missing, scanFilesFallbackJob will catch it 5 min
+    // later via its own pre-flight and tombstone properly.
+    preflight: false,
+  }).catch((err) => {
+    // Inline path is log-only on failure regardless of code: never
+    // tombstone here. A 'not-found' would only happen if pre-flight had
+    // run, which it didn't. 'transient' is the expected case (orchestrator
+    // outage); fallback job will retry. Inline-path errors stay visible
+    // in Axiom so a sustained spike still surfaces as the earliest
+    // signal the orchestrator is unreachable.
+    const submissionErrorCode =
+      err instanceof ModelFileScanSubmissionError ? err.code : 'transient';
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'model-file-scan',
+        message: `inline scan submission failed in ${handler}`,
+        fileId: file.fileId,
+        modelVersionId: file.modelVersionId,
+        submissionErrorCode,
+        responseStatus: err instanceof ModelFileScanSubmissionError ? err.status : undefined,
+        orchestratorMessages:
+          err instanceof ModelFileScanSubmissionError ? err.orchestratorMessages : undefined,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      },
+      'webhooks'
+    ).catch();
+  });
 }
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
@@ -134,14 +191,74 @@ export const createFileHandler = async ({
   input: ModelFileCreateInput;
   ctx: ProtectedContext;
 }) => {
+  await assertClientFileUrlAllowed({
+    url: input.url,
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    modelVersionId: input.modelVersionId,
+    op: 'create',
+  });
+  return createModelFile({
+    // The storage location is registered from the record's own url, as on update, never from a
+    // client-supplied path, so what downloads resolve to is what gets scanned.
+    input: { ...input, s3Path: undefined },
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    track: ctx.track,
+    // The server's own read of the host this request arrived on. This is the ONLY source the
+    // stamp may come from — see the `uploadDomain` note on `createModelFile`.
+    uploadDomain: ctx.domain,
+  });
+};
+
+/**
+ * The same create path with no request behind it, so a job can run it: a Hugging Face import
+ * attaches its own file when the transfer lands, and has no session to borrow. The url is the
+ * caller's own choice, so it is not bound the way a client's is (`assertClientFileUrlAllowed`).
+ */
+export const createModelFile = async ({
+  input,
+  userId,
+  isModerator,
+  track,
+  uploadDomain,
+}: {
+  input: ModelFileCreateInput;
+  userId: number;
+  isModerator: boolean;
+  track: Tracker;
+  /**
+   * The domain colour to stamp onto a 'Training Data' file, which a paid training submit reads to
+   * refuse an NSFW dataset prepared on red being paid for and run on green (`createTrainingWorkflow`
+   * in training.orch.ts). It is a payment/safety provenance stamp, so it must be the SERVER's view
+   * of the request — `ctx.domain` — and never a value off `input.metadata`.
+   *
+   * `null` is for callers with no request behind them (the Hugging Face transfer job): they have no
+   * server-side answer, so the file is left unstamped and falls into the legacy bucket the submit
+   * check lets through to post-run moderation. It does NOT mean "keep whatever the client sent" —
+   * a client-supplied stamp is dropped either way.
+   */
+  uploadDomain: ColorDomain | null;
+}) => {
   try {
     // Extract B2-specific fields before passing to createFile (they aren't DB columns)
     const { backend, s3Path, ...createInput } = input;
 
+    // Stamp the domain the training data is uploaded under, server-side, so a paid submit can
+    // refuse an NSFW dataset prepared on red being paid for on green. Never trusted from the client:
+    // whatever `uploadDomain` the client put in `metadata` is dropped first, and only the caller's
+    // server-derived value is written back. Mirrors the same rule in `updateFileHandler` below.
+    if (createInput.type === 'Training Data') {
+      const metadata = { ...createInput.metadata };
+      delete metadata.uploadDomain;
+      if (uploadDomain) metadata.uploadDomain = uploadDomain;
+      createInput.metadata = metadata;
+    }
+
     const file = await createFile({
       ...createInput,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      userId: userId,
+      isModerator: isModerator,
       select: {
         id: true,
         name: true,
@@ -165,7 +282,7 @@ export const createFileHandler = async ({
     if (resolved) {
       await safeRegisterFileLocation({
         op: 'create',
-        userId: ctx.user.id,
+        userId: userId,
         fileId: file.id,
         modelVersionId: file.modelVersion.id,
         modelId: file.modelVersion.modelId,
@@ -175,53 +292,18 @@ export const createFileHandler = async ({
       });
     }
 
-    ctx.track
+    track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
 
-    // Submit model file scan workflow to orchestrator. Failures here are
-    // non-fatal: scanFilesFallbackJob will retry the file within 5 minutes
-    // since scanRequestedAt is still null. We DO want them in Axiom though —
-    // the inline path is the happy case, and a sustained spike here is the
-    // earliest signal the orchestrator is unreachable.
-    await createModelFileScanRequest({
+    await submitInlineScan({
       fileId: file.id,
       modelVersionId: file.modelVersion.id,
       modelId: file.modelVersion.modelId,
       modelType: file.modelVersion.model.type,
       baseModel: file.modelVersion.baseModel,
       url: createInput.url,
-      // Skip pre-flight on inline submission: the file just landed and
-      // storage-resolver may not have finished propagating, so the
-      // pre-flight's 60s retry would block the upload response. If the
-      // file truly is missing, scanFilesFallbackJob will catch it 5 min
-      // later via its own pre-flight and tombstone properly.
-      preflight: false,
-    }).catch((err) => {
-      // Inline path is log-only on failure regardless of code: never
-      // tombstone here. A 'not-found' would only happen if pre-flight had
-      // run, which it didn't. 'transient' is the expected case (orchestrator
-      // outage); fallback job will retry. Inline-path errors stay visible
-      // in Axiom so a sustained spike still surfaces as the earliest
-      // signal the orchestrator is unreachable.
-      const submissionErrorCode =
-        err instanceof ModelFileScanSubmissionError ? err.code : 'transient';
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'model-file-scan',
-          message: 'inline scan submission failed in createFileHandler',
-          fileId: file.id,
-          modelVersionId: file.modelVersion.id,
-          submissionErrorCode,
-          responseStatus: err instanceof ModelFileScanSubmissionError ? err.status : undefined,
-          orchestratorMessages:
-            err instanceof ModelFileScanSubmissionError ? err.orchestratorMessages : undefined,
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        },
-        'webhooks'
-      ).catch();
+      handler: 'createFileHandler',
     });
 
     // Mark this version as recently mutated so subsequent reads route to the
@@ -243,34 +325,89 @@ export const updateFileHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { backend, s3Path, ...updateInput } = input;
+    const { backend, s3Path: _s3Path, ...updateInput } = input;
+
+    // Provenance is server-owned (see createFileHandler): any client value is dropped. A new
+    // training-data upload is stamped with this request's domain by updateFile; a metadata-only
+    // update keeps the stored one through updateFile's merge.
+    if (updateInput.metadata && 'uploadDomain' in updateInput.metadata) {
+      const nextMetadata = { ...updateInput.metadata };
+      delete nextMetadata.uploadDomain;
+      updateInput.metadata = nextMetadata;
+    }
 
     const result = await updateFile({
       ...updateInput,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      uploadDomain: ctx.domain,
+      urlFromClient: true,
     });
 
-    // Re-register with storage-resolver when the file was re-uploaded
-    // (e.g. training data re-uploads to B2, or new model uploads to R2),
-    // so downloads resolve to the new path.
-    const resolved = resolveRegistration({ backend, s3Path, url: updateInput.url });
+    const { replacedFileId } = result;
+
+    // Only a new upload is registered with storage-resolver, as a new file record (`result.id`),
+    // before the scan below resolves it. The location comes from the record's own url, never a
+    // client-supplied path, so what downloads resolve to is what gets scanned.
+    const resolved = replacedFileId
+      ? resolveRegistration({ backend, s3Path: undefined, url: result.url })
+      : null;
     if (resolved) {
       await safeRegisterFileLocation({
-        op: 'update',
+        op: 'create',
         userId: ctx.user.id,
         fileId: result.id,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
         backend: resolved.backend,
         s3Path: resolved.s3Path,
-        sizeKb: updateInput.sizeKB ?? result.sizeKB ?? 0,
+        sizeKb: result.sizeKB,
       });
     }
 
-    ctx.track
-      .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
-      .catch(handleLogError);
+    if (replacedFileId) {
+      ctx.track
+        .modelFile({ type: 'Delete', id: replacedFileId, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+      ctx.track
+        .modelFile({ type: 'Create', id: result.id, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+      // Links the old record's history to the new one.
+      const ownerId = result.modelVersion.model.userId;
+      ctx.track
+        .entityChanges(
+          diffEntityChanges({
+            entityType: 'ModelFile',
+            entityId: replacedFileId,
+            ownerId,
+            before: { replacedBy: null },
+            after: { replacedBy: result.id },
+            actorRole: resolveActorRole({
+              actorUserId: ctx.user.id,
+              ownerId,
+              isModerator: ctx.user.isModerator,
+            }),
+            reason: 'new-upload',
+          })
+        )
+        .catch(handleLogError);
+
+      // Not awaited: the epoch picker and dataset upload wait on this response, and a failed or slow
+      // submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within minutes.
+      void submitInlineScan({
+        fileId: result.id,
+        modelVersionId: result.modelVersionId,
+        modelId: result.modelVersion.modelId,
+        modelType: result.modelVersion.model.type,
+        baseModel: result.modelVersion.baseModel,
+        url: result.url,
+        handler: 'updateFileHandler',
+      });
+    } else {
+      ctx.track
+        .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+    }
 
     await preventModelVersionLag(result.modelVersion.modelId, result.modelVersionId);
 

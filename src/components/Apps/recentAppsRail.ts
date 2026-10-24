@@ -3,9 +3,8 @@
  *
  * Turns the tolerant localStorage `RecentApp[]` (see `recentlyOpenedAppsStore`)
  * into the exact list the `/apps` store rail renders, and decides each entry's
- * link target. Extracted as a pure module on purpose: CI does not run the
- * civitai browser-mode (`component`) suites at all (they need Chromium), so the
- * coverage that actually runs on a PR has to live in the node `unit` project —
+ * link target. Extracted as a pure module on purpose, so the rules are testable in
+ * the node `unit` project without a browser —
  * mirroring `appListingCardView` / `appListingDetailView`. (Neither project
  * BLOCKS a merge — the `Unit tests` job is `continue-on-error` — so "runs on
  * every PR" is the whole of the claim.)
@@ -147,8 +146,12 @@ export function selectRecentRailEntries(
 /**
  * A recents entry the app-chrome menu can safely render: on-site AND carrying
  * the `blockId` that builds `/apps/run/<blockId>`.
+ *
+ * 🔴 NO `iconUrl`. The menu's icon is read live and gated per request
+ * (`ChromeRecentAppIcon`), so the type gives a renderer no stored url to reach
+ * for, and `selectChromeRecentApps` drops one at runtime as well.
  */
-export type ChromeRecentApp = RecentApp & { blockId: string };
+export type ChromeRecentApp = Omit<RecentApp, 'iconUrl'> & { blockId: string };
 
 /**
  * The app-chrome ("Civitai Apps" ⋯ menu) "Recently run" list — see
@@ -175,7 +178,7 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     record. `toRecentAppFromListing` (the detail page's "Open live" CTA, the
  *     card's new-tab CTA) and the run page both write `kind` AND `hasPage`; the
  *     legacy `MarketplaceBody.recordRecent` writes only
- *     `{id, blockId, name, iconUrl}` — NEITHER field. Its entries are therefore
+ *     `{id, blockId, name}` — NEITHER field. Its entries are therefore
  *     admitted here by ABSENCE (`undefined !== 'offsite'` is true), carrying no
  *     page evidence at all, which makes them the strongest case for the gate
  *     rather than an exception to it.
@@ -213,6 +216,8 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     they would render `/apps/run/undefined`; an off-site entry carrying a
  *     stray `blockId` (hand-edited localStorage) would link to the WRONG app.
  *
+ * Every entry it returns has had any `iconUrl` removed — see `ChromeRecentApp`.
+ *
  * Pure + exported so the gate is covered by the node `unit` project.
  */
 export function selectChromeRecentApps(
@@ -220,12 +225,18 @@ export function selectChromeRecentApps(
   opts: { canOpenPage: boolean; currentAppBlockId?: string; limit: number }
 ): ChromeRecentApp[] {
   if (!opts.canOpenPage) return [];
-  return entries
-    .filter(
-      (r): r is ChromeRecentApp =>
-        r.id !== opts.currentAppBlockId && r.kind !== 'offsite' && !!r.blockId
-    )
-    .slice(0, opts.limit);
+  return (
+    entries
+      .filter(
+        (r): r is RecentApp & { blockId: string } =>
+          r.id !== opts.currentAppBlockId && r.kind !== 'offsite' && !!r.blockId
+      )
+      .slice(0, opts.limit)
+      // Strip any icon url. The store never returns one, but an in-memory entry (the `/apps`
+      // rail reconciles icons onto its own copies) could carry one, and this menu must only ever
+      // draw the live, gated icon.
+      .map(({ iconUrl, ...rest }) => rest)
+  );
 }
 
 /**
@@ -300,7 +311,9 @@ export type RecentReconcileCard = Pick<
  *
  * Built by delegating to `toRecentAppFromListing`, so a reconciled entry is
  * byte-identical to what a fresh open of that card would persist — one rule, one
- * place. Two properties follow and are pinned by tests: `id` is preserved (it is
+ * place. That includes the ICON: the card's gated `iconUrl` wins even when it is
+ * `null`, so an icon the server now hides from this viewer never comes back from
+ * the stored entry. Two properties follow and are pinned by tests: `id` is preserved (it is
  * the de-dup key and the rail's ordering handle, so reconciliation must not churn
  * it), and the function is IDEMPOTENT — reconciling a reconciled list is a no-op.
  *
@@ -442,11 +455,11 @@ function matchRecentCard(
 }
 
 function upgradeRecentFromCard(entry: RecentApp, card: RecentReconcileCard): RecentApp {
-  const upgraded: RecentApp = { ...toRecentAppFromListing(card), id: entry.id };
-  // The card's `iconUrl` is nullable; a previously-recorded icon is better than
-  // none, so it is the one field the entry can still contribute.
-  if (!upgraded.iconUrl && entry.iconUrl) upgraded.iconUrl = entry.iconUrl;
-  return upgraded;
+  // 🔴 THE CARD'S ICON WINS, INCLUDING `null`. A card's `iconUrl` is gated per image, per
+  // viewer, per host on the server (`listing-media-audience.ts`), so a `null` there is often
+  // the server HIDING the icon from this viewer — not "no icon". Falling back to an icon the
+  // entry carried would put that hidden icon back on screen. Only `id` survives from the entry.
+  return { ...toRecentAppFromListing(card), id: entry.id };
 }
 
 export type RecentRailTarget = {

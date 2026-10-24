@@ -87,7 +87,10 @@ describe('shapeSessionUser — field mapping', () => {
   });
 
   it('passes permissions straight through', () => {
-    expect(shape({}, [], ['feature:a', 'feature:b']).permissions).toEqual(['feature:a', 'feature:b']);
+    expect(shape({}, [], ['feature:a', 'feature:b']).permissions).toEqual([
+      'feature:a',
+      'feature:b',
+    ]);
   });
 
   it('coerces filePreferences to an object (never a primitive)', () => {
@@ -99,7 +102,9 @@ describe('shapeSessionUser — field mapping', () => {
 
 describe('shapeSessionUser — tier / subscriptions', () => {
   it('resolves tier + subscription entry for a single active sub', () => {
-    const u = shape({}, [sub({ id: 'sub_1', status: 'active', product: { metadata: { tier: 'gold' } } })]);
+    const u = shape({}, [
+      sub({ id: 'sub_1', status: 'active', product: { metadata: { tier: 'gold' } } }),
+    ]);
     expect(u.tier).toBe('gold');
     expect(u.subscriptionId).toBe('sub_1');
     expect(u.memberInBadState).toBe(false);
@@ -127,7 +132,9 @@ describe('shapeSessionUser — tier / subscriptions', () => {
   });
 
   it('flags memberInBadState and keeps a primary sub id from a bad-state sub', () => {
-    const u = shape({}, [sub({ id: 'bad', status: 'past_due', product: { metadata: { tier: 'gold' } } })]);
+    const u = shape({}, [
+      sub({ id: 'bad', status: 'past_due', product: { metadata: { tier: 'gold' } } }),
+    ]);
     expect(u.memberInBadState).toBe(true);
     expect(u.tier).toBeUndefined(); // bad-state isn't "active", so no highest tier
     expect(u.subscriptionId).toBe('bad'); // but the bad-state sub is tracked so the user can manage it
@@ -184,7 +191,9 @@ describe('shapeSessionUser — membership override', () => {
   });
 
   it('never lowers a higher paid tier', () => {
-    const u = withOverride('bronze', [sub({ id: 'a', product: { metadata: { tier: 'founder' } } })]);
+    const u = withOverride('bronze', [
+      sub({ id: 'a', product: { metadata: { tier: 'founder' } } }),
+    ]);
     expect(u.tier).toBe('founder');
   });
 
@@ -218,7 +227,7 @@ describe('shapeSessionUser — client-only fields (D parity)', () => {
   });
 });
 
-describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', () => {
+describe('shapeSessionUser — allowAds from settings (D)', () => {
   it('honors an explicit allowAds in settings over the tier default', () => {
     // free user defaults to allowAds=true, but an explicit false wins
     expect(shape({ settings: { allowAds: false } }).allowAds).toBe(false);
@@ -231,9 +240,12 @@ describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', (
     expect(shape({ settings: {} }, [sub()]).allowAds).toBe(false); // member → no ads
   });
 
-  it('honors redBrowsingLevel from settings, else undefined', () => {
-    expect(shape({ settings: { redBrowsingLevel: 31 } }).redBrowsingLevel).toBe(31);
-    expect(shape({ settings: {} }).redBrowsingLevel).toBeUndefined();
+  // The browsing level is one User column on every domain; a leftover red-only copy in settings
+  // must not reach the session, or a reader could be added back for a value nothing writes.
+  it('does not project a stored red-domain browsing level', () => {
+    const u = shape({ settings: { redBrowsingLevel: 3 }, browsingLevel: 31 });
+    expect(u.browsingLevel).toBe(31);
+    expect('redBrowsingLevel' in u).toBe(false);
   });
 
   it('treats a null / garbage / mistyped settings blob as no settings (tier default)', () => {
@@ -241,7 +253,42 @@ describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', (
     expect(shape({ settings: 'nope' }).allowAds).toBe(true);
     // a mistyped allowAds (wrong type) is ignored → tier default, not a throw
     expect(shape({ settings: { allowAds: 'yes' } }).allowAds).toBe(true);
-    expect(shape({ settings: { redBrowsingLevel: 'high' } }).redBrowsingLevel).toBeUndefined();
+  });
+});
+
+describe('shapeSessionUser — isEarlyAdopter from settings', () => {
+  it('projects an explicit opt-in / opt-out off the settings blob', () => {
+    expect(shape({ settings: { isEarlyAdopter: true } }).isEarlyAdopter).toBe(true);
+    expect(shape({ settings: { isEarlyAdopter: false } }).isEarlyAdopter).toBe(false);
+  });
+
+  it('stays undefined — not false — when the user never opted in', () => {
+    // Sparse on purpose: the overwhelming majority of session payloads must be
+    // byte-unchanged by this feature. `buildFliptContext` is what collapses
+    // undefined to the 'false' string, so nothing downstream needs a default here.
+    expect(shape({ settings: {} }).isEarlyAdopter).toBeUndefined();
+    expect(shape({ settings: null }).isEarlyAdopter).toBeUndefined();
+  });
+
+  it('ignores a mistyped value rather than passing it through or throwing', () => {
+    // The lenient .passthrough() parse drops the whole focused object on a type
+    // mismatch, so a garbage value must not surface as a truthy opt-in.
+    expect(shape({ settings: { isEarlyAdopter: 'yes' } }).isEarlyAdopter).toBeUndefined();
+    expect(shape({ settings: { isEarlyAdopter: 1 } }).isEarlyAdopter).toBeUndefined();
+  });
+
+  it('is independent of tier — a free user can opt in, a paying user can stay out', () => {
+    // The cohort must not be a proxy for membership; it is a pure user choice.
+    expect(shape({ settings: { isEarlyAdopter: true } }).isEarlyAdopter).toBe(true);
+    expect(shape({ settings: { isEarlyAdopter: false } }, [sub()]).isEarlyAdopter).toBe(false);
+  });
+
+  it('does not disturb the neighbouring settings-derived fields', () => {
+    // Same focused parse feeds allowAds; adding a key to it must
+    // not change how those resolve.
+    const u = shape({ settings: { isEarlyAdopter: true, allowAds: false } });
+    expect(u.allowAds).toBe(false);
+    expect(u.isEarlyAdopter).toBe(true);
   });
 });
 

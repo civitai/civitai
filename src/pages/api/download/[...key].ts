@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { dbRead } from '~/server/db/client';
+import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -17,9 +17,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   // to every download route at once rather than one abuser. See
   // `parseIpBlocklist`.
   const ip = getTrustedClientIp(req);
-  const blacklist = parseIpBlocklist(
-    (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
-  );
+  const blacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 
   const keyParts = req.query.key as string[];
@@ -33,6 +31,28 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       return res.status(401).json({ error: 'Unauthorized' });
     else return res.redirect(`/login?returnUrl=/api/download/${key}`);
   }
+
+  // Upload keys are `<type>/<userId>/<name>` (buildUploadKey): a caller may fetch their own uploads
+  // here; anything else goes through the download route for its record. Moderators may fetch any key.
+  //
+  // The prefix match reads segment 1, but the whole joined key is handed to the delivery worker,
+  // whose normalization we don't control. Require each segment to be a plain name first — non-empty,
+  // not `.`/`..`, and no separator surviving a single decode — so `model/<me>/../../model/<other>/x`
+  // or an encoded separator can't resolve past the prefix the match approved.
+  const safeSegments = keyParts.every((seg) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(seg);
+    } catch {
+      return false;
+    }
+    return seg !== '' && decoded !== '.' && decoded !== '..' && !/[/\\%]/.test(decoded);
+  });
+  const allowed = safeSegments && (!!session.user?.isModerator || keyParts[1] === String(userId));
+  logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
+    () => undefined
+  );
+  if (!allowed) return res.status(404).json({ error: 'Not found' });
 
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
   // non-existent sub-path (e.g. `/api/download/images/:id`, which is NOT a real
@@ -57,8 +77,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       // KEEP it 5xx so a real storage/worker outage is never masked as a 404.
       if (err.statusCode === 404 || err.statusCode === 410)
         return res.status(404).json({ error: 'Not found' });
-      if (err.statusCode === 400)
-        return res.status(400).json({ error: 'Invalid download key' });
+      if (err.statusCode === 400) return res.status(400).json({ error: 'Invalid download key' });
 
       // Server-fault: a real delivery-worker/storage failure. Error-log to Axiom
       // (mirrors file.service.ts `resolve-download-url-failed`) — safeError sets

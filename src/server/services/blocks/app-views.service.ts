@@ -24,6 +24,109 @@ import { logToAxiom } from '~/server/logging/client';
  * `ip` instead or they collapse into a single phantom viewer. Hence the
  * `uniqExactIf(userId, …) + uniqExactIf(ip, …)` split below.
  *
+ * 🔴 THIS RAIL EXCLUDES PRIVATE RUNS — CLOSED AT THE WRITERS, NOT HERE. It was ONE OF TWO
+ * open flag-flip preconditions, and ✅ THE OTHER ONE — the attribution rail — IS NOW CLOSED
+ * TOO: the two owner-visible reads of `block_spend_attribution` in `app-analytics.service.ts`
+ * exclude `status = 'voided'`, so a private run's generation row no longer counts into
+ * `runs` / `runs.buzzSpent`. Both analytics rails this file's heading is about are therefore
+ * shut.
+ *
+ * ⚠️ THAT IS NOT "nothing blocks the flag", and this sentence is deliberately not a list.
+ * Other preconditions live on the flag itself and they move; the authoritative, kept-current
+ * enumeration is the precondition block at `APP_BLOCKS_PRIVATE_RUN_FLAG` in
+ * `app-blocks-flag.ts`, which is the file an operator opens before widening. Read them there
+ * rather than inferring the flag's readiness from any count in this docblock — an earlier
+ * revision of this very paragraph named a rail as open that had been closed hours before.
+ *
+ * THE LEAK: a private run of a delisted app — a moderator, the owner, or an accepted
+ * listing collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emitted
+ * a `blockRenders` row like any other view and appeared in the owner's impressions. Worse
+ * than a total: the uniques split above is computed per `userId`, so the reviewer landed as
+ * an identifiable unique viewer on the exact day review happened. The operator decision for
+ * that feature is that such a run is invisible to the app's owner INCLUDING IN ANALYTICS.
+ *
+ * The sibling `block_scope_invocations` rail solves the same problem with a `source` marker
+ * written from the verified token claim (`blocks/scope-activity-predicate.ts`). That could
+ * not be reused: different store, different writer, and NEITHER writer sees a block token —
+ * the row comes from a client beacon (`components/AppBlocks/sendBlockRender.ts` →
+ * `pages/api/track/block-render.ts`) and from `track.router.ts`.
+ *
+ * ── THE TWO SHAPES, AND WHY THIS ONE ─────────────────────────────────────────
+ * (a) SUPPRESS THE INSERT on a private-run mount. (b) Carry a marker through the beacon
+ * schema, both writers and a NEW ClickHouse column, then exclude it at the read. (a) shipped:
+ *
+ *  1. THE ROW WAS NOT THE RECORD, which is the decisive one. The concern with (a) is losing
+ *     the evidence that a review happened; it is not lost. A private run cannot boot without
+ *     a token, and the mint writes `app-blocks.private-run.mint` to Axiom AND stdout, plus
+ *     `app-blocks.private-run.mint-refused` for every refusal EXCEPT `flag-off`. The
+ *     operator decision is that the trail is INTERNAL-AUDIT-ONLY, which is what those lines
+ *     are and what a ClickHouse row the owner can read is not. ⚠️ Reconciling a suppressed
+ *     impression by grepping `private-run.mint` alone MISSES the dev-tunnel case below —
+ *     that mount audits under `app-blocks.dev-tunnel.*`.
+ *  2. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
+ *     `secondary` already skips the insert in both, symmetrically.
+ *  3. 🔴 (b) COSTS (a)'s WHOLE MECHANISM PLUS TWO MORE PARTS. Neither writer sees a block
+ *     token (above), so (b) cannot derive its marker the way the sibling rail does — it
+ *     would have to call THIS SAME PREDICATE, then write the answer to a new column, then
+ *     filter at the read. That is (a)'s whole mechanism PLUS a hand-applied DDL in every
+ *     environment (`src/server/clickhouse/migrations/` is that channel;
+ *     `2026-08-17-comic-views.sql` widens a tracker-written table) which must land and be
+ *     verified everywhere BEFORE either writer ships or the marker is a silent no-op,
+ *     PLUS a read filter that can over-filter. There is no cheaper or safer version of it.
+ *
+ *     ⚠️ THE ONE THING (b) WOULD BUY: (a) is irreversible at the data layer. A suppressed
+ *     row is never written, so if the decision is ever revised — say "owners see a count
+ *     but not an identity" — there is no history to recover. The mint line is a record of
+ *     the MOUNT, in Axiom/stdout with finite retention, not a per-impression row in a
+ *     durable store. Accepted deliberately; revisit here if the policy softens.
+ *
+ * The gate is ONE predicate — `blocks/private-run-impression.service.ts` — called by BOTH
+ * writers; its docblock carries the derivation, the ordering and the cost. 🔴 The signal is
+ * derived from the SESSION, never from the request body: a client-settable field on a public
+ * beacon would let any viewer suppress their own impressions, which is a larger defect than
+ * the one being fixed.
+ *
+ * ⚠️ OVER-FILTERING is the quieter hazard — excluding too much silently deletes the owner's
+ * real impression counts, and nobody reports numbers they never saw. It is bounded
+ * STRUCTURALLY rather than by care: suppression requires the app to be NON-APPROVED (the
+ * predicate refuses `approved` outright, so nothing publicly mountable can be hidden) AND
+ * the viewer to be that app's owner, an accepted collaborator, or a moderator. A third
+ * party's impression is therefore unreachable from the gate, and every gate in it fails
+ * toward RECORDING the row.
+ *
+ * 🔴 NOTHING IN THIS FILE ENFORCES IT, AND THAT IS THE DESIGN — do not read the heading
+ * above as a claim about the query below. The rows simply never arrive; the read is
+ * unchanged and keeps its existing plan. The structural guarantee that BOTH writers gate
+ * is `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, and the behavioural
+ * one is `src/tests/api/track/block-render.private-run.test.ts`. A future reader looking
+ * here for a `source <> …` filter will not find one and should not add one.
+ *
+ * ⚠️ TWO RAILS, TWO DIFFERENT QUESTIONS, AND NOTHING ASSERTS THEY AGREE.
+ * `block_scope_invocations` marks a row from the VERIFIED TOKEN CLAIM — a fact about the
+ * REQUEST. This rail asks `resolvePrivateRunAccess` — a fact about the VIEWER AND THE APP,
+ * NOW. They are not two implementations of one predicate, so they can disagree in both
+ * directions:
+ *   · a mount served under a token minted before the flag was turned off for that viewer
+ *     records an owner-visible impression while its invocation rows stay hidden;
+ *   · a DEV-TUNNEL mount by an app's owner is the standing inverse — the impression is
+ *     suppressed (the owner satisfies the predicate) while its invocation rows are
+ *     visible, because a dev-tunnel token carries no private-run claim.
+ * The leaked row in the first case is exactly the owner-visible impression this feature
+ * exists to suppress, so it is not incidental — but it needs a mid-token-lifetime flag
+ * flip, and a third derivation to reconcile the two would be ill-defined rather than
+ * merely expensive: there is no single question for it to answer. Recorded, not guarded,
+ * and 🔴 do not accept a later proposal to unify them.
+ *
+ * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES. Recorded as a gate on widening in
+ * `app-blocks-flag.ts`'s own PRECONDITION block — the file an operator opens — so only
+ * the shape is here: the gate can reach `resolvePrivateRunAccess` (4–9 statements by
+ * audience, one on the WRITE PRIMARY) on a route with no rate limit, and before this
+ * change the common beacon path did ZERO Postgres queries.
+ *
+ * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
+ * then the operator reads that app's analytics panel and confirms `views.count` and
+ * `views.uniqueViewers` did not move.
+ *
  * 🔴 NEVER interpolate into these queries. The `$query` tagged template on the
  * ClickHouse client formats strings VERBATIM (`formatSqlType` returns the raw
  * value — no quoting, no escaping), so `${id}` is a SQL-injection vector. Every
@@ -131,9 +234,8 @@ function chDateTime(d: Date): string {
 }
 
 /**
- * Server-side execution cap, in seconds. The driver's own `request_timeout`
- * defaults to FIVE MINUTES (@clickhouse/client-common 0.2.10) and
- * `max_open_connections` to Infinity, neither of which this app overrides — so
+ * Server-side execution cap, in seconds. The shared client is configured with a
+ * `request_timeout` of FIVE MINUTES and an unbounded `max_open_connections` — so
  * without a bound a merely SLOW ClickHouse (not a down one) holds the whole
  * `Promise.all` in getMyAppAnalytics open for minutes.
  *

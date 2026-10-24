@@ -1,4 +1,4 @@
-import { Anchor, Group, Loader, Popover, Stack, Text } from '@mantine/core';
+import { Anchor, Divider, Group, Loader, Popover, ScrollArea, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
@@ -16,34 +16,58 @@ export function ItemResellersPopover({ shopItemId, count }: { shopItemId: number
     { enabled: opened }
   );
 
+  // The theme defaults every Popover to withinPortal={false}, and this one opens
+  // inside the manage table's scroll container (overflow: hidden), which clips the
+  // dropdown. Portalling is the only escape — no z-index can leave that clip.
   return (
-    <Popover width={280} position="bottom-start" withArrow opened={opened} onChange={setOpened}>
+    <Popover
+      width={380}
+      position="bottom"
+      withArrow
+      arrowSize={12}
+      withinPortal
+      opened={opened}
+      onChange={setOpened}
+    >
       <Popover.Target>
-        <Anchor component="button" type="button" size="xs" onClick={() => setOpened((o) => !o)}>
+        <Anchor
+          component="button"
+          type="button"
+          size="xs"
+          lh="xs"
+          p={0}
+          className="w-fit text-left"
+          onClick={() => setOpened((o) => !o)}
+        >
           {count} {count === 1 ? 'creator resells' : 'creators resell'} this
         </Anchor>
       </Popover.Target>
-      <Popover.Dropdown>
+      <Popover.Dropdown p={0}>
+        <Text size="xs" c="dimmed" px="sm" py="xs">
+          Each creator keeps the share listed below, even if you change it
+        </Text>
+        <Divider />
         {isLoading ? (
-          <Loader size="xs" />
+          <Group justify="center" p="sm">
+            <Loader size="xs" />
+          </Group>
         ) : (
-          <Stack gap="xs">
-            <Text size="xs" c="dimmed">
-              Each keeps the share they listed under, even if you change it.
-            </Text>
-            {data.map(({ user, sellerShare, listedAt }) => (
-              <Group key={user.id} justify="space-between" wrap="nowrap" gap="xs">
-                <UserAvatar user={user} size="xs" withUsername linkToProfile />
-                <Text size="xs" fw={600} c="green" style={{ whiteSpace: 'nowrap' }}>
-                  {sellerShare}%
-                  <Text span c="dimmed" fw={400}>
-                    {' '}
-                    · {formatDate(listedAt)}
+          <ScrollArea.Autosize mah={240}>
+            <Stack gap="xs" px="sm" py="xs">
+              {data.map(({ user, sellerShare, listedAt }) => (
+                <Group key={user.id} justify="space-between" wrap="nowrap" gap="xs">
+                  <UserAvatar user={user} size="xs" withUsername linkToProfile />
+                  <Text size="xs" fw={600} c="green" style={{ whiteSpace: 'nowrap' }}>
+                    {sellerShare}%
+                    <Text span c="dimmed" fw={400}>
+                      {' '}
+                      · {formatDate(listedAt)}
+                    </Text>
                   </Text>
-                </Text>
-              </Group>
-            ))}
-          </Stack>
+                </Group>
+              ))}
+            </Stack>
+          </ScrollArea.Autosize>
         )}
       </Popover.Dropdown>
     </Popover>

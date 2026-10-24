@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 import { ratingsCounter } from '~/server/routers/research.router';
 import { calculateLevelProgression } from '~/server/utils/research-utils';

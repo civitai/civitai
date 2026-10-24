@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SessionClaims } from '@civitai/auth';
+// The REAL key constants, from the package. `~/server/redis/client` is mocked below and the
+// mock spreads this same package, so the shim production reads and the values asserted here
+// are pinned to one source. They used to be hand-typed in the hoisted block, and three of the
+// four had drifted: USER_TOKENS 'session:usertokens' vs the real 'session:user-tokens2',
+// USER.SESSION 'user:session' vs 'session:data2', TOKEN_STATE 'session:tokenstate' vs
+// 'session:token-state' (only SESSION.ALL was right). The suite passed the whole time —
+// both sides used the same wrong string, so it asserted against keys Redis never sees.
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis/client';
 
 // End-to-end revocation property (the coverage gap behind review finding B2): a banned/logged-out user's
 // active civ-token must stop verifying. The chain spans two modules that share sysRedis:
@@ -11,15 +19,6 @@ import type { SessionClaims } from '@civitai/auth';
 const h = vi.hoisted(() => {
   const hashes = new Map<string, Map<string, string>>();
   const strings = new Map<string, string>();
-  const KEYS = {
-    REDIS_KEYS: {
-      SESSION: { USER_TOKENS: 'session:usertokens' },
-      USER: { SESSION: 'user:session' }, // invalidateAllSessions clears this pattern
-    },
-    REDIS_SYS_KEYS: {
-      SESSION: { TOKEN_STATE: 'session:tokenstate', ALL: 'session:all' },
-    },
-  };
   const sysRedis = {
     hGetAll: async (k: string) => Object.fromEntries(hashes.get(k) ?? new Map<string, string>()),
     // The revocation read scans for field NAMES rather than fetching every value. One page, complete scan —
@@ -40,12 +39,15 @@ const h = vi.hoisted(() => {
       strings.set(k, v);
     },
   };
-  return { hashes, strings, KEYS, sysRedis };
+  return { hashes, strings, sysRedis };
 });
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them — the same shape
+// `src/__tests__/setup.ts` uses globally. Only the client and the control surface stay
+// overridden; every constant comes from production's own definitions.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: h.sysRedis,
-  ...h.KEYS,
   withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
 }));
 // session-invalidation marks TOKEN_STATE via the atomic eval helper (hSetMultiWithTTL); the
@@ -70,7 +72,7 @@ vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache: async () => {
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: {
     invalidateAll: async () => {
-      h.strings.set(h.KEYS.REDIS_SYS_KEYS.SESSION.ALL, new Date(5000).toISOString());
+      h.strings.set(REDIS_SYS_KEYS.SESSION.ALL, new Date(5000).toISOString());
     },
   },
 }));
@@ -92,12 +94,12 @@ import {
 import { isRevoked } from '~/server/auth/session-verifier';
 
 const USER = 5;
-const TOKEN_STATE = h.KEYS.REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
+const TOKEN_STATE = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
 const claims = (jti: string, signedAt = 1000): SessionClaims => ({ jti, signedAt });
 
 // Mirror the hub's sessions.trackToken (session.ts): record the token's jti under the user's token hash.
 function trackToken(jti: string, userId: number) {
-  const key = `${h.KEYS.REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
+  const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
   const m = h.hashes.get(key) ?? new Map<string, string>();
   m.set(jti, '1');
   h.hashes.set(key, m);

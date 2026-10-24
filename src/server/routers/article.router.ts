@@ -13,42 +13,33 @@ import {
   upsertArticleInput,
   articleRateLimits,
   unpublishArticleSchema,
-  restoreArticleSchema,
-  createArticleRatingReviewSchema,
-  getMyArticleRatingReviewSchema,
-  getArticleRatingReviewsSchema,
-  resolveArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
+  setArticleOfficialSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  getOfficialArticleTag,
+  setArticleOfficial,
   getArticleScanStatus,
-  getCivitaiEvents,
+  isArticleProcessing,
   getCivitaiNews,
   getDraftArticlesByUserId,
   rescanArticle,
-  createArticleRatingReview,
-  getArticleRatingReviewForOwner,
-  getArticleRatingReviews,
-  getArticleRatingReviewCounts,
-  resolveArticleRatingReview,
   resolveArticleImageScan,
   rescanArticleImage,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
   upsertArticleHandler,
-  restoreArticleHandler,
 } from '~/server/controllers/article.controller';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { isModerator } from '~/server/routers/base.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -76,15 +67,23 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getInfiniteArticlesSchema)
     .query(({ input, ctx }) =>
-      getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
+      getArticles({
+        ...input,
+        sessionUser: ctx?.user,
+        include: ['cosmetics'],
+        // Uncached per viewer, so a flagged viewer may see decorations before launch.
+        eventDecorationViewer: ctx?.user,
+      })
     ),
   getCivitaiNews: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
-  getEvents: publicProcedure
+  // `tag.getAll` hides adminOnly tags from non-admins; the feed's chip row needs this one's id.
+  getOfficialTag: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
-    .query(() => getCivitaiEvents()),
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(() => getOfficialArticleTag()),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
@@ -95,6 +94,13 @@ export const articleRouter = router({
         isModerator: ctx.user?.isModerator,
       })
     ),
+  // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
+  // per-image blocked/error detail. This answers only "come back in a minute" for a viewer
+  // `getById` just refused, so it must not distinguish Blocked from never-existed.
+  isProcessing: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getByIdSchema)
+    .query(({ input }) => isArticleProcessing(input)),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)
@@ -129,22 +135,21 @@ export const articleRouter = router({
     .use(isFlagProtected('articles'))
     .use(isOwnerOrModerator)
     .mutation(unpublishArticleHandler),
-  restore: protectedProcedure
-    .meta({ requiredScope: TokenScope.Full })
-    .input(restoreArticleSchema)
-    .use(isFlagProtected('articles'))
-    .use(isModerator)
-    .mutation(restoreArticleHandler),
   rescan: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
-  getScanStatus: publicProcedure
+  // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
+  // reasons and the article's text-moderation verdict, for any id including an unpublished
+  // draft. Same guard as its `rescan` sibling, which takes the same input — every caller is
+  // the author's own editor or their article page behind `isOwner`.
+  getScanStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
+    .use(isOwnerOrModerator)
     .query(({ input }) => getArticleScanStatus(input)),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
@@ -161,59 +166,11 @@ export const articleRouter = router({
         isModerator: ctx.user.isModerator,
       })
     ),
-  createRatingReview: protectedProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(createArticleRatingReviewSchema)
-    .mutation(async ({ input, ctx }) => {
-      const review = await createArticleRatingReview({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
-      // Fire-and-forget: Tracker.send is already non-blocking, but `await`
-      // still waits on session resolution. Skip the await so a slow CH
-      // session lookup can't add latency to the user-facing mutation.
-      ctx.track
-        .articleRatingReview({
-          articleId: review.articleId,
-          fromLevel: review.currentLevel,
-          toLevel: review.suggestedLevel,
-          hasComment: !!review.userComment,
-        })
-        .catch(() => undefined);
-      return review;
-    }),
-  getMyArticleRatingReview: protectedProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(getMyArticleRatingReviewSchema)
-    .query(({ input, ctx }) =>
-      getArticleRatingReviewForOwner({ articleId: input.articleId, userId: ctx.user.id })
+  // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
+  // authority is the procedure, not anything in the payload.
+  setOfficial: moderatorProcedure
+    .input(setArticleOfficialSchema)
+    .mutation(({ input, ctx }) =>
+      setArticleOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
-  getRatingReviews: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(getArticleRatingReviewsSchema)
-    .query(({ input }) => getArticleRatingReviews(input)),
-  getRatingReviewCounts: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .query(() => getArticleRatingReviewCounts()),
-  resolveRatingReview: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(resolveArticleRatingReviewSchema)
-    .mutation(async ({ input, ctx }) => {
-      const result = await resolveArticleRatingReview({
-        ...input,
-        moderatorId: ctx.user.id,
-      });
-      // Fire-and-forget — see note on createRatingReview above.
-      ctx.track
-        .articleRatingReviewResolved({
-          reviewId: result.reviewId,
-          articleId: result.articleId,
-          status: result.status,
-          appliedLevel: result.appliedLevel,
-          moderatorId: ctx.user.id,
-        })
-        .catch(() => undefined);
-      return result;
-    }),
 });

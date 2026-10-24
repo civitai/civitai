@@ -12,10 +12,8 @@ import {
 } from '@grafana/faro-web-sdk';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  type ClassifiableException,
-  classifyException,
-} from '~/utils/faro/classifyException';
+import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
+import { buildRumGeoAttributes } from '~/utils/faro/geoAttributes';
 import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
@@ -72,8 +70,9 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * classified (`~/utils/faro/classifyException`): a conservative allowlist of known-benign noise
  * (request aborts, ad-blocker/3p script blocks, autoplay, opaque `Script error.`,
  * extension-injected, bare transient network) is DROPPED, and the rest is tagged
- * `context.error_category` (bizlogic|chunkload|meili|real → Loki `context_error_category`) so the
- * dashboard/alerts can isolate the real-app-bug stream from ~75% non-actionable noise.
+ * `context.error_category` (bizlogic|chunkload|meili|extension|ad_initiated|real → Loki
+ * `context_error_category`) so the dashboard/alerts can isolate the real-app-bug stream from
+ * ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
  * `IsClientProvider` (client-only, high in the tree).
@@ -131,8 +130,9 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
  * `beforeSend` for a single beacon: redact (fail-closed), and for EXCEPTION beacons additionally
  * classify — DROP a conservative allowlist of known-benign noise (aborts, ad-blocker/3p script
  * blocks, autoplay, opaque `Script error.`, extension-injected, bare transient network) and TAG
- * the rest with `context.error_category` (= bizlogic|chunkload|meili|real). Anything unmatched →
- * `real`, kept. See `~/utils/faro/classifyException`.
+ * the rest with `context.error_category`
+ * (= bizlogic|chunkload|meili|extension|ad_initiated|real), and
+ * anything unmatched → `real`, kept. See `~/utils/faro/classifyException`.
  *
  * WHY THE TAG REACHES LOKI (verified against the Alloy faro.receiver source): the tag is written
  * to the exception payload's `context` map (`ExceptionContext`, `Record<string,string>`). Alloy's
@@ -185,9 +185,19 @@ interface InitFaroOptions {
    * Values are boolean-coerced strings (`"true"`/`"false"`); no PII. See experimentFlags.ts.
    */
   experimentAttributes: Record<string, string>;
+  /**
+   * Geo session attributes (`region` + `timezone`, from `buildRumGeoAttributes`) built in the
+   * component from the SSR-derived country code threaded in from _app, so module-scope init
+   * never touches server utilities. Merged into the SAME `sessionTracking.session.attributes`
+   * map as `experimentAttributes` — they ride on `meta.session.attributes` of EVERY beacon
+   * (→ Loki `session_attr_region` / `session_attr_timezone`) from session creation onward.
+   * Values are coarse, non-PII strings; both keys are ALWAYS set (`unknown` when absent) so
+   * no session falls out of a Loki logfmt grouping. See geoAttributes.ts.
+   */
+  geoAttributes: Record<string, string>;
 }
 
-function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOptions) {
+function initFaro({ resourceTimingCohort, experimentAttributes, geoAttributes }: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -214,6 +224,22 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
   const gitHash = env.NEXT_PUBLIC_GIT_HASH ? env.NEXT_PUBLIC_GIT_HASH.slice(0, 7) : undefined;
   const version = process.env.version ?? gitHash ?? 'unknown';
 
+  // ONE session-attributes map (Faro's `session.attributes` is a single map). The two sources
+  // are namespace-disjoint by construction — `exp_*` from experimentFlags.ts vs
+  // `region`/`timezone` from geoAttributes.ts, both pinned by their unit tests — but the merge
+  // is DEFENSIVE anyway: on a hypothetical key collision the FIRST writer wins and it is
+  // logged, so neither side can be silently overwritten. Both maps are non-PII by contract.
+  const sessionAttributes: Record<string, string> = {};
+  for (const map of [experimentAttributes, geoAttributes]) {
+    for (const [key, value] of Object.entries(map)) {
+      if (key in sessionAttributes) {
+        console.warn(`[faro] duplicate session attribute "${key}" — keeping the first value`);
+        continue;
+      }
+      sessionAttributes[key] = value;
+    }
+  }
+
   initializeFaro({
     url: collectorUrl,
     app: {
@@ -227,16 +253,18 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
     // events + sessions stay at 100%. Browser traces are sub-sampled SEPARATELY by the OTel
     // sampler on SampledTracingInstrumentation below — this rate does NOT gate them.
     //
-    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) onto the session
-    // meta at session CREATION — the Faro session manager merges them with the generated
-    // session id, so they ride on `meta.session.attributes` of every beacon (→ Loki
-    // `session_attr_exp_*`) from the first signal onward. Only set when non-empty. See
-    // experimentFlags.ts for the mechanism, the exact Loki field, the timing guarantee, and
-    // the PII rationale (boolean values only).
+    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) AND the geo
+    // attributes (`region`/`timezone`) onto the session meta at session CREATION — the Faro
+    // session manager merges them with the generated session id, so they ride on
+    // `meta.session.attributes` of every beacon (→ Loki `session_attr_exp_*`,
+    // `session_attr_region`, `session_attr_timezone`) from the first signal onward. Only set
+    // when non-empty. See experimentFlags.ts for the mechanism, the exact Loki field, the
+    // timing guarantee, and the PII rationale (boolean values only); geoAttributes.ts for the
+    // always-set geo rule and its privacy rationale (coarse country + IANA timezone only).
     sessionTracking: {
       samplingRate: sessionSamplingRate,
-      ...(Object.keys(experimentAttributes).length
-        ? { session: { attributes: experimentAttributes } }
+      ...(Object.keys(sessionAttributes).length
+        ? { session: { attributes: sessionAttributes } }
         : {}),
     },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
@@ -300,7 +328,7 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
   });
 }
 
-export function FaroProvider() {
+export function FaroProvider({ region }: { region?: string | null }) {
   const features = useFeatureFlags();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
 
@@ -310,6 +338,7 @@ export function FaroProvider() {
         initFaro({
           resourceTimingCohort: !!features.faroResourceTiming,
           experimentAttributes: buildRumExperimentAttributes(features),
+          geoAttributes: buildRumGeoAttributes(region),
         });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();

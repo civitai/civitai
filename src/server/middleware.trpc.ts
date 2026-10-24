@@ -1,16 +1,21 @@
 import { TRPCError } from '@trpc/server';
 import { pack } from 'msgpackr';
+import superjson from 'superjson';
 import { isDev, isPreview, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
+import { hSetWithTTL, sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '~/server/services/item-holder-lock';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
+import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -56,12 +61,17 @@ type CacheItProps<TInput extends object> = {
   key?: string;
   ttl?: number;
   excludeKeys?: (keyof TInput)[];
+  // Response dimensions that live on ctx rather than on the input — the `Vary`
+  // header's job. A procedure whose output varies on something the input never
+  // carries has to declare it here or the key cannot tell two callers apart.
+  varyBy?: (ctx: Context) => Record<string, unknown>;
   tags?: (input: TInput) => string[];
 };
 export function cacheIt<TInput extends object>({
   key,
   ttl,
   excludeKeys,
+  varyBy,
   tags,
 }: CacheItProps<TInput> = {}) {
   ttl ??= 60 * 3;
@@ -72,10 +82,14 @@ export function cacheIt<TInput extends object>({
     if (_input) {
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
-        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
-
-        if (value) cacheKeyObj[key] = value;
+        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
+        else if (value) cacheKeyObj[key] = value;
       }
+    }
+    for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
+      if (_input && Object.prototype.hasOwnProperty.call(_input, varyKey))
+        throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
+      cacheKeyObj[varyKey] = varyValue;
     }
     const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
     const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
@@ -264,6 +278,145 @@ export function rateLimit<TInput = any>(
   });
 }
 
+export type InFlightLimit = {
+  /** Procedures given the same bucket share one per-user limit. */
+  bucket: string;
+  limit: number;
+  /** A request still running after this stops counting against the limit. */
+  ttlMs: number;
+  /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
+  acquireTimeoutMs: number;
+  errorMessage: string;
+};
+const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
+/**
+ * Caps a user's concurrent requests (`rateLimit` caps rate). Admits when the store fails or takes
+ * longer than `acquireTimeoutMs`.
+ */
+export function inFlightLimit({
+  bucket,
+  limit,
+  ttlMs,
+  acquireTimeoutMs,
+  errorMessage,
+}: InFlightLimit) {
+  return middleware(async ({ ctx, next }) => {
+    if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+    const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
+    const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
+    const slot = await withTimeoutFallback(acquiring, acquireTimeoutMs, ACQUIRE_TIMED_OUT, () => {
+      // A slot granted after we stopped waiting would otherwise count until its TTL.
+      void acquiring.then((late) => (late.acquired ? late.release() : undefined));
+    });
+    if (!slot.acquired) {
+      if (slot.reason === 'full')
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
+      logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
+        bucket,
+        userId: ctx.user.id,
+      });
+      return await next();
+    }
+
+    try {
+      return await next();
+    } finally {
+      // Not awaited: the work is done, and a stalled store must not hold the response.
+      void slot.release();
+    }
+  });
+}
+
+/**
+ * Purchases and box opens each hold a pooled connection while waiting on the buyer's
+ * `lockItemHolder` (at most `ITEM_HOLDER_LOCK_TIMEOUT`), so they share one bucket.
+ */
+export const itemHolderInFlightLimit = inFlightLimit({
+  bucket: 'item-holder',
+  limit: 2,
+  ttlMs: 60_000,
+  acquireTimeoutMs: 500,
+  errorMessage: ITEM_HOLDER_BUSY_MESSAGE,
+});
+
+const EDGE_TAG_SET_CAP = 100;
+// Per-tag caps, matched by tag prefix, for a tag whose legitimate URL count approaches the default.
+const EDGE_TAG_SET_CAPS: Record<string, number> = {};
+export function edgeTagSetCap(tag: string) {
+  for (const [prefix, cap] of Object.entries(EDGE_TAG_SET_CAPS))
+    if (tag.startsWith(prefix)) return cap;
+  return EDGE_TAG_SET_CAP;
+}
+
+const encodeTrpcQuery = (input: unknown) =>
+  `input=${encodeURIComponent(JSON.stringify(superjson.serialize(input)))}`;
+
+/**
+ * Exactly a URL the site's tRPC client sends for this parsed input, and no other form of it. The
+ * client spreads every object input and adds `authed: true` when signed in (see
+ * `authedCacheBypassLink` in `src/utils/trpc.ts`), so no input arrives as `{}`.
+ */
+export function isCanonicalTrpcGetUrl(url: string, input: unknown) {
+  const q = url.indexOf('?');
+  if (q === -1) return false;
+  const query = url.slice(q + 1);
+  const sent = input === undefined ? {} : input;
+  if (query === encodeTrpcQuery(sent)) return true;
+  return (
+    typeof sent === 'object' &&
+    sent !== null &&
+    !Array.isArray(sent) &&
+    query === encodeTrpcQuery({ ...sent, authed: true })
+  );
+}
+
+const capLoggedTags = new Set<string>();
+
+/**
+ * A purge can only refresh URLs recorded under the tag, so a tagged response is edge-cached only
+ * when its URL was recorded. Bounded per tag; past the bound the response is served uncached.
+ */
+/** @returns how long the response may be cached (seconds), 0 when it must not be. */
+async function recordTaggedUrl(
+  url: string,
+  input: unknown,
+  tags: string[],
+  ttl: number,
+  path: string
+) {
+  if (!isCanonicalTrpcGetUrl(url, input)) return 0;
+  try {
+    const recorded = await Promise.all(
+      tags.map((tag) =>
+        sAddCappedWithExpireGe(
+          redis,
+          `${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}`,
+          url,
+          ttl,
+          edgeTagSetCap(tag)
+        )
+      )
+    );
+    tags.forEach((tag, i) => {
+      if (recorded[i] > 0 || capLoggedTags.has(tag) || capLoggedTags.size >= 1000) return;
+      capLoggedTags.add(tag);
+      logToAxiom(
+        // Only a URL in the client's own form reaches this point, so `url` is one the site requests.
+        { name: 'edge-cache-tag-cap', type: 'warn', tag, cap: edgeTagSetCap(tag), path, url },
+        'civitai-prod'
+      ).catch(() => undefined);
+    });
+    return Math.min(...recorded);
+  } catch (error) {
+    logToAxiom(
+      { name: 'edge-cache-record-failed', type: 'error', message: (error as Error).message, tags },
+      'civitai-prod'
+    ).catch(() => undefined);
+    return 0;
+  }
+}
+
 export type EdgeCacheItProps = {
   ttl?: number;
   expireAt?: () => Date;
@@ -285,24 +438,40 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
+    // Re-read `skip` now that the resolver has run. The read above happens before
+    // `next()`, so a resolver that only knows its response is uncacheable once it has
+    // produced it (e.g. `home-block.getHomeBlock` on an Announcement block) sets a flag
+    // nothing looks at again. `canCache` is already read on the line below, after the
+    // resolver, and this puts `skip` on the same footing.
+    //
+    // PRECEDENCE, deliberate and now pinned by test: `skip` BEATS `expireAt`. Sitting
+    // after the `expireAt` assignment above, this line overrides a scheduled expiry
+    // rather than being overridden by it. That is the intended ordering — `expireAt`
+    // says "this content goes stale at time T", which is a statement about content that
+    // IS cacheable, whereas `skip` says "this particular response must not be cached at
+    // all". A response the resolver has declared uncacheable does not become cacheable
+    // because someone also scheduled when it should expire; the stronger claim wins.
+    // (Before this line existed the ordering was the other way round and nothing said
+    // so, so it was accidental rather than chosen.) Reintroducing an `expireAt` guard
+    // here — `if (ctx.cache?.skip && !expireAt)` — is caught by
+    // `middleware.trpc.edge-cache-precedence.test.ts`.
+    if (ctx.cache?.skip) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
+      const cacheTags = tags?.(input).map((x) => slugit(x));
+      if (cacheTags && ctx.req?.url && reqTTL > 0) {
+        const recordedFor = await recordTaggedUrl(ctx.req.url, input, cacheTags, ttl, path);
+        if (!recordedFor) {
+          ctx.cache.canCache = false;
+          ctx.cache.edgeTTL = 0;
+          ctx.cache.browserTTL = 0;
+          return result;
+        }
+        reqTTL = Math.min(reqTTL, recordedFor);
+      }
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;
       ctx.cache.staleWhileRevalidate = 30;
-      const cacheTags = tags?.(input).map((x) => slugit(x));
-      if (cacheTags) {
-        if (ctx.req?.url) {
-          await Promise.all(
-            cacheTags
-              .map((tag) => {
-                const key = `${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}` as const;
-                return [redis.sAdd(key, ctx.req.url!), redis.expire(key, ttl)];
-              })
-              .flat()
-          );
-        }
-        ctx.cache.tags = cacheTags;
-      }
+      if (cacheTags) ctx.cache.tags = cacheTags;
     }
 
     return result;
@@ -310,9 +479,17 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
 }
 
 export function purgeOnSuccess(tags: string[]) {
-  return middleware(async ({ next }) => {
+  return middleware(async ({ next, path }) => {
     const result = await next();
-    if (result.ok) await purgeCache({ tags });
+    // Not awaited: the save returns while the edge refresh runs. If the refresh fails, the
+    // cached response stays until its TTL runs out.
+    if (result.ok)
+      purgeCache({ tags }).catch((error: Error) =>
+        logToAxiom(
+          { name: 'edge-purge-failed', type: 'error', message: error.message, tags, path },
+          'civitai-prod'
+        ).catch(() => undefined)
+      );
 
     return result;
   });

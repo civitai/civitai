@@ -31,15 +31,14 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlags: vi.fn(() => ({ canViewNsfw: true, datapacketRead: false })),
   buildFliptContext: vi.fn(() => ({})),
 }));
-// 'off' keeps `useBitdex` false so the call lands on the feed-search branch.
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { BITDEX_IMAGE_SEARCH: 'bitdex-image-search' },
+  FLIPT_FEATURE_FLAGS: {},
   getFliptVariant: vi.fn(async () => 'off'),
 }));
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: vi.fn(async () => ({})) },
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: vi.fn(() => 'https://edge/x') }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: vi.fn(() => 'https://edge/x') }));
 
 const feedSearch = vi.fn(async () => ({ items: [], nextCursor: undefined }));
 vi.mock('~/server/services/image.service', () => ({

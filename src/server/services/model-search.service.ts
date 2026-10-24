@@ -1,7 +1,7 @@
 import type { SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {
@@ -12,11 +12,13 @@ import {
 } from '~/server/meilisearch/client';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
+import { inArray } from '~/shared/utils/meili-filter';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -24,12 +26,16 @@ import { isDefined } from '~/utils/type-guards';
  * Shared model-search + response-shaping body extracted verbatim from
  * `/api/v1/models/index.ts` so the public endpoint AND the block-scoped
  * catalog endpoint (`/api/v1/blocks/models.ts`) build the SAME response from
- * the SAME query path. The ONLY behavioral lever is `browsingLevel` (and the
+ * the SAME query path. The behavioral levers are `browsingLevel` (and the
  * `nsfwImagePassthrough` flag that mirrors the public endpoint's pre-refactor
- * `parsedParams.data.nsfw` image-filter widening) — both supplied by the
- * caller. The public endpoint passes its existing values UNCHANGED; the block
- * endpoint passes a server-clamped `browsingLevel` and `nsfwImagePassthrough:
- * false` so a SFW-domain block can never widen the image filter.
+ * `parsedParams.data.nsfw` image-filter widening) plus two block-only ctx
+ * filters, `ownerUserId` and `publicVersionsOnly` — all supplied by the
+ * caller. The public endpoint passes its existing values UNCHANGED and sets
+ * neither filter; the block endpoint passes a server-clamped `browsingLevel`,
+ * `nsfwImagePassthrough: false` so a SFW-domain block can never widen the image
+ * filter, `publicVersionsOnly: true`, and `ownerUserId` (from the token `sub`)
+ * only for `owner=mine`. The block tool route (`blocks/tools.ts`) passes the
+ * same clamp and `publicVersionsOnly: true`, and no owner filter.
  *
  * Maturity policy is NOT decided here — this helper is a pure executor. The
  * caller is the single place that derives the effective `browsingLevel`.
@@ -58,6 +64,14 @@ export type RunModelSearchInput = Partial<Omit<GetAllModelsOutput, 'browsingLeve
   collectionId?: number;
   /** supportsGeneration filter (forwarded from `data.supportsGeneration`). */
   supportsGeneration?: boolean;
+  /**
+   * Keep Meilisearch's relevance order for a text search (default `true`).
+   *
+   * Pass `false` when the caller has an EXPLICIT, user-chosen `sort` that must
+   * win over relevance — otherwise the restore below silently discards it. See
+   * the comment at the `orderedItems` assignment.
+   */
+  preserveRelevanceOrder?: boolean;
 };
 
 export type RunModelSearchContext = {
@@ -80,6 +94,14 @@ export type RunModelSearchContext = {
   user?: SessionUser;
   /** Absolute origin used to build download URLs (from getNextPage's baseUrl). */
   baseUrlOrigin: string;
+  /**
+   * Restrict to models owned by this user id. Set only by the block catalog's `owner=mine`, from
+   * the verified token subject — a ctx field, so it cannot arrive in parsed query input. Pair it
+   * with the same id on `resolveModelSearchIds` for a text query.
+   */
+  ownerUserId?: number;
+  /** Keep only Public-availability versions on every path (see getModelsRaw). */
+  publicVersionsOnly?: boolean;
 };
 
 const modelTypeValues = new Set<string>(Object.values(ModelType));
@@ -104,6 +126,13 @@ export async function resolveModelSearchIds(opts: {
   limit: number;
   browsingLevel: number;
   /**
+   * Owner filter applied INSIDE the Meili query (`user.id`, a declared filterable attribute).
+   * Filtering only afterwards in the DB would intersect the top-N relevance hits across ALL users
+   * with one user's models — sparse or empty pages, the same failure `types` documents below.
+   * Must be a safe integer: it is interpolated into the filter expression.
+   */
+  ownerUserId?: number;
+  /**
    * Type filter applied INSIDE the Meili query. Without it, a `query` +
    * `types` request intersects the top-N relevance hits (of ANY type) with
    * the type filter in the DB — for sparse types like Wildcards that's
@@ -112,11 +141,25 @@ export async function resolveModelSearchIds(opts: {
    * accepts arbitrary strings (also keeps them out of the filter expression).
    */
   types?: string[];
+  /** In the Meili query for the same reason as `types`; the DB still applies both. */
+  baseModels?: string[];
+  supportsGeneration?: boolean;
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel, types } = opts;
+  const { query, cursor, limit, browsingLevel, types, baseModels, supportsGeneration } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
   const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
+  const { ownerUserId } = opts;
+  if (ownerUserId !== undefined && !Number.isSafeInteger(ownerUserId)) {
+    throw new Error('ownerUserId must be an integer');
+  }
+
+  // The index's canGenerate is isGenerationEligible, narrower than the DB's coverage-only filter.
+  const canGenerateField = supportsGeneration
+    ? (await nextCoverageEnabled())
+      ? 'canGenerateNext'
+      : 'canGenerate'
+    : undefined;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
   try {
@@ -129,6 +172,9 @@ export async function resolveModelSearchIds(opts: {
             filter: [
               `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
               ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
+              ...(ownerUserId !== undefined ? [`user.id = ${ownerUserId}`] : []),
+              ...(baseModels?.length ? [inArray('versions.baseModel', baseModels)] : []),
+              ...(canGenerateField ? [`${canGenerateField} = true`] : []),
             ],
             attributesToRetrieve: ['id'],
           })
@@ -172,7 +218,14 @@ export async function runModelSearch(
   input: RunModelSearchInput & { searchIds?: number[] },
   ctx: RunModelSearchContext
 ): Promise<{ items: unknown[]; nextCursor?: string | bigint | Date }> {
-  const { browsingLevel, nsfwImagePassthrough, user, baseUrlOrigin } = ctx;
+  const {
+    browsingLevel,
+    nsfwImagePassthrough,
+    user,
+    baseUrlOrigin,
+    ownerUserId,
+    publicVersionsOnly,
+  } = ctx;
   const {
     limit,
     skip,
@@ -182,6 +235,9 @@ export async function runModelSearch(
     primaryFileOnly,
     collectionId,
     searchIds,
+    // Destructured so it does NOT reach `...data` and get spread into the
+    // catalog query as an unknown column filter.
+    preserveRelevanceOrder,
     // Dropped, never forwarded: the ctx value is the only authority. The input
     // type excludes it, but callers spread parsed query data in through a cast,
     // and `browsingLevel` now decides the minor gate as well as the level filter.
@@ -210,14 +266,53 @@ export async function runModelSearch(
       disablePoi: true,
     } as Parameters<typeof getModelsWithVersions>[0]['input'],
     user,
+    ownerUserId,
+    publicVersionsOnly,
   });
 
   // Meilisearch returns ids in relevance order, but getModelsWithVersions
   // re-sorts by lastVersionAt/modelId. For text search, restore relevance.
-  const orderedItems =
-    query && searchIds
-      ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
-      : items;
+  //
+  // 🔴 UNLESS THE CALLER EXPLICITLY ASKED FOR AN ORDER. This restore is
+  // unconditional-on-`query` by default, which silently DISCARDS `sort`
+  // whenever a text query is present: `getModelsRaw` builds its `orderBy`
+  // purely from `sort` (`model.service`, the `ModelSort` ladder), the rows come
+  // back correctly ordered, and this line then reimposes relevance over the top.
+  // The caller cannot tell — nothing errors, and the result is a plausible list
+  // in the wrong order. That is how "the most popular ANIME models" returns
+  // relevance-ranked results while "the most popular models" ranks correctly.
+  //
+  // Opt-out rather than a behaviour change: `preserveRelevanceOrder` defaults to
+  // the historical behaviour, so every existing caller — the public endpoint and
+  // `blocks/models` included — is untouched. Only a caller that has a real
+  // user-chosen sort AND wants it to win passes `false`.
+  // 🔴 ZERO HITS MEANS ZERO RESULTS, AND IT MUST NOT DEPEND ON THE FLAG ABOVE.
+  // `getModelsRaw` adds its id predicate under `if (!!ids?.length)`, so an EMPTY
+  // `searchIds` adds NO filter at all and the query degrades to an unfiltered
+  // catalog page. Until `preserveRelevanceOrder` existed, the relevance restore
+  // hid that: mapping over an empty array returned `[]`, so the empty case was
+  // guarded by ACCIDENT rather than on purpose. Opting out of the restore
+  // removed the accident and let a no-match text search return the whole
+  // catalog — measured `[]` vs `[1,2,3]` on identical inputs, i.e. a block
+  // answering "the most downloaded zzzqqq models are…" with the site-wide top
+  // 10. That is strictly worse than the wrong ORDER this flag exists to fix.
+  //
+  // So the empty case is now its own branch, ahead of the flag, and says what it
+  // means. Also covers the SFW-clamped shape where Meili's own nsfwLevel filter
+  // is what leaves the hit list empty.
+  // `!searchIds?.length` rather than an Array.isArray + length check: it covers
+  // `undefined` as well as `[]`. Both degrade identically at
+  // `ids: query ? searchIds ?? [] : queryIds` — an absent id list is no id
+  // predicate, which is the same fail-open. No caller passes `undefined` today
+  // (all three declare `let searchIds: number[] = []`), so this closes a shape
+  // that is currently unreachable rather than fixing a live bug — but the type
+  // permits it, and the cost is one character.
+  const noTextMatches = Boolean(query) && !searchIds?.length;
+  const orderedItems = noTextMatches
+    ? []
+    : query && searchIds && preserveRelevanceOrder !== false
+    ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
+    : items;
 
   const preferredFormat = { metadata: user?.filePreferences };
 
@@ -267,7 +362,12 @@ export async function runModelSearch(
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrlOrigin}${createModelFileDownloadUrl({

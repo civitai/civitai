@@ -1,5 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
-import { resolveCapTier, type CapTier } from '@civitai/buzz';
+import { resolveCapTier, type CapTier, type PricingEligibility } from '@civitai/buzz';
 
 // Read membership off SessionUser (resolved by the shared session cache / hub) rather than re-querying.
 
@@ -18,16 +18,18 @@ export type Membership = {
 // from the sidebar simulator; ignored for non-moderators. Any other value = the user's real membership.
 export const TEST_MEMBERSHIP_COOKIE = 'cs-test-membership';
 
-function realMembership(user: SessionUser | undefined): Membership {
+/** The user's membership with no simulator override, for a gate the main app enforces from the session alone. */
+export function realMembership(user: SessionUser | undefined): Membership {
   const tier = user?.tier ?? null;
   const isMember = tier !== null && tier !== 'free' && !user?.memberInBadState;
   const isCreatorProgramMember = ((user?.onboarding ?? 0) & CREATOR_PROGRAM_ONBOARDING_FLAG) !== 0;
   return { tier, isMember, isCreatorProgramMember };
 }
 
-// Resolve membership, applying the moderator-only Creator-Program override when the cookie is set. Every place
-// that gates on membership (layout, form actions) must go through this with the cookie so the simulated state
-// is consistent. The override keeps the user's real tier and just forces CP membership on top.
+// Resolve membership, applying the moderator-only Creator-Program override when the cookie is set. Every gate
+// this app decides for itself (layout, form actions) goes through this with the cookie so the simulated state
+// is consistent; a gate the main app re-checks uses `realMembership`. The override keeps the user's real tier
+// and just forces CP membership on top.
 export function resolveMembership(user: SessionUser | undefined, testCookie?: string): Membership {
   const real = realMembership(user);
   if (user?.isModerator && testCookie === 'creator-program') {
@@ -36,8 +38,8 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
   return real;
 }
 
-// Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — membership decides
-// only HOW MUCH, via maxLicensingFee / maxPaidAccessPrice.
+// Monetization is open to every creator who meets the eligibility floor; membership decides only HOW MANY
+// new prices they may set in a month, via monthlyPricingAllowance.
 
 // Usage control is NOT open like monetization is: a non-Download control needs the main app's
 // `generationOnlyModels` feature, whose availability is ['mod', 'granted', 'gold']. Restated here rather
@@ -62,18 +64,24 @@ export function tierGrantsGenerationOnly(tier: string | null | undefined): boole
 export const displayTier = (m: Membership): string => m.tier ?? 'free';
 
 /**
- * The tier the caps resolve against. Delegates to the shared rule so the spoke and the main app can't
- * disagree about what a lapse, an unknown tier, or founder resolves to.
+ * The tier the monthly pricing allowance resolves against. Delegates to the shared rule so the spoke and
+ * the main app can't disagree about what a lapse, an unknown tier, or founder resolves to.
  */
 export const cappedTier: (m: Membership) => CapTier = resolveCapTier;
 
-/** Every capacity fact the models page ships to its editors. `null` cap = unlimited. */
+/** Every capacity fact the models page ships to its editors. `null` limit = unlimited. */
 export type CreatorCaps = {
-  /** Display label only — cap math uses `capTier`, which drops to free on a lapse. */
+  /** Display label only — the allowance uses `capTier`, which drops to free on a lapse. */
   tier: string;
   capTier: CapTier;
-  permanentUsed: number;
-  permanentCap: number | null;
+  /** Prices applied this calendar month, and how many the tier allows. */
+  pricingUsed: number;
+  pricingLimit: number | null;
+  /** The licensing-fee limit: `pricingLimit` plus any fee boost. A paid-access gate uses `pricingLimit`. */
+  feePricingLimit: number | null;
+  feeBoost: number;
+  /** Where the creator's score stands against the monetization floor, for the editors to render. */
+  pricingFloor: PricingEligibility;
   maxEarlyAccessDays: number;
   earlyAccessUsed: number;
   earlyAccessCap: number;

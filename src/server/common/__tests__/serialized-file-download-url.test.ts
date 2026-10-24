@@ -198,7 +198,14 @@ describe('toApiModelFile — the owning version id survives the reduction', () =
   });
 
   it('tolerates a missing metadata blob', () => {
-    const out = toApiModelFile({ id: 5, modelVersionId: 4242 });
+    // `metadata` is declared and not passed: the type argument is spelled out because
+    // `{ metadata?: unknown }` is a weak type, so a row that names none of its members
+    // fails the constraint and TS falls back to the constraint itself — which then
+    // reports `id` as an excess property and drops `modelVersionId` from the result.
+    const out = toApiModelFile<{ id: number; modelVersionId: number; metadata?: unknown }>({
+      id: 5,
+      modelVersionId: 4242,
+    });
     expect(out.modelVersionId).toBe(4242);
     expect(out.metadata.format).toBeUndefined();
   });

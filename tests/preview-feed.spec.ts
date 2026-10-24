@@ -15,7 +15,8 @@ import { trpcQuery } from './preview-trpc';
  *
  * Why tRPC instead of scraping cards out of the DOM:
  *  - The /models feed IS this query — model.getAll backs it
- *    (src/components/Model/model.utils.ts:145 `trpc.model.getAll.useInfiniteQuery`).
+ *    (`useQueryModels` in src/components/Model/model.utils.ts,
+ *    `trpc.model.getAll.useInfiniteQuery`).
  *    Asserting the query result is asserting the same data the card grid renders,
  *    minus the flaky virtualized-list / lazy-image DOM surface (cards mount on
  *    scroll/intersection, have no stable testid) — a DOM-card count would be the
@@ -32,11 +33,13 @@ import { trpcQuery } from './preview-trpc';
  *
  * Verified tRPC shape (civitai repo, paths relative to civitai/src):
  *  - model.getAll  publicProcedure, input getAllModelsSchema (minus `page`)
- *                  (server/routers/model.router.ts:141). All fields optional with
- *                  server defaults, so `{ limit }` is a valid input.
+ *                  (server/routers/model.router.ts). Every field is optional, so
+ *                  `{ limit }` is a valid input. `browsingLevel` has no schema
+ *                  default: when it is omitted, the model.getAll handler
+ *                  (`resolveRequestBrowsingLevels`, server/utils/browsing-level.ts)
+ *                  fills in the signed-in viewer's own level, or the domain cap.
  *                  getModelsInfiniteHandler returns { items, nextCursor }
- *                  (server/controllers/model.controller.ts:27 `return { items,
- *                  nextCursor }`); each item carries a numeric `id`.
+ *                  (server/controllers/model.controller.ts); each item carries a numeric `id`.
  *
  * Tolerant on COUNT, strict on STRUCTURE: the prod-clone dev DB has real content
  * but we never assume specific models/titles. We assert ">= 1 item with a numeric
@@ -49,7 +52,7 @@ import { trpcQuery } from './preview-trpc';
  * the DB in a preview: getInfiniteImagesHandler routes a broad query (no
  * postId/modelId/collection/reaction filter → requiresDbPath=false) through
  * getAllImagesIndex — the MEILISEARCH-backed index path — whenever
- * `features.imageIndexFeed` or the BitDex Flipt flag (BITDEX_IMAGE_SEARCH) is on,
+ * `features.imageIndexFeed` is on,
  * which is the production-like default (src/server/controllers/image.controller.ts
  * :300-320). That path hits an image search index the preview doesn't populate and
  * then hydrates from the dev clone, so a broad image.getInfinite returns flaky /
@@ -73,6 +76,9 @@ const ROLE = 'tester' as const;
 // on the single-replica preview pod (the suite runs serially, workers:1).
 const FEED_LIMIT = 5;
 
+// NsfwLevel.PG, the lowest browsing-level bit.
+const PG = 1;
+
 test.describe('browse feed renders real content (tester)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
@@ -84,11 +90,14 @@ test.describe('browse feed renders real content (tester)', () => {
     // app's background traffic never idles, so a networkidle nav hangs to timeout.
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    const data = await trpcQuery<{ items: Array<{ id: number }> }>(
-      page.request,
-      'model.getAll',
-      { limit: FEED_LIMIT }
-    );
+    // Deliberately NO browsingLevel: API and script callers often omit it. A signed-in
+    // caller who omitted it, on a domain that caps nothing, once reached the models
+    // query with an undefined level, which matched no row: an empty page and no error.
+    // This call is the regression guard for that; it can only see the bug while the
+    // tester is signed in and the domain caps nothing.
+    const data = await trpcQuery<{ items: Array<{ id: number }> }>(page.request, 'model.getAll', {
+      limit: FEED_LIMIT,
+    });
 
     const items = data?.items ?? [];
     // STRUCTURE: a real, non-empty page came back. An empty models feed is the
@@ -97,6 +106,25 @@ test.describe('browse feed renders real content (tester)', () => {
     expect(items.length, 'the models feed should render >= 1 model card').toBeGreaterThan(0);
     // Each rendered card needs an identifiable model — assert the first item is a
     // real row (numeric id), not a malformed/placeholder entry.
+    expect(typeof items[0]?.id, 'a feed model should carry a numeric id').toBe('number');
+  });
+
+  test('model.getAll with an explicit browsingLevel, as the site sends it, returns models', async ({
+    page,
+  }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    // The site always sends a level (`useQueryModels` passes the viewer's own). PG is
+    // the level every viewer may be served on every domain, so this needs no knowledge
+    // of the tester's saved settings.
+    const data = await trpcQuery<{ items: Array<{ id: number }> }>(page.request, 'model.getAll', {
+      limit: FEED_LIMIT,
+      browsingLevel: PG,
+    });
+
+    const items = data?.items ?? [];
+    expect(Array.isArray(items), 'model.getAll should return an items array').toBe(true);
+    expect(items.length, 'the PG models feed should render >= 1 model card').toBeGreaterThan(0);
     expect(typeof items[0]?.id, 'a feed model should carry a numeric id').toBe('number');
   });
 });

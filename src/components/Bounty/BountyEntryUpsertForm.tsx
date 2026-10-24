@@ -44,12 +44,12 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { getFilesHash } from '~/client-utils/file-hashing';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -89,7 +89,6 @@ const formSchema = z
   );
 
 export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
-  const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -253,6 +252,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   placeholder="empty"
                   src={image.url}
                   alt={undefined}
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
                   style={{ objectFit: 'cover', height: '100%' }}
                 />
                 <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -269,7 +269,10 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     <IconTrash size={26} strokeWidth={2.5} />
                   </LegacyActionIcon>
                 </div>
-                {image.meta && (
+                {/* hasMeta is false whenever hideMeta is set, but this form is the
+                    owner's own, and getMediaGenerationData serves the owner their
+                    hidden prompt. */}
+                {(image.hasMeta || image.hideMeta) && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
                       <LegacyActionIcon component="div" variant="light" color="dark" size="lg">
@@ -297,6 +300,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                         placeholder="empty"
                         src={file.url}
                         alt={file.name ?? undefined}
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
                         style={{ objectFit: 'cover', height: '100%' }}
                       />
                       <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -454,10 +458,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                 const existingModels = await getModelsByHashMutation({ hashes });
                 setValidatingHash({ loading: false, progress: {} });
 
-                if (
-                  existingModels.length > 0 &&
-                  existingModels.find((m) => m.userId !== currentUser?.id)
-                ) {
+                if (existingModels.some((m) => m.ownedByOther)) {
                   return {
                     valid: false,
                     errors: [

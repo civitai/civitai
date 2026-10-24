@@ -1,14 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { BanReasonCode } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { handBanReasonSchema } from '~/server/schema/user.schema';
 import { toggleBan } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const schema = z.object({
+export const banUserQuerySchema = z.object({
   userId: z.coerce.number(),
-  reasonCode: z.enum(BanReasonCode).optional(),
+  reasonCode: handBanReasonSchema.optional(),
   detailsExternal: z.string().optional(),
   detailsInternal: z.string().optional(),
   // Explicit 'true'/'false' string enum, NOT z.coerce.boolean() — coercion
@@ -21,11 +21,22 @@ const schema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+  removeComments: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { userId, reasonCode, detailsExternal, detailsInternal, removeMedia, removeModels } =
-    schema.parse(req.query);
+  const {
+    userId,
+    reasonCode,
+    detailsExternal,
+    detailsInternal,
+    removeMedia,
+    removeModels,
+    removeComments,
+  } = banUserQuerySchema.parse(req.query);
 
   res.status(200).json({
     userId,
@@ -39,6 +50,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       detailsInternal,
       removeMedia,
       removeModels,
+      removeComments,
       userId: -1, // using civitai user for banning using webhook
     });
 

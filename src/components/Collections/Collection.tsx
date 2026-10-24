@@ -38,17 +38,31 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import {
+  BrowsingLevelProvider,
+  useBrowsingLevelContext,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { viewerCollectionCap } from '~/components/BrowsingLevel/resolve-browsing-level';
+import { Model3DsInfinite } from '~/components/Model3D/Infinite/Model3DsInfinite';
 import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
   useCollection,
   useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
+import {
+  articleCollectionSortOptions,
+  contestArticleSorts,
+  contestModelSorts,
+  contestPostSorts,
+  imageCollectionSortOptions,
+  modelCollectionSortOptions,
+  postCollectionSortOptions,
+  resolveImageCollectionSort,
+  toSortMenuOptions,
+} from '~/components/Collections/collection-sort';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -60,8 +74,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { useUpdateCollectionCoverImage } from '~/components/Image/hooks/useUpdateCollectionCoverImage';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -74,10 +88,10 @@ import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDr
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -96,26 +110,29 @@ import type { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
+import { isViewer } from '~/utils/is-viewer';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
 
-const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+const ModelCollection = ({
+  collection,
+  permissions,
+}: {
+  collection: NonNullable<CollectionByIdModel>;
+  permissions?: CollectionContributorPermissionFlags;
+}) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection
-    ? getRandom(Object.values(ModelSort))
-    : query.sort ?? ModelSort.Newest;
+  const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -127,6 +144,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         browsingMode: undefined,
         status: undefined,
         earlyAccess: undefined,
+        hidePaid: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -151,12 +169,15 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
     <ModelContextMenuProvider
       setMenuItems={(data, menuItems) => {
         const items = menuItems.filter((m) => m.key !== 'add-to-collection');
-        const isOwnerOrMod =
+        // Same rule the image collection uses, and the same one the server enforces — a Manager
+        // could not remove anything here while being able to on an image collection.
+        const canRemove =
+          permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.id === data.user.id ||
           currentUser?.isModerator;
 
-        if (isOwnerOrMod) {
+        if (canRemove) {
           items.push({
             key: 'remove-from-collection',
             component: (
@@ -176,13 +197,13 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
                   type="models"
                   value={sort}
                   onChange={(x) => set({ sort: x as ModelSort })}
+                  options={toSortMenuOptions(modelCollectionSortOptions)}
                 />
                 <ModelFiltersDropdown
                   filterMode="query"
                   maxPopoverHeight={'calc(75vh - var(--header-height))'}
                 />
               </Group>
-              <CategoryTags />
             </>
           )}
           {isContestCollection && collection.tags.length > 0 && (
@@ -201,7 +222,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
   );
 };
 
-const imageCollectionSortOptions = [ImageSort.Newest, ImageSort.Oldest];
 const ImageCollection = ({
   collection,
   permissions,
@@ -211,12 +231,12 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const defaultSort =
-    query.sort && imageCollectionSortOptions.includes(query.sort) ? query.sort : ImageSort.Newest;
-  const sort = isContestCollection ? ImageSort.Random : defaultSort;
+  const sort = resolveImageCollectionSort({
+    querySort: query.sort,
+    isContest: isContestCollection,
+  });
   const period = query.period ?? MetricTimeframe.AllTime;
-  const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
-  const utils = trpc.useUtils();
+  const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
@@ -250,7 +270,7 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        const canUpdateCover = !permissions || !permissions.manage || !image.id;
+        const canUpdateCover = !!permissions?.manage && !!image.id;
 
         return (
           <>
@@ -264,21 +284,10 @@ const ImageCollection = ({
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  updateCollectionCoverImageMutation.mutate(
-                    {
-                      id: collection.id,
-                      imageId: image.id,
-                    },
-                    {
-                      onSuccess: async () => {
-                        showSuccessNotification({
-                          title: 'Cover image updated',
-                          message: 'Collection cover image has been updated',
-                        });
-                        await utils.collection.getById.invalidate({ id: collection.id });
-                      },
-                    }
-                  );
+                  updateCollectionCoverImage({
+                    collectionId: collection.id,
+                    imageId: image.id,
+                  });
                 }}
               >
                 Use as cover image
@@ -288,11 +297,17 @@ const ImageCollection = ({
         );
       }}
       additionalMenuItemsAfter={(image) => {
-        const isOwnerOrMod =
-          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        // Mirrors `removeCollectionItem`: a manage holder, the collection owner, a moderator, the
+        // image's author, or whoever put it in the collection.
+        const canRemove =
+          permissions?.manage ||
+          currentUser?.id === collection.user.id ||
+          currentUser?.isModerator ||
+          isViewer(currentUser, image.userId ?? image.user?.id) ||
+          isViewer(currentUser, image.collectionItemAddedById);
         return (
           <>
-            {isOwnerOrMod && (
+            {canRemove && (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
             )}
           </>
@@ -308,7 +323,7 @@ const ImageCollection = ({
                   type="images"
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
-                  options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
+                  options={toSortMenuOptions(imageCollectionSortOptions)}
                   ignoreNsfwLevel
                 />
                 <MediaFiltersDropdown
@@ -317,7 +332,6 @@ const ImageCollection = ({
                   onChange={(value) => replace(value)}
                 />
               </Group>
-              <ImageCategories />
             </>
           )}
 
@@ -374,9 +388,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection
-    ? getRandom(Object.values(PostSort))
-    : query.sort ?? PostSort.Newest;
+  const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
     ? {
@@ -410,10 +422,10 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
                 type="posts"
                 value={sort}
                 onChange={(sort) => replace({ sort: sort as PostSort })}
+                options={toSortMenuOptions(postCollectionSortOptions)}
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
-            <PostCategories />
           </>
         )}
         <ReactionSettingsProvider settings={{ hideReactionCount: !isContestCollection }}>
@@ -429,7 +441,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
-    ? getRandom(Object.values(ArticleSort))
+    ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -462,10 +474,10 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
                 type="articles"
                 value={sort}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
+                options={toSortMenuOptions(articleCollectionSortOptions)}
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
-            <ArticleCategories />
           </>
         )}
         <ArticlesInfinite filters={filters} disableStoreFilters />
@@ -510,6 +522,7 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -578,12 +591,29 @@ export function Collection({
     !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
   const showSubmissionsClosedNotice =
     !!permissions?.collaborationDisabled && (submissionsClosed || !!permissions?.isOwner);
+  // Open collections get the same entry point contests have always had. Without it the only way
+  // in was the save picker on someone else's model or image page, so a collection asking for
+  // submissions had no way to accept one from its own page.
+  const canSubmitEntry =
+    collection?.mode !== CollectionMode.Contest &&
+    !permissions?.isOwner &&
+    !submissionsClosed &&
+    (permissions?.write || permissions?.writeReview) &&
+    (collectionType === CollectionType.Image || collectionType === CollectionType.Post) &&
+    (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
+    (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
+
+  // validateContestCollectionEntry applies the base-model list to model entries only, so on any
+  // other collection type a stored value advertises a restriction nothing enforces.
+  const showAllowedBaseModels =
+    !!metadata.baseModels?.length &&
+    (collectionType ?? CollectionType.Model) === CollectionType.Model;
 
   const submissionPeriod =
     metadata.submissionStartDate ||
     metadata.submissionEndDate ||
     metadata.maxItemsPerUser ||
-    metadata.baseModels?.length ? (
+    showAllowedBaseModels ? (
       <Popover
         zIndex={200}
         position="bottom-end"
@@ -614,8 +644,8 @@ export function Collection({
               <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
             )}
 
-            {!!metadata.baseModels?.length && (
-              <Text size="sm">Allowed base models: {metadata.baseModels.join(', ')}</Text>
+            {showAllowedBaseModels && (
+              <Text size="sm">Allowed base models: {metadata.baseModels?.join(', ')}</Text>
             )}
           </Stack>
         </Popover.Dropdown>
@@ -624,17 +654,30 @@ export function Collection({
 
   if (!collection) return null;
 
+  const bypassRating =
+    permissions?.manage ||
+    currentUser?.id === collection.user.id ||
+    (currentUser?.isModerator ?? false);
+  const collectionCap = viewerCollectionCap(
+    collection.metadata.forcedBrowsingLevel,
+    userBrowsingLevel,
+    bypassRating
+  );
+
   return (
-    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
+    /* 🔴 `forcedBrowsingLevel`, not `browsingLevel`. This is a policy ceiling —
+       the collection's level, which `Gated` below treats as a gate, bypassed only
+       for mods and owners — and the override slot it used to sit in is one any component may
+       decline to read. `useViewerBrowsingLevelDebounced` does exactly that by
+       design, so as an override this cap silently stopped applying to the remix
+       gallery and to avatars. Caps are intersected by the provider, so this
+       cannot lift the domain cap either. */
+    <BrowsingLevelProvider forcedBrowsingLevel={collectionCap}>
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
           nsfw={collection.nsfw ?? undefined}
-          bypassRating={
-            permissions?.manage ||
-            currentUser?.id === collection.user.id ||
-            (currentUser?.isModerator ?? false)
-          }
+          bypassRating={bypassRating}
           suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
@@ -730,6 +773,13 @@ export function Collection({
                     </IconBadge> */}
                       </Group>
                     )}
+                    {collection && (
+                      <OwnerRatingControls
+                        entityType="Collection"
+                        entityId={collection.id}
+                        isOwner={!!permissions?.isOwner}
+                      />
+                    )}
                   </Stack>
                   {collection && permissions && (
                     <Stack>
@@ -793,11 +843,32 @@ export function Collection({
                           </HoverCard>
                         ) : (
                           <>
+                            {canSubmitEntry && (
+                              <Button
+                                color="blue"
+                                radius="xl"
+                                onClick={() => {
+                                  if (
+                                    !!metadata.existingEntriesDisabled ||
+                                    collection.type === CollectionType.Post
+                                  ) {
+                                    router.push(`/posts/create?collectionId=${collection.id}`);
+                                  } else {
+                                    dialogStore.trigger({
+                                      component: AddUserContentModal,
+                                      props: { collectionId: collection.id },
+                                    });
+                                  }
+                                }}
+                              >
+                                Submit an entry
+                              </Button>
+                            )}
                             <CollectionFollowAction
                               collectionId={collection.id}
                               permissions={permissions}
                             />
-                            {!submissionsClosed && canAddContent && (
+                            {!canSubmitEntry && !submissionsClosed && canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
                                 <LegacyActionIcon
                                   color="blue"
@@ -955,7 +1026,7 @@ export function Collection({
                       </AlertWithIcon>
                     )}
                     {collection && collectionType === CollectionType.Model && (
-                      <ModelCollection collection={collection} />
+                      <ModelCollection collection={collection} permissions={permissions} />
                     )}
                     {collection && collectionType === CollectionType.Image && (
                       <ImageCollection collection={collection} permissions={permissions} />
@@ -965,6 +1036,9 @@ export function Collection({
                     )}
                     {collection && collectionType === CollectionType.Article && (
                       <ArticleCollection collection={collection} />
+                    )}
+                    {collection && collectionType === CollectionType.Model3D && (
+                      <Model3DsInfinite filters={{ collectionId: collection.id }} />
                     )}
                   </>
                 )}

@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 // Verifies judging-category routing at the two challenge.service.ts call sites
 // (endChallengeAndPickWinners, playgroundPickWinners) after the DYNAMIC_JUDGING_CATEGORIES flag
@@ -7,7 +11,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // directly on the `categories` arg it receives — the sole observable output of the routing here.
 
 const {
-  mockDbWrite,
   mockIsFlipt,
   mockGetJudgedEntries,
   mockGenerateWinners,
@@ -17,14 +20,6 @@ const {
   mockRefundUserChallengeFunds,
 } = vi.hoisted(() => {
   return {
-    mockDbWrite: {
-      challenge: {
-        update: vi.fn().mockResolvedValue(undefined),
-        // Final-prize recompute reads prizePool/prizeDistribution on the User path; null
-        // distribution skips the recompute so these tests exercise the judging gate unchanged.
-        findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-      },
-    },
     mockIsFlipt: vi.fn().mockResolvedValue(false),
     mockGetJudgedEntries: vi.fn(),
     mockGenerateWinners: vi.fn(),
@@ -49,11 +44,6 @@ const {
     mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn(), challenge: { findUnique: vi.fn() } },
-  dbWrite: mockDbWrite,
-}));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/flipt/client')>();

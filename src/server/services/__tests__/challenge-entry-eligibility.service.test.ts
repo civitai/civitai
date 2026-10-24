@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // `checkImageEligibility` is what the challenge submit modal prechecks each library image against.
 // Only an AUTO-DETECTED resource satisfies a challenge's model requirement: a `detected: false` row
@@ -12,16 +16,9 @@ import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge
 // different thing to tell them and a different thing for them to do about it. Reporting the former
 // for the latter is what sent a user to support insisting their image used the required model.
 
-const { mockDbRead, mockDbWrite, mockIsFlipt } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRawUnsafe: vi.fn(),
-    challenge: { findUnique: vi.fn() },
-  },
-  mockDbWrite: { $queryRawUnsafe: vi.fn() },
+const { mockIsFlipt } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
 }));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -80,8 +77,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 }));
 
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 
 vi.mock('~/utils/errorHandling', () => ({ withRetries: vi.fn((fn: () => unknown) => fn()) }));
 

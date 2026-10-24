@@ -12,12 +12,14 @@ import {
 import Router from 'next/router';
 import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
+import { useDeletePost } from '~/components/Post/hooks/useDeletePost';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportCsamImages } from '~/components/Image/image.utils';
@@ -33,17 +35,25 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import {
+  moderatorBulkImageManagerPath,
+  moderatorImageLookupPath,
+} from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
   noDelete?: boolean;
+  /** Images in the post a `context="post"` card stands for; shown in the delete confirmation. */
+  postImageCount?: number;
   children?: React.ReactElement;
 };
 
 export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: boolean }) {
-  const { image, context = 'image', additionalMenuItems, disableDelete } = props;
+  const { image, context = 'image', additionalMenuItems, disableDelete, postImageCount } = props;
   const { isOwner, isModerator } = useImageContext();
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
@@ -60,6 +70,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
     openReportModal({ entityType: ReportEntity.Image, entityId: imageId });
 
   const deleteImage = useDeleteImage();
+  const deletePost = useDeletePost();
   const rescanImage = useRescanImage();
   const reportTos = useReportTosViolation();
   const reportCsamMutation = useReportCsamImages();
@@ -81,12 +92,24 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
           {isImage && (
-            <AddArtFrameMenuItem
-              entityType={CosmeticEntity.Image}
-              entityId={imageId}
-              image={image}
-              currentCosmetic={image.cosmetic}
-            />
+            <>
+              <AddArtFrameMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={imageId}
+                image={image}
+                currentCosmetic={image.cosmetic}
+              />
+              {/* A hat can't go on an image outside a post (an article cover, say), but one already
+                  there can come off. `undefined` is a feed that didn't select postId, not "none". */}
+              {(postId !== null || image.eventDecoration) && (
+                <AddEventDecorationMenuItem
+                  entityType={CosmeticEntity.Image}
+                  entityId={imageId}
+                  image={image}
+                  currentCosmetic={image.eventDecoration}
+                />
+              )}
+            </>
           )}
         </>
       )}
@@ -109,6 +132,11 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
+      <RemixGalleryMenuItems
+        imageId={imageId}
+        isOwner={!!isOwner}
+        published={!!image.publishedAt}
+      />
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">
@@ -166,7 +194,12 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             <Menu.Item
               color="red"
               leftSection={<IconTrash size={14} stroke={1.5} />}
-              onClick={() => deleteImage({ imageId })}
+              onClick={() =>
+                // A post card's image is only its cover: Delete there means the whole post.
+                context === 'post' && postId
+                  ? deletePost({ postId, imageCount: postImageCount })
+                  : deleteImage({ imageId })
+              }
             >
               Delete
             </Menu.Item>
@@ -179,6 +212,16 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {isModerator && (
         <>
           <Menu.Label>Moderator</Menu.Label>
+          <ModeratorLookupMenuItem path={moderatorImageLookupPath(imageId)}>
+            Lookup Image
+          </ModeratorLookupMenuItem>
+          {/* The post, not just this image: a report about one image is usually about the drop it
+              came in, and Bulk Image Manager is the only view of a post as a whole. */}
+          {postId && (
+            <ModeratorLookupMenuItem path={moderatorBulkImageManagerPath('post', postId)}>
+              Lookup Post
+            </ModeratorLookupMenuItem>
+          )}
           <Menu.Item
             leftSection={<IconBan size={14} stroke={1.5} />}
             onClick={() => reportTos({ imageId })}

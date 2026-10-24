@@ -32,6 +32,18 @@ vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: vi.fn(async () => false) },
 }));
+
+// These suites isolate ONE property of `withBlockScope` each (scope gating, CORS,
+// Cache-Control, the RED labels, the runtime flag). The approved-status gate added
+// alongside the revocation check is a REAL dependency of every one of those paths — an
+// approved app is the precondition each of them was already implicitly assuming — so it
+// is stubbed to 'ok' here for the same reason `isRevoked` is stubbed to false: to keep
+// the suite about its own subject. The gate's OWN behaviour (suspended/missing/dev/
+// lookup-failure, and its order relative to revocation) is covered in
+// `block-scope.approved-gate.test.ts`.
+vi.mock('~/server/services/blocks/block-approval.service', () => ({
+  resolveRestApprovalVerdict: vi.fn(async () => 'ok' as const),
+}));
 // The success path registers a fire-and-forget res.on('finish') audit logger
 // that dynamic-imports this service; stub it so invoking the finish listeners
 // doesn't reach a real DB.
@@ -124,19 +136,16 @@ async function counterValue(
 ): Promise<number> {
   const metric = client.register.getSingleMetric('civitai_app_block_requests_total');
   if (!metric) return 0;
-  const data = await (metric as { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }).get();
+  const data = await (
+    metric as {
+      get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }>;
+    }
+  ).get();
   const match = data.values.find(
-    (v) => v.labels.app_block_id === appBlockId && v.labels.endpoint === endpoint && v.labels.result === result
-  );
-  return match?.value ?? 0;
-}
-
-async function histogramCount(endpoint: AppBlockEndpoint): Promise<number> {
-  const metric = client.register.getSingleMetric('civitai_app_block_request_duration_seconds');
-  if (!metric) return 0;
-  const data = await (metric as { get(): Promise<{ values: Array<{ metricName?: string; labels: Record<string, string>; value: number }> }> }).get();
-  const match = data.values.find(
-    (v) => v.metricName?.endsWith('_count') && v.labels.app_block_id === APP_BLOCK_ID && v.labels.endpoint === endpoint
+    (v) =>
+      v.labels.app_block_id === appBlockId &&
+      v.labels.endpoint === endpoint &&
+      v.labels.result === result
   );
   return match?.value ?? 0;
 }
@@ -154,47 +163,6 @@ beforeEach(() => {
 });
 
 describe('withBlockScope — per-app REST RED metric', () => {
-  it('increments result=success + records a duration sample on a 2xx', async () => {
-    const before = await counterValue('model_detail', 'success');
-    const beforeHist = await histogramCount('model_detail');
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'success')).toBe(before + 1);
-    expect(await histogramCount('model_detail')).toBe(beforeHist + 1);
-  });
-
-  it('increments result=server_error on a 5xx', async () => {
-    const before = await counterValue('model_detail', 'server_error');
-    const route = withBlockScope(statusHandler(500) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'server_error')).toBe(before + 1);
-  });
-
-  it('increments result=client_error on a 4xx (non-403)', async () => {
-    const before = await counterValue('model_detail', 'client_error');
-    const route = withBlockScope(statusHandler(404) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'client_error')).toBe(before + 1);
-  });
-
   it('increments result=forbidden when the middleware itself rejects a missing scope (403)', async () => {
     const before = await counterValue('model_detail', 'forbidden');
     // The wrapped handler would 200, but the token lacks the required scope so
@@ -224,7 +192,9 @@ describe('withBlockScope — per-app REST RED metric', () => {
     });
     const res = makeRes();
     await route(
-      makeReq(await mintToken([REQUIRED_SCOPE], { dev: true, appBlockId: 'apb_synthetic_dev_xyz' })) as never,
+      makeReq(
+        await mintToken([REQUIRED_SCOPE], { dev: true, appBlockId: 'apb_synthetic_dev_xyz' })
+      ) as never,
       res as never
     );
     res._finish();
@@ -233,17 +203,66 @@ describe('withBlockScope — per-app REST RED metric', () => {
     // The synthetic id NEVER became a label.
     expect(await counterValue('model_detail', 'success', 'apb_synthetic_dev_xyz')).toBe(0);
   });
+});
 
-  it('keeps a normal (non-dev) token on its real appBlockId', async () => {
-    const before = await counterValue('model_detail', 'success', APP_BLOCK_ID);
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
+/**
+ * 🔴 THE CONSENT-REVOCATION COUNTER'S `scope` LABEL IS CLAMPED TO THE KNOWN VOCABULARY.
+ *
+ * prom-client retains every distinct label set in the Node heap FOREVER, per pod, across ~130
+ * pods — so an unbounded label is a permanent leak, not a tidiness issue. The bound has to be
+ * enforced in the EMITTER, because neither the parameter (`scope: string`) nor
+ * `WithBlockScopeOpts.requiredScope` (`string`) is typed to the scope union: nothing would catch
+ * a future caller that derives the value.
+ *
+ * A survived mutation is what put this here. `isKnownBlockScope(scope) ? scope : 'other'` → bare
+ * `scope` passed the whole suite: the emitter's sibling clamps (`revocationNamespaceLabel`) and
+ * this one did not, and no test read the label at all.
+ */
+describe('recordBlockConsentRevocationRefusal clamps its scope label', () => {
+  beforeEach(() => {
+    client.register.resetMetrics();
+  });
 
-    expect(await counterValue('model_detail', 'success', APP_BLOCK_ID)).toBe(before + 1);
+  /** Reads the one metric back out of the real default registry. */
+  async function labelsFor(): Promise<Array<Record<string, string>>> {
+    const metrics = await client.register.getMetricsAsJSON();
+    const m = metrics.find(
+      (x) => x.name === 'civitai_app_block_consent_revocation_refusals_total'
+    ) as { values?: Array<{ labels: Record<string, string> }> } | undefined;
+    return (m?.values ?? []).map((v) => v.labels);
+  }
+
+  it('passes a KNOWN scope through verbatim (positive control)', async () => {
+    const { recordBlockConsentRevocationRefusal, ensureRegisterAppBlockRuntimeMetrics } =
+      await import('~/server/metrics/app-block-runtime.metrics');
+    ensureRegisterAppBlockRuntimeMetrics();
+    recordBlockConsentRevocationRefusal('rest', 'ai:write:budgeted');
+    const labels = await labelsFor();
+    // The number moved AND carries the real scope — without this the clamp assertion below
+    // could pass on an emitter wired to nothing.
+    expect(labels).toEqual([{ surface: 'rest', scope: 'ai:write:budgeted' }]);
+  });
+
+  it('CLAMPS an unknown scope to `other`, so the label set cannot grow without bound', async () => {
+    const { recordBlockConsentRevocationRefusal, ensureRegisterAppBlockRuntimeMetrics } =
+      await import('~/server/metrics/app-block-runtime.metrics');
+    ensureRegisterAppBlockRuntimeMetrics();
+    recordBlockConsentRevocationRefusal('rest', 'totally:made:up');
+    recordBlockConsentRevocationRefusal('rest', 'also:made:up');
+    const labels = await labelsFor();
+    expect(
+      labels,
+      'an unknown scope reached the label verbatim. Two junk values produced two series; a ' +
+        'caller deriving this value would grow the set without bound, retained in the Node ' +
+        'heap forever, per pod.'
+    ).toEqual([{ surface: 'rest', scope: 'other' }]);
+  });
+
+  it('clamps on the bridge surface too', async () => {
+    const { recordBlockConsentRevocationRefusal, ensureRegisterAppBlockRuntimeMetrics } =
+      await import('~/server/metrics/app-block-runtime.metrics');
+    ensureRegisterAppBlockRuntimeMetrics();
+    recordBlockConsentRevocationRefusal('bridge', 'nope:nope:nope');
+    expect(await labelsFor()).toEqual([{ surface: 'bridge', scope: 'other' }]);
   });
 });

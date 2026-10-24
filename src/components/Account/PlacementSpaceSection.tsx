@@ -3,6 +3,7 @@ import {
   Anchor,
   Badge,
   Button,
+  Chip,
   Divider,
   Group,
   SegmentedControl,
@@ -10,24 +11,49 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
+  STICKER_MEDIA_TYPES,
   STICKER_PLACEMENT_DEFAULT_MAX_SCALE,
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
+  stickerMediaTypes,
 } from '~/shared/utils/sticker-placement';
+import type { StickerMediaType } from '~/shared/utils/sticker-placement';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
+import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import {
+  STICKER_QUEUE_RECEIVED_URL,
+  STICKER_QUEUE_SENT_URL,
+} from '~/components/Placement/queue-routes';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
+import { pendingCount } from '~/components/Placement/queue-counts';
 import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
+
+/**
+ * The notification an `auto` space owner has to opt into.
+ *
+ * Spelled as a literal rather than imported: the module that owns these types
+ * pulls all 36 notification processors and their SQL into whatever imports it —
+ * 33 KB gzipped — and every other consumer sits behind a `dynamic()` boundary
+ * that this component, reachable from `/user/[username]/sticker-book`, does not
+ * have. A test pins the spelling against the lists that actually feed the
+ * setting, which is the coupling a literal gives up.
+ */
+const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -44,7 +70,11 @@ const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SUR
  * rather than rounded on sight, because silently rewriting it is how a creator
  * finds out from their earnings.
  */
-export function PlacementSpaceSection() {
+export function PlacementSpaceSection({
+  flat,
+  footer,
+}: { flat?: boolean; footer?: ReactNode } = {}) {
+  const { pendingPlacements } = useQueryNotificationsCount();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -59,7 +89,35 @@ export function PlacementSpaceSection() {
     isPending: spacesPending,
     isError: spacesFailed,
   } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
-  const { data: pending } = trpc.placement.getPending.useQuery({}, { enabled });
+  // The paged `placement.getPending` query this card used to make is gone with
+  // the count that needed it: it fetched 50 rows and joined every image just to
+  // read `.length` for a badge, on a settings page that never renders one of
+  // them.
+  const { data: sent } = trpc.placement.getMyStickerPlacements.useQuery({}, { enabled });
+  // Read directly rather than through `useNotificationSettings`, which imports the
+  // processor registry. One boolean is not worth that graph -- see the note on
+  // AUTO_ACCEPTED_NOTIFICATION.
+  const { data: notificationSettings } = trpc.user.getNotificationSettings.useQuery(undefined, {
+    enabled: enabled && !!currentUser,
+  });
+  // Subscribing from here, rather than sending the owner to the settings page.
+  // Opt-in types are excluded from the category aggregates by design, so a
+  // creator who has turned Creator notifications off is shown no checkbox for
+  // this type at all -- and `toggleAll(false)` puts them in that state. A link
+  // would have been a dead end for exactly the creator who chose "Accept all"
+  // to stop being pinged.
+  //
+  // `toggle: true` means "subscribe" for every type; the handler picks the write
+  // direction from the type's own polarity, so this carries no opinion about it.
+  const toggleAutoNotification = trpc.notification.updateUserSettings.useMutation({
+    onSuccess: () => utils.user.getNotificationSettings.invalidate(),
+    // Without this a failed write is spinner-on, spinner-off, nothing: the alert
+    // is still there because the state is still true, which reads as a button
+    // that does not work. No success toast to match -- the alert changing IS the
+    // confirmation, and "User profile updated" is the wrong sentence for this.
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) }),
+  });
 
   const stored = spaces?.[0];
   // Seeded from the surface defaults, not from `off`. With no row the cascade
@@ -69,16 +127,30 @@ export function PlacementSpaceSection() {
   const [mode, setMode] = useState<string>(DEFAULT_MODE);
   const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
+  const [mediaTypes, setMediaTypes] = useState<StickerMediaType[]>([...STICKER_MEDIA_TYPES]);
+  // `null`, not the default value, and that distinction is the mechanism rather
+  // than a nicety: a stored number stops tracking the surface default when it
+  // moves. Seeding this to `1` and sending it on every commit wrote an explicit
+  // `1` the first time a creator touched anything else on this page, so within a
+  // few weeks of normal use raising the default would have reached nobody.
+  //
+  // It also cannot be recovered by diffing against the default, because "unset"
+  // and "deliberately set to 1" are the same number.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) {
       setMode(DEFAULT_MODE);
       setPrice(DEFAULT_PRICE ?? '');
+      setFreeSlots(null);
+      setMediaTypes([...STICKER_MEDIA_TYPES]);
       return;
     }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setFreeSlots(stored.freeSlots);
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
+    setMediaTypes(stickerMediaTypes(stored.settings as Record<string, unknown>));
   }, [stored]);
 
   const save = trpc.placement.setSpace.useMutation({
@@ -94,33 +166,71 @@ export function PlacementSpaceSection() {
       // page asserting a price the creator never chose — which the next commit
       // would then write into their row.
       setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
+      setFreeSlots(stored?.freeSlots ?? null);
+      setMediaTypes(stickerMediaTypes(stored?.settings as Record<string, unknown> | undefined));
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });
 
-  if (!enabled || !currentUser) return null;
+  // The sticker-inventory footer isn't gated on placement, so it must survive these early returns.
+  if (!enabled || !currentUser) return <>{footer}</>;
   // `spaces` is undefined in every terminal state except success — in flight
   // AND after the retries are exhausted — and undefined is indistinguishable
   // from "no row". Rendering against either would seed the defaults and let one
   // click write `review` over a space the creator had explicitly closed. A
   // failed read is not permission to assume they have no preference.
-  if (spacesPending || spacesFailed) return null;
+  if (spacesPending || spacesFailed) return <>{footer}</>;
 
   const cap = range?.max ?? 0;
-  const waiting = pending?.items.length ?? 0;
-  // One page's worth is a floor, not a total. Badging it as an exact number
-  // tells an owner with 200 waiting that they have 50, which is the same lie
-  // the unpaged queue told.
-  const waitingLabel = pending?.nextCursor ? `${waiting}+` : `${waiting}`;
+  const freeSlotCap = range?.freeSlotCap ?? 0;
+  // The real count, not this page's `items.length`. That was one page's worth —
+  // a floor badged with a `+`, which told an owner with 200 waiting that they
+  // had "50+". It rides on `checkNotifications`, already in flight for the
+  // notification bell, so this costs no request; and it is now the SAME number
+  // the user menu shows, where before this card and the menu answered "how many
+  // are waiting on me" differently.
+  const waiting = pendingPlacements;
+
+  // Held back until the rows arrive, rather than read off a falsy default: an
+  // opt-in type with no row is indistinguishable from one nobody subscribed to,
+  // so reading it eagerly flashes "turn this on" at the creator who already did.
+  const autoNoticeReady = mode === 'auto' && !!notificationSettings;
+  const subscribedToAuto = !!notificationSettings?.some(
+    (setting) => setting.type === AUTO_ACCEPTED_NOTIFICATION
+  );
+
+  const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
     'sticker',
     price === '' ? DEFAULT_PRICE ?? 0 : price,
     range?.max ?? null
   );
 
-  const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) =>
+  const commit = (
+    nextMode: string,
+    nextPrice: number | '',
+    nextMaxScale = maxScale,
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, which for a creator who has never touched
+     * it means leaving it NULL — and NULL is what tracks the surface default.
+     * Sending the on-screen number on every commit is what froze it.
+     */
+    nextFreeSlots?: number,
+    nextMediaTypes = mediaTypes
+  ) =>
     save.mutate({
-      settings: { maxScale: nextMaxScale },
+      // `settings` replaces the stored object, so every key the card owns goes out
+      // on every commit — a slider move that left `mediaTypes` out would reopen
+      // the types the creator had closed. Omitted when both are on, which is what
+      // an absent key already means.
+      settings: {
+        maxScale: nextMaxScale,
+        ...(nextMediaTypes.length < STICKER_MEDIA_TYPES.length
+          ? { mediaTypes: nextMediaTypes }
+          : {}),
+      },
+      freeSlots: nextFreeSlots,
       surface: 'sticker',
       entityType: 'user',
       // Keyed by the owner's own id; the service refuses any other, so this
@@ -134,23 +244,21 @@ export function PlacementSpaceSection() {
         !stored && nextPrice === DEFAULT_PRICE ? undefined : nextPrice === '' ? null : nextPrice,
     });
 
-  return (
-    <>
-      <Divider
-        label={
-          <Group gap={4} wrap="nowrap">
-            Stickers on your images
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
-              <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
-                Let other people pay to place a sticker on your work. You keep most of what they
-                pay, and you can decline anything you don&apos;t want. Individual posts and images
-                can override this.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-      />
+  const heading = (
+    <Group gap={4} wrap="nowrap">
+      Stickers on your images
+      <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
+        <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
+          Let other people pay to place a sticker on your work. You keep most of what they pay, and
+          you can decline anything you don&apos;t want. Individual posts and images can override
+          this.
+        </Text>
+      </InfoPopover>
+    </Group>
+  );
 
+  const body = (
+    <>
       <SegmentedControl
         value={mode}
         onChange={(value) => {
@@ -163,6 +271,80 @@ export function PlacementSpaceSection() {
           { value: 'auto', label: 'Accept all' },
         ]}
       />
+
+      {/* "Accept all" removes the review step, and with it the only thing that
+          told this creator a sticker had landed. Subscribing happens HERE rather
+          than behind a link: opt-in types are excluded from the category
+          aggregates by design, so a creator who has turned Creator notifications
+          off is shown no checkbox for this type at all, and `toggleAll(false)`
+          puts them in that state. A link would have been a dead end for exactly
+          the creator who chose "Accept all" to stop being pinged.
+
+          Both directions, for the same reason. Subscribing in one click and then
+          having to find a disabled checkbox to undo it is the same dead end
+          pointing the other way. */}
+      {autoNoticeReady && (
+        <Alert color="blue" p="xs">
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="xs">
+              {subscribedToAuto
+                ? "We'll tell you when someone places a sticker on your images."
+                : 'Stickers are accepted without asking you, so nothing reaches your review queue. Get notified when someone places one?'}
+            </Text>
+            <Button
+              // Never squeezed by the sentence beside it. In a nowrap row the
+              // button is the flexible item by default, and "Notify me" rendered
+              // as "Notify m".
+              className="shrink-0"
+              size="compact-xs"
+              variant="light"
+              loading={toggleAutoNotification.isPending}
+              onClick={() =>
+                // The state being ASKED FOR, never the current one. Passing
+                // `subscribedToAuto` straight through is a click that does
+                // nothing in both directions, which is the bug the polarity
+                // guard pins for the other two callers of this mutation.
+                toggleAutoNotification.mutate({
+                  toggle: !subscribedToAuto,
+                  type: [AUTO_ACCEPTED_NOTIFICATION],
+                })
+              }
+            >
+              {subscribedToAuto ? 'Stop notifying me' : 'Notify me'}
+            </Button>
+          </Group>
+        </Alert>
+      )}
+
+      {/* Hidden at "No stickers", like the free-slot slider: with the space closed
+          there is nothing for it to narrow. The one chip left on is disabled, not
+          silently ignored — the mode is how everything is switched off. */}
+      {mode !== 'off' && (
+        <Stack gap={8}>
+          <Text size="sm" fw={500}>
+            Allow stickers on
+          </Text>
+          <Chip.Group
+            multiple
+            value={mediaTypes}
+            onChange={(next) => {
+              const types = STICKER_MEDIA_TYPES.filter((type) => next.includes(type));
+              if (types.length === 0) return;
+              setMediaTypes(types);
+              commit(mode, price, maxScale, undefined, types);
+            }}
+          >
+            <Group gap="xs">
+              <Chip value="image" disabled={mediaTypes.length === 1 && mediaTypes[0] === 'image'}>
+                Images
+              </Chip>
+              <Chip value="video" disabled={mediaTypes.length === 1 && mediaTypes[0] === 'video'}>
+                Videos
+              </Chip>
+            </Group>
+          </Chip.Group>
+        </Stack>
+      )}
 
       <Stack gap={4}>
         <Group justify="space-between" gap="xs" wrap="nowrap">
@@ -199,6 +381,8 @@ export function PlacementSpaceSection() {
             commit(mode, value);
           }}
         />
+        {/* On the marks' row, which only holds while the caption is one short
+            line — see `placementPriceCaption`, which is bounded to the amount. */}
         {caption && (
           <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
             {caption.text}
@@ -237,34 +421,55 @@ export function PlacementSpaceSection() {
         </Text>
       </Stack>
 
-      {/* The queue is otherwise unreachable: the notification links to the image,
-          and nothing else in the app points at it. */}
+      {/* Hidden entirely at a cap of 0 rather than shown disabled: a control whose
+          every position means the same thing is asking a question with one
+          answer, and the cap moves on its own as a score or a membership does. */}
+      {freeSlotCap > 0 && mode !== 'off' && (
+        <PlacementFreeSlotSlider
+          surface="sticker"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['sticker', 'stickers']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, maxScale, value);
+          }}
+        />
+      )}
+
+      {/* No longer the only way in — the user menu carries the received queue
+          and the pending notification now lands on it — but still the right
+          place for both directions, next to the space controls that create the
+          queue. Two buttons rather than one link, matching the remix gallery:
+          each direction has a count, and a count needs somewhere to sit. */}
       {/* A real button, and `component="a"` rather than `component={Link}` —
           Mantine's polymorphic button drops its styles through the Next link,
-          which is why this read as bare text. The count rides in the button so
-          it has somewhere to live. */}
+          which is why this read as bare text. */}
       <Group gap="xs" wrap="nowrap">
         <Button
           component="a"
-          href="/user/sticker-placements"
+          href={STICKER_QUEUE_RECEIVED_URL}
           variant={waiting > 0 ? 'light' : 'default'}
           size="sm"
+          rightSection={<QueueCountBadge count={waiting} />}
+        >
+          Review pending stickers
+        </Button>
+        <Button
+          component="a"
+          href={STICKER_QUEUE_SENT_URL}
+          variant="default"
+          size="sm"
           rightSection={
-            waiting > 0 ? (
-              <Badge
-                size="sm"
-                color="yellow"
-                variant="filled"
-                // See the remix tab badge: a disc clips the "+" off "50+".
-                circle={!pending?.nextCursor}
-                px={pending?.nextCursor ? 6 : undefined}
-              >
-                {waitingLabel}
+            placedCount > 0 ? (
+              <Badge size="sm" variant="light" circle>
+                {placedCount}
               </Badge>
             ) : undefined
           }
         >
-          Review pending stickers
+          Stickers you&apos;ve placed
         </Button>
       </Group>
 
@@ -283,6 +488,23 @@ export function PlacementSpaceSection() {
           </Text>
         </Alert>
       )}
+    </>
+  );
+
+  if (flat)
+    return (
+      <SettingsSection title={heading}>
+        <div className="flex flex-col gap-4">
+          {body}
+          {footer}
+        </div>
+      </SettingsSection>
+    );
+
+  return (
+    <>
+      <Divider label={heading} />
+      {body}
     </>
   );
 }

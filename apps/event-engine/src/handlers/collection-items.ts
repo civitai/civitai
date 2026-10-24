@@ -40,7 +40,7 @@ interface CollectionItemRecord {
 export const collectionItemHandler = createEventHandler<CollectionItemRecord>({
   tables: ['CollectionItem'],
   operations: ['create', 'delete'],
-  processor: async ({ operation, record, actions, pg }) => {
+  processor: async ({ operation, record, actions }) => {
     const value = operation === 'create' ? 1 : -1
     const addedBy = record.addedById ?? 0
 

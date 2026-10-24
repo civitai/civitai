@@ -1,6 +1,9 @@
 import type { NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
-import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
+import {
+  submitVersionParseErrorMessage,
+  submitVersionSchema,
+} from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
@@ -63,7 +66,10 @@ export default ModEndpoint(
 
     const parsed = submitVersionSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: 'Invalid bundle payload' });
+      // Names the offending field when the failure is confined to the #4059
+      // provenance fields; still exactly 'Invalid bundle payload' for a bundle
+      // problem. See submitVersionParseErrorMessage.
+      res.status(400).json({ message: submitVersionParseErrorMessage(parsed.error) });
       return;
     }
 
@@ -82,7 +88,14 @@ export default ModEndpoint(
 
     try {
       const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
-      const result = await submitVersion({ bundleBuffer, submittedByUserId: user.id });
+      const result = await submitVersion({
+        bundleBuffer,
+        submittedByUserId: user.id,
+        // #4059 — pass the client's provenance CLAIM through untouched. Absent
+        // stays absent; the service must not invent a value.
+        sourceCommit: parsed.data.sourceCommit,
+        sourceDirty: parsed.data.sourceDirty,
+      });
       res.status(200).json(result);
     } catch (err) {
       // Service throws plain Errors with human-readable messages (bundle too

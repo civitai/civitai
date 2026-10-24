@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  userWithCachedCosmeticsSelect,
+  userWithCosmeticsSelect,
+} from '~/server/selectors/user.selector';
 
 export const commentDetailSelect = Prisma.validator<Prisma.CommentSelect>()({
   id: true,
@@ -31,4 +34,10 @@ export const getAllCommentsSelect = Prisma.validator<Prisma.CommentSelect>()({
   //     comments: true,
   //   },
   // },
+});
+
+/** `getAllCommentsSelect` for a caller that fills the user's cosmetics and profile picture from cache. */
+export const getAllCommentsWithCachedUserSelect = Prisma.validator<Prisma.CommentSelect>()({
+  ...getAllCommentsSelect,
+  user: { select: userWithCachedCosmeticsSelect },
 });

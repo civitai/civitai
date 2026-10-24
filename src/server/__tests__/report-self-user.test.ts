@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+  fn({
+    report: { create: (...args: unknown[]) => reportCreate(...args) },
+    image: { update: vi.fn(), findUnique: vi.fn(async () => null) },
+    model: { update: vi.fn() },
+  })
+);
 
 /**
  * The guard is User-only on purpose, so the tests that matter most here are the
@@ -14,25 +22,9 @@ const OTHER_USER = 52;
 const OWN_IMAGE = 63;
 const SYSTEM_USER = -1;
 
-const reportFindFirst = vi.fn();
+const reportFindFirst = dbMock.dbWrite.report.findFirst;
 const reportCreate = vi.fn();
-const reportUpdate = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { placement: { findFirst: vi.fn(async () => null) } },
-  dbWrite: {
-    report: {
-      findFirst: (...args: unknown[]) => reportFindFirst(...args),
-      update: (...args: unknown[]) => reportUpdate(...args),
-    },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        report: { create: (...args: unknown[]) => reportCreate(...args) },
-        image: { update: vi.fn(), findUnique: vi.fn(async () => null) },
-        model: { update: vi.fn() },
-      }),
-  },
-}));
+const reportUpdate = dbMock.dbWrite.report.update;
 
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 

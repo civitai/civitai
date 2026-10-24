@@ -1,15 +1,21 @@
 import {
   actOnRemixGallerySubmissionSchema,
+  declineOutOfBandRemixGallerySubmissionsSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceRowSchema,
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getMyRemixGallerySubmissionsSchema,
+  getMyStickerPlacementsSchema,
   getPendingRemixGallerySubmissionsSchema,
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
+  getRemixGalleryFreeEligibilitySchema,
+  getRemixSourcesForImageSchema,
   getRemixGalleryVisibilitySchema,
+  getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
@@ -21,7 +27,18 @@ import {
   setStickerCommentHiddenSchema,
   submitToRemixGallerySchema,
   suspendPlacerSchema,
+  actOnStorylineContinuationSchema,
+  setStorylineSpaceSchema,
+  storylineContinuationCursorSchema,
+  storylineContinuePriceSchema,
+  storylineIdSchema,
+  storylinePlacementIdSchema,
+  submitStorylineContinuationSchema,
 } from '~/server/schema/placement.schema';
+import {
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
+} from '~/server/services/free-placement.service';
 import { placementPriceRange } from '~/server/services/placement.service';
 import {
   clearPlacementSpace,
@@ -41,27 +58,57 @@ import {
 import {
   actOnStickerPlacements,
   createStickerPlacement,
+  getMyStickerPlacements,
   getPendingStickerPlacements,
   getStickerPlacementDetail,
   getPlacementSettlementStates,
   getStickerPlacementCounts,
   getStickerPlacements,
+  getStickerPlacementsAndCounts,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
   actOnRemixGallerySubmission,
+  declineOutOfBandRemixGallerySubmissions,
   createRemixGallerySubmission,
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   getRemixGallery,
+  getRemixGalleryFreeEligibility,
+  getRemixSourcesForImage,
   getRemixGalleryVisibility,
+  getRemixGalleryCardSummaries,
   retractRemixGallerySubmission,
   setRemixGalleryPins,
 } from '~/server/services/remix-gallery.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
+import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { PlacementSurface } from '~/shared/utils/placement';
+import {
+  actOnStorylineContinuation,
+  createStorylinePlacement,
+  getMyStorylineContinuations,
+  getPendingStorylineContinuations,
+  getStorylineContinuePrice,
+  getStorylineSpace,
+  retractStorylineContinuation,
+  setStorylineSpace,
+} from '~/server/services/storyline-placement.service';
+import { rateLimit } from '~/server/middleware.trpc';
+import {
+  STORYLINE_REFUSALS,
+  STORYLINE_SUBMIT_RATE_LIMIT,
+} from '~/shared/utils/storyline-placement';
+import { isPromotionSurface } from '~/shared/utils/promotion';
+import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
 
 /**
@@ -105,55 +152,101 @@ function assertRemixGalleryEnabled(ctx: Context) {
  * everywhere except the one endpoint that turns it on.
  */
 function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
+  if (isPromotionSurface(surface)) return assertPromotionsEnabled(ctx);
   return assertPlacementEnabled(ctx);
 }
 
+/** Reads of a space are open for stickers and remixes; a promotion space is not. */
+function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
+  if (isPromotionSurface(surface)) assertPromotionsEnabled(ctx);
+}
+
 /**
- * What the viewer may see, with the SFW domain applied.
- *
- * The level itself is client-supplied, as it is for every image listing. The
- * clamp is not a second opinion about the viewer's preference — it is the
- * domain's rule, and a gallery shows content the host creator did not choose,
- * so it cannot inherit the host image's own admissibility.
+ * Storyline spaces are reached only through the storyline procedures below, which
+ * run the feature flag and the chapter check. Left unrouted here, the surface
+ * would fall through to the sticker flags above, and a storyline space opens at
+ * price 0 by default.
  */
-const viewerBrowsingLevel = (ctx: Context, requested: number) =>
-  ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
+function assertSurfaceRouted(surface: PlacementSurface) {
+  if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
+}
+
+function assertStorylinesEnabled(ctx: Context) {
+  if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
+}
 
 export const placementRouter = router({
-  getSpace: publicProcedure
-    .input(getPlacementSpaceSchema)
-    .query(({ input }) => resolvePlacementSpaceFor(input)),
+  getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return resolvePlacementSpaceFor(input);
+  }),
 
   // The row for one level, so a toggle shows what that level is set to rather
   // than what it inherits.
-  getSpaceRow: protectedProcedure
-    .input(getPlacementSpaceRowSchema)
-    .query(({ input, ctx }) => getPlacementSpaceRow({ ...input, userId: ctx.user.id })),
+  getSpaceRow: protectedProcedure.input(getPlacementSpaceRowSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return getPlacementSpaceRow({ ...input, userId: ctx.user.id });
+  }),
 
   clearSpace: protectedProcedure.input(getPlacementSpaceRowSchema).mutation(({ input, ctx }) => {
     assertSurfaceEnabled(ctx, input.surface);
     return clearPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
-  getMySpaces: protectedProcedure
-    .input(placementPriceRangeSchema)
-    .query(({ input, ctx }) => getPlacementSpaces({ surface: input.surface, userId: ctx.user.id })),
+  getMySpaces: protectedProcedure.input(placementPriceRangeSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return getPlacementSpaces({ surface: input.surface, userId: ctx.user.id });
+  }),
 
-  getPriceRange: protectedProcedure
-    .input(placementPriceRangeSchema)
-    .query(({ input, ctx }) => placementPriceRange(ctx.user.id, input.surface)),
+  getPriceRange: protectedProcedure.input(placementPriceRangeSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return placementPriceRange(ctx.user.id, input.surface);
+  }),
 
   setSpace: protectedProcedure.input(placementSpaceSchema).mutation(({ input, ctx }) => {
     assertSurfaceEnabled(ctx, input.surface);
     return setPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
-  getStickerPlacements: publicProcedure
-    .input(getStickerPlacementsSchema)
-    .query(({ input, ctx }) =>
-      getStickerPlacements({ imageIds: input.imageIds, viewerId: ctx.user?.id })
-    ),
+  /**
+   * Where the viewer stands against the free tier on one target: their daily
+   * allowance, and whether they have already spent a free placement here.
+   *
+   * **A listing.** Both halves read a replica and are stale the moment they
+   * return; the refusals live in `createFreePlacement`, under a lock, in the
+   * transaction that inserts. This exists so the choice can be offered with the
+   * numbers visible — an allowance spent silently is the worst version of a
+   * scarce thing — and for no other purpose.
+   *
+   * Takes the target rather than being sticker-specific, because the allowance
+   * is one placement a day across the whole site and both surfaces need to say
+   * so. Surface-agnostic by reusing what PR 1 already exposes, not by anything
+   * new sitting between the two.
+   *
+   * `placerId` is the session's. Off the input it would read anyone's allowance.
+   */
+  getFreeStanding: protectedProcedure
+    .input(getPlacementSpaceSchema)
+    .query(async ({ input, ctx }) => {
+      assertPromotionSurfaceReadable(ctx, input.surface);
+      const [allowance, usedHere] = await Promise.all([
+        getFreePlacementAllowance({ placerId: ctx.user.id }),
+        hasUsedFreePlacementOn({ ...input, placerId: ctx.user.id }),
+      ]);
+
+      return { ...allowance, usedHere };
+    }),
+
+  getStickerPlacements: publicProcedure.input(getStickerPlacementsSchema).query(({ input, ctx }) =>
+    getStickerPlacements({
+      imageIds: input.imageIds,
+      viewerId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    })
+  ),
 
   // Its own query, hit only when someone hovers a sticker. Folding it into the
   // listing would pay for it on every sticker in a feed.
@@ -171,22 +264,48 @@ export const placementRouter = router({
     .input(getStickerPlacementsSchema)
     .query(({ input }) => getStickerPlacementCounts(input.imageIds)),
 
+  // The listing and the counts in one call, for every surface that wants both —
+  // which is every surface a signed-in viewer sees. Same input cap as the two it
+  // replaces there. Both of those stay: anonymous viewers who have not revealed
+  // stickers still ask for counts alone (an edge-cacheable call), and clients
+  // built before this procedure keep calling the pair for hours after a release.
+  getStickerPlacementsAndCounts: publicProcedure
+    .input(getStickerPlacementsSchema)
+    .query(({ input, ctx }) =>
+      getStickerPlacementsAndCounts({
+        imageIds: input.imageIds,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
+
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
   getSettlementStates: protectedProcedure
     .input(getPlacementSettlementStatesSchema)
     .query(({ input, ctx }) => getPlacementSettlementStates(input.placementIds, ctx.user.id)),
 
-  createSticker: protectedProcedure
-    .input(createStickerPlacementSchema)
-    .mutation(({ input, ctx }) => {
-      assertPlacementEnabled(ctx);
-      return createStickerPlacement({
-        ...input,
-        placerId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
-    }),
+  /**
+   * `guardedProcedure`, not `protectedProcedure`: placing a sticker publishes
+   * content onto someone else's image, so a muted account has to be refused the
+   * same way it is refused a comment. Account state lives here; placement state
+   * — the moderator suspension and the block pair — lives in `assertCanPlace`.
+   */
+  createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
+    assertPlacementEnabled(ctx);
+    return createStickerPlacement({
+      ...input,
+      // After the spread, and the schema has no `placerId` to strip anyway —
+      // both, because this is the id the whole free tier is scoped by and
+      // every check downstream is a statement about it rather than a check of
+      // it. Read off the payload it would spend someone else's daily
+      // allowance and place under their name with nothing raising.
+      placerId: ctx.user.id,
+      // From the request's own domain, never the input: `...input` spreads
+      // first, so a client-sent `spendType` cannot survive this line.
+      spendType: domainSpendType(ctx.features),
+    });
+  }),
 
   /**
    * The one mutation here that is deliberately NOT flag-gated: turning the flag
@@ -282,10 +401,28 @@ export const placementRouter = router({
     .input(placerSchema)
     .mutation(({ input }) => restorePlacementPrivileges(input.userId)),
 
-  getPending: protectedProcedure
-    .input(getPendingStickerPlacementsSchema)
+  getPending: protectedProcedure.input(getPendingStickerPlacementsSchema).query(({ input, ctx }) =>
+    getPendingStickerPlacements({
+      ownerId: ctx.user.id,
+      cursor: input.cursor,
+      domainLevels: domainServableLevels(ctx),
+      viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  /**
+   * The placer's own side of the same queue. `ctx.user.id` is the only source of
+   * `placerId` — there is no input for it, so this cannot be pointed at anyone
+   * else's placements.
+   */
+  getMyStickerPlacements: protectedProcedure
+    .input(getMyStickerPlacementsSchema)
     .query(({ input, ctx }) =>
-      getPendingStickerPlacements({ ownerId: ctx.user.id, cursor: input.cursor })
+      getMyStickerPlacements({
+        placerId: ctx.user.id,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
     ),
 
   // How many pending placements blocking someone would decline, so the confirm
@@ -318,6 +455,20 @@ export const placementRouter = router({
     })
   ),
 
+  // Counts and preview thumbnails for a whole surface, so a feed pays one query
+  // per 100 cards. Deliberately not merged with the sticker batch: the two
+  // filter completely differently — a gallery entry has to clear a visibility
+  // gate that a sticker has none of — and HTTP/3 makes a second request cheap
+  // enough that fusing two safety contracts to save one is a bad trade.
+  getRemixGalleryCardSummaries: publicProcedure
+    .input(getRemixGalleryCardSummariesSchema)
+    .query(({ input, ctx }) =>
+      getRemixGalleryCardSummaries({
+        imageIds: input.imageIds,
+        browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
+
   // Whether to draw the card at all, and at what price. Its own query because
   // the answer is needed on every image detail view while the gallery contents
   // are needed only where one exists.
@@ -327,6 +478,7 @@ export const placementRouter = router({
       getRemixGalleryVisibility({
         hostImageId: input.imageId,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        domainLevels: domainServableLevels(ctx),
         // The service only counts pending submissions when this matches the
         // space owner, so a signed-out or unrelated viewer never learns how
         // many someone has waiting.
@@ -334,12 +486,48 @@ export const placementRouter = router({
       })
     ),
 
-  submitToRemixGallery: protectedProcedure
+  /** `guardedProcedure` for the same reason `createSticker` is. */
+  submitToRemixGallery: guardedProcedure
     .input(submitToRemixGallerySchema)
     .mutation(({ input, ctx }) => {
       assertRemixGalleryEnabled(ctx);
-      return createRemixGallerySubmission({ ...input, placerId: ctx.user.id });
+      return createRemixGallerySubmission({
+        ...input,
+        // From the session, never the input. `createFreePlacement` takes this as
+        // a plain number and cannot tell where it came from, and every check
+        // downstream is *about* this id rather than a check *of* it — so a
+        // client-supplied one would spend someone else's daily allowance and
+        // submit under their account with nothing raising. `...input` spreads
+        // first, so no client value can survive this line.
+        placerId: ctx.user.id,
+        spendType: domainSpendType(ctx.features),
+      });
     }),
+
+  /**
+   * The free option's inputs, for the submit card. A listing: everything it
+   * returns is stale by the time it renders, and the refusals live on the
+   * mutation.
+   */
+  getRemixGalleryFreeEligibility: protectedProcedure
+    .input(getRemixGalleryFreeEligibilitySchema)
+    .query(({ input, ctx }) => getRemixGalleryFreeEligibility({ ...input, placerId: ctx.user.id })),
+  // `placerId` from the session, never from input: this answers "which galleries
+  // can THIS image go to", and an input-supplied id would answer it about
+  // somebody else's image.
+  getRemixSourcesForImage: protectedProcedure
+    .input(getRemixSourcesForImageSchema)
+    .query(({ input, ctx }) =>
+      getRemixSourcesForImage({
+        imageId: input.imageId,
+        placerId: ctx.user.id,
+        // From the request's own feature flags, never from input: a
+        // client-supplied ceiling would be the client choosing what it is
+        // allowed to be sent.
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   /**
    * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
@@ -354,6 +542,21 @@ export const placementRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  /**
+   * Ungated for the same reason as the single action above: an owner must be
+   * able to clear submissions their own rule should never have taken, whatever
+   * the flag says.
+   *
+   * `isModerator` is deliberately not passed. This resolves a set from a
+   * gallery's own rule and settles every row in it — a moderator running it on
+   * someone else's gallery would be a bulk action attributed to the owner.
+   */
+  declineOutOfBandRemixGallerySubmissions: protectedProcedure
+    .input(declineOutOfBandRemixGallerySubmissionsSchema)
+    .mutation(({ input, ctx }) =>
+      declineOutOfBandRemixGallerySubmissions({ ...input, userId: ctx.user.id })
     ),
 
   // Also ungated: a submitter must be able to get their Buzz back out of escrow
@@ -378,10 +581,108 @@ export const placementRouter = router({
         ownerId: ctx.user.id,
         hostImageId: input.hostImageId,
         cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
     ),
 
-  getMyRemixGallerySubmissions: protectedProcedure.query(({ ctx }) =>
-    getMyRemixGallerySubmissions({ placerId: ctx.user.id })
-  ),
+  getMyRemixGallerySubmissions: protectedProcedure
+    .input(getMyRemixGallerySubmissionsSchema)
+    .query(({ input, ctx }) =>
+      getMyRemixGallerySubmissions({
+        placerId: ctx.user.id,
+        domainLevels: domainServableLevels(ctx),
+        viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
+
+  getStorylineSpace: protectedProcedure.input(storylineIdSchema).query(({ input, ctx }) => {
+    assertStorylinesEnabled(ctx);
+    return getStorylineSpace({ storylineId: input.storylineId, userId: ctx.user.id });
+  }),
+
+  setStorylineSpace: protectedProcedure
+    .input(setStorylineSpaceSchema)
+    .mutation(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return setStorylineSpace({ ...input, userId: ctx.user.id });
+    }),
+
+  getStorylineContinuePrice: publicProcedure
+    .input(storylineContinuePriceSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getStorylineContinuePrice({
+        parentPostId: input.parentPostId,
+        viewerId: ctx.user?.id,
+      });
+    }),
+
+  getPendingStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getPendingStorylineContinuations({
+        ownerId: ctx.user.id,
+        cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+      });
+    }),
+
+  /**
+   * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
+   * off must not leave a creator holding continuations with no way to answer
+   * them. Ownership is enforced in the service.
+   */
+  actOnStorylineContinuation: protectedProcedure
+    .input(actOnStorylineContinuationSchema)
+    .mutation(({ input, ctx }) =>
+      actOnStorylineContinuation({
+        placementId: input.placementId,
+        ownerId: ctx.user.id,
+        action: input.action,
+      })
+    ),
+
+  /**
+   * `guardedProcedure` for the same reason `createSticker` is, and rate-limited
+   * because a zero-priced continuation costs the placer nothing: the pending
+   * cap bounds one placer per creator, not one placer across many.
+   */
+  submitStorylineContinuation: guardedProcedure
+    .use(
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
+    )
+    .input(submitStorylineContinuationSchema)
+    .mutation(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return createStorylinePlacement({
+        ...input,
+        // From the session, never the input, as on every other create.
+        placerId: ctx.user.id,
+        spendType: domainSpendType(ctx.features),
+      });
+    }),
+
+  getMyStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getMyStorylineContinuations({ placerId: ctx.user.id, cursor: input.cursor });
+    }),
+
+  // Ungated: a contributor must be able to get their Buzz back whatever the flag says.
+  retractStorylineContinuation: protectedProcedure
+    .input(storylinePlacementIdSchema)
+    .mutation(({ input, ctx }) =>
+      retractStorylineContinuation({ placementId: input.placementId, placerId: ctx.user.id })
+    ),
 });

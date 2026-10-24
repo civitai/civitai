@@ -1,4 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// Type-only: erased at runtime, so the dynamic-import warm-up in each describe
+// (which is what keeps the heavy module graph off the per-test timeout) still
+// does the actual loading. Replaces inline `typeof import(...)` annotations,
+// which this repo's eslint config forbids.
+import type * as FileService from '../file.service';
+import type * as ModelHelpers from '~/server/common/model-helpers';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -46,19 +53,10 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const modelVersionFindFirst = vi.fn();
-const modelFileFindMany = vi.fn();
-const modelFileFindFirst = vi.fn();
-const recommendedResourceFindFirst = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    modelVersion: { findFirst: modelVersionFindFirst },
-    modelFile: { findMany: modelFileFindMany, findFirst: modelFileFindFirst },
-    recommendedResource: { findFirst: recommendedResourceFindFirst },
-  },
-  dbWrite: {},
-}));
+const modelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
+const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
+const modelFileFindFirst = dbMock.dbRead.modelFile.findFirst;
+const recommendedResourceFindFirst = dbMock.dbRead.recommendedResource.findFirst;
 
 // Entity-access check: grant access by default so the happy path reaches the
 // file lookup + URL resolution.
@@ -81,6 +79,7 @@ vi.mock('~/server/services/bountyEntry.service', () => ({
 const getPaidAccessMock = vi.fn();
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: getPaidAccessMock,
+  bustModelSaleCache: vi.fn(),
 }));
 
 // Control whether the delivery URL resolves. A throw here is the
@@ -89,13 +88,6 @@ vi.mock('~/server/services/paid-access.service', () => ({
 const resolveDownloadUrlMock = vi.fn();
 vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
-}));
-
-// The global setup mocks logToAxiom but not safeError (used in the resolve
-// catch). Provide both so the unresolvable-URL path logs without throwing.
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-  safeError: (err: unknown) => ({ name: 'Error', message: String(err) }),
 }));
 
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
@@ -150,7 +142,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // box that transform can exceed a per-test timeout (a 30s describe override
   // flaked here under contention). Pay it ONCE in beforeAll with a generous hook
   // timeout, then every test uses the warm reference — no per-test import race.
-  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
   }, 60000);
@@ -230,6 +222,47 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
     expect(result.status).toBe('success');
     if (result.status === 'success') expect(result.url).toBe('https://cdn.example.com/signed');
+  });
+
+  it('never picks a replaced file when resolving the primary file', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('never picks a replaced file when resolving by type', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'VAE',
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('still serves a replaced file asked for by its id', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      fileId: aFile.id,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).not.toHaveProperty('replacedAt');
   });
 
   // --- Access denial must not masquerade as "you need to log in" ----------
@@ -384,8 +417,9 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
  * clauses. `not-found` here IS the production 404.
  */
 describe('serialized downloadUrl → getFileForModelVersion (the pair actually resolves)', () => {
-  let getFileForModelVersion: typeof import('../file.service')['getFileForModelVersion'];
-  let createSerializedFileDownloadUrl: typeof import('~/server/common/model-helpers')['createSerializedFileDownloadUrl'];
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  let createSerializedFileDownloadUrl: typeof ModelHelpers.createSerializedFileDownloadUrl;
+  type RouteInput = Omit<Parameters<typeof getFileForModelVersion>[0], 'user' | 'noAuth'>;
   beforeAll(async () => {
     ({ getFileForModelVersion } = await import('../file.service'));
     ({ createSerializedFileDownloadUrl } = await import('~/server/common/model-helpers'));
@@ -404,7 +438,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+    metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' } as BasicFileMetadata,
     hashes: [{ hash: 'aaaa1111' }],
   };
   const OWNED_SECOND = {
@@ -415,7 +449,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'PickleTensor', size: 'full', fp: 'fp32' },
+    metadata: { format: 'PickleTensor', size: 'full', fp: 'fp32' } as BasicFileMetadata,
     hashes: [{ hash: 'bbbb2222' }],
   };
   // Lives on the LINKED version. `getVaeFiles` relabels its `type` to 'VAE'
@@ -428,7 +462,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     overrideName: null,
     type: 'Model',
     visibility: 'Public',
-    metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' },
+    metadata: { format: 'SafeTensor', size: 'full', fp: 'fp32' } as BasicFileMetadata,
     hashes: [{ hash: 'eeee5555' }],
   };
   const UNIVERSE = [OWNED_PRIMARY, OWNED_SECOND, LINKED_VAE];
@@ -480,20 +514,23 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
 
   /** Parse an emitted URL into the route's handler input (schema at
    * src/pages/api/download/models/[modelVersionId].ts). */
-  function toRouteInput(path: string) {
+  function toRouteInput(path: string): RouteInput {
     const url = new URL(`https://civitai.com${path}`);
     const modelVersionId = Number(url.pathname.split('/').pop());
     const q = url.searchParams;
     const fileIdParam = q.get('fileId');
+    // The enum-shaped params are cast one by one rather than the whole object being
+    // widened: the route's zod schema is what narrows them in production, and a cast
+    // per field still fails here if the service stops accepting one.
     return {
       modelVersionId,
       fileId: fileIdParam ? Number(fileIdParam) : undefined,
-      type: q.get('type') ?? undefined,
-      format: q.get('format') ?? undefined,
-      size: q.get('size') ?? undefined,
+      type: (q.get('type') ?? undefined) as RouteInput['type'],
+      format: (q.get('format') ?? undefined) as RouteInput['format'],
+      size: (q.get('size') ?? undefined) as RouteInput['size'],
       fp: q.get('fp') ?? undefined,
       quantType: q.get('quantType') ?? undefined,
-    } as never;
+    };
   }
 
   it('a pinned URL for a file the version OWNS resolves to exactly that file', async () => {
@@ -559,7 +596,113 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
       noAuth: true,
       user: PUBLIC_REQUESTER,
     });
-    const where = modelFileFindFirst.mock.calls[0][0].where;
-    expect(where).toMatchObject({ id: 21, modelVersionId: 4242 });
+    // The pin is applied in memory so the file's siblings come back too (they decide whether its
+    // download name needs a variant suffix), which leaves the version — the boundary that matters —
+    // as the only thing keeping another version's file out of the result set.
+    const where = modelFileFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ modelVersionId: 4242 });
+  });
+
+  it('a pinned URL serves the file that was pinned, not the first on the version', async () => {
+    // Guards the in-memory half of the pin above: version 4242 holds files 21 and 22, and 21 is
+    // both lower-numbered and the primary, so picking wrongly still returns a plausible file.
+    const result = (await getFileForModelVersion({
+      ...toRouteInput('/api/download/models/4242?fileId=22'),
+      noAuth: true,
+      user: PUBLIC_REQUESTER,
+    })) as { status: string; fileId?: number };
+
+    expect(result.status).toBe('success');
+    expect(result.fileId).toBe(22);
+  });
+});
+
+/**
+ * The SEAM between `getFileForModelVersion` and `resolveDownloadUrl`.
+ *
+ * 🔴 Measured before these existed: hardcoding `{ direct: true }` at the
+ * `resolveDownloadUrl` call site, and dropping the 4th argument entirely, BOTH
+ * passed the full download-path suite. The caller's `direct` had no observable
+ * consequence anywhere in the tests — the option was threaded through code that
+ * nothing asserted on.
+ *
+ * `direct` decides whether a download is served from a CDN or from the storage
+ * origin, and those are billed differently. An always-on mutant is therefore a
+ * silent cost regression, which is precisely the shape a test suite should not
+ * be blind to.
+ */
+describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  beforeEach(() => {
+    modelVersionFindFirst.mockReset();
+    modelFileFindMany.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    modelFileFindMany.mockResolvedValue([aFile]);
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+  });
+
+  // `requireAuth` defaults on when UNAUTHENTICATED_DOWNLOAD is unset, so a
+  // user-less call returns `unauthorized` before it ever resolves a URL — which
+  // would make every assertion below vacuous rather than failing.
+  const A_USER = { id: 1, isModerator: true };
+  const ATTRIBUTION = { caller: 'download-route', actor: 'user' } as const;
+
+  // The 4th argument is the options bag. Asserting on it by index rather than
+  // with objectContaining is deliberate: a dropped argument is `undefined`
+  // there, and an objectContaining assertion cannot tell that from a present one.
+  const optionsArg = () => resolveDownloadUrlMock.mock.calls[0][3];
+
+  it.each([
+    ['true', true],
+    ['false', false],
+  ])('forwards direct:%s exactly as given', async (_label, direct) => {
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      direct,
+      attribution: ATTRIBUTION,
+    });
+
+    expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
+    expect(optionsArg()).toEqual({ direct, ...ATTRIBUTION });
+  });
+
+  // The caller's attribution reaches the resolver unchanged. Two distinct pairs
+  // so a hardcoded caller or actor at the resolve cannot pass both.
+  it.each([
+    [{ caller: 'download-route', actor: 'anon' }],
+    [{ caller: 'wildcard', actor: 'user' }],
+  ] as const)('forwards attribution %o unchanged', async (attribution) => {
+    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, attribution });
+
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...attribution });
+  });
+
+  // A caller that omits `direct` must not be upgraded to a direct resolve. This
+  // is the default every pre-existing call site takes.
+  it('passes direct:undefined when the caller omits it, never true', async () => {
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      attribution: ATTRIBUTION,
+    });
+
+    // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
+    // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
+    // is exactly the distinction the comment above claims this assertion makes.
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
+    expect(optionsArg()?.direct).not.toBe(true);
   });
 });

@@ -4,13 +4,18 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { parseBody, setWildcardCors, setPublicClientCors } from '$lib/server/oauth/http';
+import {
+  basicCredentials,
+  parseBody,
+  setWildcardCors,
+  setPublicClientCors,
+} from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/revoke — RFC 7009 token revocation. Ported from src/pages/api/auth/oauth/revoke.ts.
-// Session-cookie OR client-secret auth; ALWAYS returns 200 (even for unknown/expired tokens — never
-// reveal token existence). The session is the hub's locals.user (hooks.server.ts) instead of
-// getServerAuthSession.
+// Session-cookie, client-secret, or public-client auth; ALWAYS returns 200 (even for unknown/expired
+// tokens — never reveal token existence). The session is the hub's locals.user (hooks.server.ts)
+// instead of getServerAuthSession.
 //
 // This is where the (user, client) ACCESS-token cascade lives: explicit revocation is the intended place
 // to wipe all of an app's access for the user. Routine refresh rotation no longer cascades — see
@@ -24,7 +29,10 @@ export const OPTIONS: RequestHandler = () => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   const body = await parseBody(request);
-  const { token, token_type_hint, client_id, client_secret } = body;
+  const { token, token_type_hint } = body;
+  const basic = basicCredentials(request);
+  const client_id = basic?.id ?? body.client_id;
+  const client_secret = basic?.secret ?? body.client_secret;
   // Real CLIENT IP from proxy headers (not the shared ingress peer) — keyed per-client, or null →
   // limit skipped, never one global bucket. `'unknown'` is for the audit log only, not the limiter.
   const clientIp = getClientIp(request);
@@ -78,23 +86,25 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     );
   }
 
-  // Authenticate: a valid session OR matching client credentials.
-  let authenticatedUserId: number | null = locals.user?.id ?? null;
-  if (!authenticatedUserId && client?.isConfidential && client.secret && client_secret) {
+  let clientAuthenticated = false;
+  if (client?.isConfidential && client.secret && client_secret) {
     const a = Buffer.from(generateSecretHash(client_secret));
     const b = Buffer.from(client.secret);
     // Length guard — timingSafeEqual throws on a length mismatch (a legacy/plaintext secret). Fail closed.
-    if (a.length === b.length && timingSafeEqual(a, b)) {
-      authenticatedUserId = client.userId;
-    }
+    clientAuthenticated = a.length === b.length && timingSafeEqual(a, b);
   }
+  // Authenticate: a valid session OR matching client credentials.
+  const authenticatedUserId: number | null =
+    locals.user?.id ?? (clientAuthenticated && client ? client.userId : null);
+  // RFC 7009 §2.1: a public client may revoke a token issued to it — the token is its own credential.
+  const publicClientId = client && !client.isConfidential ? client.id : null;
 
   try {
     const hash = generateSecretHash(token);
     const types =
       token_type_hint === 'refresh_token'
-        ? (['Refresh', 'Access'] as const)
-        : (['Access', 'Refresh'] as const);
+        ? (['Refresh', 'Access', 'Worker'] as const)
+        : (['Access', 'Refresh', 'Worker'] as const);
 
     for (const type of types) {
       const apiKey = await db
@@ -105,9 +115,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         .executeTakeFirst();
 
       if (apiKey) {
-        // Must be authenticated, and can only revoke your own tokens. Silently ignore otherwise (RFC 7009
-        // — don't reveal token existence).
-        if (!authenticatedUserId || apiKey.userId !== authenticatedUserId) break;
+        // A Worker token only by the workload client it was issued to.
+        const mayRevoke =
+          apiKey.type === 'Worker'
+            ? clientAuthenticated && apiKey.clientId === client?.id
+            : (!!authenticatedUserId && apiKey.userId === authenticatedUserId) ||
+              (!!publicClientId && apiKey.clientId === publicClientId);
+        // Silently, not as an error (RFC 7009 — don't reveal token existence).
+        if (!mayRevoke) break;
 
         logOAuthEvent({
           type: 'token.revoked',

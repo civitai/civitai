@@ -1,11 +1,6 @@
 import {
-  Anchor,
   Badge,
-  Box,
   Button,
-  Code,
-  Collapse,
-  CopyButton,
   Divider,
   Group,
   Image,
@@ -15,12 +10,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
-  IconCheck,
-  IconChevronDown,
-  IconClipboard,
   IconDatabase,
   IconPalette,
   IconPhoto,
@@ -32,76 +23,54 @@ import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
+import { ManualSetupCollapse } from '~/components/Apps/ManualSetupCollapse';
 
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
  *
- * The page that renders this is gated on the `appBlocksGetStarted` flag, which
- * is STAGED MOD-ONLY today (deploys dark-to-public; mods review live on prod)
- * and widened to `['public']` in a one-line flag change at launch — see
- * get-started.tsx / feature-flags.service.ts.
+ * This is not a page and is not gated on its own. It is mounted by `AppsBuildBody`
+ * as state A of `/apps/build`, whose gate is `canAccessAppsBuild` =
+ * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+ * (`~/shared/utils/app-blocks-access`). `appBlocksGetStarted` is STAGED MOD-ONLY today,
+ * but it is one disjunct UNDER a store AND, not the gate — so widening it alone is NOT
+ * a one-line flag change and does not launch this: the widened cohort gets a `notFound`
+ * from `/apps/build`. See the flag's own comment in `feature-flags.service.ts` for what
+ * else has to move. (The earlier version of this note said "one-line flag change" and
+ * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
- * Copy is QUICKSTART-FIRST (devs scan + copy-paste; minimal prose). Honesty /
- * scope: this page points would-be developers at the LOCAL build tooling. The
- * `dev:live` (`/api/v1/blocks/dev-token`) path is `isModerator`-gated server
- * side, so a non-mod can install the CLI, scaffold, and build/test locally
- * against the mock harness.
+ * Copy is AGENT-FIRST: the copyable agent prompt leads, and the manual CLI steps sit in a
+ * closed collapse at the bottom. Honesty / scope: both routes point would-be developers at
+ * the LOCAL build tooling. The `dev:live` (`/api/v1/blocks/dev-token`) path is
+ * `isModerator`-gated server side, so a non-mod can install the CLI, scaffold, and
+ * build/test locally against the mock harness.
  *
  * Pure presentational (props-only, no tRPC / no network) so it renders in
  * isolation in component tests.
  */
 
-// CLI commands + ecosystem links are single-sourced in `./cliCommands`. The
-// quickstart uses the with-sample-name create form (`CLI_CREATE_SAMPLE_COMMAND`).
-
-function CopyableCommand({ command }: { command: string }) {
-  return (
-    <CopyButton value={command}>
-      {({ copied, copy }) => (
-        <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-          <Code
-            block
-            color={copied ? 'green' : undefined}
-            style={{ wordBreak: 'break-all', paddingRight: 36 }}
-          >
-            {copied ? 'Copied' : `$ ${command}`}
-          </Code>
-          <LegacyActionIcon
-            className="absolute right-2 top-1/2 -translate-y-1/2"
-            right={8}
-            variant="transparent"
-            color="gray"
-            aria-label={`Copy command: ${command}`}
-            onClick={copy}
-          >
-            {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
-          </LegacyActionIcon>
-        </Box>
-      )}
-    </CopyButton>
-  );
-}
-
-export function GetStartedBody() {
-  const [opened, { toggle }] = useDisclosure(false);
-
+/**
+ * `onCopyCommand` is OPTIONAL and threads the `/apps/build` funnel's `cli_copy` step
+ * out to whoever mounted this. It is a CALLBACK rather than a `useTrackEvent()` call
+ * in here on purpose: the header above promises this component is props-only with no
+ * network, and its `*.browser.test.tsx` suite mounts it with no providers — importing
+ * the tracker would break both. See `AppsBuildBody`, the one call site that passes it.
+ *
+ * `onCopyAgentPrompt` threads the funnel's `agent_prompt_copy` step the same way, for
+ * {@link AgentOnboardingCard} below. Same reason, same shape, separate action: the two
+ * routes into building an app are the thing this page is trying to measure, so collapsing
+ * them onto one event would make the comparison unanswerable.
+ */
+export function GetStartedBody({
+  onCopyCommand,
+  onCopyAgentPrompt,
+}: {
+  onCopyCommand?: (c: string) => void;
+  onCopyAgentPrompt?: (prompt: string) => void;
+} = {}) {
   return (
     <Stack gap="xl">
-      {/* Banner — 3:2 hero image (public asset, no layout shift) */}
-      <Image
-        src="/images/apps/civitai-apps-banner.webp"
-        alt="Build apps on Civitai"
-        radius="md"
-        w="100%"
-        style={{ aspectRatio: '3 / 2' }}
-      />
-
       {/* Hero — one line, no wall of text */}
       <Stack gap="xs">
         <Group gap="xs">
@@ -115,6 +84,24 @@ export function GetStartedBody() {
           models and generate with Buzz. You focus on creating; we handle the rest.
         </Text>
       </Stack>
+
+      {/*
+        Above the banner on purpose: the agent route is this state's primary action. The
+        banner is therefore not guaranteed to be the LCP element of this indexable state, and
+        LCP has not been measured for this order, so do not tune the image's loading on that
+        assumption. The card can also shift what follows it by one line just after hydration;
+        see `AgentOnboardingCard`'s header.
+      */}
+      <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
+
+      {/* Banner: 3:2 public asset. The fixed aspect ratio reserves its box before it loads. */}
+      <Image
+        src="/images/apps/civitai-apps-banner.webp"
+        alt="Build apps on Civitai"
+        radius="md"
+        w="100%"
+        style={{ aspectRatio: '3 / 2' }}
+      />
 
       {/* What you get — the platform leverage a dev gets, then the toolkit links */}
       <Stack gap="sm">
@@ -214,45 +201,7 @@ export function GetStartedBody() {
 
       <Divider />
 
-      {/* Quickstart — copy 3 lines, you're running. Collapsed by default so the
-          "what you get" pitch leads; the commands are one click away. */}
-      <Stack gap="sm">
-        <Title order={2}>Quickstart</Title>
-        <Text size="sm" c="dimmed">
-          Create a local Civitai app in 3 steps with the{' '}
-          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
-            Civitai CLI
-          </Anchor>
-        </Text>
-        <Button
-          variant="subtle"
-          size="xs"
-          onClick={toggle}
-          aria-expanded={opened}
-          w="fit-content"
-          rightSection={
-            <IconChevronDown
-              size={16}
-              style={{
-                transform: opened ? 'rotate(180deg)' : undefined,
-                transition: 'transform 150ms ease',
-              }}
-            />
-          }
-        >
-          {opened ? 'Hide commands' : 'Show commands'}
-        </Button>
-        <Collapse in={opened} data-testid="quickstart-commands">
-          <Stack gap="sm">
-            <CopyableCommand command={CLI_INSTALL_BREW} />
-            <Text size="xs" c="dimmed">
-              or: <Code>{CLI_INSTALL_GO}</Code>
-            </Text>
-            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
-            <CopyableCommand command={CLI_RUN_COMMAND} />
-          </Stack>
-        </Collapse>
-      </Stack>
+      <ManualSetupCollapse onCopyCommand={onCopyCommand} />
     </Stack>
   );
 }

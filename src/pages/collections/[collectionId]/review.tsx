@@ -1,5 +1,6 @@
 import {
   Badge,
+  Button,
   Center,
   Checkbox,
   Chip,
@@ -31,6 +32,12 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import {
+  openRejectCollectionItemsModal,
+  type RejectionSelection,
+} from '~/components/Collections/components/RejectCollectionItemsModal';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
+import { getDisplayName } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
@@ -40,7 +47,9 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import {
   getCollectionItemReviewData,
   useCollection,
+  useOnCollectionItemsReviewed,
 } from '~/components/Collections/collection.utils';
+import { countPendingReviewItems } from '~/components/Collections/collection-review-counts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -56,6 +65,8 @@ import { CollectionItemNSFWLevelSelector } from '~/components/Collections/compon
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import { ContestCommunityScore } from '~/components/Collections/components/ContestCollections/ContestCommunityScore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -134,7 +145,14 @@ const ReviewCollection = () => {
     [collectionId, statuses, sort, collectionTagId, awaitingHumanReview]
   );
 
-  const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
+  const {
+    collection,
+    permissions,
+    redPendingReviewCount = 0,
+    isLoading: loadingCollection,
+  } = useCollection(collectionId);
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   const { data, isLoading, isFetching, fetchNextPage, hasNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
@@ -192,8 +210,9 @@ const ReviewCollection = () => {
 
       <Stack gap="sm" mb="lg">
         <Text c="dimmed">
-          You are reviewing items on the collection that are either pending review or have been
-          rejected. You can change the status of these to be accepted or rejected.
+          {isContestCollection
+            ? 'You are reviewing items on the collection that are either pending review or have been rejected. You can change the status of these to be accepted or rejected.'
+            : 'You are reviewing items waiting to join this collection. Accepting one adds it to the collection; rejecting it leaves it out. Either way it leaves this queue.'}
         </Text>
         {isContestCollection && collection.tags.length > 0 && (
           <CollectionCategorySelect
@@ -203,28 +222,32 @@ const ReviewCollection = () => {
           />
         )}
         <Group justify="space-between">
-          <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-            <Group gap="xs">
-              <Chip value={CollectionItemStatus.REVIEW}>
-                <span>Review</span>
+          {isContestCollection && (
+            <>
+              <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+                <Group gap="xs">
+                  <Chip value={CollectionItemStatus.REVIEW}>
+                    <span>Review</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.REJECTED}>
+                    <span>Rejected</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.ACCEPTED}>
+                    <span>Accepted</span>
+                  </Chip>
+                </Group>
+              </Chip.Group>
+              <Chip
+                checked={awaitingHumanReview}
+                onChange={() => {
+                  setAwaitingHumanReview((v) => !v);
+                  deselectAll();
+                }}
+              >
+                <span>Needs human review</span>
               </Chip>
-              <Chip value={CollectionItemStatus.REJECTED}>
-                <span>Rejected</span>
-              </Chip>
-              <Chip value={CollectionItemStatus.ACCEPTED}>
-                <span>Accepted</span>
-              </Chip>
-            </Group>
-          </Chip.Group>
-          <Chip
-            checked={awaitingHumanReview}
-            onChange={() => {
-              setAwaitingHumanReview((v) => !v);
-              deselectAll();
-            }}
-          >
-            <span>Needs human review</span>
-          </Chip>
+            </>
+          )}
 
           <SelectMenuV2
             label="Sort by"
@@ -242,7 +265,22 @@ const ReviewCollection = () => {
         <div className="relative">
           <MasonryGrid
             data={collectionItems}
-            empty={<NoContent mt="lg" message="There are no images that need review" />}
+            empty={
+              <NoContent mt="lg" message="There are no images that need review">
+                {redPendingReviewCount > 0 && (
+                  <Button
+                    component="a"
+                    href={syncAccount(`//${redDomain}${router.asPath}`)}
+                    variant="light"
+                    color="red"
+                    rightSection={<IconExternalLink size={16} />}
+                  >
+                    {redPendingReviewCount} {redPendingReviewCount === 1 ? 'item' : 'items'} to
+                    review on civitai.red
+                  </Button>
+                )}
+              </NoContent>
+            }
             render={CollectionItemGridItem}
             withAds={false}
           />
@@ -323,6 +361,13 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   const queryUtils = trpc.useUtils();
 
   const image = reviewData.image;
+  const rejectionCopy =
+    collectionItem.status === CollectionItemStatus.REJECTED
+      ? resolveRejectionCopy({
+          reason: collectionItem.rejectionReason,
+          detail: collectionItem.rejectionDetail,
+        })
+      : undefined;
 
   return (
     <div className="flex flex-col">
@@ -368,6 +413,12 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   {collectionItem.status}
                 </Badge>
               )}
+              {collectionItem.status === CollectionItemStatus.REJECTED &&
+                collectionItem.rejectionReason && (
+                  <Badge variant="light" color="red" h={26} radius="xl">
+                    {getDisplayName(collectionItem.rejectionReason)}
+                  </Badge>
+                )}
               {image?.type === 'video' && image.metadata && 'duration' in image.metadata && (
                 <DurationBadge duration={image.metadata.duration ?? 0} h={26} radius="xl" />
               )}
@@ -406,6 +457,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             {reviewData.title && (
               <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} inline>
                 {reviewData.title}
+              </Text>
+            )}
+            {rejectionCopy && (
+              <Text className={cardClasses.dropShadow} size="sm" lineClamp={3} inline>
+                {rejectionCopy}
               </Text>
             )}
             {reviewData.user && reviewData.user.id !== -1 && (
@@ -458,7 +514,7 @@ type CollectionItemGridItemProps = {
   width: number;
 };
 
-function ModerationControls({
+export function ModerationControls({
   collectionItems,
   filters,
 }: {
@@ -466,6 +522,7 @@ function ModerationControls({
   filters: { collectionId: number; statuses: CollectionItemStatus[]; forReview: boolean };
 }) {
   const queryUtils = trpc.useUtils();
+  const onReviewed = useOnCollectionItemsReviewed();
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -478,27 +535,60 @@ function ModerationControls({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status }) {
+      async onMutate({ collectionItemIds, status, rejectionReason }) {
+        // Counted here, not in onSuccess: React Query pushes the latest render's options into an
+        // in-flight mutation, and the setInfiniteData below rewrites the very query `collectionItems`
+        // is memoized over — so by the time onSuccess runs its closure sees the POST-mutation list and
+        // the filter matches nothing. onMutate's options are the ones built at mutate() time.
+        const reviewed = countPendingReviewItems(collectionItems, collectionItemIds);
+
         await queryUtils.collection.getAllCollectionItems.cancel();
+
+        // Snapshot for onError: the item is about to leave the queue, and without a rollback a
+        // failed write hides an entry that is still pending review.
+        const prevData = queryUtils.collection.getAllCollectionItems.getInfiniteData({
+          ...filters,
+        });
+
+        // A decided item leaves the queue rather than flipping in place. Left visible it stays
+        // selectable, and the next bulk action silently re-decides it the other way.
+        const stillMatchesFilter = filters.statuses.includes(status);
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
           { ...filters },
           produce((data) => {
             if (!data?.pages?.length) return;
 
-            for (const page of data.pages)
-              for (const item of page.collectionItems) {
+            for (const page of data.pages) {
+              if (!stillMatchesFilter) {
+                page.collectionItems = page.collectionItems.filter(
+                  (item) => !collectionItemIds.includes(item.id)
+                );
+                continue;
+              }
+
+              for (const item of page.collectionItems)
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
+                  item.rejectionReason = rejectionReason ?? null;
+                  item.rejectionDetail = null;
                 }
-              }
+            }
           })
         );
+
+        return { prevData, reviewed };
       },
-      onSuccess() {
+      onSuccess(_, { collectionId }, context) {
+        onReviewed({ collectionId, reviewed: context?.reviewed ?? 0 });
         showSuccessNotification({ message: `The items have been reviewed` });
       },
-      onError(error) {
+      onError(error, _variables, context) {
+        if (context?.prevData)
+          queryUtils.collection.getAllCollectionItems.setInfiniteData(
+            { ...filters },
+            context.prevData
+          );
         showNotification({
           id: 'error',
           title: 'Error',
@@ -508,12 +598,14 @@ function ModerationControls({
       },
     });
 
-  const handleRejectSelected = () => {
+  const handleRejectSelected = (selection: RejectionSelection) => {
+    const collectionItemIds = selected;
     deselectAll();
     updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: selected,
+      collectionItemIds,
       status: CollectionItemStatus.REJECTED,
       collectionId: filters.collectionId,
+      ...selection,
     });
   };
 
@@ -594,18 +686,21 @@ function ModerationControls({
           </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
-      <PopConfirm
-        message={`Are you sure you want to reject ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleRejectSelected}
-        withArrow
-      >
-        <ButtonTooltip label="Reject" {...tooltipProps}>
-          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
-            <IconTrash size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      <ButtonTooltip label="Reject" {...tooltipProps}>
+        <LegacyActionIcon
+          variant="outline"
+          disabled={!selected.length}
+          color="red"
+          onClick={() =>
+            openRejectCollectionItemsModal({
+              count: selected.length,
+              onConfirm: handleRejectSelected,
+            })
+          }
+        >
+          <IconTrash size="1.25rem" />
+        </LegacyActionIcon>
+      </ButtonTooltip>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
         <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />

@@ -7,6 +7,10 @@
  * can render remix/workflow action buttons.
  */
 
+import {
+  CIVITAI_MEDIA_ID_MIME,
+  CIVITAI_MEDIA_TYPE_MIME,
+} from '~/components/EdgeMedia/media-drag-data';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   ActionIcon,
@@ -45,6 +49,7 @@ import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphStore, generationGraphPanel } from '~/store/generation-graph.store';
 import { ResourceItemContent } from './ResourceItemContent';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
 
 /** Try to extract an image URL from a drop event (e.g. dragging an on-site image). */
 function getDroppedImageUrl(event: React.DragEvent): string | undefined {
@@ -64,18 +69,17 @@ function getDroppedImageUrl(event: React.DragEvent): string | undefined {
 
 /**
  * Try to extract a Civitai media database ID and type from the drop event's custom drag data.
- * EdgeImage/EdgeVideo
- * set 'application/x-civitai-media-id' and 'application/x-civitai-media-type'
- * when imageId is provided, allowing drop targets to fetch stored metadata server-side.
+ * EdgeImage/EdgeVideo set CIVITAI_MEDIA_ID_MIME and CIVITAI_MEDIA_TYPE_MIME when imageId is
+ * provided, allowing drop targets to fetch stored metadata server-side.
  */
 function getDroppedMediaInfo(
   event: React.DragEvent
 ): { id: number; type: 'image' | 'video' } | undefined {
-  const raw = event.dataTransfer.getData('application/x-civitai-media-id');
+  const raw = event.dataTransfer.getData(CIVITAI_MEDIA_ID_MIME);
   if (!raw) return undefined;
   const id = parseInt(raw, 10);
   if (!Number.isFinite(id)) return undefined;
-  const type = event.dataTransfer.getData('application/x-civitai-media-type');
+  const type = event.dataTransfer.getData(CIVITAI_MEDIA_TYPE_MIME);
   return { id, type: type === 'video' ? 'video' : 'image' };
 }
 
@@ -307,7 +311,7 @@ export function MetadataExtractionPanel() {
         onDragOver={(e) => {
           // Allow drop so the event fires for URL-based drags
           if (
-            e.dataTransfer.types.includes('application/x-civitai-media-id') ||
+            e.dataTransfer.types.includes(CIVITAI_MEDIA_ID_MIME) ||
             e.dataTransfer.types.includes('text/uri-list') ||
             e.dataTransfer.types.includes('text/plain')
           ) {
@@ -440,44 +444,48 @@ export function MetadataExtractionPanel() {
               </Card.Section>
               <Card.Section>
                 <div className="p-3">
-                  <Stack gap="xs">
-                    {store.resolvedResources.map((resource) => (
-                      <Group key={resource.id} gap="xs" wrap="nowrap" align="start">
-                        {store.resolvedResources.length > 1 && (
-                          <Checkbox
-                            size="xs"
-                            className="mt-1.5"
-                            checked={selectedResourceIds.has(resource.id)}
-                            onChange={(e) => {
-                              const checked = e.currentTarget.checked;
-                              setSelectedResourceIds((prev) => {
-                                const next = new Set(prev);
-                                if (checked) next.add(resource.id);
-                                else next.delete(resource.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <ResourceItemContent
-                            resource={resource}
-                            actions={
-                              <Tooltip label="Add to generation">
-                                <ActionIcon
-                                  size="md"
-                                  variant="subtle"
-                                  onClick={() => handleAddResources([resource])}
-                                >
-                                  <IconPlus size={14} />
-                                </ActionIcon>
-                              </Tooltip>
-                            }
-                          />
-                        </div>
-                      </Group>
-                    ))}
-                  </Stack>
+                  <ResidencyBatchProvider
+                    modelVersionIds={store.resolvedResources.map((r) => r.id)}
+                  >
+                    <Stack gap="xs">
+                      {store.resolvedResources.map((resource) => (
+                        <Group key={resource.id} gap="xs" wrap="nowrap" align="start">
+                          {store.resolvedResources.length > 1 && (
+                            <Checkbox
+                              size="xs"
+                              className="mt-1.5"
+                              checked={selectedResourceIds.has(resource.id)}
+                              onChange={(e) => {
+                                const checked = e.currentTarget.checked;
+                                setSelectedResourceIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(resource.id);
+                                  else next.delete(resource.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <ResourceItemContent
+                              resource={resource}
+                              actions={
+                                <Tooltip label="Add to generation">
+                                  <ActionIcon
+                                    size="md"
+                                    variant="subtle"
+                                    onClick={() => handleAddResources([resource])}
+                                  >
+                                    <IconPlus size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              }
+                            />
+                          </div>
+                        </Group>
+                      ))}
+                    </Stack>
+                  </ResidencyBatchProvider>
                 </div>
               </Card.Section>
             </Card>

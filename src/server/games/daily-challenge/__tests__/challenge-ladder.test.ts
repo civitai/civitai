@@ -355,16 +355,10 @@ describe('findSlot seating', () => {
 describe('the per-tick placement budget fits the job lock', () => {
   // The bound this exists for is the JOB lock, which is not the completion claim and is not the
   // cron interval. Getting the three confused is how a cap gets sized against the wrong number.
-  it('is the lock the job actually asks for, not createJob’s default', async () => {
-    const { createJob } = await import('~/server/jobs/job');
-    const inherited = createJob('probe', '*/10 * * * *', async () => undefined);
-    const { dailyChallengeJobs } = await import('~/server/jobs/daily-challenge-processing');
-    const job = dailyChallengeJobs.find((j) => j.name === 'daily-challenge-process-entries')!;
-
-    expect(job.options.lockExpiration).toBe(REVIEW_JOB_LOCK_SECONDS);
-    // The point of the override: the inherited default is too short to hold a drain.
-    expect(REVIEW_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
-    // Still shorter than the interval, so a tick can never overlap itself.
+  // The other half of this — that the JOB actually asks for REVIEW_JOB_LOCK_SECONDS — lives in
+  // `src/server/jobs/__tests__/challenge-jobs-scale.test.ts`, which already loads
+  // daily-challenge-processing.ts. Importing that graph here cost 35s of test-body time on its own.
+  it('is shorter than the interval, so a tick can never overlap itself', () => {
     expect(REVIEW_JOB_LOCK_SECONDS).toBeLessThan(REVIEW_JOB_INTERVAL_SECONDS);
   });
 

@@ -17,6 +17,20 @@ export const BUZZ_MEMBERSHIP_PREMIUM_MULTIPLIER = 1.25;
  */
 export const BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE = 'buzzPurchase';
 
+const isMetadataTrue = (value: unknown) => value === true || value === 'true';
+
+/**
+ * Several products share a `tier`: the cash one, the Buzz-purchase variant
+ * (`buzzPurchase`) and the referral-grant variant (`referralGrantable`). Only the cash one
+ * carries the tier's real perks — the variants zero out `rewardsMultiplier` /
+ * `purchasesMultiplier` — so anything resolving a tier to a product must exclude them or it
+ * silently strips those perks from whoever it points at.
+ */
+export function isCanonicalTierProduct(metadata: unknown) {
+  const meta = (metadata ?? {}) as Record<string, unknown>;
+  return !isMetadataTrue(meta.buzzPurchase) && !isMetadataTrue(meta.referralGrantable);
+}
+
 type MembershipStanding = {
   isBadState?: boolean;
   currentPeriodEnd: Date;

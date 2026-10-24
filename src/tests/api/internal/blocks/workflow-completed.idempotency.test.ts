@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockIncrBy = redisMock.redis.incrBy;
+const mockExpire = redisMock.redis.expire;
 
 /**
  * Idempotency + JOB_TOKEN auth + install-validation contract for
@@ -10,7 +14,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * stable contract (Critical path 8 — idempotency dedup, plus the JOB_TOKEN auth
  * surface and the install pre-validation that gates the dedup write):
  *
- *   - JOB_TOKEN auth: missing-env-secret → 401; wrong header → 401; correct
+ *   - JOB_TOKEN auth: blank-env-secret → 503; wrong header → 401; correct
  *     header → proceeds (the timing-safe `safeEqualHeader` path);
  *   - method != POST → 405;
  *   - install validation runs BEFORE the 7-day dedup marker is written
@@ -33,15 +37,13 @@ const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 const DEDUP_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const { mockEnvStore, mockFindUnique, mockIncrBy, mockExpire, mockExecuteRaw } = vi.hoisted(() => ({
+const { mockEnvStore } = vi.hoisted(() => ({
   // Inlined literal: vi.hoisted() runs before the top-level `const JOB_TOKEN`,
   // so it can't reference that binding (keep this in sync with JOB_TOKEN below).
   mockEnvStore: { JOB_TOKEN: 'test-job-token' } as Record<string, unknown>,
-  mockFindUnique: vi.fn(),
-  mockIncrBy: vi.fn(),
-  mockExpire: vi.fn(),
-  mockExecuteRaw: vi.fn(),
 }));
+const mockFindUnique = dbMock.dbRead.blockUserSubscription.findUnique;
+const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
@@ -57,16 +59,6 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) => flag === 'app-blocks-pipeline-enabled'),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { blockUserSubscription: { findUnique: mockFindUnique } },
-  // G6: the handler persists the queue read-model status on first delivery.
-  dbWrite: { $executeRaw: (...a: unknown[]) => mockExecuteRaw(...a) },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { incrBy: mockIncrBy, expire: mockExpire },
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
-}));
-
 function makeReq(over: Partial<NextApiRequest> = {}): NextApiRequest {
   return {
     method: 'POST',
@@ -135,13 +127,19 @@ describe('workflow-completed — JOB_TOKEN auth', () => {
     expect(res._status).toBe(401);
   });
 
-  it('401s (fail-closed) when JOB_TOKEN is not configured on the server', async () => {
-    // A missing server secret must NOT degrade into accept-anything.
-    mockEnvStore.JOB_TOKEN = undefined;
-    const res = makeRes();
-    await invoke(makeReq({ headers: { 'x-civitai-internal-token': '' } }), res);
-    expect(res._status).toBe(401);
-  });
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['whitespace-only', '  '],
+  ])(
+    '503s when JOB_TOKEN is %s, even for a caller presenting the same value',
+    async (_label, secret) => {
+      mockEnvStore.JOB_TOKEN = secret;
+      const res = makeRes();
+      await invoke(makeReq({ headers: { 'x-civitai-internal-token': secret ?? '' } }), res);
+      expect(res._status).toBe(503);
+    }
+  );
 
   it('accepts the correct token and reaches the post-auth path', async () => {
     const res = makeRes();
@@ -159,7 +157,10 @@ describe('workflow-completed — method + body validation', () => {
 
   it('400s a blockInstanceId that does not match the bki_<crockford26> shape', async () => {
     const res = makeRes();
-    await invoke(makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: 'nope', buzzSpent: 0 } }), res);
+    await invoke(
+      makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: 'nope', buzzSpent: 0 } }),
+      res
+    );
     expect(res._status).toBe(400);
     expect(mockIncrBy).not.toHaveBeenCalled();
   });
@@ -167,7 +168,9 @@ describe('workflow-completed — method + body validation', () => {
   it('400s a negative buzzSpent', async () => {
     const res = makeRes();
     await invoke(
-      makeReq({ body: { workflowId: WORKFLOW_ID, blockInstanceId: BLOCK_INSTANCE_ID, buzzSpent: -1 } }),
+      makeReq({
+        body: { workflowId: WORKFLOW_ID, blockInstanceId: BLOCK_INSTANCE_ID, buzzSpent: -1 },
+      }),
       res
     );
     expect(res._status).toBe(400);

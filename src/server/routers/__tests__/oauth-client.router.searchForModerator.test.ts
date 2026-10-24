@@ -32,10 +32,6 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { oauthClient: { findMany: mocks.findMany } },
-  dbWrite: { oauthClient: {}, apiKey: {} },
-}));
 // The router imports this at module load for the (unrelated) delete path — stub it so
 // importing the router doesn't reach the orchestrator client.
 vi.mock('~/server/services/orchestrator/civitai', () => ({
@@ -44,6 +40,10 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 
 import { oauthClientRouter } from '../oauth-client.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.oauthClient.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.findMany as (...a: unknown[]) => unknown)(...args)
+);
 
 function fakeCtx(user: unknown) {
   return {

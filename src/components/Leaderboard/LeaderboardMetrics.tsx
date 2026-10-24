@@ -23,16 +23,21 @@ import {
   IconFileStar,
   IconHeart,
   IconHexagonFilled,
+  IconMedal,
   IconMoodSmile,
   IconPhoto,
   IconReport,
+  IconScoreboard,
   IconShieldChevron,
   IconStar,
+  IconSwords,
   IconTarget,
   IconTargetArrow,
   IconTargetOff,
   IconThumbUp,
   IconTrophy,
+  IconUsers,
+  IconVideo,
   IconX,
 } from '@tabler/icons-react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -210,16 +215,38 @@ const metricTypes: Record<
     tooltip: 'All Judgments',
     icon: <IconBadges {...iconProps} />,
   }),
+  crucibles: () => ({
+    tooltip: 'Crucibles',
+    icon: <IconSwords {...iconProps} />,
+  }),
+  votes: () => ({
+    tooltip: 'Votes',
+    icon: <IconScoreboard {...iconProps} />,
+  }),
+  entrants: () => ({
+    tooltip: 'Entrants',
+    icon: <IconUsers {...iconProps} />,
+  }),
+  wins: () => ({
+    tooltip: 'Wins',
+    icon: <IconMedal {...iconProps} />,
+  }),
 };
+
+// The population job writes every board's entry count as `imageCount`, so a video board would
+// otherwise label its videos "Images".
+const videoBoardIds = new Set(['videos-overall']);
 
 export function LeaderboardMetrics({
   metrics,
   score,
   delta,
+  leaderboardId,
 }: {
   metrics: { type: string; value: number }[];
   score: number;
   delta?: number;
+  leaderboardId?: string;
 }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -249,8 +276,10 @@ export function LeaderboardMetrics({
         const typeProcessor = metricTypes[type];
         if (!typeProcessor) return null;
 
-        const badge = typeProcessor(metrics, theme, colorScheme);
+        let badge = typeProcessor(metrics, theme, colorScheme);
         if (value === 0 && badge.hideEmpty) return null;
+        if (type === 'imageCount' && leaderboardId && videoBoardIds.has(leaderboardId))
+          badge = { ...badge, tooltip: 'Videos', icon: <IconVideo {...iconProps} /> };
 
         return (
           <IconBadge

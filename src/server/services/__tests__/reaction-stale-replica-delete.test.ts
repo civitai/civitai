@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 
 type Row = Record<string, unknown>;
@@ -41,30 +42,21 @@ const METRIC_MODELS = REACTION_MODELS.filter(([entityType]) =>
   ['question', 'answer', 'post', 'article', 'bountyEntry'].includes(entityType)
 );
 
-const { mockDbWrite, mockDbReplica, mockQueueUpdate } = vi.hoisted(() => {
-  const build = () =>
-    Object.fromEntries(
-      [
-        'questionReaction',
-        'answerReaction',
-        'commentReaction',
-        'commentV2Reaction',
-        'imageReaction',
-        'postReaction',
-        'resourceReviewReaction',
-        'articleReaction',
-        'bountyEntryReaction',
-      ].map((model) => [model, undefined])
-    );
-  return {
-    mockDbWrite: build() as Record<string, ReturnType<typeof makeTable>>,
-    mockDbReplica: build() as Record<string, ReturnType<typeof makeTable>>,
-    mockQueueUpdate: vi.fn(async () => undefined),
-  };
-});
+const { mockQueueUpdate } = vi.hoisted(() => ({
+  mockQueueUpdate: vi.fn(async () => undefined),
+}));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite, dbRead: mockDbReplica }));
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => mockDbReplica }));
+// `seed()` below replaces one model at a time with an in-memory table, so these are the roots
+// the assignment lands on rather than hand-built client objects. `reaction.service` imports
+// only `dbWrite` from the client module; the replica reaches it exclusively through
+// `getDbWithoutLag`, which is what makes the stale-read case constructible at all.
+const mockDbWrite = dbMock.dbWrite as unknown as Record<string, ReturnType<typeof makeTable>>;
+const mockDbReplica = dbMock.dbRead as unknown as Record<string, ReturnType<typeof makeTable>>;
+
+// Replaces the helper outright rather than spreading the original: the point of this file is
+// that the read and the write disagree, and the real helper decides which client to hand back
+// from replication-lag state at call time.
+vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbRead }));
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: mockQueueUpdate };
   return {

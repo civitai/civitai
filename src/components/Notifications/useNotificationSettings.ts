@@ -36,7 +36,10 @@ export const useNotificationSettings = (enabled = true) => {
 };
 
 /**
- * Shared so the two callers can't drift apart on polarity. They previously hand-rolled the same
+ * Shared so the two settings-page callers can't drift apart on polarity. A third caller,
+ * `PlacementSpaceSection`, deliberately does NOT use this: importing it pulls the whole processor
+ * registry into a page chunk, so it calls the mutation directly and is pinned separately in
+ * `notification-settings-polarity.test.ts`. They previously hand-rolled the same
  * optimistic update, and updating one of them left the /shop bell writing correctly to the server
  * while its own cache patch no-opped — the control looked inert in both directions.
  */
@@ -74,6 +77,33 @@ export const useToggleNotificationSetting = () => {
     },
     onError(_error, _variables, context) {
       queryUtils.user.getNotificationSettings.setData(undefined, context?.prevUserSettings);
+    },
+  });
+};
+
+export const usePushNotificationSettings = (enabled = true) => {
+  // staleTime 0 (app default Infinity): per-type push rows change from other devices too.
+  const { data: pushTypes = [], isLoading } = trpc.notification.getPushSettings.useQuery(
+    undefined,
+    { enabled, staleTime: 0 }
+  );
+  return { pushTypes, isLoading };
+};
+
+export const useTogglePushSetting = () => {
+  const queryUtils = trpc.useUtils();
+
+  return trpc.notification.updatePushSettings.useMutation({
+    async onMutate({ type, enabled }) {
+      await queryUtils.notification.getPushSettings.cancel();
+      const prevPushTypes = queryUtils.notification.getPushSettings.getData() ?? [];
+      queryUtils.notification.getPushSettings.setData(undefined, (old = []) =>
+        enabled ? [...new Set([...old, ...type])] : old.filter((t) => !type.includes(t))
+      );
+      return { prevPushTypes };
+    },
+    onError(_error, _variables, context) {
+      queryUtils.notification.getPushSettings.setData(undefined, context?.prevPushTypes);
     },
   });
 };

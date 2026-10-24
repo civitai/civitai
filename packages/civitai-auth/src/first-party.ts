@@ -10,6 +10,7 @@ export const FIRST_PARTY_ID_PREFIX = 'firstparty-';
 
 /** The spoke receiver path for the auth-code callback (replaces the swap bridge's /api/auth/sync receiver). */
 export const SPOKE_CALLBACK_PATH = '/api/auth/callback';
+// Sibling: SPOKE_AUTHORIZE_PATH (constants.ts) is where the login LANDS; this is where the code comes back.
 
 /**
  * Deterministic first-party client id for a spoke origin (https://civitai.red → firstparty-civitai_red).

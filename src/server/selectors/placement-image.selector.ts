@@ -1,0 +1,79 @@
+import { Prisma } from '@prisma/client';
+import { Availability } from '~/shared/utils/prisma/enums';
+
+/**
+ * The host image behind a placement, as every placement surface reads it.
+ *
+ * Shared because it is a rule, not a shape: the fields are what `toQueueImage`
+ * needs to decide whether this domain may be sent the asset at all, and a
+ * surface selecting fewer would silently hand the mask a `nsfwLevel` of
+ * `undefined`.
+ */
+export const placementImageSelect = Prisma.validator<Prisma.ImageSelect>()({
+  id: true,
+  url: true,
+  name: true,
+  width: true,
+  height: true,
+  type: true,
+  metadata: true,
+  nsfwLevel: true,
+});
+
+/**
+ * Whether a host image may be shown at all, independent of who is looking.
+ *
+ * 🔴 ONE COPY, BECAUSE A DIVERGENCE IS A DISCLOSURE. Every placement surface
+ * shows an image its viewer did not upload, and the next exclusion added here
+ * has to reach all of them. Added to the queue and not to the sticker book, it
+ * would mean the book publishes on a public profile exactly the image the queue
+ * was careful to withhold.
+ *
+ * A function, not a constant, because `publishedAt` is compared against **now**:
+ * a scheduled post carries a non-null future `publishedAt`, so `{ not: null }`
+ * served it ahead of its own publish time. A module-level constant would freeze
+ * that comparison at import.
+ *
+ * `needsReview` and `acceptableMinor` are the two the feeds test that this did
+ * not. Neither is implied by `ingestion`: a moderator flag leaves `ingestion` at
+ * `Scanned`, so an image withheld from browse everywhere else on the site was
+ * being returned in full — url included — to anyone who could see a placement
+ * pointing at it.
+ *
+ * Not a browsing-level rule: levels are the viewer's and the domain's, applied
+ * per request by `toQueueImage`.
+ *
+ * 🔴 This is no longer the only copy. `entryIsVisible` in
+ * `remix-gallery.service.ts` states the same rule in raw SQL, because a
+ * `Prisma.sql` predicate and a `where` object cannot share code. An exclusion
+ * added here does NOT reach the remix gallery and has to be added there too —
+ * `acceptableMinor`, the clause this docblock calls out, was already missing
+ * from that copy once. The two also differ deliberately today: the SQL copy
+ * excludes level 0 and licence-restricted images, and this one leaves those to
+ * its caller.
+ *
+ * 🔴 Published is not public. A post inherits its availability from the model
+ * version, so it can be published AND private, and nothing on the placement
+ * submission path reads the column — such an image is stickered and approved
+ * normally, and only turns private afterwards. Surfaces that hydrate through
+ * `getAllImages` never needed this because that carries its own private guard;
+ * this read does not hydrate, so without the clause it hands back the url of an
+ * image its owner marked not-public. Same defect, same fix as `entryIsVisible`
+ * in `remix-gallery.service.ts` (#4364).
+ *
+ * No owner arm, deliberately, for the same reason it has none there:
+ * `getAllImages` re-admits a private image to its own author, which is right on
+ * their own feed and wrong on a surface built around somebody else's picture.
+ */
+export const publishedPlacementImageWhere = (): Prisma.ImageWhereInput => ({
+  post: {
+    publishedAt: { not: null, lte: new Date() },
+    availability: { not: Availability.Private },
+  },
+  ingestion: 'Scanned',
+  tosViolation: false,
+  minor: false,
+  poi: false,
+  needsReview: null,
+  acceptableMinor: false,
+});

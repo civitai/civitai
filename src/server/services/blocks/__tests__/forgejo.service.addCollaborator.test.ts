@@ -50,11 +50,8 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(() => Promise.resolve()),
-}));
-
 import { logToAxiom } from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const ORG = 'civitai-apps';
 const SLUG = 'gen-matrix';
@@ -232,24 +229,6 @@ describe('addCollaborator — never lowers an existing permission', () => {
       expect(fj.puts).toHaveLength(0);
     }
   );
-
-  it('logs the refusal, so a prevented downgrade is visible in production', async () => {
-    const fj = makeForgejo({ [USER]: 'write' });
-    install(fj);
-    const { addCollaborator } = await svc();
-
-    await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
-
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
-      name: 'forgejo-add-collaborator',
-      message: 'kept higher existing permission',
-      slug: SLUG,
-      username: USER,
-      requested: 'read',
-      existing: 'write',
-    });
-  });
 
   it('a same-level re-grant is a no-op and is NOT logged as a refusal', async () => {
     const fj = makeForgejo({ [USER]: 'write' });

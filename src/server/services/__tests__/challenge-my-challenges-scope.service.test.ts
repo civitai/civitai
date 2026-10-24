@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
 
 // getMyChallenges: pins the WHERE-clause grouping between the "entered" branch (my CTE) and the
 // "created" branch (creator id + source = User). Flattening that OR — even by accident while
@@ -8,28 +11,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // no visible symptom besides a dead "Manage" link for the moderators who created them (see
 // challenge.service.ts:454's isCreator scoping). Mocking shape mirrors
 // challenge-feed-block-exclusion.service.test.ts.
-const {
-  mockDbRead,
-  mockHiddenUsersGetCached,
-  mockBlockedByUsersGetCached,
-  mockBlockedUsersGetCached,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(),
-    modelVersion: { findMany: vi.fn() },
-    image: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(() => []) },
-    challenge: { findUnique: vi.fn() },
-    collectionItem: { count: vi.fn() },
-  },
-  mockHiddenUsersGetCached: vi.fn(() => [] as { id: number }[]),
-  mockBlockedByUsersGetCached: vi.fn(() => [] as { id: number }[]),
-  mockBlockedUsersGetCached: vi.fn(() => [] as { id: number }[]),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
+const { mockHiddenUsersGetCached, mockBlockedByUsersGetCached, mockBlockedUsersGetCached } =
+  vi.hoisted(() => ({
+    mockHiddenUsersGetCached: vi.fn(() => [] as { id: number }[]),
+    mockBlockedByUsersGetCached: vi.fn(() => [] as { id: number }[]),
+    mockBlockedUsersGetCached: vi.fn(() => [] as { id: number }[]),
+  }));
 
 vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenUsers: { getCached: mockHiddenUsersGetCached },
@@ -104,10 +91,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 
 vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: vi.fn(),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
 }));
 
 vi.mock('~/utils/errorHandling', () => ({

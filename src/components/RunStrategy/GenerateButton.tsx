@@ -1,10 +1,10 @@
 import type { ButtonProps } from '@mantine/core';
-import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
-import { IconBolt, IconBrush } from '@tabler/icons-react';
+import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { PaidAccessPriceBadge } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 export function GenerateButton({
@@ -12,6 +12,8 @@ export function GenerateButton({
   mode = 'replace',
   children,
   generationPrice,
+  listedPrice,
+  acceptsBlueBuzz,
   onPurchase,
   onClick,
   epochNumber,
@@ -20,8 +22,12 @@ export function GenerateButton({
   wildcardSetId,
   ...buttonProps
 }: Props) {
-  const theme = useMantineTheme();
   const { trackAction } = useTrackEvent();
+  // `generationPrice` is what THIS viewer must pay and turns the button into a purchase action.
+  // `listedPrice` is what buyers pay, shown to the owner/mod who already has access — it must never
+  // reach onClickHandler, or a creator clicking Generate on their own model would be asked to buy it.
+  const shownPrice = generationPrice ?? listedPrice;
+  const isListedOnly = generationPrice == null && listedPrice != null;
 
   const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = (e?: React.MouseEvent<HTMLElement>) => {
@@ -80,27 +86,12 @@ export function GenerateButton({
     });
 
   const purchaseIcon = (
-    <Badge
-      radius="sm"
-      size="sm"
-      variant="filled"
-      color="yellow.7"
-      style={{
-        position: 'absolute',
-        top: '-8px',
-        right: '-8px',
-        boxShadow: theme.shadows.sm,
-        padding: '4px 2px',
-        paddingRight: '6px',
-      }}
-    >
-      <Group gap={0} wrap="nowrap">
-        <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
-        <Text size="xs" fz={11} c="dark.9">
-          {abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}
-        </Text>
-      </Group>
-    </Badge>
+    <PaidAccessPriceBadge
+      price={shownPrice ?? 0}
+      acceptsBlueBuzz={acceptsBlueBuzz}
+      listedOnly={isListedOnly}
+      decimals={0}
+    />
   );
 
   const button = (
@@ -114,6 +105,9 @@ export function GenerateButton({
           ? { paddingRight: 0, paddingLeft: 0, width: 36, ...buttonProps.style }
           : {
               flex: 1,
+              // 12px of padding overflows Mantine's fixed height for the size, and only a flex parent
+              // stretching the button hides it. Callers can still override.
+              height: 'auto',
               padding: '12px 20px',
               background:
                 'linear-gradient(135deg, var(--mantine-color-blue-6), var(--mantine-color-blue-7))',
@@ -121,7 +115,7 @@ export function GenerateButton({
             }
       }
     >
-      {generationPrice && <>{purchaseIcon}</>}
+      {!!shownPrice && <>{purchaseIcon}</>}
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
@@ -149,6 +143,10 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
   generationPrice?: number;
+  /** What buyers pay for generation. Informational only — never triggers the purchase flow. */
+  listedPrice?: number;
+  /** The paid-access terms accept Blue Buzz — colours the price chip to say so. */
+  acceptsBlueBuzz?: boolean;
   onPurchase?: () => void;
   onClick?: () => void;
   epochNumber?: number;

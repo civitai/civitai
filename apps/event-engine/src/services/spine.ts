@@ -68,7 +68,7 @@ export class SpineService {
    */
   private transformSteps(
     stepBuilder: StepBuilder,
-    requestArguments: Record<string, any>
+    _requestArguments: Record<string, any>
   ): WorkflowStep[] {
     // Track property accesses
     const propertyAccesses = new Map<any, { type: 'args' | 'output'; path: string[] }>();
@@ -94,7 +94,7 @@ export class SpineService {
     });
 
     // Transform steps by replacing tracked proxies with $ref objects
-    const transformedSteps = steps.map((step, stepIndex) => {
+    const transformedSteps = steps.map((step) => {
       const transformedStep: WorkflowStep = {
         $type: step.$type,
         ...(step.metadata && { metadata: step.metadata }),

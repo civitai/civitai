@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * BlockRegistry.resolveBlockInstance — the centralised lookup that translates
@@ -20,38 +22,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     pinned shape (NOT model_block_installs)
  */
 
-const { mockDb, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const db = {
-    platformDefaultBlock: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    blockUserSubscription: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    model: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    modelVersion: {
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-  };
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDb: db, mockRedis: redis, mockSysRedis: sysRedis };
-});
+// One local served both clients. `resolveBlockInstance` is the only entry point here and it
+// passes no `db` option, so it falls to the parameterised default at
+// block-registry.service:1362 — `opts.db === 'read' ? dbRead : dbWrite`, i.e. **dbWrite**.
+// `model.findUnique` (:2617) and `modelVersion.findFirst` (:2629, :2693) are spelled dbRead.
+//
+// 🔴 `expect(mockDbWrite.blockUserSubscription.findUnique).not.toHaveBeenCalled()` is why the
+// routing is load-bearing: routed to dbRead it would pass whatever the code did.
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' } },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+// `scanIterator` is consumed with `for await`; a vivified spy returns undefined, which throws
+// rather than iterating.
+mockRedis.scanIterator.mockImplementation(async function* () {});
 
 const APPROVED_BLOCK = {
   id: 'ab_test',
@@ -116,19 +99,13 @@ function makeViewerSub(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function resetAll() {
-  for (const tbl of Object.values(mockDb)) {
-    for (const fn of Object.values(tbl)) (fn as ReturnType<typeof vi.fn>).mockReset();
-  }
-}
-
 describe('BlockRegistry.resolveBlockInstance', () => {
-  beforeEach(resetAll);
+  beforeEach(() => vi.clearAllMocks());
 
   describe('bki_* (per-model install — now via block_user_subscriptions)', () => {
     it('resolves a pinned subscription row and matches modelId/slotId', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bki_real',
@@ -147,7 +124,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     it('returns null when caller-supplied modelId does NOT match target_model_ids', async () => {
       // Critical: a stale tab on model 999 trying to mint against a pinned
       // sub for model 100 must not succeed.
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bki_x',
@@ -159,7 +136,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null on disabled or non-approved install', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makePinnedSub({ enabled: false })
       );
       const { BlockRegistry } = await import('../block-registry.service');
@@ -175,8 +152,8 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     it('returns null when the model owner does not match the subscription user', async () => {
       // Defense-in-depth: if the model ownership transferred away from the
       // subscription user since install, the pinned sub no longer mints.
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makePinnedSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bki_x',
@@ -188,7 +165,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the install row does not exist', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(null);
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(null);
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bki_missing',
@@ -202,13 +179,13 @@ describe('BlockRegistry.resolveBlockInstance', () => {
 
   describe('pdb_* (platform default)', () => {
     it('resolves when the platform default exists, enabled, slot matches', async () => {
-      mockDb.platformDefaultBlock.findUnique.mockResolvedValueOnce({
+      mockDbWrite.platformDefaultBlock.findUnique.mockResolvedValueOnce({
         enabled: true,
         slotId: 'model.sidebar_top',
         targetModelTypes: [],
         appBlock: APPROVED_BLOCK,
       });
-      mockDb.blockUserSubscription.findFirst.mockResolvedValueOnce(null); // no pinned-sub suppressor
+      mockDbWrite.blockUserSubscription.findFirst.mockResolvedValueOnce(null); // no pinned-sub suppressor
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'pdb_ab_test',
@@ -223,14 +200,14 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('suppression: returns null when a pinned subscription on same (model, slot, app_block) exists', async () => {
-      mockDb.platformDefaultBlock.findUnique.mockResolvedValueOnce({
+      mockDbWrite.platformDefaultBlock.findUnique.mockResolvedValueOnce({
         enabled: true,
         slotId: 'model.sidebar_top',
         targetModelTypes: [],
         appBlock: APPROVED_BLOCK,
       });
       // Pinned sub suppressor present.
-      mockDb.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
+      mockDbWrite.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'pdb_ab_test',
@@ -242,13 +219,13 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('target_model_types filter excludes mismatched model type', async () => {
-      mockDb.platformDefaultBlock.findUnique.mockResolvedValueOnce({
+      mockDbWrite.platformDefaultBlock.findUnique.mockResolvedValueOnce({
         enabled: true,
         slotId: 'model.sidebar_top',
         targetModelTypes: ['Checkpoint'],
         appBlock: APPROVED_BLOCK,
       });
-      mockDb.model.findUnique.mockResolvedValueOnce({ type: 'LORA' });
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ type: 'LORA' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'pdb_ab_test',
@@ -260,7 +237,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when slotId does not match', async () => {
-      mockDb.platformDefaultBlock.findUnique.mockResolvedValueOnce({
+      mockDbWrite.platformDefaultBlock.findUnique.mockResolvedValueOnce({
         enabled: true,
         slotId: 'model.below_images',
         targetModelTypes: [],
@@ -277,7 +254,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the pdb is disabled', async () => {
-      mockDb.platformDefaultBlock.findUnique.mockResolvedValueOnce({
+      mockDbWrite.platformDefaultBlock.findUnique.mockResolvedValueOnce({
         enabled: false,
         slotId: 'model.sidebar_top',
         targetModelTypes: [],
@@ -296,10 +273,10 @@ describe('BlockRegistry.resolveBlockInstance', () => {
 
   describe('bus_pub_* (publisher subscription — blanket-only)', () => {
     it('happy path: resolves when bus.user_id == Model.userId and predicates pass', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
       // No pinned-sub suppressor.
-      mockDb.blockUserSubscription.findFirst.mockResolvedValueOnce(null);
+      mockDbWrite.blockUserSubscription.findFirst.mockResolvedValueOnce(null);
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_pub_busid',
@@ -314,8 +291,8 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the model is not owned by the subscription user (wrong-model-owner)', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' }); // != 42
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' }); // != 42
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_pub_busid',
@@ -327,9 +304,9 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('suppression: pinned subscription on same (model, slot, app_block) hides the blanket sub', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
-      mockDb.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeBlanketPublisherSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_pub_busid',
@@ -345,7 +322,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
       // only. A pinned sub would have come in as bki_* — if it shows up
       // here it means the client is constructing a bogus id from a row
       // it isn't allowed to see.
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makeBlanketPublisherSub({ slotId: 'model.sidebar_top', targetModelIds: [100] })
       );
       const { BlockRegistry } = await import('../block-registry.service');
@@ -363,7 +340,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
         ...APPROVED_BLOCK,
         manifest: { ...APPROVED_BLOCK.manifest, targets: [{ slotId: 'model.below_images' }] },
       };
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makeBlanketPublisherSub({ appBlock: blockTargetingDifferentSlot })
       );
       const { BlockRegistry } = await import('../block-registry.service');
@@ -377,11 +354,11 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('target_base_models filter requires a matching version', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makeBlanketPublisherSub({ targetBaseModels: ['Flux.1 D'] })
       );
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
-      mockDb.modelVersion.findFirst.mockResolvedValueOnce(null); // no version matches
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+      mockDbWrite.modelVersion.findFirst.mockResolvedValueOnce(null); // no version matches
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_pub_busid',
@@ -393,7 +370,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the subscription is disabled', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makeBlanketPublisherSub({ enabled: false })
       );
       const { BlockRegistry } = await import('../block-registry.service');
@@ -407,7 +384,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the app block is not approved', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
         makeBlanketPublisherSub({ appBlock: { ...APPROVED_BLOCK, status: 'pending' } })
       );
       const { BlockRegistry } = await import('../block-registry.service');
@@ -423,16 +400,16 @@ describe('BlockRegistry.resolveBlockInstance', () => {
 
   describe('bus_view_* (viewer subscription)', () => {
     it('happy path: resolves when the viewer == subscription owner', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
       // No suppressors at any rank.
       // rank-1 + rank-2 both use blockUserSubscription.findFirst (the
       // suppression queries hit the same table in different shapes — pin
       // then blanket).
-      mockDb.blockUserSubscription.findFirst
+      mockDbWrite.blockUserSubscription.findFirst
         .mockResolvedValueOnce(null) // rank-1 pinned suppressor
         .mockResolvedValueOnce(null); // rank-2 blanket suppressor
-      mockDb.platformDefaultBlock.findFirst.mockResolvedValueOnce(null);
+      mockDbWrite.platformDefaultBlock.findFirst.mockResolvedValueOnce(null);
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_view_busid',
@@ -446,7 +423,7 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('returns null when the viewer is NOT the subscription owner', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_view_busid',
@@ -467,14 +444,14 @@ describe('BlockRegistry.resolveBlockInstance', () => {
       });
       expect(r).toBeNull();
       // Crucially we never hit the DB at all for anon viewers on bus_view_*.
-      expect(mockDb.blockUserSubscription.findUnique).not.toHaveBeenCalled();
+      expect(mockDbWrite.blockUserSubscription.findUnique).not.toHaveBeenCalled();
     });
 
     it('rank-1 suppression: pinned subscription hides the viewer subscription', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
       // First findFirst is the rank-1 pinned suppressor — returns a hit.
-      mockDb.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
+      mockDbWrite.blockUserSubscription.findFirst.mockResolvedValueOnce({ id: 'bus_pin' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_view_busid',
@@ -486,9 +463,9 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('rank-2 suppression: blanket publisher subscription for the model owner hides viewer', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
-      mockDb.blockUserSubscription.findFirst
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findFirst
         .mockResolvedValueOnce(null) // rank-1 pinned suppressor: empty
         .mockResolvedValueOnce({ id: 'pubbusid' }); // rank-2 blanket suppressor: hit
       const { BlockRegistry } = await import('../block-registry.service');
@@ -502,12 +479,12 @@ describe('BlockRegistry.resolveBlockInstance', () => {
     });
 
     it('rank-3 suppression: platform default hides viewer', async () => {
-      mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
-      mockDb.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
-      mockDb.blockUserSubscription.findFirst
+      mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(makeViewerSub());
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 99, type: 'LORA' });
+      mockDbWrite.blockUserSubscription.findFirst
         .mockResolvedValueOnce(null) // rank-1
         .mockResolvedValueOnce(null); // rank-2
-      mockDb.platformDefaultBlock.findFirst.mockResolvedValueOnce({ appBlockId: 'ab_test' });
+      mockDbWrite.platformDefaultBlock.findFirst.mockResolvedValueOnce({ appBlockId: 'ab_test' });
       const { BlockRegistry } = await import('../block-registry.service');
       const r = await BlockRegistry.resolveBlockInstance({
         blockInstanceId: 'bus_view_busid',

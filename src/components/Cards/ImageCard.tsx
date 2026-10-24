@@ -7,6 +7,9 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
@@ -17,11 +20,17 @@ import { ThemeIcon } from '@mantine/core';
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
+  // Called unconditionally: inside the `??` below it would sit after a
+  // short-circuit, which is a conditional hook call.
+  const remix = useRemixCardData(data.id);
 
   return (
     <AspectRatioImageCard
       image={data}
-      cosmetic={data.cosmetic?.data}
+      // The owner's own cosmetic wins; the remix frame is only a fallback.
+      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
+      eventDecoration={data.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Image', entityId: data.id }}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
@@ -43,15 +52,27 @@ export function ImageCard({ data }: Props) {
           </div>
         </div>
       }
-      footer={
+      footer={({ safe }) => (
         <div className="flex w-full flex-col gap-2">
-          <UserAvatarSimple {...data.user} />
+          {/* In the footer, not over the media: this card's footer is painted on
+              the image at the same bottom edge, so an anchored panel lands on the
+              reaction counts. */}
+          {safe && <RemixedCardFlyout imageId={data.id} />}
+          <UserAvatarSimple
+            {...data.user}
+            classNames={{
+              avatar: cardClasses.creatorAvatar,
+              namePill: cardClasses.creatorPill,
+              namePillPlate: cardClasses.creatorPillPlate,
+            }}
+          />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
               className={cardClasses.reactions}
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
+              metricsUnknown={data.stats?.statsUnknown}
               metrics={{
                 likeCount: data.stats?.likeCountAllTime,
                 dislikeCount: data.stats?.dislikeCountAllTime,
@@ -64,7 +85,7 @@ export function ImageCard({ data }: Props) {
               disableBuzzTip={data.poi}
             />
             {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-            {data.hasMeta && (
+            {features.imageCardInfoButton && data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ThemeIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
@@ -73,7 +94,7 @@ export function ImageCard({ data }: Props) {
             )}
           </div>
         </div>
-      }
+      )}
     />
   );
 }

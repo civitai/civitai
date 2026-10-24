@@ -1,18 +1,21 @@
-import { useEffect, useMemo } from 'react';
-import { create } from 'zustand';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AnnouncementType } from '~/server/schema/announcement.schema';
 import { trpc } from '~/utils/trpc';
-import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 import {
   migrateLegacyLocalStorageToCookie,
   readDismissedCookieClient,
   writeDismissedCookieClient,
 } from '~/components/Announcements/announcements-dismissed-cookie';
 import { resolveAnnouncementExposure } from '~/components/Announcements/announcements-exposure';
+import { useMergeServerDismissals } from '~/components/Announcements/announcement-dismissal-merge';
+import {
+  recordAnnouncementDismissals,
+  useServerDismissedAnnouncements,
+} from '~/components/Announcements/announcement-dismissal-sync';
+import { createDismissalStore } from '~/store/dismissal-store';
 
 // The announcements query is SSR-seeded (see AppProvider / `/api/user/settings`).
 // A non-zero staleTime is what actually skips the per-bootstrap fetch: with
@@ -38,29 +41,23 @@ migrateLegacyLocalStorageToCookie();
 // it too. On the server there is no `document.cookie`, so the store initializes
 // empty; SSR rendering reads the per-request dismissed value threaded through
 // AppProvider context (`announcementsDismissed`) instead of this store.
-export const useAnnouncementsStore = create<{
-  dismissed: DismissedByType;
-}>(() => ({
-  dismissed: readDismissedCookieClient(),
-}));
+//
+// The set semantics (add, prune, single-writer) come from the shared dismissal
+// store; the cookie stays behind an adapter so `parseDismissedCookieValue`
+// remains the one parser both server and client use.
+const announcementDismissals = createDismissalStore<number, AnnouncementType>({
+  storage: { read: readDismissedCookieClient, write: writeDismissedCookieClient },
+  defaultBucket: 'site',
+});
 
-// Single writer for the dismissed set: update the store AND persist the cookie so
-// the server sees the change on the next request.
-function setDismissed(dismissed: DismissedByType) {
-  useAnnouncementsStore.setState({ dismissed });
-  writeDismissedCookieClient(dismissed);
-}
+export const useAnnouncementsStore = announcementDismissals.useStore;
 
 export function dismissAnnouncements(ids: number | number[], type: AnnouncementType = 'site') {
-  const { dismissed } = useAnnouncementsStore.getState();
-  setDismissed({
-    ...dismissed,
-    [type]: [...new Set(dismissed[type].concat(ids))],
-  });
+  announcementDismissals.dismiss(ids, type);
+  recordAnnouncementDismissals(ids);
 }
 
 export function useGetAnnouncements(type: AnnouncementType = 'site') {
-  const features = useFeatureFlags();
   const isClient = useIsClient();
   const dismissedStore = useAnnouncementsStore((state) => state.dismissed[type]);
   const domainColor = useDomainColor();
@@ -87,26 +84,31 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
     [data, type]
   );
 
+  // The account's dismissals, merged into this type's bucket. Intersected with `typed` inside
+  // the hook, so a creator announcement's id and another type's id can never land here.
+  const serverDismissedIds = useServerDismissedAnnouncements();
+  const typedIds = useMemo(() => typed.map((x) => x.id), [typed]);
+  const mergeDismissed = useCallback(
+    (ids: number[]) => announcementDismissals.dismiss(ids, type),
+    [type]
+  );
+  useMergeServerDismissals({ liveIds: typedIds, serverDismissedIds, merge: mergeDismissed });
+
   // v5: query onSettled removed — prune this type's dismissed ids to those still
-  // present once data loads. Only WRITE (store + cookie) when something actually
-  // pruned, to avoid a gratuitous cookie write on every mount.
+  // present once data loads. The store writes only when something was actually
+  // stale, so a mount that prunes nothing doesn't touch the cookie.
   useEffect(() => {
     if (!typed.length) return;
-    const announcementIds = typed.map((x) => x.id);
-    const { dismissed } = useAnnouncementsStore.getState();
-    const pruned = dismissed[type].filter((id) => announcementIds.includes(id));
-    if (pruned.length !== dismissed[type].length) {
-      setDismissed({ ...dismissed, [type]: pruned });
-    }
+    announcementDismissals.prune(
+      typed.map((x) => x.id),
+      type
+    );
   }, [typed, type]);
 
-  // SSR-exact dismiss (durable feed-CLS fix), gated on `feedReserveCls` for the
-  // `site` feed placement. When ON, the server + first client paint both read the
-  // dismissed set from the SAME cookie (`dismissedSeed`), so SSR renders the REAL
-  // carousel (or nothing) at its true height from frame 0 — no `isClient` gate, no
-  // min-height reserve, and (steady state) no post-hydration collapse. Post-
-  // hydration we switch to the store (initialized from the same cookie → identical
-  // value → no visual change) so live dismisses stay reactive.
+  // `site` feed placement: the server + first client paint both read the dismissed set
+  // from the SAME cookie (`dismissedSeed`), so SSR renders the REAL carousel (or nothing)
+  // from frame 0 with no `isClient` gate. Post-hydration we switch to the store
+  // (initialized from the same cookie → identical value) so live dismisses stay reactive.
   //
   // BOUNDED exception: on a legacy dismisser's FIRST load of the new bundle the
   // cookie doesn't exist server-side yet (the localStorage→cookie migration is
@@ -117,11 +119,10 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
   // paint matches SSR. Modeled by the migration-transition case in
   // `announcements-exposure.test.ts`.
   //
-  // When OFF (or type !== 'site'): behavior is byte-identical to before — the
-  // `isClient` gate zeroes `data` on the server + first client render (deferring
-  // dismissed-dependent rendering to after hydration), and the store drives
+  // Other types (generator/training panels sit outside the feed) keep the `isClient`
+  // gate: `data` is empty on the server + first client render and the store drives
   // `dismissed`. The RQ seed still primes the cache, so no bootstrap fetch fires.
-  const exposeSSR = features.feedReserveCls && type === 'site';
+  const exposeSSR = type === 'site';
 
   const announcements = useMemo(
     () =>

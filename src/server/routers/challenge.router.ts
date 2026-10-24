@@ -2,6 +2,7 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  moderatorDeleteChallengeSchema,
   getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getCompletedChallengesWithWinnersSchema,
@@ -107,7 +108,9 @@ export const challengeRouter = router({
   getDaily: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getDailyChallenges()),
+    .query(({ ctx }) =>
+      getDailyChallenges({ isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })
+    ),
 
   // Current user's own challenges — entered or created — most-recent-activity first.
   getMyChallenges: protectedProcedure
@@ -335,22 +338,33 @@ export const challengeRouter = router({
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure
-    .input(deleteChallengeSchema)
+    .input(moderatorDeleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => deleteChallenge(input.id)),
+    .mutation(({ input }) => deleteChallenge(input.id, { force: input.force })),
 
   // Public: Get active challenge events for featured section
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
+    .query(({ ctx }) =>
+      getActiveEvents(
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Public: Get single event by ID
   getEventById: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ id: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEventById(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeEventById(
+        input.id,
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure

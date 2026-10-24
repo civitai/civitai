@@ -20,8 +20,14 @@ type ImageScannedMessage = WorkflowMessage<[
 
 export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
   topics: ['orchestrator.imageScanned'],
+  // The three disables here are all the same reason: this handler is not in the registry in
+  // `handlers/index.ts` and nothing publishes `orchestrator.imageScanned` (its only producer is
+  // the commented-out body of `outbox/image-scan.ts`), so none of this runs yet. The bindings
+  // are what the TODOs below will use.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   processor: async ({ record, pg, actions }) => {
     // TODO briant: Implement image scanned processing logic
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { workflowId, status, metadata, outputs } = record;
 
     // Extract imageId from metadata
@@ -29,11 +35,12 @@ export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
     if (!imageId) {
       logger.warn(`[imageScannedHandler] Missing imageId in metadata for workflow ${workflowId}`);
       return;
-    };
+    }
 
     // TODO: handle workflow status (e.g., only process if status is 'completed', appropriate handlding for 'failed', etc.)
 
     // Extract outputs from the workflow
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [{tags}, {nsfwLevel, isBlocked}, { hashes }] = outputs;
 
     // TODO: handle scanned image results

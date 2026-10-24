@@ -1,5 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { formatPricingAllowance, isAlreadyPriced, pricingAllowanceState } from '@civitai/buzz';
+  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -8,12 +10,13 @@
   import UsageControlPicker from '$lib/components/monetization/UsageControlPicker.svelte';
   import PaidAccessFields from '$lib/components/monetization/PaidAccessFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
+  import SaleUndercutNotice from '$lib/components/monetization/SaleUndercutNotice.svelte';
+  import { type ModelVersionSaleWindow } from '@civitai/buzz';
   import type { PaidAccessContext } from '$lib/monetization/paid-access-form';
   import { resolveGateEligibility } from '$lib/monetization/gate-eligibility';
   import {
     MIN_ACCESS_PRICE,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    GENERATION_ONLY_HINT,
     monetizationLimits,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -28,21 +31,36 @@
     version,
     onClose,
     caps,
+    sales,
   }: {
     version: CreatorModelVersion;
     onClose: () => void;
     caps: CreatorCaps;
+    /** Live or upcoming sales covering this version — a base-price edit moves what buyers pay under them. */
+    sales?: ModelVersionSaleWindow[];
   } = $props();
 
-  const permanentCap = $derived(caps.permanentCap);
-  const permanentUsed = $derived(caps.permanentUsed);
+  const pricingLimit = $derived(caps.pricingLimit);
+  const pricingUsed = $derived(caps.pricingUsed);
   const earlyAccessUsed = $derived(caps.earlyAccessUsed);
   const earlyAccessCap = $derived(caps.earlyAccessCap);
   const maxEarlyAccessDays = $derived(caps.maxEarlyAccessDays);
   const tier = $derived(caps.tier);
-  const permAtCap = $derived(
-    permanentCap !== null && permanentCap > 0 && permanentUsed >= permanentCap
+  // A version that already carries a price is exempt — only a NEW price spends allowance, so an edit
+  // must never be blocked by a full month. A TIMED window is not a price: it prices itself out when the
+  // window closes, so it must not count as one here.
+  const alreadyPriced = $derived(
+    isAlreadyPriced({
+      licensingFee: version.licensingFee,
+      hasPermanentGate: !!version.paidAccessConfig?.permanent,
+    })
   );
+  const allowance = $derived(
+    pricingAllowanceState({ used: pricingUsed, limit: pricingLimit, exempt: alreadyPriced })
+  );
+  const permAtCap = $derived(allowance.atLimit);
+  // Only a NEW price is floored: a timed window is not a price, and an existing one is exempt.
+  const belowPricingFloor = $derived(!alreadyPriced && !caps.pricingFloor.eligible);
 
   // Ever actually published — a Scheduled version's future anchor doesn't count, and an unpublished
   // version that once went live does. Seeding and eligibility must agree on this or the drawer can open
@@ -99,8 +117,8 @@
   // The permanent option stays available to an already-permanent version even if membership lapsed or the
   // tier is at capacity, so an edit can't strand the creator (mirrors the main-app carve-out).
   const alreadyPermanent = $derived(!!version.paidAccessConfig?.permanent);
-  const canChoosePermanent = $derived(alreadyPermanent || !permAtCap);
-  const permBlocked = $derived(permAtCap && !alreadyPermanent);
+  const canChoosePermanent = $derived(alreadyPermanent || (!permAtCap && !belowPricingFloor));
+  const permBlocked = $derived(!canChoosePermanent);
   // A version already on a timed gate stays editable regardless of score/publish state.
   const timedAlreadySet = $derived(!!version.paidAccessConfig && !alreadyPermanent);
   // Same rule the bulk dialog applies, over a selection of one — a published version is simply a
@@ -113,7 +131,9 @@
       // take an early-access window. publishedAt is no good here: the republish job overwrites it.
       publishedCount: everPublished ? 1 : 0,
       maxEarlyAccessDays,
-      permanentSlotsLeft: canChoosePermanent ? 1 : 0,
+      pricingSlotsLeft: canChoosePermanent ? 1 : 0,
+      pricingFloor: caps.pricingFloor,
+      alreadyPriced,
       resolving: false,
     })
   );
@@ -125,16 +145,15 @@
     canChoosePermanent,
     permBlocked,
     timedBlockedReason: canChooseTimed ? undefined : eligibility.timedBlockedReason,
+    permBlockedReason: eligibility.permBlockedReason,
     maxEarlyAccessDays,
-    permanentUsed,
-    permanentCap,
+    pricingUsed,
+    pricingLimit,
     earlyAccessUsed,
     earlyAccessCap,
     tierLabel,
     capTier: caps.capTier,
-    accessCapFor: (t, permanent) =>
-      monetizationLimits({ tier: t, baseModel: version.baseModel, permanent }).access.maxPrice,
-    storedAccessPrice: version.paidAccessConfig?.accessPrice ?? 0,
+
     hadDonationGoal,
   });
   // Usage control gates paid access: Download (download + gen) and Generation (on-site gen only, no
@@ -198,7 +217,7 @@
         allowGenerationOnly={caps.canSetGenerationOnly}
       />
       {#if !caps.canSetGenerationOnly}
-        <p class="mt-2 text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+        <GenerationOnlyHint class="mt-2" />
       {/if}
       {#if usageControl !== storedUsageControl}
         <div class="mt-3 flex items-center gap-3">
@@ -230,11 +249,14 @@
   {:else if !canChooseTimed && !canChoosePermanent && !version.paidAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
       {#if version.status === 'Published'}
-        Early access can't be started after a version is published, and you've reached your
-        permanent paid-access limit ({permanentUsed} of {permanentCap}).
+        Early access can't be started after a version is published.
       {:else}
         Early access isn't available for your account yet — it unlocks as your creator score grows.
-        You've also reached your permanent paid-access limit ({permanentUsed} of {permanentCap}).
+      {/if}
+      {#if eligibility.permBlockedReason}
+        {eligibility.permBlockedReason}
+      {:else}
+        You've also used this month's monetization limit ({formatPricingAllowance(allowance)}).
       {/if}
     </p>
   {:else}
@@ -248,6 +270,13 @@
       <input type="hidden" name="usageControl" value={usageControl} />
 
       <PaidAccessFields bind:ea bind:genMode {isGenOnly} ctx={paidAccessCtx} />
+      <!-- Only for a permanent gate: a sale cannot cover early access, so quoting a sale price beside a
+           timed gate advertises a discount that will never apply. -->
+      <SaleUndercutNotice
+        sales={version.paidAccessConfig?.permanent === true ? sales : []}
+        storedPrice={version.paidAccessConfig?.accessPrice ?? 0}
+        newPrice={ea.accessPrice}
+      />
       {#if mustAffirm}
         <RightsAffirmation bind:checked={rightsAffirmed} />
       {/if}

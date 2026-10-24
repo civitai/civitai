@@ -4,32 +4,8 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 // at the newest eligible published version. These pin the eligibility walk — a copy of
 // createBid's inline gates, deliberately not shared — and that the swap never touches
 // today's charged Bid (an in-place entityId rewrite, no refunds).
-const {
-  bidRecurringFindFirst,
-  bidRecurringFindMany,
-  bidRecurringUpdate,
-  modelVersionFindFirst,
-  modelVersionFindMany,
-  imagesFetch,
-} = vi.hoisted(() => ({
-  bidRecurringFindFirst: vi.fn(),
-  bidRecurringFindMany: vi.fn(),
-  bidRecurringUpdate: vi.fn(async () => ({ id: 100 })),
-  modelVersionFindFirst: vi.fn(),
-  modelVersionFindMany: vi.fn(async () => [] as unknown[]),
+const { imagesFetch } = vi.hoisted(() => ({
   imagesFetch: vi.fn(async () => ({} as Record<number, unknown>)),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    bidRecurring: {
-      findFirst: bidRecurringFindFirst,
-      findMany: bidRecurringFindMany,
-      update: bidRecurringUpdate,
-    },
-    modelVersion: { findFirst: modelVersionFindFirst, findMany: modelVersionFindMany },
-  },
-  dbRead: {},
 }));
 
 // image.service's real import graph (-> event-engine-common) is heavy; only the cache the
@@ -46,6 +22,14 @@ vi.mock('~/components/Auction/auction.utils', () => ({
 }));
 
 import { getMyRecurringBids, moveRecurringBidToLatest } from '~/server/services/auction.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const bidRecurringFindFirst = dbMock.dbWrite.bidRecurring.findFirst;
+const bidRecurringFindMany = dbMock.dbWrite.bidRecurring.findMany;
+const bidRecurringUpdate = dbMock.dbWrite.bidRecurring.update;
+const modelVersionFindFirst = dbMock.dbWrite.modelVersion.findFirst;
+const modelVersionFindMany = dbMock.dbWrite.modelVersion.findMany;
+dbMock.dbWrite.bidRecurring.update.mockImplementation(async () => ({ id: 100 }));
+dbMock.dbWrite.modelVersion.findMany.mockImplementation(async () => [] as unknown[]);
 
 const auctionBase = {
   id: 10,

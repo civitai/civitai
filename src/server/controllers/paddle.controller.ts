@@ -10,7 +10,6 @@ import {
 import { verifyCaptchaToken } from '~/server/recaptcha/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import type {
-  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
@@ -20,7 +19,6 @@ import {
   cancelSubscriptionPlan,
   createBuzzPurchaseTransaction,
   createCustomer,
-  getAdjustmentsInfinite,
   processCompleteBuzzTransaction,
   purchaseBuzzWithSubscription,
   refreshSubscription,
@@ -298,18 +296,4 @@ const fromDbSubscriptionHandler = async ({ ctx }: { ctx: ProtectedContext }) => 
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
-};
-
-export const getAdjustmentsInfiniteHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: ProtectedContext;
-  input: GetPaddleAdjustmentsSchema;
-}) => {
-  if (!ctx.user.isModerator || !ctx.features.paddleAdjustments) {
-    throwAuthorizationError('You are not authorized to view this resource');
-  }
-
-  return getAdjustmentsInfinite(input);
 };

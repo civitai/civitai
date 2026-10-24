@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -9,7 +11,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * submit through the shared {@link ReasonGatedActionModal} (B3), so delist / relist /
  * claim / purge get the SAME live counter + inline error + disabled-with-Tooltip gate
  * the reject paths have (finding A). resolve / dismiss keep the OPTIONAL note (no gate).
- * Browser-mode (report-only in Tekton): the gate + the fired mutations.
+ * Browser-mode (`Component tests` in CI): the gate + the fired mutations.
  */
 
 const REPORT = {
@@ -31,11 +33,27 @@ const mocks = vi.hoisted(() => ({
   errorMode: false,
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 
-vi.mock('~/utils/notifications', () => ({
+// Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
+// because it actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, reached from here through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
+// requested module '/src/utils/notifications.tsx' does not provide an export named
+// 'showWarningNotification'`. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));

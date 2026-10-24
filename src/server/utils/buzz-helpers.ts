@@ -4,12 +4,17 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export const getBuzzBulkMultiplier = ({
   buzzAmount: _buzzAmount,
-  purchasesMultiplier,
+  purchasesMultiplier: _purchasesMultiplier,
 }: {
   buzzAmount: number;
   purchasesMultiplier: number;
 }) => {
   const buzzAmount = Number(_buzzAmount);
+  // Floor at 1 (no bonus), never 0: on the paid-purchase path a non-finite or sub-1 multiplier makes
+  // `buzzAmount * m - buzzAmount` zero/negative, and the caller's `metadata.transactionId`
+  // idempotency marker makes that zero-credit unrepairable by retry. See ClickUp 868m0axkg.
+  const parsedMultiplier = Number(_purchasesMultiplier);
+  const purchasesMultiplier = Number.isFinite(parsedMultiplier) ? Math.max(parsedMultiplier, 1) : 1;
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;
@@ -74,16 +79,44 @@ export function getAllowedAccountTypes(
 }
 
 /**
- * The owner account a paid-access purchase pays into, given what the buyer spent.
+ * Where a paid-access purchase made BEFORE payouts went in-kind credited the seller.
  *
- * Blue pays out blue — the credit is non-withdrawable and must stay that way, or the purchase
- * launders it into cashable currency. Everything else pays into yellow.
+ * A record, not a policy. The charge used to name no destination account, so the buzz service
+ * applied its yellow default and every green purchase paid the seller yellow — 2,409 legs from
+ * 2025-10-30 until the charge started naming the buyer's own account. Purchases from then on pay in
+ * kind and never reach this function.
  *
- * Shared with the unpublish-refund guard, which has no other way to learn the payout account — the
- * ledger's multi-transaction listing reports each leg by the account the BUYER spent from.
+ * It survives for ONE reader: the unpublish-refund guard, which sizes a refund by the account
+ * reversing a purchase would debit, and cannot learn that from the ledger — the multi-transaction
+ * listing reports each leg by the account the BUYER spent from and carries no destination.
+ *
+ * ⚠️ That makes the guard right for pre-cutover purchases and increasingly wrong for post-cutover
+ * green ones, where it checks a seller's YELLOW balance against money now held in GREEN. The
+ * consequences are a misleading refusal on unpublish, or a refund that takes a green balance
+ * negative, since the ledger exempts refunds from its own sufficiency check — both accepted
+ * deliberately (Justin, 2026-08-14) rather than blocking the currency fix on a schema change.
+ *
+ * The real fix is to record the payout account per purchase, the way `Placement.spendType` does, at
+ * which point this function has no readers and goes. `EntityAccess.meta` already carries the
+ * transaction ids, so it needs no migration. Before writing it, confirm which account a refund
+ * DEBITS against the buzz service rather than reasoning from this comment: sampled prod refunds
+ * credit the account the payer was debited from, and the seller side is unverified here.
  */
 export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
   return spendType === 'blue' ? 'blue' : 'yellow';
+}
+
+/**
+ * The single currency a request may spend, from the domain it arrived on.
+ *
+ * `getAllowedAccountTypes` with no seed returns exactly the domain currency, so
+ * this is that list's one element named rather than indexed. Surfaces that must
+ * spend one currency and no other — placements — take it from here so there is
+ * no second derivation to drift from the generator's.
+ */
+export function domainSpendType(features: FeatureAccess): BuzzSpendType {
+  const [type] = getAllowedAccountTypes(features);
+  return type;
 }
 
 /**
@@ -145,12 +178,11 @@ export function orderBlockCurrencyTypes(
 /**
  * PAYOUT-SAFETY GATE (App Blocks Sybil / payout review).
  *
- * Which Buzz account types are eligible to accrue an app-author payout
- * (`spendSharePct` > 0 / the dark #2605 rev-share rail) when spent inside a
- * block. This is the load-bearing rule that lets block currencies widen to
- * on-site parity (blue/green/yellow) WITHOUT ever turning into a
- * platform-funded farming loop: FREE Buzz is EXCLUDED so a Sybil ring can
- * never mint platform-funded bounty out of free daily Buzz.
+ * Which Buzz account types are eligible to accrue an app-author payout when
+ * spent inside a block. This is the load-bearing rule that lets block
+ * currencies widen to on-site parity
+ * (blue/green/yellow) WITHOUT ever turning into a farming loop: FREE Buzz is
+ * EXCLUDED so a Sybil ring can never mint a payout out of free daily Buzz.
  *
  * Determination (from `src/shared/constants/buzz.constants.ts` buzzTypeConfig;
  * PAID vs FREE confirmed by product 2026-06-30 — "green buzz is paid, only
@@ -165,10 +197,19 @@ export function orderBlockCurrencyTypes(
  *   - red    ('FakeRed')     → EXCLUDED. disabled; never a real spend.
  *
  * Rule: PAID (purchasable) types are payout-eligible; the free type (blue) is
- * not. The payout rail (#2605) MUST route every tracked spend row through this
- * predicate before paying — see `computeSpendShare`, which zeroes the share
- * for any non-eligible type. DO NOT widen this set without monetization +
- * Sybil-economics sign-off.
+ * not. DO NOT widen this set without monetization + Sybil-economics sign-off.
+ *
+ * ⚠️ THIS USED TO SAY "the payout rail (#2605) MUST route every tracked spend
+ * row through this predicate before paying". Corrected: #2605 reads
+ * `blockBuzzAttribution` (the PURCHASE table) only and never reads a spend row,
+ * and the platform-funded spend bounty that would have paid them is removed. So
+ * no rail pays a spend row today, and this predicate is not a gate in front of
+ * one. What it IS, still, and why it stays load-bearing: `blocks.router.ts` uses
+ * it to narrow the realized per-account debit to its PAID portion before that
+ * becomes a spend row's `grossValueCents`. It bounds the money BASIS at write
+ * time rather than the payout at pay time — so free Buzz can never enter the
+ * basis in the first place, which is the stronger of the two placements.
+ * Any future payout rail inherits that, and should still consult this predicate.
  */
 export const PAYOUT_ELIGIBLE_BUZZ_TYPES: ReadonlySet<string> = new Set<BuzzSpendType>([
   'green',

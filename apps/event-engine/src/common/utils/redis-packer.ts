@@ -8,12 +8,12 @@ import { IRedisClient, IDataPacker } from '../types/package-stubs';
  * Based on the redis.packed pattern from the main application.
  *
  * @param redis - The Redis client to wrap
- * @param packer - The data packer (e.g., msgpackr) with pack/unpack methods
+ * @param _packer - The data packer (e.g., msgpackr) with pack/unpack methods
  * @returns Wrapped Redis client that automatically packs/unpacks values
  */
 export function withRedisPacking(
   redis: IRedisClient,
-  packer: IDataPacker
+  _packer: IDataPacker
 ): IRedisClient {
   // Create a proxy that intercepts Redis operations
   // For now, we return the original client as-is since the cache implementation

@@ -25,6 +25,8 @@ import {
 } from '~/shared/constants/ecosystem-seo.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import styles from './EcosystemPage.module.scss';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -113,6 +115,16 @@ export default function EcosystemPage({
       return count ? `${formatCount(count)}+` : '—';
     });
 
+  // Same tokens in the title and description, but a missing count drops the number instead of
+  // putting a dash into the search snippet.
+  const resolveMetaText = (value: string) =>
+    value
+      .replace(LORA_COUNT_TOKEN, (_, key: string) => {
+        const count = data.loraCounts[key];
+        return count ? `${formatCount(count)}+` : '';
+      })
+      .replace(/\s{2,}/g, ' ');
+
   // A row of live counts can't carry a hand-set winner — highlight whichever column actually
   // has the most. Rows without tokens keep their curated `winner`.
   const comparisonWinner = (row: EcosystemSeoConfig['comparison']['rows'][number]) => {
@@ -156,8 +168,8 @@ export default function EcosystemPage({
   return (
     <>
       <Meta
-        title={`${name} AI Models & Generator | Civitai`}
-        description={config.metaDescription}
+        title={resolveMetaText(config.seoTitle ?? `${name} AI Models & Generator | Civitai`)}
+        description={resolveMetaText(config.metaDescription)}
         canonical={`/ecosystems/${slug}`}
         images={ogImage}
         schema={schema}
@@ -363,6 +375,9 @@ export default function EcosystemPage({
               {data.featuredExamples.map((ex) => (
                 <div key={ex.imageId} className={styles.galleryCard}>
                   <div className={styles.galleryImage}>
+                    <ImpressionSentinel
+                      impressions={[{ entityType: 'Image', entityId: ex.imageId }]}
+                    />
                     <EdgeMedia
                       src={ex.url}
                       type={ex.type}
@@ -629,8 +644,10 @@ function ResourceCard({
   /** False for a checkpoint that isn't always hosted — the card links out instead of generating. */
   generatable?: boolean;
 }) {
+  // The cover is a URL without an image id here, so only the model is recorded.
+  const impressionRef = useTrackImpression([{ entityType: 'Model', entityId: modelId }]);
   return (
-    <Card withBorder padding="sm" radius="md" className="flex h-full flex-col">
+    <Card ref={impressionRef} withBorder padding="sm" radius="md" className="flex h-full flex-col">
       {imageUrl && (
         <Card.Section component={NextLink} href={modelUrl(modelId, versionId)}>
           <EdgeMedia

@@ -65,15 +65,15 @@ The historic format uses `params.process` and `params.workflow` instead of a sin
 #### Resolution Priority
 
 1. **Comfy steps** (`$type === 'comfy'`): `params.workflow` mapped through `COMFY_KEY_TO_WORKFLOW`
-2. **Draft detection**: `params.draft === true` on txt2img → `txt2img:draft`
-3. **Already new format**: `params.workflow` contains `:` → used directly
-4. **Process-based** (`params.process` or `params.workflow`): refined by ecosystem context (see below)
-5. **Source image detection**: presence of `params.sourceImage` or `params.images` → `img2img` refined by ecosystem
-6. **Fallback**: `txt2img`
+2. **New-format key**: `params.workflow` starting `image:` / `video:` → mapped back through `NEW_TO_OLD`
+3. **Process-based** (`params.process` or `params.workflow`): refined by ecosystem context (see below)
+4. **Source image detection**: presence of `params.sourceImage` or `params.images` → `img2img` refined by ecosystem
+5. **Engine detection**: `params.engine` in `ENGINE_TO_BASE_MODEL` → `txt2vid`, or `img2vid` refined by image count
+6. **Fallback**: the first non-enhancement, non-utility workflow matching the baseModel's media type that the ecosystem supports (`txt2img` for images)
 
 #### Ecosystem-Aware Refinement
 
-When the base process is determined (step 4/5), it is refined based on the inferred `baseModel`. The mapper derives which ecosystems support which workflow variants from `workflowConfigs` (in `config/workflows.ts`) rather than maintaining hardcoded sets. This means adding a new ecosystem to a workflow config automatically updates the legacy mapping.
+When the base process is determined (step 3/4/5), it is refined based on the inferred `baseModel`. The mapper derives which ecosystems support which workflow variants from `workflowConfigs` (in `config/workflows.ts`) rather than maintaining hardcoded sets. This means adding a new ecosystem to a workflow config automatically updates the legacy mapping.
 
 The helper `ecosystemSupportsWorkflow(baseModel, workflowKey)` converts a baseModel key to its ecosystem ID via `ecosystemByKey`, then checks if that ID appears in the workflow config's `ecosystemIds`.
 
@@ -180,10 +180,10 @@ Video workflows (`txt2vid`, `img2vid`, `vid2vid:*`) in the historic format have 
 
 These would need to be accessed from the raw `metadata.params` as a fallback.
 
-### 6. `params.draft` Boolean vs `txt2img:draft` Workflow
+### 6. Image Draft Is Named by Workflow Key, Not `params.draft`
 **Impact: Low**
 
-The historic format uses `params.draft: true` to indicate draft mode. The new format uses `workflow: 'txt2img:draft'`. The mapper detects `draft: true` + txt2img workflow and maps to `txt2img:draft`, but this only applies when `params.workflow` starts with `txt2img`. Draft with other base workflows (if any existed) would not be detected.
+An image draft is stored as `workflow: 'txt2img:draft'` (or the newer `image:draft`), with no `draft` field. For the SD family and Flux1 it remixes back into the `txt2img:draft` workflow (SD gets its accelerator LoRA re-added server-side; Flux is put on its draft build), so the stored `steps` / `cfgScale` / `sampler` are kept. When the stored row names no inferable ecosystem, the draft key and the three params also stand, and the form's current ecosystem decides whether the draft workflow survives. A draft that lands on an ecosystem without a draft workflow resolves to plain `txt2img` and has the three **dropped**: they only cohere with the draft accelerator, so carrying them through would bill the ordinary rate for a generation that cannot come out right. The legacy form's `params.draft: true` on an image row selects no workflow and is dropped the same way. Video draft (`txt2vid`/`img2vid`/`vid2vid*`, incl. Wan's `turbo`) is untouched and still maps to the `draft` node.
 
 ### 7. Aspect Ratio Precision
 **Impact: Low**

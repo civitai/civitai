@@ -21,7 +21,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import sharedStyles from '~/pages/comics/Comics.module.scss';
 
@@ -159,6 +159,7 @@ function ComicReader() {
   // an Image relation default to "blocked" — the safe assumption.
   const features = useFeatureFlags();
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   // Active chapter is driven by `?chapter={position}` so refresh / share /
   // back-button all land on the same chapter. We pick first-with-panels as
@@ -277,7 +278,7 @@ function ComicReader() {
     if (!Number.isFinite(projectId) || projectId <= 0) return null;
     const params = activeChapter ? `?chapter=${activeChapter.position}` : '';
     return syncAccount(`//${redDomain}/comics/project/${projectId}/read${params}`);
-  }, [redDomain, projectId, activeChapter]);
+  }, [redDomain, projectId, activeChapter, syncAccount]);
 
   const chapterOptions = useMemo(
     () =>

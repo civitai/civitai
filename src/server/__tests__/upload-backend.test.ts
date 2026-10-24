@@ -67,6 +67,9 @@ vi.mock('~/utils/s3-utils', () => ({
 // (no default ApiRouteConfig export), failing `next build`.
 import handler from '~/pages/api/upload';
 import { UploadType } from '~/server/common/enums';
+// Mocked in ~/__tests__/setup as vi.fn(); imported here so the ORDER of the log relative to
+// the response is observable, and so it can be made to REJECT.
+import { logToAxiom } from '~/server/logging/client';
 
 function makeRes() {
   const res = {
@@ -197,6 +200,111 @@ describe('upload handler — model backend selection (b2-upload-default retired)
       null,
       undefined,
       CHUNK_SIZE
+    );
+  });
+});
+
+/**
+ * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY — the `/api/upload` half of the contract
+ * pinned for ./complete.ts and ./abort.ts in `upload-{complete,abort}-endpoint.test.ts`.
+ *
+ * This route was the worst of the four: no try/catch at all, and `await logToAxiom` sitting
+ * between a successfully created multipart session and the 200 that hands the client its
+ * presigned part URLs. During the 2026-08-23 Axiom outage that made it a 500 with nothing
+ * logged anywhere — 292 of them, against a baseline of zero.
+ *
+ * These exist because the restructure was otherwise UNPINNED IN BOTH DIRECTIONS: an audit
+ * showed that moving the log back ahead of the response, or deleting the containment
+ * try/catch, both left this file green at 5/5. Two independent guards, because they fail
+ * differently — one reads the ordering directly even with a healthy logger, the other only
+ * bites when the logger is sick.
+ */
+describe('/api/upload — telemetry cannot gate or fail the response', () => {
+  beforeEach(() => {
+    vi.mocked(logToAxiom).mockReset();
+    mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+  });
+
+  /**
+   * 🔴 "Committed" means the BODY was written, not merely that `res.status()` ran. Splitting
+   * them (`res.status(200); await log; res.json(...)`) leaves the client waiting exactly as
+   * long as the pre-fix code did, and a status-only assertion cannot see it.
+   */
+  it('ORDERING: the 200 is already committed by the time the event is logged', async () => {
+    const res = makeRes();
+    // Reads the response state AT LOG TIME. With the log ahead of the response — the
+    // pre-2026-08-23 shape — this observes 0/undefined, because nothing has been sent yet.
+    let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
+    vi.mocked(logToAxiom).mockImplementation(async () => {
+      statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
+    });
+
+    await handler(makeReq(UploadType.Model), res);
+
+    expect(statusAtLogTime).toBe(200);
+    expect(bodyAtLogTime).toMatchObject({ uploadId: 'test-upload-id', backend: 'b2' });
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload' })
+    );
+  });
+
+  /**
+   * 🔴 THE ERROR PATH NEEDS THE SAME GUARD, and a delta re-audit caught that it did not have
+   * one — while the commit message and PR body both asserted every route was covered "on both
+   * the success and error paths". It was the claim that was wrong, not the code, but a guard
+   * described more widely than it is written is worse than no guard: it stops anyone looking.
+   *
+   * The weakness this closes is the one that let the sign-part reorder mutant survive an
+   * earlier round: a status-only assertion cannot see it, because the same 500 still gets
+   * sent and only the telemetry stall in front of the client returns.
+   */
+  it('ORDERING (error path): the 500 is committed before the error event is logged', async () => {
+    getMultipartPutUrl.mockRejectedValueOnce(new Error('B2 said no'));
+    const res = makeRes();
+    let statusAtLogTime: number | undefined;
+    let bodyAtLogTime: unknown;
+    vi.mocked(logToAxiom).mockImplementation(async () => {
+      statusAtLogTime = res.statusCode;
+      bodyAtLogTime = res.body;
+    });
+
+    await handler(makeReq(UploadType.Model), res);
+
+    expect(statusAtLogTime).toBe(500);
+    expect(bodyAtLogTime).toEqual({ error: 'Failed to start upload' });
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-create-error' })
+    );
+  });
+
+  it('CONTAINMENT: a rejecting logger leaves the 200 intact and the handler settled', async () => {
+    vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+    const res = makeRes();
+
+    await expect(handler(makeReq(UploadType.Model), res)).resolves.toBeUndefined();
+
+    // Without the inner try/catch the rejection unwinds into the handler's own catch and
+    // overwrites this with a 500 — on a request whose upload session was created fine.
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { uploadId?: string })?.uploadId).toBe('test-upload-id');
+  });
+
+  it('a create failure is a 500 with a STATIC body and its own logged event', async () => {
+    getMultipartPutUrl.mockRejectedValueOnce(new Error('B2 said no: bucket civitai-modelfiles'));
+    const res = makeRes();
+
+    await expect(handler(makeReq(UploadType.Model), res)).resolves.toBeUndefined();
+
+    expect(res.statusCode).toBe(500);
+    // Static, never the error's own text: the driver message must not reach the wire, and
+    // `rest-error-envelope-ledger` fails if it does.
+    expect(res.body).toEqual({ error: 'Failed to start upload' });
+    expect(JSON.stringify(res.body)).not.toContain('civitai-modelfiles');
+    // The detail goes to the log instead — before this change a failure here logged nothing.
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-create-error', error: expect.any(String) })
     );
   });
 });

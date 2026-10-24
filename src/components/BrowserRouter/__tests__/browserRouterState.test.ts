@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveLocationChangeState } from '~/components/BrowserRouter/browserRouterState';
+import {
+  resolveLocationChangeState,
+  resolveRouteChangeState,
+} from '~/components/BrowserRouter/browserRouterState';
 
 // Regression coverage for the Safari/iOS back-navigation crash:
 //   TypeError: null is not an object (evaluating 't.as')
@@ -37,7 +40,11 @@ describe('resolveLocationChangeState', () => {
 
     it('uses history.state.url for query when popstate e.state is null but history.state exists', () => {
       // Safari can null the popstate `e.state` while `history.state` is present.
-      const historyState = { url: '/search?query=cats', as: '/search', state: { prev: { asPath: '/' } } };
+      const historyState = {
+        url: '/search?query=cats',
+        as: '/search',
+        state: { prev: { asPath: '/' } },
+      };
       const result = resolveLocationChangeState(null, historyState, location);
       // asPath still degrades to location (e.state.as is what normally supplies it).
       expect(result.asPath).toBe('/models?sort=Newest');
@@ -135,5 +142,85 @@ describe('resolveLocationChangeState', () => {
       const result = resolveLocationChangeState(eventState, eventState, location, '/images');
       expect(result.query).toEqual({});
     });
+  });
+});
+
+// The popstate handler resolves against the route being LEFT, so a pop Next owns
+// — `/models/[id]` back onto `/images/123` — matched no pattern and produced a
+// query with no `imageId`. `BrowserRouterProvider` commits that on
+// `routeChangeComplete`, so the params have to be re-derived there against the
+// route now rendered.
+describe('resolveRouteChangeState', () => {
+  it("publishes Next's query, which has the params of the route just rendered", () => {
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      {}
+    );
+    expect(result.asPath).toBe('/images/135356251');
+    expect(result.query.imageId).toBe(135356251);
+  });
+
+  it('types params like the rest of the query rather than as strings', () => {
+    // Consumers hand `imageId` straight to tRPC inputs typed as numbers.
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      {}
+    );
+    expect(typeof result.query.imageId).toBe('number');
+  });
+
+  it('carries the history state, which Next does not', () => {
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      { prev: { asPath: '/models/827184' } }
+    );
+    expect(result.state).toEqual({ prev: { asPath: '/models/827184' } });
+  });
+
+  it('publishes only what Next has, so nothing can be merged over it', () => {
+    // Not a re-derivation: the query is copied whole. A reader who reintroduced a
+    // merge would have somewhere for an outgoing-route param to come back in.
+    const result = resolveRouteChangeState(
+      { asPath: '/comics/project/55/chapter/2', query: { id: '55', chapterPosition: '2' } },
+      {}
+    );
+    expect(Object.keys(result.query)).toEqual(['id', 'chapterPosition']);
+    expect(result.query.id).toBe(55);
+  });
+});
+
+describe('a URL fragment', () => {
+  it('does not end up inside the path param', () => {
+    // `eventState.as` keeps the hash, and `imageId: '135356251#comments'` reaches
+    // tRPC as the image id.
+    const eventState = {
+      as: '/images/135356251#comments',
+      url: '/images/135356251#comments',
+      state: {},
+    };
+    const result = resolveLocationChangeState(
+      eventState,
+      eventState,
+      { pathname: '/images/135356251', search: '' },
+      '/images/[imageId]'
+    );
+    expect(result.query.imageId).toBe(135356251);
+  });
+
+  it('does not end up on the last query param either', () => {
+    // The query string is everything after `?`, fragment included, and it is
+    // spread over the path params — so this shadowed the fix above.
+    const eventState = {
+      as: '/models/827184?modelVersionId=5#reviews',
+      url: '/models/[id]?modelVersionId=5#reviews',
+      state: {},
+    };
+    const result = resolveLocationChangeState(
+      eventState,
+      eventState,
+      { pathname: '/models/827184', search: '?modelVersionId=5' },
+      '/models/[id]'
+    );
+    expect(result.query.modelVersionId).toBe(5);
   });
 });

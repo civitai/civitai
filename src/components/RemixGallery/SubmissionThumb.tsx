@@ -6,6 +6,12 @@ import type { RouterOutput } from '~/types/router';
 type PendingSubmission =
   RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
+/** The variant that carries an asset. The other one has no pixels to open. */
+export type ViewableQueueImage = Extract<
+  NonNullable<PendingSubmission['image']>,
+  { viewable: true }
+>;
+
 /**
  * The submitted image, openable.
  *
@@ -17,9 +23,15 @@ type PendingSubmission =
  * still waiting on them, and sending the reviewer away to see one submission
  * loses the list and their place in it.
  */
-export function SubmissionThumb({ image }: { image: NonNullable<PendingSubmission['image']> }) {
+export function SubmissionThumb({
+  image,
+  label = 'Open this remix in a new tab',
+}: {
+  image: ViewableQueueImage;
+  label?: string;
+}) {
   return (
-    <Tooltip label="Open this remix in a new tab" withArrow openDelay={400}>
+    <Tooltip label={label} withArrow openDelay={400}>
       <a
         href={`/images/${image.id}`}
         target="_blank"

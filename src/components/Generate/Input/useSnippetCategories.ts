@@ -2,8 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
 import { trpc } from '~/utils/trpc';
-import { useGraph, useGraphSubscription } from '~/libs/data-graph/react/DataGraphProvider';
-import type { SnippetsNodeValue } from '~/shared/data-graph/generation/common';
+import { useSnippetsForm } from './useSnippetsForm';
 
 /**
  * Resolve the popover-ready category list for the snippets feature, reading
@@ -25,26 +24,21 @@ import type { SnippetsNodeValue } from '~/shared/data-graph/generation/common';
  * audit/invalidated state, valueCount per category) so the strip can
  * render without re-querying.
  *
- * Must be called inside a `DataGraphProvider`. When the active subgraph
- * has no `snippets` node, the hook treats `wildcardSetIds` as empty —
- * still safe to call unconditionally (no errors, just empty results).
+ * When the active branch has no `snippets` field, the hook treats `wildcardSetIds` as
+ * empty — still safe to call unconditionally (no errors, just empty
+ * results).
  */
 export function useSnippetCategories() {
   // Subscribe to the snippets node so additions/removals push fresh
   // `wildcardSetIds` through without callers needing their own graph
-  // plumbing. `useGraphSubscription` returns `null` when the node isn't
-  // in the active discriminator branch — that's the v0 case where the
-  // ecosystem didn't merge `snippetsGraph`.
-  const graph = useGraph();
-  const snippetsSnapshot = useGraphSubscription(graph, 'snippets');
+  // plumbing. `snippets` is undefined when the field isn't in the active branch,
+  // or when its block was built with `snippets: false`.
+  const { snippets, setSnippets } = useSnippetsForm();
   // Memo on the snapshot value (stable until the node updates) so the
   // fallback empty-array branch doesn't churn a new `[]` reference per
   // render — that would re-trigger every downstream `useMemo` keyed off
   // this array.
-  const wildcardSetIds = useMemo(
-    () => (snippetsSnapshot?.value as SnippetsNodeValue | undefined)?.wildcardSetIds ?? [],
-    [snippetsSnapshot?.value]
-  );
+  const wildcardSetIds = useMemo(() => snippets?.wildcardSetIds ?? [], [snippets]);
 
   const userSetQuery = trpc.wildcardSet.getMyUserSet.useQuery(undefined, {
     refetchOnWindowFocus: false,
@@ -113,17 +107,13 @@ export function useSnippetCategories() {
     const returned = new Set(setsQuery.data.map((s) => s.id));
     const orphans = wildcardSetIds.filter((id) => !returned.has(id));
     if (orphans.length === 0) return;
-    const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
-    const current = snap.snippets;
-    if (!current) return;
+    if (!snippets) return;
     const orphanSet = new Set(orphans);
-    graph.set({
-      snippets: {
-        ...current,
-        wildcardSetIds: current.wildcardSetIds.filter((id) => !orphanSet.has(id)),
-      },
-    } as Parameters<typeof graph.set>[0]);
-  }, [setsQuery.data, setsQuery.isPlaceholderData, wildcardSetIds, graph]);
+    setSnippets({
+      ...snippets,
+      wildcardSetIds: snippets.wildcardSetIds.filter((id) => !orphanSet.has(id)),
+    });
+  }, [setsQuery.data, setsQuery.isPlaceholderData, wildcardSetIds, snippets, setSnippets]);
 
   const categories = useMemo<SnippetCategoryItem[]>(() => {
     if (loadedSets.length === 0) return [];

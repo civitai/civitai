@@ -1,4 +1,3 @@
-import type { IncomingTransferRow } from '~/components/Apps/AppTransferOffersView';
 import {
   AppTransferOffersView,
   invalidationsForTransferResponse,
@@ -62,7 +61,16 @@ export function AppTransferOffers() {
 
   return (
     <AppTransferOffersView
-      transfers={(transfersQuery.data ?? []) as IncomingTransferRow[]}
+      /**
+       * 🔴 NO CAST. There used to be an `as IncomingTransferRow[]` here, against a
+       * hand-written structural duplicate of the service's return type — and a cast to a
+       * wider type is LEGAL, so `tsc` could not see the server drifting from the View at
+       * the one hop where that drift is invisible at runtime too. #3935 fixed the same
+       * hole on the owner's page (F3). `IncomingTransferRow` is now derived from
+       * `IncomingTransferView`, so the tRPC output type is checked against it directly and
+       * a field the service stops sending fails HERE.
+       */
+      transfers={transfersQuery.data ?? []}
       isLoading={transfersQuery.isLoading}
       errorMessage={transfersQuery.error?.message ?? null}
       busyTransferId={busyTransferId}

@@ -4,6 +4,11 @@
 
 type GuardSession = { user?: { isModerator?: boolean | null } | null } | null | undefined;
 
+// /testing pages open to everyone in prod. Each must set `<Meta deIndex />`: public is fine, indexed is not.
+// /testing/ads only renders the site's ad units plus the CMP state the ad loader already exposes on every page, so
+// non-mods (Snigel, QA) can check it against the staging engine via `?adengine=staging`.
+const PUBLIC_TESTING_PATHS = new Set(['/testing/ads']);
+
 export type AuthGuardResult =
   | { redirect: string } // redirect the request here
   | { needsPreviewCheck: true } // logged-in non-mod on a preview deploy → caller runs the Flipt check
@@ -18,11 +23,11 @@ export function resolveAuthGuard(
   const isLoggedIn = !!session?.user;
   const loginRedirect = `/login?returnUrl=${encodeURIComponent(path)}`;
 
-  // /moderator (always) + /testing (prod only) require a moderator. Login can't grant the missing permission and
-  // would loop back here, so an authed-but-unauthorized user is sent home instead of to login.
+  // /moderator (always) + /testing (prod only, minus PUBLIC_TESTING_PATHS) require a moderator. Login can't grant
+  // the missing permission and would loop back here, so an authed-but-unauthorized user is sent home instead.
   if (
     (path.startsWith('/moderator') && !isModerator) ||
-    (path.startsWith('/testing') && env.isProd && !isModerator)
+    (path.startsWith('/testing') && env.isProd && !isModerator && !PUBLIC_TESTING_PATHS.has(path))
   ) {
     return { redirect: isLoggedIn ? '/' : loginRedirect };
   }

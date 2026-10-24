@@ -187,20 +187,19 @@ const donationGoalByEntity = async ({
 // Creates a donation goal for an entity. This is purely a DonationGoal concern — it knows nothing
 // about PaidAccess/early-access; the gate is created separately by its own writer. Create-once:
 // later edits don't retroactively replace an existing goal (an entity has at most one).
-export async function ensureDonationGoal(
-  {
-    entityType,
-    entityId,
-    amount,
-    userId,
-    title = 'Donation Goal',
-  }: {
-    entityType: PaidAccessEntityType;
-    entityId: number;
-    amount: number;
-    userId: number;
-    title?: string;
-  }) {
+export async function ensureDonationGoal({
+  entityType,
+  entityId,
+  amount,
+  userId,
+  title = 'Donation Goal',
+}: {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  amount: number;
+  userId: number;
+  title?: string;
+}) {
   // Create-once is enforced by the partial unique index on (entityType, entityId), not by a prior
   // read: a read-then-create left a window where concurrent early-access writes all saw no goal and
   // each inserted one, splitting the entity's donations across rows that donationGoalByEntity then
@@ -222,9 +221,9 @@ export async function ensureDonationGoal(
     DO NOTHING
   `;
   if (inserted === 0) return;
-  // Bust like every PaidAccess writer — the cache seeds a `goal: null` entry for an existing version,
+  // Invalidate (by refresh, see below) like every PaidAccess writer — the cache seeds a `goal: null` entry for an existing version,
   // so without this the public/owner reads serve "no goal" until the TTL backstop lapses.
-  await bustPublicDonationGoalsCache(entityType, entityId);
+  await refreshPublicDonationGoalsCache(entityType, entityId);
 }
 
 export const donateToGoal = async ({
@@ -262,6 +261,10 @@ export const donateToGoal = async ({
       amount,
       fromAccountId: userId,
       fromAccountTypes: [buzzType],
+      // The creator receives what the donor gave. Naming no destination let the
+      // buzz service apply its yellow default, so a green donation reached the
+      // creator as yellow — 137 legs / 85,210 Buzz since green launched.
+      toAccountType: buzzType,
       toAccountId: goal.userId,
       externalTransactionIdPrefix,
       description: `Donation to ${goal.title}`,
@@ -358,7 +361,7 @@ export const checkDonationGoalComplete = async ({
       await bustPaidAccessCache(entityType, [entityId]);
       await syncModelAfterEarlyGateEnd(entityType, entityId);
     }
-    await bustPublicDonationGoalsCache(entityType, entityId);
+    await refreshPublicDonationGoalsCache(entityType, entityId);
   } catch (error) {
     logToAxiom({
       type: 'warning',
@@ -373,9 +376,18 @@ export const checkDonationGoalComplete = async ({
 };
 
 // The public donation-goals cache is entity-type-keyed at the cache layer (only ModelVersion has one
-// today); route the bust here so the completion flow above stays entity-agnostic.
-const bustPublicDonationGoalsCache = async (entityType: PaidAccessEntityType, entityId: number) => {
-  if (entityType === 'ModelVersion') await modelVersionPublicDonationGoalsCache.bust(entityId);
+// today); route it here so the completion flow above stays entity-agnostic.
+//
+// refresh, not bust: this runs on every donation, and a bust leaves the id uncached for its window, so
+// a version taking donations faster than that would never be cached while every page view ran the
+// lookup. refresh() runs the lookup once with fromWrite, which reads the goal and its donation total
+// from the primary, so the just-committed donation is in what it caches. If that lookup throws, refresh
+// falls back to bust() and never throws itself.
+const refreshPublicDonationGoalsCache = async (
+  entityType: PaidAccessEntityType,
+  entityId: number
+) => {
+  if (entityType === 'ModelVersion') await modelVersionPublicDonationGoalsCache.refresh(entityId);
 };
 
 // A goal-met early end must refresh the model's derived early-access state (feed/card caches + Meili

@@ -1,9 +1,28 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { guard } from '$lib/server/auth';
+import { dbPool } from '$lib/server/db';
 import { getLogger } from '$lib/server/logger';
 
 const FALLBACK_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
+
+console.info(`[creator-studio] version ${__APP_VERSION__}`);
+
+/**
+ * pg has no parser for arrays of a user-defined enum — see `toDomainArray`. `init` is awaited before
+ * the first request, which is why registration lives here and not at module scope.
+ *
+ * Fail-open, matching `instrumentation.node.ts`: a DB hiccup at boot must not stop the app serving,
+ * so read sites still have to tolerate the unparsed shape.
+ */
+export const init: ServerInit = async () => {
+  try {
+    await registerEnumArrayTypeParsers(dbPool);
+  } catch (err) {
+    console.error('[creator-studio] enum-array type-parser registration failed (fail-open):', err);
+  }
+};
 
 // Prerendered at build (no cookie), so it must resolve before the gate.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);
@@ -11,14 +30,20 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 // signed-in visitors to the dashboard).
 const OPTIONAL_AUTH_PATHS = new Set(['/']);
 
+// Every resolve() must pass this, or the literal %app.version% ships in app.html's meta tag.
+const withVersion = {
+  transformPageChunk: ({ html }: { html: string }) =>
+    html.replace('%app.version%', __APP_VERSION__),
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   const { pathname } = event.url;
-  if (PUBLIC_PATHS.has(pathname)) return resolve(event);
+  if (PUBLIC_PATHS.has(pathname)) return resolve(event, withVersion);
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 
   if (result.status === 'login' || result.status === 'forbidden') {
-    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event);
+    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event, withVersion);
     if (result.status === 'login') {
       return new Response(null, { status: 302, headers: { location: result.redirect } });
     }
@@ -26,7 +51,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.user = result.user;
-  return resolve(event);
+  return resolve(event, withVersion);
 };
 
 // Unexpected server errors (thrown loads/actions) — log to Axiom; SvelteKit already returns the 500.

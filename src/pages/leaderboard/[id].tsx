@@ -45,6 +45,7 @@ const leaderboardQuerySchema = z.object({
   // Position lives in the URL fragment (e.g. /leaderboard/flux#93), not the
   // query string. Fragments aren't separate URLs in Google's eyes — keeps
   // shareable position links without polluting the alternate-canonical bucket.
+  // 'legend' is the Legacy board's URL value; renaming it breaks shared links.
   board: z.enum(['season', 'legend']).default('season'),
 });
 
@@ -229,7 +230,7 @@ export default function Leaderboard() {
             <Stack gap={0} maw={600} w="100%">
               <Group gap={8} wrap="nowrap">
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
-                {hasLegends && <LegendsToggle className={classes.legendsToggleSm} />}
+                {hasLegends && <LegacyToggle className={classes.legendsToggleSm} />}
                 <LegacyActionIcon
                   className={classes.drawerButton}
                   size="md"
@@ -239,7 +240,7 @@ export default function Leaderboard() {
                   <IconLayoutSidebarLeftExpand />
                 </LegacyActionIcon>
               </Group>
-              {hasLegends && <LegendsToggle className={classes.legendsToggle} />}
+              {hasLegends && <LegacyToggle className={classes.legendsToggle} />}
               <Group gap={5}>
                 <Text className={classes.slogan} c="dimmed" size="lg">
                   {selectedLeaderboard?.description}
@@ -254,10 +255,9 @@ export default function Leaderboard() {
                     {board === 'season' ? (
                       <Stack gap={4}>
                         <Text fw={500}>Rank is calculated based on:</Text>
+                        {/* Each board states its own window (30, 90, 7 days, all time) in
+                            scoringDescription; a shared line here would be wrong for some. */}
                         <Code block>{selectedLeaderboard?.scoringDescription}</Code>
-                        <Text c="dimmed" size="xs">
-                          Only the last 30 days are considered
-                        </Text>
                       </Stack>
                     ) : board === 'legend' ? (
                       <Stack gap={4}>
@@ -325,7 +325,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
   );
 }
 
-const LegendsToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
+const LegacyToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
   const { query, pathname, replace } = useRouter();
   const { board } = leaderboardQuerySchema.parse(query);
   const setBoard = (board: 'season' | 'legend') => {
@@ -346,7 +346,7 @@ const LegendsToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 
     <SegmentedControl
       data={[
         { value: 'season', label: 'Season' },
-        { value: 'legend', label: 'Legend' },
+        { value: 'legend', label: 'Legacy' },
       ]}
       size="xs"
       value={board}

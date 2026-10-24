@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
@@ -10,10 +9,17 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
+import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
-import { isRequestFromBrowser, repairSplitQueryString } from '~/server/utils/request-helpers';
+import {
+  isRequestFromBrowser,
+  repairSplitQueryString,
+  shouldResolveDirect,
+} from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
@@ -34,6 +40,70 @@ const downloadLimiter = createLimiter({
   fetchCount: fetchDownloadCount,
 });
 
+/**
+ * A caller can drive this 400 at will, so it is sampled where the repair below
+ * is not. Neither payload carries a query VALUE — `token` on this route is the
+ * caller's API key, and Axiom applies no redaction of its own.
+ */
+const SCHEMA_REJECTION_SAMPLE_RATE = 0.01;
+
+function logSplitQueryRepair(req: NextApiRequest) {
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'split-query-repaired',
+    keys: Object.keys(req.query),
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+/** A file this large can still be downloading when a short-lived link expires. */
+const LARGE_FILE_KB = 1024 * 1024;
+const SMALL_FILE_EXPIRY_SAMPLE_RATE = 0.01;
+
+/** How long the link a download was sent to has left. Never the link itself: it carries a signature. */
+function logUrlExpiry({
+  fileId,
+  sizeKB,
+  urlExpiresAt,
+}: {
+  fileId: number;
+  sizeKB: number;
+  urlExpiresAt: Date;
+}) {
+  const large = sizeKB >= LARGE_FILE_KB;
+  if (!large && Math.random() >= SMALL_FILE_EXPIRY_SAMPLE_RATE) return;
+  const expiresAt = Number.isNaN(urlExpiresAt.getTime()) ? null : urlExpiresAt;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'url-expiry',
+    fileId,
+    sizeKB,
+    expiresAt: expiresAt?.toISOString() ?? null,
+    remainingSeconds: expiresAt ? Math.round((expiresAt.getTime() - Date.now()) / 1000) : null,
+    sampleRate: large ? 1 : SMALL_FILE_EXPIRY_SAMPLE_RATE,
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+function logSchemaRejection(error: z.ZodError, repaired: boolean) {
+  if (Math.random() >= SCHEMA_REJECTION_SAMPLE_RATE) return;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'warning',
+    message: 'schema-rejected',
+    fields: error.issues.map((issue) => issue.path.join('.')),
+    // A rejection AFTER a repair is a different bug from one the repair never saw.
+    repaired,
+    sampleRate: SCHEMA_REJECTION_SAMPLE_RATE,
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     // This response is per-user, auth/early-access-gated, rate-limited, and
@@ -48,7 +118,10 @@ export default PublicEndpoint(
     // Must run before `getServerAuthSession` below, which reads `?token=` off
     // `req.url` — a stray `?` swallows that param into the one before it, so an
     // API-key caller would otherwise be treated as anonymous.
-    repairSplitQueryString(req);
+    const repaired = repairSplitQueryString(req);
+    // Unsampled: this is what says whether any client still needs the shim, and
+    // a rate that can report zero is the point.
+    if (repaired) logSplitQueryRepair(req);
 
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
@@ -68,17 +141,13 @@ export default PublicEndpoint(
       // so where that peer is a shared hop, listing its address blocks all such
       // traffic to every download route at once. See `parseIpBlocklist`.
       const ip = getTrustedClientIp(req);
-      const ipBlacklist = parseIpBlocklist(
-        (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
-      );
+      const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
       const session = await getServerAuthSession({ req, res });
       if (!!session?.user) {
-        const userBlacklist = parseUserBlocklist(
-          (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
-        );
+        const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
         if (userBlacklist.includes(session.user.id.toString()))
           return errorResponse(403, 'Forbidden');
       }
@@ -124,18 +193,27 @@ export default PublicEndpoint(
 
       // Validate query params
       const queryResults = schema.safeParse(req.query);
-      if (!queryResults.success)
+      if (!queryResults.success) {
+        logSchemaRejection(queryResults.error, repaired);
         return res
           .status(400)
           .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
+      }
       const input = queryResults.data;
       const modelVersionId = input.modelVersionId;
       if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
 
       // Get file
+      //
+      // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
+      // getFileForModelVersion) auth/ownership/paid-access checks. It selects
+      // which host serves the bytes and nothing else — a caller that fails any
+      // gate above never reaches this line, so the allowlist cannot widen access.
       const fileResult = await getFileForModelVersion({
         ...input,
         user: session?.user,
+        direct: shouldResolveDirect(req),
+        attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
@@ -239,13 +317,16 @@ export default PublicEndpoint(
           });
         }
 
-        // Increment download count for user
-        await downloadLimiter.increment(userKey);
+        // Increment download count for user. A resume re-enters here for the same file, so only the
+        // first request for a file and repeats past the free allowance count.
+        if (await countsTowardDownloadLimit(userKey, fileResult.fileId))
+          await downloadLimiter.increment(userKey);
       } catch (error) {
         // Don't return error to user
         console.error(error);
       }
 
+      logUrlExpiry(fileResult);
       // Redirect to download url
       res.redirect(fileResult.url);
     } catch (error) {

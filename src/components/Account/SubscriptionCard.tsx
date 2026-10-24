@@ -1,17 +1,12 @@
-import {
-  Button,
-  Card,
-  Stack,
-  Center,
-  Loader,
-  Title,
-  Text,
-  Group,
-  Box,
-  Divider,
-} from '@mantine/core';
+import { Button, Stack, Center, Loader, Title, Text, Group, Box, Divider } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconAlertTriangle, IconExternalLink, IconSettings } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconExternalLink,
+  IconRosetteDiscountCheck,
+  IconSettings,
+  IconUserCircle,
+} from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -27,16 +22,17 @@ import {
 } from '~/shared/utils/buzz-membership';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { CardOrSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
-export function SubscriptionCard() {
+export function SubscriptionCard({ flat }: { flat?: boolean } = {}) {
   const [mainBuzzType] = useAvailableBuzz();
   const otherBuzzType: BuzzSpendType = mainBuzzType === 'green' ? 'yellow' : 'green';
 
@@ -68,16 +64,43 @@ export function SubscriptionCard() {
   if (subscription) rows.push({ sub: subscription, isCrossDomain: false });
   if (otherSubscription) rows.push({ sub: otherSubscription, isCrossDomain: true });
 
+  // The legacy page hides the card entirely with no membership; the flat pane is a whole route, so
+  // hiding it leaves the section blank.
   if (!isLoading && rows.length === 0) {
-    return null;
+    if (!flat) return null;
+
+    return (
+      <CardOrSection flat title="Membership" id="manage-subscription">
+        <UpsellPanel
+          icon={<IconUserCircle size={24} />}
+          title="No active membership"
+          description="You're on the free plan. A membership adds:"
+          perks={[
+            'A monthly Buzz allowance',
+            'Ad-free browsing',
+            'Exclusive Discord channels and early access',
+          ]}
+          action={
+            <Button
+              component={Link}
+              href="/pricing"
+              variant="filled"
+              size="sm"
+              leftSection={<IconRosetteDiscountCheck size={16} />}
+              className="w-fit"
+            >
+              See membership plans
+            </Button>
+          }
+        />
+      </CardOrSection>
+    );
   }
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Membership" id="manage-subscription">
       <Stack gap="md">
-        <Title id="manage-subscription" order={2}>
-          Membership
-        </Title>
+        {!flat && <Title order={2}>Membership</Title>}
         {isLoading ? (
           <Center p="xl">
             <Loader />
@@ -100,7 +123,7 @@ export function SubscriptionCard() {
           ))
         )}
       </Stack>
-    </Card>
+    </CardOrSection>
   );
 }
 
@@ -120,6 +143,7 @@ function SubscriptionRow({
   showDivider: boolean;
 }) {
   const [siteBuzzType] = useAvailableBuzz();
+  const syncAccount = useSyncAccount();
   const price = subscription.price;
   const product = subscription.product;
   const { image } = getPlanDetails(subscription.product, features);
@@ -208,7 +232,7 @@ function SubscriptionRow({
             </Text>
           </AlertWithIcon>
         )}
-        <Group justify="space-between" wrap="nowrap" align="center" gap="sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Group wrap="nowrap" gap="sm" style={{ minWidth: 0, flex: 1 }}>
             {image && (
               <Box w={40} style={{ flexShrink: 0 }}>
@@ -235,7 +259,7 @@ function SubscriptionRow({
                 </Box>
               </Group>
               {priceText && (
-                <Group gap={6} wrap="nowrap">
+                <Group gap={6}>
                   <Text size="sm" c="dimmed" lh={1.2}>
                     {priceText}
                   </Text>
@@ -254,8 +278,8 @@ function SubscriptionRow({
               )}
             </Stack>
           </Group>
-          {manageButton}
-        </Group>
+          <div className="shrink-0 self-end sm:self-auto">{manageButton}</div>
+        </div>
         {nextBuzzDelivery && (
           <Group gap={6} wrap="nowrap">
             <Text size="xs" c="dimmed" lh={1.2}>

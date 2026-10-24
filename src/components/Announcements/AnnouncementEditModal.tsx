@@ -296,8 +296,9 @@ export function AnnouncementEditModal({
         <InputSimpleImageUpload
           name="image"
           label="Banner Image"
-          description="Shown alongside the announcement. Uploads are stored as a bare object key."
+          description="Square (1:1). The card crops to a square, so anything else loses its edges. Uploads are stored as a bare object key."
           previewWidth={ANNOUNCEMENT_IMAGE_WIDTH}
+          aspectRatio={1}
           withNsfwLevel={false}
           onUploadStateChange={handleUploadStateChange}
         />

@@ -1,9 +1,21 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as OrchestratorModels from '~/server/services/orchestrator/models';
+import type * as ResourceData from '~/server/redis/resource-data.redis';
+
+// One local served both clients. Everything this file drives is dbWrite —
+// modelFile.findUnique/update (model-file-scan.service:132, :161, :203), modelFileHash.*
+// (:171, :213, :214), modelVersion.findUnique (:339, :686), modelFile.updateMany (:670) —
+// EXCEPT rescanModel's modelFile.findMany at :616, which is dbRead. One line decides it.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
+const mockSetNxKeepTtlWithEx = redisMock.sysRedis.setNxKeepTtlWithEx;
 
 const {
-  mockDbWrite,
   mockGetWorkflow,
-  mockLogToAxiom,
   mockDeleteFilesForModelVersionCache,
   mockCreateNotification,
   mockModelsSearchIndexQueueUpdate,
@@ -12,9 +24,13 @@ const {
   mockModelFileScanSubmissionError,
   mockLimitConcurrency,
   mockUnpublishModelById,
-  mockSetNxKeepTtlWithEx,
   mockCheckMinorHashOnScan,
+  mockCheckPoiHashOnScan,
+  mockCheckDuplicateHashOnScan,
   mockIsFlipt,
+  mockBustOrchestratorModelCache,
+  mockBustOrchestratorScannedFileCache,
+  mockResourceDataBust,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -29,32 +45,8 @@ const {
       this.name = 'ModelFileScanSubmissionError';
     }
   }
-  const mockModelFile = {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    findMany: vi.fn(),
-    updateMany: vi.fn(),
-  };
-
-  const mockModelFileHash = {
-    deleteMany: vi.fn(),
-    createMany: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  const mockModelVersion = {
-    findUnique: vi.fn(),
-  };
-
   return {
-    mockDbWrite: {
-      modelFile: mockModelFile,
-      modelFileHash: mockModelFileHash,
-      modelVersion: mockModelVersion,
-      $transaction: vi.fn(),
-    },
     mockGetWorkflow: vi.fn(),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
     mockDeleteFilesForModelVersionCache: vi.fn().mockResolvedValue(undefined),
     mockCreateNotification: vi.fn().mockResolvedValue(undefined),
     mockModelsSearchIndexQueueUpdate: vi.fn().mockResolvedValue(undefined),
@@ -66,18 +58,18 @@ const {
       for (const t of tasks) await t();
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
-    mockSetNxKeepTtlWithEx: vi.fn().mockResolvedValue(true),
     mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
+    mockCheckPoiHashOnScan: vi.fn().mockResolvedValue('skipped'),
+    mockCheckDuplicateHashOnScan: vi.fn().mockResolvedValue('none'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
+    mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
+    mockBustOrchestratorScannedFileCache: vi.fn().mockResolvedValue(undefined),
+    mockResourceDataBust: vi.fn().mockResolvedValue(undefined),
   };
 });
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbWrite,
-}));
-
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: mockGetWorkflow,
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),
@@ -87,10 +79,6 @@ vi.mock('@civitai/client', () => ({
 
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: {},
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -110,6 +98,17 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
 
+vi.mock('~/server/services/orchestrator/models', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorModels>()),
+  bustOrchestratorModelCache: mockBustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache: mockBustOrchestratorScannedFileCache,
+}));
+
+vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceData>()),
+  resourceDataCache: { bust: mockResourceDataBust },
+}));
+
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
   ModelFileScanSubmissionError: mockModelFileScanSubmissionError,
@@ -126,30 +125,35 @@ vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mockUnpublishModelById,
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { setNxKeepTtlWithEx: mockSetNxKeepTtlWithEx },
-  REDIS_SYS_KEYS: {
-    WEBHOOKS: { MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed' },
-  },
-}));
-
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
+
+vi.mock('~/server/services/duplicate-model-hash.service', () => ({
+  checkDuplicateHashOnScan: mockCheckDuplicateHashOnScan,
+}));
 
 vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: mockCheckMinorHashOnScan,
   MINOR_HASH_FILE_TYPE: 'Model',
+}));
+vi.mock('~/server/services/poi-hash.service', () => ({
+  checkPoiHashOnScan: mockCheckPoiHashOnScan,
 }));
 
 // Default ON so the existing wiring tests exercise the real path; the gate's
 // off-state is asserted explicitly below.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    POI_HASH_AUTO_FLAG: 'poi-hash-auto-flag',
+  },
 }));
 
 import {
   applyScanOutcome,
+  deriveSshsHash,
   examinePickleImports,
+  normalizeScanHashes,
   processModelFileScanResult,
   rescanModel,
   unpublishBlockedModel,
@@ -158,6 +162,24 @@ import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import { addLinkedComponent } from '~/server/services/model-version.service';
 import { constants } from '~/server/common/constants';
+
+// Every hash writer runs through normalizeScanHashes, which DERIVES rows (SHA256_12 from SHA256,
+// a truncated AutoV3) on top of what the orchestrator sent. So these assertions name the exact
+// set of type=hash pairs written: a new derivation shows up as an unexpected member rather than
+// as arithmetic that needs re-doing, and a wrong derivation shows up as a wrong value.
+const hashRowsWritten = (callIndex = 0) => {
+  const { data } = mockDbWrite.modelFileHash.createMany.mock.calls[callIndex][0] as {
+    data: { fileId: number; type: ModelHashType; hash: string }[];
+  };
+  return data.map(({ fileId, type, hash }) => `${fileId}:${type}=${hash}`).sort();
+};
+
+const expectHashRows = (expected: string[], callIndex = 0) =>
+  expect(hashRowsWritten(callIndex)).toEqual([...expected].sort());
+
+// Long enough that a slice is observable — 'sha' would make SHA256_12 identical to SHA256.
+const SHA256_FIXTURE = 'a'.repeat(60) + 'beef';
+const AUTOV3_FIXTURE = 'c'.repeat(60) + 'dead';
 
 describe('model-file-scan.service', () => {
   beforeEach(() => {
@@ -275,8 +297,9 @@ describe('model-file-scan.service', () => {
   describe('applyScanOutcome', () => {
     const baseFile = {
       id: 1,
+      type: 'Model',
       modelVersionId: 100,
-      modelVersion: { modelId: 200 },
+      modelVersion: { modelId: 200, baseModel: 'SDXL 1.0', model: { type: 'Checkpoint' } },
     };
 
     function setupFileFound(file: typeof baseFile | null = baseFile) {
@@ -319,6 +342,81 @@ describe('model-file-scan.service', () => {
       expect(mockDataForModelsCacheRefresh).not.toHaveBeenCalled();
     });
 
+    // A cached failing answer must not outlive the scan that hit it.
+    describe('busting the orchestrator after a failed scan', () => {
+      beforeEach(() => {
+        const held = new Set<string>();
+        mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+          if (held.has(key)) return false;
+          held.add(key);
+          return true;
+        });
+      });
+
+      afterEach(() => mockSetNxKeepTtlWithEx.mockReset());
+
+      it('busts the version once per window, however many of its files fail', async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+        await applyScanOutcome({ fileId: 2, modelVersionId: 100, failed: true });
+
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledTimes(1);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      });
+
+      it("busts each failing file's own scanned AIR, even when its version was just busted", async () => {
+        setupFileFound();
+        await applyScanOutcome({ fileId: 1, failed: true });
+        setupFileFound({ ...baseFile, id: 2 });
+        await applyScanOutcome({ fileId: 2, failed: true });
+
+        expect(mockBustOrchestratorScannedFileCache.mock.calls).toEqual([
+          [
+            {
+              fileId: 1,
+              modelVersionId: 100,
+              modelId: 200,
+              modelType: 'Checkpoint',
+              baseModel: 'SDXL 1.0',
+            },
+          ],
+          [expect.objectContaining({ fileId: 2, modelVersionId: 100 })],
+        ]);
+      });
+
+      it("busts a file's scanned AIR once per window", async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+        await applyScanOutcome({ fileId: 1, failed: true });
+
+        expect(mockBustOrchestratorScannedFileCache).toHaveBeenCalledTimes(1);
+      });
+
+      it('busts each failing version', async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, modelVersionId: 100, failed: true });
+        await applyScanOutcome({ fileId: 3, modelVersionId: 101, failed: true });
+
+        expect(mockBustOrchestratorModelCache.mock.calls).toEqual([[100], [101]]);
+      });
+
+      it('keeps the retry bump when the bust throws', async () => {
+        setupFileFound();
+        mockBustOrchestratorModelCache.mockRejectedValueOnce(new Error('orchestrator down'));
+
+        await expect(applyScanOutcome({ fileId: 1, failed: true })).resolves.toBeUndefined();
+
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+          where: { id: 1 },
+          data: { scanRequestedAt: expect.any(Date) },
+        });
+      });
+    });
+
     it('advances scannedAt only when a scan actually ran (virusScan present)', async () => {
       setupFileFound();
 
@@ -345,6 +443,74 @@ describe('model-file-scan.service', () => {
       const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
       expect(updateCall.data.scannedAt).toBeUndefined();
       expect(updateCall.data.headerData).toEqual({ foo: 'bar' });
+    });
+
+    it('invalidates the orchestrator cache entry when a scan ran', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+      expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+    });
+
+    it('does NOT invalidate for a file that cannot move coverage', async () => {
+      setupFileFound({ ...baseFile, type: 'Training Data' });
+
+      await applyScanOutcome({
+        fileId: 1,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).not.toHaveBeenCalled();
+      expect(mockResourceDataBust).not.toHaveBeenCalled();
+    });
+
+    it('invalidates for a pickle-only scan too', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        pickleScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+    });
+
+    it('logs a failed invalidation instead of failing the outcome, after the index update', async () => {
+      setupFileFound();
+      mockBustOrchestratorModelCache.mockRejectedValueOnce(new Error('db timeout'));
+
+      await expect(
+        applyScanOutcome({
+          fileId: 1,
+          virusScan: { result: ScanResultCode.Success, message: null },
+        })
+      ).resolves.toBeUndefined();
+
+      expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalled();
+      expect(mockModelsSearchIndexQueueUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+        mockBustOrchestratorModelCache.mock.invocationCallOrder[0]
+      );
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', name: 'model-file-scan' }),
+        'webhooks'
+      );
+    });
+
+    it('does NOT invalidate the orchestrator for a hash-only rescan', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        hashes: { [ModelHashType.SHA256]: 'abc' },
+      });
+
+      expect(mockBustOrchestratorModelCache).not.toHaveBeenCalled();
+      expect(mockResourceDataBust).not.toHaveBeenCalled();
     });
 
     it('writes pickleScan result and message when present', async () => {
@@ -377,7 +543,7 @@ describe('model-file-scan.service', () => {
       await applyScanOutcome({
         fileId: 1,
         hashes: {
-          [ModelHashType.SHA256]: 'sha-1',
+          [ModelHashType.SHA256]: SHA256_FIXTURE,
           [ModelHashType.AutoV2]: 'auto-1',
         },
       });
@@ -386,12 +552,11 @@ describe('model-file-scan.service', () => {
       expect(mockDbWrite.modelFileHash.deleteMany).toHaveBeenCalledWith({
         where: { fileId: 1 },
       });
-      expect(mockDbWrite.modelFileHash.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
-          { fileId: 1, type: ModelHashType.SHA256, hash: 'sha-1' },
-          { fileId: 1, type: ModelHashType.AutoV2, hash: 'auto-1' },
-        ]),
-      });
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.AutoV2}=auto-1`,
+      ]);
     });
 
     it('skips the hash transaction when all hash values are empty/falsy', async () => {
@@ -578,6 +743,146 @@ describe('model-file-scan.service', () => {
         expect.any(Number)
       );
       expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    });
+
+    // A key held through a failed attempt turns the orchestrator's redelivery into a "duplicate",
+    // and the file stays Pending forever. The key store here is stateful so the second delivery
+    // sees exactly what the first one left behind.
+    it('lets the redelivery through when the first attempt throws', async () => {
+      const held = new Set<string>();
+      mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        if (held.has(key)) return false;
+        held.add(key);
+        return true;
+      });
+      redisMock.sysRedis.del.mockImplementationOnce(async (key: string) => {
+        held.delete(key);
+        return 1;
+      });
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1, modelVersionId: 100 },
+          steps: [{ $type: 'modelClamScan', output: { exitCode: 0, output: '' } }],
+        },
+      });
+      mockDbWrite.modelFile.update.mockRejectedValueOnce(new Error('transient write failure'));
+
+      const req = makeReq({ workflowId: 'wf-retry', type: 'workflow', status: 'succeeded' });
+      await expect(processModelFileScanResult(req)).rejects.toThrow('transient write failure');
+      await processModelFileScanResult(req);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      expect(mockDbWrite.modelFile.update.mock.calls[1][0].data.virusScanResult).toBe(
+        ScanResultCode.Success
+      );
+      // Released once, by the failure; the success keeps its key so later duplicates stay suppressed.
+      expect(redisMock.sysRedis.del).toHaveBeenCalledTimes(1);
+      expect(held.has('webhooks:model-file-scan:processed:wf-retry')).toBe(true);
+    });
+
+    it('lets the redelivery through when the failed-workflow write throws', async () => {
+      const held = new Set<string>();
+      mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        if (held.has(key)) return false;
+        held.add(key);
+        return true;
+      });
+      redisMock.sysRedis.del.mockImplementationOnce(async (key: string) => {
+        held.delete(key);
+        return 1;
+      });
+      mockGetWorkflow.mockResolvedValue({ data: { metadata: { fileId: 1 }, steps: [] } });
+      mockDbWrite.modelFile.update.mockRejectedValueOnce(new Error('transient write failure'));
+
+      const req = makeReq({ workflowId: 'wf-failed-retry', type: 'workflow', status: 'failed' });
+      await expect(processModelFileScanResult(req)).rejects.toThrow('transient write failure');
+      await processModelFileScanResult(req);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      expect(mockDbWrite.modelFile.update.mock.calls[1][0].data).toEqual({
+        scanRequestedAt: expect.any(Date),
+      });
+    });
+
+    it('keeps the original error when releasing the dedupe key also fails', async () => {
+      redisMock.sysRedis.del.mockRejectedValueOnce(new Error('redis down'));
+      mockGetWorkflow.mockResolvedValue({ data: null });
+
+      await expect(
+        processModelFileScanResult(
+          makeReq({ workflowId: 'wf-both', type: 'workflow', status: 'succeeded' })
+        )
+      ).rejects.toThrow('could not find workflow: wf-both');
+      expect(redisMock.sysRedis.del).toHaveBeenCalledWith(
+        'webhooks:model-file-scan:processed:wf-both'
+      );
+    });
+
+    // Postgres rejects U+0000 in text and jsonb (22P05). Trainers do write it into safetensors
+    // metadata; before the strip, one such header failed the update and lost the scan.
+    it('strips NUL characters from everything it writes', async () => {
+      const NUL = String.fromCharCode(0);
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            { $type: 'modelClamScan', output: { exitCode: 1, output: `bad${NUL}file` } },
+            {
+              $type: 'modelPickleScan',
+              output: { exitCode: 1, dangerousImports: [`os${NUL}.system`], globalImports: [] },
+            },
+            {
+              $type: 'modelParseMetadata',
+              output: { metadata: JSON.stringify({ [`key${NUL}`]: `a${NUL}b`, list: [NUL] }) },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-nul', type: 'workflow', status: 'succeeded' })
+      );
+
+      const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(data.headerData).toEqual({ key: 'ab', list: [''] });
+      expect(data.virusScanMessage).toBe('badfile');
+      expect(data.pickleScanMessage).toContain('os.system');
+      const nulPaths: string[] = [];
+      const walk = (v: unknown, path: string) => {
+        if (typeof v === 'string' && v.includes(NUL)) nulPaths.push(path);
+        else if (v && typeof v === 'object')
+          for (const [k, child] of Object.entries(v)) {
+            if (k.includes(NUL)) nulPaths.push(`${path}.<key>`);
+            walk(child, `${path}.${k}`);
+          }
+      };
+      walk(data, 'data');
+      expect(nulPaths).toEqual([]);
+    });
+
+    // SSHS_12 is derived from the header, and the hash rows are written after the file is marked
+    // scanned — a NUL reaching them leaves a scanned file with no hashes at all.
+    it('derives SSHS_12 from the stripped header', async () => {
+      const NUL = String.fromCharCode(0);
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            { $type: 'modelHash', output: { sha256: SHA256_FIXTURE } },
+            {
+              $type: 'modelParseMetadata',
+              output: { metadata: JSON.stringify({ sshs_model_hash: `${NUL}abcdef123456` }) },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-sshs-nul', type: 'workflow', status: 'succeeded' })
+      );
+
+      expect(hashRowsWritten()).toContain(`1:${ModelHashType.SSHS_12}=abcdef123456`);
     });
 
     it('throws when the orchestrator returns no workflow data', async () => {
@@ -734,10 +1039,10 @@ describe('model-file-scan.service', () => {
             {
               $type: 'modelHash',
               output: {
-                sha256: 'sha',
+                sha256: SHA256_FIXTURE,
                 autoV1: 'av1',
                 autoV2: 'av2',
-                autoV3: 'av3',
+                autoV3: AUTOV3_FIXTURE,
                 blake3: 'b3',
                 crc32: 'crc',
               },
@@ -750,16 +1055,15 @@ describe('model-file-scan.service', () => {
         makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
       );
 
-      expect(mockDbWrite.modelFileHash.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
-          { fileId: 1, type: ModelHashType.SHA256, hash: 'sha' },
-          { fileId: 1, type: ModelHashType.AutoV1, hash: 'av1' },
-          { fileId: 1, type: ModelHashType.AutoV2, hash: 'av2' },
-          { fileId: 1, type: ModelHashType.AutoV3, hash: 'av3' },
-          { fileId: 1, type: ModelHashType.BLAKE3, hash: 'b3' },
-          { fileId: 1, type: ModelHashType.CRC32, hash: 'crc' },
-        ]),
-      });
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.AutoV1}=av1`,
+        `1:${ModelHashType.AutoV2}=av2`,
+        `1:${ModelHashType.AutoV3}=${AUTOV3_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.BLAKE3}=b3`,
+        `1:${ModelHashType.CRC32}=crc`,
+      ]);
     });
 
     it('skips hash entries with null/empty values', async () => {
@@ -769,7 +1073,7 @@ describe('model-file-scan.service', () => {
           steps: [
             {
               $type: 'modelHash',
-              output: { sha256: 'sha', autoV1: null, autoV2: '', autoV3: undefined },
+              output: { sha256: SHA256_FIXTURE, autoV1: null, autoV2: '', autoV3: undefined },
             },
           ],
         },
@@ -779,8 +1083,27 @@ describe('model-file-scan.service', () => {
         makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
       );
 
-      const createManyCall = mockDbWrite.modelFileHash.createMany.mock.calls[0][0];
-      expect(createManyCall.data).toEqual([{ fileId: 1, type: ModelHashType.SHA256, hash: 'sha' }]);
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+      ]);
+    });
+
+    // The scan-request path writes an all-zero SHA256 as a "file unreachable" sentinel; deriving
+    // from it would give every unreachable file the same 12-char hash, matching them to each other.
+    it('does not derive SHA256_12 from the all-zero sha256 sentinel', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [{ $type: 'modelHash', output: { sha256: '0'.repeat(64) } }],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      expectHashRows([`1:${ModelHashType.SHA256}=${'0'.repeat(64)}`]);
     });
 
     it('maps clamScan status "clean" to virusScan.Success even when exitCode is null', async () => {
@@ -1043,13 +1366,13 @@ describe('model-file-scan.service', () => {
   // ==========================================================================
   describe('rescanModel', () => {
     beforeEach(() => {
-      mockDbWrite.modelFile.findMany.mockReset().mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockReset().mockResolvedValue([]);
       mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 0 });
       mockCreateModelFileScanRequest.mockReset();
     });
 
     it('returns { sent: 0, failed: 0 } when the model has no files', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockResolvedValue([]);
 
       const result = await rescanModel({ id: 1 });
 
@@ -1058,11 +1381,11 @@ describe('model-file-scan.service', () => {
     });
 
     it('queries with the orchestrator-shaped select (includes modelVersion + model)', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockResolvedValue([]);
 
       await rescanModel({ id: 1 });
 
-      const findManyArgs = mockDbWrite.modelFile.findMany.mock.calls[0][0];
+      const findManyArgs = mockDbRead.modelFile.findMany.mock.calls[0][0];
       expect(findManyArgs.select).toMatchObject({
         id: true,
         url: true,
@@ -1076,7 +1399,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('routes every file through createModelFileScanRequest', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1104,13 +1427,13 @@ describe('model-file-scan.service', () => {
         modelType: 'Checkpoint',
         baseModel: 'SD 1.5',
         url: 's3://k1',
-        priority: 'low',
+        priority: 'normal',
       });
       expect(result).toEqual({ sent: 2, failed: 0 });
     });
 
     it('skips files with a null modelVersion (orphaned/soft-deleted) without crashing', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         { id: 1, url: 's3://k1', modelVersion: null },
         {
           id: 2,
@@ -1127,7 +1450,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('counts createModelFileScanRequest throws as failures, not crashes', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1153,7 +1476,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('marks scanRequestedAt=now only for files that were sent', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1176,7 +1499,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('does NOT call updateMany when no files were sent', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         { id: 1, url: 's3://k1', modelVersion: null },
       ]);
 
@@ -1345,6 +1668,80 @@ describe('model-file-scan.service', () => {
   // ==========================================================================
   // applyScanOutcome — minor-hash-detection wiring
   // ==========================================================================
+  describe('applyScanOutcome — duplicate-hash wiring', () => {
+    const scannedFile = {
+      id: 710,
+      type: 'Model',
+      sizeKB: 150_000,
+      modelVersionId: 40,
+      modelVersion: {
+        modelId: 65,
+        model: { userId: 790, status: 'Draft', meta: { showcaseCollectionId: 1 } },
+      },
+    };
+
+    it('passes the scanned file, its owner and the previous SHA256 to the duplicate check', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([
+        { type: 'SHA256', hash: 'OLDHASH' },
+        { type: 'AutoV2', hash: 'AV2' },
+      ]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 710,
+        hashes: { SHA256: 'NEWHASH' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckDuplicateHashOnScan).toHaveBeenCalledExactlyOnceWith({
+        fileId: 710,
+        fileType: 'Model',
+        sizeKB: 150_000,
+        sha256: 'NEWHASH',
+        previousSha256: 'OLDHASH',
+        modelId: 65,
+        ownerId: 790,
+        modelStatus: 'Draft',
+        modelMeta: { showcaseCollectionId: 1 },
+      });
+    });
+
+    // A failed lookup must not fail the webhook: its dedupe key is already taken, so a 500 would
+    // drop the redelivery and the scan results with it.
+    it('still applies the rest of the outcome when the duplicate check throws', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      mockCheckDuplicateHashOnScan.mockRejectedValueOnce(new Error('db down'));
+
+      await expect(
+        applyScanOutcome({
+          fileId: 710,
+          hashes: { SHA256: 'NEWHASH' },
+          virusScan: { result: ScanResultCode.Success, message: null },
+        })
+      ).resolves.toBeUndefined();
+
+      expect(mockCheckDuplicateHashOnScan).toHaveBeenCalledTimes(1);
+      expect(mockDeleteFilesForModelVersionCache).toHaveBeenCalledWith(40);
+    });
+
+    it('does not run without a SHA256', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 710,
+        hashes: { AutoV2: 'AV2' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckDuplicateHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
   describe('applyScanOutcome — minor-hash wiring', () => {
     it('calls checkMinorHashOnScan with the fileId/modelId/userId/sha256 derived from the scanned file', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
@@ -1433,6 +1830,110 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyScanOutcome — real-person hash wiring', () => {
+    const scanModelFile = async (type = 'Model') => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 720,
+        type,
+        modelVersionId: 40,
+        modelVersion: { modelId: 65, model: { userId: 790 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      await applyScanOutcome({
+        fileId: 720,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+    };
+
+    it('checks a scanned weights file while its own switch is on', async () => {
+      await scanModelFile();
+      expect(mockCheckPoiHashOnScan).toHaveBeenCalledWith({
+        fileId: 720,
+        modelId: 65,
+        userId: 790,
+        sha256: 'deadbeef',
+      });
+    });
+
+    // Its own switch: throwing it must stop the real-person path without touching the minor one.
+    it('does not run when its switch is off, even with the minor switch on', async () => {
+      mockIsFlipt.mockImplementation(async (flag: string) => flag !== 'poi-hash-auto-flag');
+      await scanModelFile();
+      expect(mockCheckPoiHashOnScan).not.toHaveBeenCalled();
+      expect(mockCheckMinorHashOnScan).toHaveBeenCalled();
+    });
+
+    it('does not run for a non-weights file', async () => {
+      await scanModelFile('Training Data');
+      expect(mockCheckPoiHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SSHS_12 — the trainer hash from the safetensors header', () => {
+    // The real values from ClickUp 868kxvagd, model version 3120690. The 12-char form A1111/Forge
+    // write into image metadata is '0x7875fed548': the 0x occupies two of the twelve characters.
+    const SSHS_PREFIXED = '0x7875fed54803c0f6f23ec0b1e3ddc681f0bae3167dffef482054a68dfd5b172c';
+    const SSHS_PLAIN = '7f6de38cf1daa16be4caac096b158c7e92333a9523099418de028a2e60a4d95c';
+
+    it('keeps the 0x prefix, because that is what the generator writes', () => {
+      // 🔴 Stripping it is the fix that does NOT work: measured on prod, of 3,109 prefixed files
+      // exactly 1 matched AutoV3 after the prefix was removed. The prefix is not the defect.
+      expect(deriveSshsHash({ sshs_model_hash: SSHS_PREFIXED })).toBe('0x7875fed548');
+    });
+
+    it('ignores a header without the key, and a non-string or too-short value', () => {
+      expect(deriveSshsHash({ ss_v2: 'False' })).toBeUndefined();
+      expect(deriveSshsHash({ sshs_model_hash: 42 })).toBeUndefined();
+      expect(deriveSshsHash({ sshs_model_hash: '0xabc' })).toBeUndefined();
+      expect(deriveSshsHash(undefined)).toBeUndefined();
+      expect(deriveSshsHash(null)).toBeUndefined();
+      expect(deriveSshsHash('not an object')).toBeUndefined();
+    });
+
+    it('is added by normalizeScanHashes when no sibling row already carries the value', () => {
+      const out = normalizeScanHashes(
+        { SHA256: SHA256_FIXTURE, AutoV3: AUTOV3_FIXTURE },
+        { sshs_model_hash: SSHS_PREFIXED }
+      );
+
+      expect(out.SSHS_12).toBe('0x7875fed548');
+    });
+
+    it('🔴 is NOT added when AutoV3 already carries it — the ~98% case', () => {
+      // sshs_model_hash equals the addnet-safetensors hash for most files, so storing it again
+      // would add a row per file and match nothing AutoV3 does not already match. This is the
+      // whole reason the backfill is ~15k rows and not ~622k.
+      const out = normalizeScanHashes(
+        { SHA256: SHA256_FIXTURE, AutoV3: SSHS_PLAIN },
+        { sshs_model_hash: SSHS_PLAIN }
+      );
+
+      expect(out.SSHS_12).toBeUndefined();
+      expect(out.AutoV3).toBe(SSHS_PLAIN.slice(0, 12));
+    });
+
+    it('survives a hash-only rescan by falling back to the stored headerData', async () => {
+      // 🔴 The rebuild is deleteMany({ fileId }) + createMany, so a rescan carrying no headerData
+      // would drop the row entirely. Reverting the ?? fallback fails HERE and nowhere else.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 1,
+        type: 'Model',
+        modelVersionId: 10,
+        headerData: { sshs_model_hash: SSHS_PREFIXED },
+        modelVersion: { modelId: 100, model: { userId: 5 } },
+      });
+
+      await applyScanOutcome({
+        fileId: 1,
+        hashes: { SHA256: SHA256_FIXTURE, AutoV3: AUTOV3_FIXTURE },
+      });
+
+      expect(hashRowsWritten()).toContain('1:SSHS_12=0x7875fed548');
     });
   });
 });

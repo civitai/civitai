@@ -27,14 +27,23 @@ const PENDING_TIMEOUT_MIN = 30;
 
 // Fixture rows returned by the image SELECT. Fields mirror IngestImageRow.
 const OLD = new Date(Date.now() - 2 * HOUR); // past the 30-min age-out threshold
-const FRESH = new Date(); // well under the threshold
+// Under the age-out threshold, but past SUBMIT_IN_FLIGHT_GRACE — a just-created row
+// with no `scanRequestedAt` is deferred as "first submit still in flight", which would
+// mask the age-out behaviour under test here.
+const FRESH = new Date(Date.now() - 10 * 60 * 1000);
 const OLD_SCAN = new Date(Date.now() - 2 * HOUR); // past the 60-min Error retry delay
 
 const ROWS = [
   // 1: old, non-backfill, Pending  -> AGED OUT to Error (not sent, kept in queue)
   mkRow({ id: 1, ingestion: 'Pending', createdAt: OLD, isBackfill: false, scanRequestedAt: null }),
   // 2: fresh, non-backfill, Pending -> NOT aged out; sent this run
-  mkRow({ id: 2, ingestion: 'Pending', createdAt: FRESH, isBackfill: false, scanRequestedAt: null }),
+  mkRow({
+    id: 2,
+    ingestion: 'Pending',
+    createdAt: FRESH,
+    isBackfill: false,
+    scanRequestedAt: null,
+  }),
   // 3: old, BACKFILL, Pending       -> NOT aged out (backfill excluded); sent low-pri
   mkRow({ id: 3, ingestion: 'Pending', createdAt: OLD, isBackfill: true, scanRequestedAt: null }),
   // 4: Error, under the cap, cooled  -> re-tried via the Error lane (proves the
@@ -67,6 +76,7 @@ function mkRow(overrides: {
   scanRequestedAt: Date | null;
   retryCount?: number;
   failureClass?: string | null;
+  rateLimitedSince?: Date | null;
 }) {
   return {
     url: `img-${overrides.id}`,
@@ -76,42 +86,24 @@ function mkRow(overrides: {
     prompt: null,
     retryCount: 0,
     failureClass: null,
+    rateLimitedSince: null,
     ...overrides,
   };
 }
 
-const { execLog, mockDbRead, mockDbWrite, mockIngestImage, mockDeleteImages, mockLimitConcurrency } =
-  vi.hoisted(() => {
-    const execLog: { sql: string; values: unknown[] }[] = [];
-    return {
-      execLog,
-      mockDbRead: {
-        jobQueue: {
-          // Return one queue row per fixture id, oldest-first.
-          findMany: vi.fn(async () => [1, 2, 3, 4, 5].map((entityId) => ({ entityId }))),
-        },
-      },
-      mockDbWrite: {
-        // Image SELECT -> the fixture rows.
-        $queryRaw: vi.fn(async () => ROWS),
-        // Record every write so the test can distinguish the age-out UPDATE
-        // (contains 'Pending'), the exhaustedRescan UPDATE ('Rescan'), and the
-        // JobQueue prune DELETE, plus inspect the id array each targets.
-        $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
-          execLog.push({ sql: strings.join('?'), values });
-          return 0;
-        }),
-      },
-      mockIngestImage: vi.fn(async () => true),
-      mockDeleteImages: vi.fn(async () => undefined),
-      // Sequential for deterministic assertions.
-      mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-        for (const t of tasks) await t();
-      }),
-    };
-  });
+const { execLog, mockIngestImage, mockDeleteImages, mockLimitConcurrency } = vi.hoisted(() => {
+  const execLog: { sql: string; values: unknown[] }[] = [];
+  return {
+    execLog,
+    mockIngestImage: vi.fn(async () => true),
+    mockDeleteImages: vi.fn(async () => undefined),
+    // Sequential for deterministic assertions.
+    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+      for (const t of tasks) await t();
+    }),
+  };
+});
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
   ingestImage: mockIngestImage,
   deleteImages: mockDeleteImages,
@@ -128,6 +120,19 @@ vi.mock('~/env/server', () => ({
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbRead.jobQueue.findMany.mockImplementation(async () =>
+  [1, 2, 3, 4, 5].map((entityId) => ({ entityId }))
+);
+dbMock.dbWrite.$queryRaw.mockImplementation(async () => ROWS);
+dbMock.dbWrite.$executeRaw.mockImplementation(
+  async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    execLog.push({ sql: strings.join('?'), values });
+    return 0;
+  }
+);
 
 const ctx = {} as Parameters<typeof ingestImages.run>[0];
 async function runJob<T extends { run: (ctx: any) => { result: Promise<unknown> } }>(
@@ -172,7 +177,7 @@ describe('ingest-images pending age-out', () => {
     // Bound UPDATE targeting exactly the aged-out id, guarded on the current status
     // so a concurrent verdict is never clobbered.
     expect(targetIds(update)).toEqual([1]);
-    expect(update!.sql).toContain("ingestion = 'Pending'::\"ImageIngestionStatus\"");
+    expect(update!.sql).toContain('ingestion = \'Pending\'::"ImageIngestionStatus"');
     expect(result.agedOutPending).toBe(1);
   });
 
@@ -214,5 +219,72 @@ describe('ingest-images pending age-out', () => {
     // so the retry loop is bounded, never infinite.
     expect(sentIds()).not.toContain(5);
     expect(targetIds(del)).toContain(5);
+  });
+});
+
+// A run of orchestrator 429s must not age an upload out to Error: it is old because we were
+// told to wait, and the Error lane's retry ceilings would then drop the scan.
+describe('ingest-images pending age-out — rate-limited uploads', () => {
+  const COOLED = new Date(Date.now() - 10 * 60 * 1000); // past the 5-min retry delay
+  function runWith(rows: ReturnType<typeof mkRow>[]) {
+    mockDbRead.jobQueue.findMany.mockImplementationOnce(async () =>
+      rows.map(({ id }) => ({ entityId: id }))
+    );
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => rows);
+    return runJob(ingestImages) as Promise<{ agedOutPending: number }>;
+  }
+
+  it('an old Pending upload whose last submit was a 429 stays Pending and is re-sent', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 6,
+        ingestion: 'Pending',
+        createdAt: OLD,
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'transient',
+        rateLimitedSince: OLD,
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(0);
+    expect(ageOutUpdate()).toBeUndefined();
+    expect(sentIds()).toEqual([6]);
+  });
+
+  // The exemption is bounded: a limit that never lifts must still surface the upload as Error.
+  it('ages out an upload that has been rate limited for more than 6 hours', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 8,
+        ingestion: 'Pending',
+        createdAt: new Date(Date.now() - 8 * HOUR),
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'transient',
+        rateLimitedSince: new Date(Date.now() - 7 * HOUR),
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(1);
+    expect(targetIds(ageOutUpdate())).toEqual([8]);
+  });
+
+  it('control: the same upload with an unknown-class failure still ages out', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 7,
+        ingestion: 'Pending',
+        createdAt: OLD,
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'unknown',
+        retryCount: 3,
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(1);
+    expect(targetIds(ageOutUpdate())).toEqual([7]);
+    expect(sentIds()).not.toContain(7);
   });
 });

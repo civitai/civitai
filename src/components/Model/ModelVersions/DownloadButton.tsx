@@ -1,43 +1,35 @@
 import type { ButtonProps } from '@mantine/core';
-import {
-  Badge,
-  Button,
-  Group,
-  Tooltip,
-  createPolymorphicComponent,
-  useMantineTheme,
-  Text,
-} from '@mantine/core';
-import { IconBolt, IconDownload } from '@tabler/icons-react';
+import { Button, Group, Tooltip, createPolymorphicComponent } from '@mantine/core';
+import { IconDownload } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { PaidAccessPriceBadge } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 
 const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
-  ({ iconOnly, canDownload, downloadPrice, children, tooltip, joinAlert, ...buttonProps }, ref) => {
-    const theme = useMantineTheme();
+  (
+    {
+      iconOnly,
+      canDownload,
+      downloadPrice,
+      listedPrice,
+      acceptsBlueBuzz,
+      children,
+      tooltip,
+      joinAlert,
+      ...buttonProps
+    },
+    ref
+  ) => {
+    // `downloadPrice` is what THIS viewer must pay; `listedPrice` is what buyers pay, shown to the
+    // owner who already has access and would otherwise see no price at all on their own model.
+    const shownPrice = downloadPrice ?? listedPrice;
+    const isListedOnly = downloadPrice == null && listedPrice != null;
     const purchaseIcon = (
-      <Badge
-        radius="sm"
-        size="sm"
-        variant="filled"
-        color="yellow.7"
-        style={{
-          position: 'absolute',
-          top: '-8px',
-          right: '-8px',
-          boxShadow: theme.shadows.sm,
-          padding: '4px 2px',
-          paddingRight: '6px',
-        }}
-      >
-        <Group gap={0} wrap="nowrap">
-          <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
-          <Text size="xs" fz={11} c="dark.9">
-            {abbreviateNumber(downloadPrice ?? 0)}
-          </Text>
-        </Group>
-      </Badge>
+      <PaidAccessPriceBadge
+        price={shownPrice ?? 0}
+        acceptsBlueBuzz={acceptsBlueBuzz}
+        listedOnly={isListedOnly}
+      />
     );
 
     const button = iconOnly ? (
@@ -50,14 +42,14 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
           variant="light"
         >
           <IconDownload size={24} />
-          {downloadPrice && <>{purchaseIcon}</>}
+          {!!shownPrice && <>{purchaseIcon}</>}
         </Button>
       </Tooltip>
     ) : (
       <Button pos="relative" className="overflow-visible" ref={ref} {...buttonProps}>
         <Group gap={8} wrap="nowrap">
           <IconDownload size={20} />
-          {downloadPrice && <>{purchaseIcon}</>}
+          {!!shownPrice && <>{purchaseIcon}</>}
           {children}
         </Group>
       </Button>
@@ -78,6 +70,10 @@ type Props = ButtonProps & {
   iconOnly?: boolean;
   canDownload?: boolean;
   downloadPrice?: number;
+  /** What buyers pay. Informational only — shown to the owner/mod, never gates the button. */
+  listedPrice?: number;
+  /** The paid-access terms accept Blue Buzz — colours the price chip to say so. */
+  acceptsBlueBuzz?: boolean;
   modelVersionId?: number;
   tooltip?: string;
   joinAlert?: string;

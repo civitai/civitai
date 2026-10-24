@@ -30,7 +30,12 @@ const setMock = vi.fn(async (key: string, value: unknown) => {
 const delMock = vi.fn(async () => undefined);
 const setNxMock = vi.fn().mockResolvedValue(true);
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spreads the real package for the key CONSTANTS; only the client stubs are overridden.
+// `REDIS_KEYS.CACHE_LOCKS` used to be hand-typed here as 'caches:lock' — the real value is
+// 'cache-lock'. Both the lock writer and the lock reader read that one fake, so the suite
+// passed while exercising a key Redis never sees. See no-hand-typed-redis-key-constants.test.ts.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   redis: {
     packed: {
       mGet: (...args: unknown[]) => mGetMock(...(args as [string[]])),
@@ -40,7 +45,6 @@ vi.mock('~/server/redis/client', () => ({
     del: (...args: unknown[]) => delMock(...args),
   },
   sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock' },
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
@@ -175,6 +179,45 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(2);
     expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalledTimes(2);
     expect(second[999]).toBeUndefined();
+  });
+
+  it('refresh() after a donation caches the PRIMARY total, even while the replica lags', async () => {
+    // The donation path refreshes rather than busts, so what refresh() caches must include the
+    // just-committed donation: the goal and its total come from the primary (fromWrite).
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]); // replica: pre-donation
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 300 }]); // primary: post-donation
+    const cache = buildCache();
+    expect((await cache.fetch([5]))[5].goal?.total).toBe(250);
+
+    await cache.refresh(5);
+    const afterRefresh = await cache.fetch([5]);
+
+    expect(afterRefresh[5].goal?.total).toBe(300);
+    // Served from the refreshed entry: no further replica lookup.
+    expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('refresh() of a version not yet on the replica checks existence on the primary and caches it', async () => {
+    // ensureDonationGoal refreshes right after a version and its goal are created. If existence were
+    // read from the replica only, the lookup would return {} and refresh() would delete the entry.
+    mockDbRead.modelVersion.findMany.mockResolvedValue([]); // replica: version not there yet
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([]); // no donations yet
+    const cache = buildCache();
+
+    await cache.refresh(5);
+
+    expect(delMock).not.toHaveBeenCalled();
+    const fetched = await cache.fetch([5]);
+    expect(fetched[5].goal?.id).toBe(10);
+    expect(fetched[5].goal?.total).toBe(0);
+    // Served from the refreshed entry, not a read-path lookup.
+    expect(mockDbRead.modelVersion.findMany).not.toHaveBeenCalled();
   });
 
   // The early-access-window + creator opt-out DISPLAY filters live at read time in getDonationGoals

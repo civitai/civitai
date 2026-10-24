@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Namespace type-import (erased at compile time, so it is safe above the hoisted vi.mock calls) —
 // the repo forbids inline `typeof import(...)` annotations.
 import type * as ChallengeMetrics from '~/server/prom/challenge.metrics';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockCreate = dbMock.dbWrite.challengeWinner.create;
+const mockFindUnique = dbMock.dbWrite.challengeWinner.findUnique;
+dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 
 // Covers the two DB-facing halves of the duplicate-payout guard:
 //
@@ -15,31 +23,15 @@ import type * as ChallengeMetrics from '~/server/prom/challenge.metrics';
 //        freshly-picked place under a brand-new externalTransactionId — a second prize.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbWriteQueryRaw,
-  mockCreate,
-  mockFindUnique,
   mockLogToAxiom,
   mockRecordDivergence,
   mockRecordUnresolved,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn().mockResolvedValue([]),
-  mockDbWriteQueryRaw: vi.fn().mockResolvedValue([]),
-  mockCreate: vi.fn(),
-  mockFindUnique: vi.fn(),
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockRecordDivergence: vi.fn(),
   mockRecordUnresolved: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: mockDbReadQueryRaw },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    challengeWinner: { create: mockCreate, findUnique: mockFindUnique },
-  },
-}));
-vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
   safeError: vi.fn((e: unknown) => e),

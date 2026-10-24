@@ -5,6 +5,18 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { DEPLOY_STALE_AFTER_MS } from '~/shared/constants/app-block-deploy.constants';
 import type { OffsitePendingRow } from './OffsiteReviewQueue';
 import type { OnsiteReviewRequest } from './unifiedReviewRow';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+
+/*
+  Stubbed: the real `UserAvatar` reaches providers and a tRPC proc this harness does not
+  mount. Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
+}));
 
 /**
  * /apps/review APPROVED tab — the MODERATOR half of the fix.
@@ -38,10 +50,9 @@ function onsiteRow(over: Partial<Record<string, unknown>> = {}): OnsiteReviewReq
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://example.invalid/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     // The lifecycle projection `listApprovedRequests` now selects.
     deployState: null,
-    deployDetail: null,
     deployUpdatedAt: null,
     ...over,
   } as unknown as OnsiteReviewRequest;
@@ -104,6 +115,32 @@ describe('Approved tab — the Deploy column exposes a stranded approval', () =>
     expect(page.getByTestId(DEPLOY_CHIP).elements()).toHaveLength(0);
     expect(page.getByTestId(RETRIGGER).elements()).toHaveLength(0);
     expect(page.getByText('Deploy', { exact: true }).elements()).toHaveLength(0);
+  });
+});
+
+describe('Approved tab — a failed build names its step and class (structured, no excerpt)', () => {
+  test('the chip reads "failed · security scan · unknown"', async () => {
+    renderApproved({
+      row: onsiteRow({
+        deployState: 'failed',
+        deployUpdatedAt: JUST_NOW,
+        buildSignals: { failedStep: 'scan', failureClass: 'unknown' },
+      }),
+      onRetrigger: vi.fn(),
+    });
+    await expect
+      .element(page.getByTestId(DEPLOY_CHIP))
+      .toHaveTextContent('failed · security scan · unknown');
+  });
+
+  test('without signals the chip is the bare state, as before', async () => {
+    renderApproved({
+      row: onsiteRow({ deployState: 'failed', deployUpdatedAt: JUST_NOW, buildSignals: null }),
+      onRetrigger: vi.fn(),
+    });
+    const chip = page.getByTestId(DEPLOY_CHIP);
+    await expect.element(chip).toBeInTheDocument();
+    expect(chip.element().textContent).toBe('failed');
   });
 });
 

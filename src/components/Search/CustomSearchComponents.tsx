@@ -13,7 +13,7 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MultiSelectProps } from '@mantine/core';
 import {
   Accordion,
   Box,
@@ -45,11 +45,12 @@ import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
-import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import { Flags } from '~/shared/utils/flags';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
+import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isDefined } from '~/utils/type-guards';
+import { buildBrowsingLevelFilters, joinFilterClauses } from './search-filters';
 import styles from './CustomSearchComponents.module.scss';
 
 // const useStyles = createStyles((theme) => ({
@@ -112,8 +113,9 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 
 export function SearchableMultiSelectRefinementList({
   title,
+  renderOption,
   ...props
-}: RefinementListProps & { title: string }) {
+}: RefinementListProps & { title: string; renderOption?: MultiSelectProps['renderOption'] }) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -193,6 +195,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
+            renderOption={renderOption}
             nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
@@ -262,21 +265,20 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 };
 
 export const BrowsingLevelFilter = ({
-  attributeName,
+  indexKey,
   filters: _filters,
   ...props
-}: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
-  const browsingLevel = useBrowsingLevelDebounced();
+}: {
+  indexKey: SearchIndexKey;
+  filters?: string[] | string;
+} & Omit<ConfigureProps, 'filters'>) => {
+  const { browsingLevel } = useBrowsingSettingsAddons();
+  const attribute = BROWSING_LEVEL_ATTRIBUTE[indexKey];
 
-  const filters = useMemo(() => {
-    const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-    const browsingLevelFilter = attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : null;
-    const filterList = Array.isArray(_filters) ? _filters : [_filters];
-
-    return [...filterList, browsingLevelFilter].filter(isDefined);
-  }, [browsingLevel, attributeName, _filters]);
+  const filters = useMemo(
+    () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),
+    [browsingLevel, attribute, _filters]
+  );
 
   return <ApplyCustomFilter filters={filters} {...props} />;
 };
@@ -445,16 +447,9 @@ export const ApplyCustomFilter = ({
   filters: _filters,
   ...props
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
-  const filters = useMemo(() => {
-    const filterList = Array.isArray(_filters) ? _filters : _filters ? [_filters] : [];
-    return filterList.map((f) => `(${f})`).join(' AND ');
-  }, [_filters]);
+  const filters = useMemo(() => joinFilterClauses(_filters), [_filters]);
 
-  const { refine } = useConfigure({ ...props, filters });
-
-  useEffect(() => {
-    refine({ filters });
-  }, [filters]);
+  useConfigure({ ...props, filters });
 
   return null;
 };

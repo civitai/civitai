@@ -12,19 +12,32 @@
  * WHAT IT ASSERTS, AND WHY THAT IS THE RIGHT INVARIANT. Next 16.3.0 applies a process-global
  * libvips block on first image-optimizer use and re-enables only six RASTER loaders; SVG is
  * not among them, so every `ImageResponse` in the process throws
- * `Input buffer contains unsupported image format` from then on. We carry upstream
- * vercel/next.js#96681 as `patches/next@16.3.0.patch` until we are on a Next that contains it.
+ * `Input buffer contains unsupported image format` from then on. Upstream fixed that in
+ * vercel/next.js#96681, and 16.3.1 is the first release that CONTAINS the fix: it ships
+ * `'VipsForeignLoadSvg'` in the unblock list itself. We carried the one-line fix as a pnpm
+ * patch only while we were on 16.3.0; there is no Next patch now, and this guard needs none.
  *
- * The assertion is deliberately "the installed Next unblocks SVG", NOT "our patch file is on
- * disk" and NOT "we are on 16.3.0":
+ * So what this protects against today is a FUTURE Next regressing the loader entry again —
+ * which is exactly why the assertion is deliberately "the installed Next unblocks SVG", NOT
+ * "our patch file is on disk" and NOT "we are on any particular version":
  *
- *   - reading `node_modules` rather than `patches/` is the whole point — a patch that exists
- *     but did not APPLY (unregistered key, failed hunk, a stale lockfile hash) is exactly the
- *     silent failure this catches, and a patch-file grep would sail through it;
- *   - staying version-agnostic means the guard does not have to be retired in the same commit
- *     that bumps Next. On >= 16.3.1 the entry is present upstream and this still passes; the
- *     patch itself is separately version-pinned, so the bump fails the install rather than
- *     silently carrying a stale patch.
+ *   - reading `node_modules` rather than `patches/` is the whole point. It is the only form
+ *     that is correct both now (upstream supplies the entry, no patch exists) and in the
+ *     patched past (a patch that exists but did not APPLY — unregistered key, failed hunk, a
+ *     stale lockfile hash — is exactly the silent failure this catches, and a patch-file grep
+ *     would sail through it);
+ *   - staying version-agnostic means the guard does not have to be retired, re-pinned or
+ *     re-dated in the same commit that bumps Next. It keeps passing on any Next that unblocks
+ *     the loader, and goes red the moment one does not — whoever hits that decides between
+ *     re-introducing a patch and pinning back.
+ *
+ * 🔴 One occurrence per copy is NOT evidence about WHO supplied it. The count is the same
+ * whether upstream ships the entry or a patch inserted it, so it cannot distinguish the two —
+ * reading it as proof of a working patch is how the now-deleted 16.3.1 patch was carried for
+ * a while after it had gone inert (pnpm silently no-ops an already-applied patch: rc=0, no
+ * warning, and it still creates a `patch_hash=…` virtual-store dir, so it LOOKS applied).
+ * To attribute the entry, compare the installed file against the pristine published tarball —
+ * on 16.3.1 they are byte-identical, so upstream is the source.
  *
  * BOTH BUILDS, SKIPPING WHAT IS ABSENT. Next ships this module twice — `dist/server/` (CJS)
  * and `dist/esm/server/`. A full `pnpm install` has both; the production standalone image has
@@ -112,10 +125,15 @@ function formatReport(report) {
 const FAILURE_EXPLANATION =
   `FAIL: the installed Next does not unblock the libvips SVG loader (${REQUIRED_LOADER}).\n` +
   'Every `next/og` ImageResponse — i.e. all of /api/og — will return 500 as soon as anything\n' +
-  'touches the image optimizer in that process. Check that `patches/next@16.3.0.patch` is\n' +
-  'still registered under `pnpm.patchedDependencies` in package.json and that\n' +
-  '`pnpm install` applied it; this reads node_modules, so a patch file that exists but did\n' +
-  'not apply fails here. See src/tests/api/og.image-optimizer-sharp.test.ts for the outage.';
+  'touches the image optimizer in that process.\n' +
+  'Next >= 16.3.1 ships this loader entry itself (vercel/next.js#96681), and we carry no Next\n' +
+  'patch, so this failing means the Next you installed has REGRESSED it — or dependencies are\n' +
+  'stale. Re-run `pnpm install` and re-check; if the installed Next genuinely lacks the entry,\n' +
+  'pin Next back to a release that unblocks the loader, or re-introduce a pnpm patch adding\n' +
+  `'${REQUIRED_LOADER}' to the sharp.unblock({ operation: [...] }) list in BOTH\n` +
+  'dist/server/image-optimizer.js and dist/esm/server/image-optimizer.js. This reads\n' +
+  'node_modules, not patches/, so it judges the artifact you actually installed however the\n' +
+  'entry got there. See src/tests/api/og.image-optimizer-sharp.test.ts for the outage.';
 
 const NO_COPIES_EXPLANATION =
   'FAIL: found no copy of next/dist/**/server/image-optimizer.js to read, so this check ' +

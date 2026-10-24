@@ -31,9 +31,9 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconSpeakerphone,
   IconExclamationMark,
   IconFlag,
-  IconInfoCircle,
   IconLock,
   IconLockOff,
   IconPlus,
@@ -42,6 +42,7 @@ import {
   IconReload,
   IconRepeat,
   IconRosetteDiscountCheck,
+  IconShieldCheck,
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
@@ -50,6 +51,8 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -61,12 +64,14 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ModelPromotionModal } from '~/components/Promotion/ModelPromotionModal';
 
 const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
@@ -80,6 +85,7 @@ const TransferModelOwnership = dynamic(
   { ssr: false }
 );
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
@@ -88,27 +94,40 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
+import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  modelVersionAccessInput,
+  toModelVersionPermissionData,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -118,13 +137,12 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
+import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getIsSafeBrowsingLevel,
@@ -132,7 +150,15 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
-import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  AppealCategory,
+  Availability,
+  CollectionType,
+  CosmeticEntity,
+  ModelStatus,
+  ModelType,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import {
   showErrorNotification,
@@ -158,9 +184,18 @@ import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
+
+const NOT_FOUND = Symbol('model-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -255,14 +290,19 @@ export const getServerSideProps = createServerSideProps({
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
       // bookmarks land here often; bailing early saves ~5 DB roundtrips.
-      const model = await ssg.model.getById
+      const fetched = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
-        .catch(() => null);
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+      // `getById` is viewer-scoped, so this is a 404 for exactly the viewers it refuses; any
+      // other failure still renders and lets the client retry.
+      if (fetched === NOT_FOUND) return { notFound: true };
+      const model = fetched;
 
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // A complete .com face is what civitai.com shows; it is not the mature listing.
+          nsfw: model.nsfw && !model.hasSfwFace,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }
@@ -295,10 +335,9 @@ export const getServerSideProps = createServerSideProps({
         [
           ssg.hiddenPreferences.getHidden.prefetch(),
           modelVersionIdParsed
-            ? ssg.common.getEntityAccess.prefetch({
-                entityId: modelVersionIdParsed as number,
-                entityType: 'ModelVersion',
-              })
+            ? ssg.common.getEntityAccess.prefetch(
+                modelVersionAccessInput(modelVersionIdParsed as number)
+              )
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
           // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
@@ -306,6 +345,10 @@ export const getServerSideProps = createServerSideProps({
           // rank, links, badges — instead of rendering the zeroed fallback and
           // growing once the client fetch lands. Simple key, no middleware to
           // mismatch; fail-soft on miss.
+          // Kept under `modelPageDeferBelowFold` too: there the card renders client-side only
+          // (see ModelVersionDetails), and this prefetch lets it mount from the dehydrated
+          // cache with the real creator, so the page shifts once (placeholder → card) rather
+          // than twice (placeholder → zeroed fallback → card).
           model?.user?.id
             ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
             : null,
@@ -340,7 +383,6 @@ export const getServerSideProps = createServerSideProps({
           // Query key won't line up and the client refetches. Fail-soft on any miss.
           model && modelVersionIdParsed
             ? (async () => {
-                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
                 // the viewer's own level here would key on a different disableMinor
@@ -355,11 +397,10 @@ export const getServerSideProps = createServerSideProps({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
                     });
-                const addons = await getBrowsingSettingAddons().catch(() => null);
-                if (!addons) return null;
-                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                const filters = await getServerImageQueryFilters(browsingLevel, {
                   isModerator: session?.user?.isModerator,
                 });
+                if (!filters) return null;
                 return ssg.image.getInfinite
                   .prefetchInfinite({
                     modelVersionId: modelVersionIdParsed as number,
@@ -370,10 +411,7 @@ export const getServerSideProps = createServerSideProps({
                     pending: true,
                     include: [],
                     withMeta: false,
-                    browsingLevel,
-                    excludedTagIds: addonSettings.excludedTagIds,
-                    disablePoi: addonSettings.disablePoi,
-                    disableMinor: addonSettings.disableMinor,
+                    ...filters,
                   })
                   .catch(() => null);
               })()
@@ -451,7 +489,12 @@ export default function ModelDetailsV2({
     ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id,
+      // The version is already on hand from model.getById — don't refetch it via modelVersion.getById.
+      modelVersion:
+        model && selectedVersion ? toModelVersionPermissionData(model, selectedVersion) : undefined,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -520,17 +563,34 @@ export default function ModelDetailsV2({
   });
   const handleUnpublishModel = async () => {
     try {
-      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch({ id });
+      // The client's global default is `staleTime: Infinity` (`src/utils/trpc.ts`), and `fetchQuery`
+      // applies it — so without this the dialog can show a Buzz figure cached from an earlier open.
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
+        { id },
+        { staleTime: 0 }
+      );
+      const exemptNote =
+        refund.exemptBuyerCount > 0
+          ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
+          : '';
       if (refund.purchaseCount > 0) {
         openConfirmModal({
           title: 'Refund early access buyers',
           children: `${
             refund.buyerCount
-          } member(s) purchased early access to this model. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access. Do you want to continue?`,
+          } member(s) bought early access to this model in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access.${exemptNote} Do you want to continue?`,
           centered: true,
           labels: { confirm: 'Refund & Unpublish', cancel: 'Cancel' },
           confirmProps: { color: 'yellow' },
           onConfirm: () => unpublishModelMutation.mutate({ id, refundEarlyAccess: true }),
+        });
+      } else if (refund.exemptBuyerCount > 0) {
+        openConfirmModal({
+          title: 'Unpublish model',
+          children: `${refund.exemptBuyerCount} member(s) bought early access to this model, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to the model and are not refunded, and nothing is taken from your account. Do you want to continue?`,
+          centered: true,
+          labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+          onConfirm: () => unpublishModelMutation.mutate({ id }),
         });
       } else {
         unpublishModelMutation.mutate({ id });
@@ -542,7 +602,8 @@ export default function ModelDetailsV2({
     }
   };
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess() {
+    async onSuccess(result) {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {
@@ -784,6 +845,7 @@ export default function ModelDetailsV2({
     description: removeTags(model.description ?? ''),
     name: model.name,
     image: imageUrl,
+    // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
     author:
       !model.user.deletedAt && model.user.username
         ? {
@@ -793,7 +855,7 @@ export default function ModelDetailsV2({
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: model.publishedAt,
     ...(totalRatingCount > 0 && {
       aggregateRating: {
@@ -827,11 +889,6 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
-  const unpublishedMessage =
-    unpublishedReason !== 'other'
-      ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
   const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
   const showRail = !model.poi && !adsDisabledByUser;
@@ -839,7 +896,7 @@ export default function ModelDetailsV2({
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw}
+      nsfw={model.nsfw && !model.hasSfwFace}
       bypassRating={isOwner}
       suppressAds={!published}
       meta={{
@@ -848,10 +905,17 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
         description: truncate(removeTags(model.description ?? ''), { length: 150 }),
         images: versionImages,
-        ogEndpoint: `/api/og?type=model&id=${model.id}`,
+        ogEndpoint: modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Models', path: '/models' },
+          ...(category
+            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+            : []),
+          { name: model.name },
+        ]),
         deIndex:
           model.status !== ModelStatus.Published ||
           model.availability === Availability.Unsearchable,
@@ -1020,7 +1084,14 @@ export default function ModelDetailsV2({
                         size="xl"
                         tooltip="Need help? Start the tour!"
                         iconProps={{ size: 30, stroke: 1.5 }}
-                        onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
+                        onClick={() =>
+                          runTour({
+                            key: activeTour === 'welcome' ? 'welcome' : 'model-page',
+                            step: 0,
+                            forceRun: true,
+                            trigger: 'help',
+                          })
+                        }
                       />
                     )}
                     <Menu
@@ -1037,7 +1108,7 @@ export default function ModelDetailsV2({
                           <IconDotsVertical size={20} />
                         </LegacyActionIcon>
                       </Menu.Target>
-                      <Menu.Dropdown>
+                      <Menu.Dropdown className="max-h-[70vh] overflow-y-auto">
                         {currentUser && isCreator && published && (
                           <Menu.Item
                             leftSection={<IconBan size={14} stroke={1.5} />}
@@ -1061,60 +1132,6 @@ export default function ModelDetailsV2({
                               Republish
                             </Menu.Item>
                           )}
-                        {currentUser && isModerator && modelDeleted && (
-                          <Menu.Item
-                            leftSection={<IconRecycle size={14} stroke={1.5} />}
-                            color="green"
-                            onClick={() => restoreModelMutation.mutate({ id })}
-                            disabled={restoreModelMutation.isPending}
-                          >
-                            Restore
-                          </Menu.Item>
-                        )}
-                        {currentUser && isModerator && (
-                          <>
-                            {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                              <Menu.Item
-                                component="a"
-                                target="_blank"
-                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                                href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                              >
-                                Lookup Model
-                              </Menu.Item>
-                            )}
-                            {published && (
-                              <Menu.Item
-                                color="yellow"
-                                leftSection={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
-                              >
-                                Unpublish as Violation
-                              </Menu.Item>
-                            )}
-                            <Menu.Item
-                              color="orange"
-                              leftSection={<IconBan size={14} stroke={1.5} />}
-                              onClick={() => handleToggleCannotPromote()}
-                            >
-                              {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
-                            </Menu.Item>
-                            <Menu.Item
-                              color="blue"
-                              leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
-                              onClick={() => handleSetOfficial(!model.isOfficial)}
-                            >
-                              {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
-                            </Menu.Item>
-                            <Menu.Item
-                              color="red.6"
-                              leftSection={<IconTrash size={14} stroke={1.5} />}
-                              onClick={() => handleDeleteModel({ permanently: true })}
-                            >
-                              Permanently Delete Model
-                            </Menu.Item>
-                          </>
-                        )}
                         {currentUser && isOwner && !modelDeleted && (
                           <>
                             <Menu.Item
@@ -1133,6 +1150,19 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </>
                         )}
+                        {isCreator && published && features.creatorPromotions && (
+                          <Menu.Item
+                            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: ModelPromotionModal,
+                                props: { modelId: model.id },
+                              })
+                            }
+                          >
+                            Promote this model
+                          </Menu.Item>
+                        )}
                         {features.collections && (
                           <AddToCollectionMenuItem
                             onClick={() =>
@@ -1145,11 +1175,33 @@ export default function ModelDetailsV2({
                             }
                           />
                         )}
+                        <AddToHubMenuItem
+                          onClick={() =>
+                            openAddToHubModal({
+                              props: {
+                                source: {
+                                  type: UserHubSourceType.Model,
+                                  targetId: model.id,
+                                  alias: model.name,
+                                },
+                              },
+                            })
+                          }
+                        />
                         {isOwner && (
                           <AddToShowcaseMenuItem
                             key="add-to-showcase"
                             entityType="Model"
                             entityId={model.id}
+                          />
+                        )}
+                        {/* The model itself, so its showcase images are not the nearest thing to hat. */}
+                        {isCreator && versionImages[0] && (
+                          <AddEventDecorationMenuItem
+                            entityType={CosmeticEntity.Model}
+                            entityId={model.id}
+                            image={versionImages[0]}
+                            findWornHat
                           />
                         )}
                         {(!currentUser || !isOwner || isModerator) && (
@@ -1167,25 +1219,12 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </LoginRedirect>
                         )}
-                        {isModerator && (
-                          <Menu.Item
-                            leftSection={
-                              rescanModelMutation.isPending ? (
-                                <Loader size={14} />
-                              ) : (
-                                <IconRadar2 size={14} stroke={1.5} />
-                              )
-                            }
-                            onClick={() => handleRescanModel()}
-                          >
-                            Rescan Files
-                          </Menu.Item>
-                        )}
                         {currentUser && (
                           <>
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" modelId={model.id} />
+                            <BlockUserButton as="menu-item" userId={model.user.id} />
+                            <HideModelButton as="menu-item" model={model} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>
@@ -1196,6 +1235,65 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             {isModerator && (
                               <>
+                                <ModeratorLookupMenuItem
+                                  path={moderatorModelLookupPath(model.id, selectedVersion?.id)}
+                                >
+                                  Lookup Model
+                                </ModeratorLookupMenuItem>
+                                {published && (
+                                  <Menu.Item
+                                    color="yellow"
+                                    leftSection={<IconBan size={14} stroke={1.5} />}
+                                    onClick={() =>
+                                      openUnpublishModal({ props: { modelId: model.id } })
+                                    }
+                                  >
+                                    Unpublish as Violation
+                                  </Menu.Item>
+                                )}
+                                <Menu.Item
+                                  color="orange"
+                                  leftSection={<IconBan size={14} stroke={1.5} />}
+                                  onClick={() => handleToggleCannotPromote()}
+                                >
+                                  {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="blue"
+                                  leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
+                                  onClick={() => handleSetOfficial(!model.isOfficial)}
+                                >
+                                  {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="red.6"
+                                  leftSection={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={() => handleDeleteModel({ permanently: true })}
+                                >
+                                  Permanently Delete Model
+                                </Menu.Item>
+                                {modelDeleted && (
+                                  <Menu.Item
+                                    leftSection={<IconRecycle size={14} stroke={1.5} />}
+                                    color="green"
+                                    onClick={() => restoreModelMutation.mutate({ id })}
+                                    disabled={restoreModelMutation.isPending}
+                                  >
+                                    Restore
+                                  </Menu.Item>
+                                )}
+                                <Menu.Item
+                                  leftSection={
+                                    rescanModelMutation.isPending ? (
+                                      <Loader size={14} />
+                                    ) : (
+                                      <IconRadar2 size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={() => handleRescanModel()}
+                                >
+                                  Rescan Files
+                                </Menu.Item>
                                 <ToggleLockModel modelId={model.id} locked={model.locked}>
                                   {({ onClick }) => (
                                     <Menu.Item
@@ -1222,6 +1320,20 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleMinorModel>
+                                {/* Minor already forces (and locks) sfwOnly, so the toggle would
+                                    only ever offer an "Unset" the server refuses. */}
+                                {!model.minor && (
+                                  <ToggleSfwOnlyModel modelId={model.id} sfwOnly={model.sfwOnly}>
+                                    {({ onClick }) => (
+                                      <Menu.Item
+                                        leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                                        onClick={onClick}
+                                      >
+                                        {model.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
+                                      </Menu.Item>
+                                    )}
+                                  </ToggleSfwOnlyModel>
+                                )}
                                 <ToggleLockModelComments
                                   modelId={model.id}
                                   locked={model.meta?.commentsLocked}
@@ -1372,23 +1484,15 @@ export default function ModelDetailsV2({
                 </Alert>
               )}
               {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
-                <Alert color="red">
-                  <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <ThemeIcon color="red">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="sm" mt={-3}>
-                      This model has been unpublished due to a violation of our{' '}
-                      <Text component="a" c="blue.4" href="/content/tos" target="_blank">
-                        guidelines
-                      </Text>{' '}
-                      and is not visible to the community.{' '}
-                      {unpublishedReason && unpublishedMessage ? unpublishedMessage : null} If you
-                      adjust your model to comply with our guidelines, you can request a review from
-                      one of our moderators.
-                    </Text>
-                  </Group>
-                </Alert>
+                <ModelUnpublishedAlert
+                  reason={model.meta?.unpublishedReason}
+                  customMessage={model.meta?.customMessage}
+                  appealHref={
+                    isCreator && features.siteAppealForm
+                      ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
+                      : undefined
+                  }
+                />
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
                 <Alert color="yellow">
@@ -1420,7 +1524,10 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
+              {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                <ModelMinorFlagAlert model={model} />
+              )}
+              <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1441,6 +1548,14 @@ export default function ModelDetailsV2({
                     ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
                     : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
                 </AlertWithIcon>
+              )}
+              {model.status === ModelStatus.Published && (
+                <FirstPublishCard
+                  entityType="model"
+                  entityId={model.id}
+                  ownerId={model.user.id}
+                  publishedAt={model.publishedAt}
+                />
               )}
             </Stack>
             <Group gap={4} wrap="nowrap">
@@ -1497,44 +1612,47 @@ export default function ModelDetailsV2({
           {versionCount > 1 ? (
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}
-          {canLoadBelowTheFold && (
-            <>
-              {(isOwner || model.hasSuggestedResources) && (
-                <>
-                  {model.hasSuggestedResources && <AdUnitTopSection />}
-                  {selectedVersion && (
-                    <AssociatedModels
-                      fromId={model.id}
-                      type="Suggested"
-                      ownerId={model.user.id}
-                      label={
-                        <Group gap={8} wrap="nowrap">
-                          Suggested Resources{' '}
-                          <InfoPopover>
-                            <Text size="sm" fw={400}>
-                              These are resources suggested by the creator of this model. They may
-                              be related to this model or created by the same user.
-                            </Text>
-                          </InfoPopover>
-                        </Group>
-                      }
-                    />
-                  )}
-                </>
-              )}
-              <AdUnitTopSection />
-              <ModelDiscussion
-                canDiscuss={canDiscuss}
-                onlyEarlyAccess={onlyEarlyAccess}
-                modelId={model.id}
-                modelUserId={model.user.id}
-                locked={model.locked || model.meta?.commentsLocked}
-              />
-            </>
-          )}
         </Container>
         {showRail && <div className={classes.rail}>{canShowRail && <AdUnitSide_1 />}</div>}
       </div>
+      {canLoadBelowTheFold && (
+        <>
+          {/* A sponsored card can run on a page with no suggestions of its own. */}
+          {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
+            <>
+              {model.hasSuggestedResources && <AdUnitTopSection />}
+              {selectedVersion && (
+                <AssociatedModels
+                  fromId={model.id}
+                  type="Suggested"
+                  ownerId={model.user.id}
+                  label={
+                    <Group gap={8} wrap="nowrap">
+                      Suggested Resources{' '}
+                      <InfoPopover>
+                        <Text size="sm" fw={400}>
+                          These are resources suggested by the creator of this model. They may be
+                          related to this model or created by the same user.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                />
+              )}
+            </>
+          )}
+          <AdUnitTopSection />
+          <Container size="xl" my="xl">
+            <ModelDiscussion
+              canDiscuss={canDiscuss}
+              onlyEarlyAccess={onlyEarlyAccess}
+              modelId={model.id}
+              modelUserId={model.user.id}
+              locked={model.locked || model.meta?.commentsLocked}
+            />
+          </Container>
+        </>
+      )}
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box id="gallery" mt="md">
           <ModelGallery

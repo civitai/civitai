@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
+
 /**
  * App Listing COLLABORATORS — the RECIPIENT INBOX (`listMyPendingTransfers`).
  *
@@ -20,6 +22,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `findMany` fake that ignored the clause would return every row to every caller, which
  * makes the leak test — the one that matters most here — pass no matter what the service
  * queries. `the fake CAN filter` below is the positive control for exactly that.
+ *
+ * 🔴 AND IT NOW HONOURS ITS `select`, WHICH IT DID NOT. Until #3952 the fake filtered on
+ * `where` and then handed back the WHOLE fixture row — so a column the service's `select`
+ * never asked for was present anyway, and the mutant that DELETES `connectClientId: true`
+ * from that select survived this entire suite. A canned fixture cannot observe a `select`,
+ * by construction; only projection can. `the fake honours its select (positive control)`
+ * below proves an unselected column really is absent, modelled on the identical control in
+ * `app-access.authoring-context-connect-client.test.ts`.
  */
 
 const { mockDb } = vi.hoisted(() => ({
@@ -56,6 +66,13 @@ type Row = {
     name: string;
     kind: string;
     appBlockId: string | null;
+    /**
+     * 🔴 IN THE FIXTURE TABLE, NEVER IN THE SERVICE'S OUTPUT. The column is what
+     * `refusesTransferForConnectClient` reads; the recipient receives only the derived
+     * `acceptBlockedReason`. The leak assertion in `listMyPendingTransfers` below pins
+     * that, and it can only mean anything because the column is genuinely present here.
+     */
+    connectClientId: string | null;
     icon: { url: string } | null;
   } | null;
 };
@@ -79,6 +96,7 @@ function transferTable(): Row[] {
         name: 'Shiny Thing',
         kind: 'onsite',
         appBlockId: 'ab_shiny',
+        connectClientId: null,
         icon: { url: 'https://img.example/shiny.png' },
       },
     },
@@ -95,6 +113,30 @@ function transferTable(): Row[] {
         name: 'External Thing',
         kind: 'offsite',
         appBlockId: null,
+        connectClientId: null,
+        icon: null,
+      },
+    },
+    /**
+     * 🔴 THE BLOCKED OFFER — off-site AND connect-linked, so `acceptTransfer` refuses it
+     * in-transaction every time. Live, `pending`, in date, addressed to ME: indistinguish-
+     * able from the row above on every other axis, which is precisely why the recipient
+     * could not tell them apart until `acceptBlockedReason` existed.
+     */
+    {
+      id: 'aot_mine_offsite_linked',
+      appListingId: 'apl_offsite_linked',
+      fromUserId: 17,
+      toUserId: ME,
+      status: 'pending',
+      expiresAt: FUTURE,
+      createdAt: new Date('2026-08-07T00:00:00Z'),
+      appListing: {
+        slug: 'connected-thing',
+        name: 'Connected Thing',
+        kind: 'offsite',
+        appBlockId: null,
+        connectClientId: 'oc_linked',
         icon: null,
       },
     },
@@ -112,6 +154,7 @@ function transferTable(): Row[] {
         name: 'Someone Else’s App',
         kind: 'onsite',
         appBlockId: 'ab_secret',
+        connectClientId: null,
         icon: null,
       },
     },
@@ -129,6 +172,7 @@ function transferTable(): Row[] {
         name: 'Already Taken',
         kind: 'onsite',
         appBlockId: 'ab_done',
+        connectClientId: null,
         icon: null,
       },
     },
@@ -144,7 +188,10 @@ function transferTable(): Row[] {
         slug: 'withdrawn',
         name: 'Withdrawn',
         kind: 'offsite',
+        // A CANCELLED offer on a connect-linked listing: the blocked branch must never be
+        // reached for it, because the status filter removes the row first.
         appBlockId: null,
+        connectClientId: 'oc_withdrawn',
         icon: null,
       },
     },
@@ -162,6 +209,7 @@ function transferTable(): Row[] {
         name: 'Lapsed Offer',
         kind: 'onsite',
         appBlockId: 'ab_stale',
+        connectClientId: null,
         icon: null,
       },
     },
@@ -170,16 +218,44 @@ function transferTable(): Row[] {
 
 let ROWS: Row[];
 
+type Select = Record<string, unknown>;
+
+/**
+ * Project one fixture row through a Prisma-style `select`, RECURSIVELY — a nested
+ * `{ select: … }` on a relation narrows that relation the same way, and a `null` relation
+ * stays `null`.
+ *
+ * 🔴 COLUMNS THE SELECT DID NOT ASK FOR ARE ABSENT, not merely undefined, because that is
+ * what Prisma does and it is the only thing that makes the service's `select` OBSERVABLE.
+ * The previous fake returned the whole fixture row after filtering, so deleting a line from
+ * the service's `select` changed nothing here — the mutant survived a fully green suite.
+ * No `select` at all still returns everything, which keeps the raw-fixture control below
+ * able to read the table directly.
+ */
+function project(row: unknown, select: Select | undefined): unknown {
+  if (row === null || row === undefined) return row;
+  if (!select) return row;
+  const source = row as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, spec] of Object.entries(select)) {
+    if (!spec) continue;
+    const nested = (spec as { select?: Select }).select;
+    out[key] = nested ? project(source[key], nested) : source[key];
+  }
+  return out;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   ROWS = transferTable();
   mockDb.appOwnershipTransfer.findMany.mockImplementation(async (args: unknown) => {
-    const where = (args as { where?: { toUserId?: number; status?: string } }).where ?? {};
+    const a = (args ?? {}) as { where?: { toUserId?: number; status?: string }; select?: Select };
+    const where = a.where ?? {};
     return ROWS.filter(
       (r) =>
         (where.toUserId === undefined || r.toUserId === where.toUserId) &&
         (where.status === undefined || r.status === where.status)
-    );
+    ).map((r) => project(r, a.select));
   });
 });
 
@@ -208,10 +284,71 @@ describe('listMyPendingTransfers — the fake', () => {
   });
 });
 
+describe('the fake honours its select (positive control)', () => {
+  /**
+   * 🔴 BEFORE BELIEVING ANY `select`-SENSITIVE ASSERTION BELOW: prove the fake can return
+   * BOTH shapes, and that an unselected column really is ABSENT rather than merely
+   * undefined. Without this, "the field came back" and "the fake returns everything
+   * regardless" are indistinguishable — which is exactly the state this suite was in
+   * before #3952, and why the `connectClientId` deletion mutant survived it.
+   *
+   * The nested arm matters as much as the flat one: the column the service reads lives on
+   * the JOINED listing, so a projector that narrowed only the top level would be just as
+   * blind as no projector at all.
+   */
+  it('omits a column the select did not ask for, and returns one it did', async () => {
+    const asked = (await mockDb.appOwnershipTransfer.findMany({
+      where: { toUserId: ME, status: 'pending' },
+      select: { id: true, appListing: { select: { slug: true, connectClientId: true } } },
+    })) as Array<Record<string, unknown>>;
+    expect(asked[0]).toEqual({
+      id: 'aot_mine_onsite',
+      appListing: { slug: 'shiny-thing', connectClientId: null },
+    });
+    // The column IS on the fixture row — so its absence below is the projection, not a
+    // hole in the table.
+    expect('connectClientId' in (asked[0].appListing as object)).toBe(true);
+
+    const notAsked = (await mockDb.appOwnershipTransfer.findMany({
+      where: { toUserId: ME, status: 'pending' },
+      select: { id: true, appListing: { select: { slug: true } } },
+    })) as Array<Record<string, unknown>>;
+    expect(notAsked[0]).toEqual({ id: 'aot_mine_onsite', appListing: { slug: 'shiny-thing' } });
+    expect('connectClientId' in (notAsked[0].appListing as object)).toBe(false);
+    // …and the top level narrows too: `fromUserId` was never asked for.
+    expect('fromUserId' in notAsked[0]).toBe(false);
+  });
+
+  /** A `null` relation survives projection as `null`, not as an empty object. */
+  it('a null relation stays null', async () => {
+    ROWS = [
+      {
+        id: 'aot_orphan_probe',
+        appListingId: 'apl_vanished',
+        fromUserId: 16,
+        toUserId: ME,
+        status: 'pending',
+        expiresAt: FUTURE,
+        createdAt: NOW,
+        appListing: null,
+      },
+    ];
+    const rows = (await mockDb.appOwnershipTransfer.findMany({
+      where: { toUserId: ME, status: 'pending' },
+      select: { id: true, appListing: { select: { slug: true } } },
+    })) as Array<Record<string, unknown>>;
+    expect(rows).toEqual([{ id: 'aot_orphan_probe', appListing: null }]);
+  });
+});
+
 describe('listMyPendingTransfers', () => {
   it('returns the caller’s LIVE pending offers', async () => {
     const rows = await listMyPendingTransfers(ME, NOW);
-    expect(rows.map((r) => r.transferId)).toEqual(['aot_mine_onsite', 'aot_mine_offsite']);
+    expect(rows.map((r) => r.transferId)).toEqual([
+      'aot_mine_onsite',
+      'aot_mine_offsite',
+      'aot_mine_offsite_linked',
+    ]);
   });
 
   /**
@@ -282,6 +419,9 @@ describe('listMyPendingTransfers', () => {
       fromUserId: OWNER,
       expiresAt: FUTURE,
       createdAt: new Date('2026-08-09T00:00:00Z'),
+      // 🔴 EXHAUSTIVE `toEqual`, so a NEW field on the view has to be declared here — and
+      // so this row is pinned as carrying the raw column NOWHERE. See the leak test below.
+      acceptBlockedReason: null,
     });
     // An OFF-SITE offer legitimately carries no block and no icon — absent, not missing.
     expect(offsite.kind).toBe('offsite');
@@ -292,10 +432,10 @@ describe('listMyPendingTransfers', () => {
 
   it('names the OFFERING user, so the recipient can see who is handing it over', async () => {
     const rows = await listMyPendingTransfers(ME, NOW);
-    expect(rows.map((r) => r.fromUserId)).toEqual([OWNER, 11]);
+    expect(rows.map((r) => r.fromUserId)).toEqual([OWNER, 11, 17]);
     // POSITIVE CONTROL: the offerers are distinct from each other and from the recipient,
     // so a mixed-up column is observable.
-    expect(new Set([OWNER, 11, ME]).size).toBe(3);
+    expect(new Set([OWNER, 11, 17, ME]).size).toBe(4);
   });
 
   it('a row whose listing relation is missing is DROPPED, not rendered blank', async () => {
@@ -312,10 +452,108 @@ describe('listMyPendingTransfers', () => {
     const ids = (await listMyPendingTransfers(ME, NOW)).map((r) => r.transferId);
     expect(ids).not.toContain('aot_orphan');
     // POSITIVE CONTROL: the other rows still come back, so the drop is targeted.
-    expect(ids).toEqual(['aot_mine_onsite', 'aot_mine_offsite']);
+    expect(ids).toEqual(['aot_mine_onsite', 'aot_mine_offsite', 'aot_mine_offsite_linked']);
   });
 
   it('an empty inbox is an empty array, not a throw', async () => {
     await expect(listMyPendingTransfers(999, NOW)).resolves.toEqual([]);
+  });
+});
+
+/**
+ * 🔴 `acceptBlockedReason` — WHY AN OFFER CANNOT BE ACCEPTED, decided server-side.
+ *
+ * `acceptTransfer` re-asserts the connect-client refusal IN-TRANSACTION, so a live offer on
+ * a connect-linked off-site listing is guaranteed to fail on accept. Until this field
+ * existed the recipient's inbox had no way to know: `listMyPendingTransfers` did not read
+ * the column, so the fact could not cross the wire at all, and the addressee met the
+ * refusal only by pressing Accept.
+ *
+ * These pin the FIELD. The BRANCH that reads it lives in `AppTransferOffersView`, pinned by
+ * `src/tests/pages/apps/invites-transfer-blocked.browser.test.tsx` — a field is not a guard.
+ */
+describe('🔴 listMyPendingTransfers — acceptBlockedReason', () => {
+  it('an OFF-SITE offer on a connect-linked listing carries the server’s refusal, verbatim', async () => {
+    const rows = await listMyPendingTransfers(ME, NOW);
+    const blocked = rows.find((r) => r.transferId === 'aot_mine_offsite_linked');
+    expect(blocked).toBeDefined();
+    // VERBATIM against the constant the two server gates throw — a paraphrase here would
+    // let the recipient's sentence drift out from under the owner's and the API's.
+    expect(blocked?.acceptBlockedReason).toBe(CONNECT_CLIENT_TRANSFER_REFUSAL);
+  });
+
+  /**
+   * 🔴 THE CONTROL, AND IT IS THE ARM THAT KILLS "block every offer". Without it, returning
+   * the refusal unconditionally satisfies the test above and ships an inbox where nothing
+   * can ever be accepted. The unblocked row is off-site too, so `kind` alone cannot explain
+   * the difference — only the client id can.
+   */
+  it('🔴 CONTROL — an OFF-SITE offer with NO client is null, and an ON-SITE one is too', async () => {
+    const rows = await listMyPendingTransfers(ME, NOW);
+    const byId = Object.fromEntries(rows.map((r) => [r.transferId, r.acceptBlockedReason]));
+    expect(byId).toEqual({
+      aot_mine_onsite: null,
+      aot_mine_offsite: null,
+      aot_mine_offsite_linked: CONNECT_CLIENT_TRANSFER_REFUSAL,
+    });
+    // POSITIVE CONTROL on the fixture: the two off-site rows differ ONLY in the client id.
+    const linked = ROWS.find((r) => r.id === 'aot_mine_offsite_linked');
+    const unlinked = ROWS.find((r) => r.id === 'aot_mine_offsite');
+    expect(linked?.appListing?.kind).toBe(unlinked?.appListing?.kind);
+    expect(linked?.appListing?.connectClientId).toBe('oc_linked');
+    expect(unlinked?.appListing?.connectClientId).toBeNull();
+  });
+
+  /**
+   * 🔴 THE `kind` ARM OF THE PREDICATE, pinned against the SERVER's rule rather than a
+   * guess. `refusesTransferForConnectClient` requires `kind === 'offsite'`, so an on-site
+   * row carrying a client id is still transferable server-side and the inbox must agree —
+   * blocking it here would refuse an offer `acceptTransfer` would have honoured.
+   */
+  it('an ON-SITE row carrying a client id is NOT blocked — the predicate needs both', async () => {
+    const onsite = ROWS.find((r) => r.id === 'aot_mine_onsite');
+    onsite!.appListing!.connectClientId = 'oc_onsite';
+    const rows = await listMyPendingTransfers(ME, NOW);
+    expect(rows.find((r) => r.transferId === 'aot_mine_onsite')?.acceptBlockedReason).toBeNull();
+    // POSITIVE CONTROL: the same client id on the OFF-SITE row does block, so the value is
+    // not simply being ignored.
+    expect(rows.find((r) => r.transferId === 'aot_mine_offsite_linked')?.acceptBlockedReason).toBe(
+      CONNECT_CLIENT_TRANSFER_REFUSAL
+    );
+  });
+
+  /**
+   * 🔴 THE RAW COLUMN NEVER CROSSES THE WIRE. A pending offeree holds no role on the
+   * listing and this read imposes no status gate, so an offer can sit on a `draft`
+   * listing whose client id the public listing-detail read does not expose. The derived
+   * sentence is all they can act on, and all they get.
+   */
+  it('🔴 does NOT return the raw connectClientId to the recipient', async () => {
+    const rows = await listMyPendingTransfers(ME, NOW);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect('connectClientId' in row).toBe(false);
+    // POSITIVE CONTROL: the value IS in the fixture and DID reach the predicate — the row
+    // it belongs to came back blocked. So its absence above is suppression, not a hole.
+    expect(ROWS.find((r) => r.id === 'aot_mine_offsite_linked')?.appListing?.connectClientId).toBe(
+      'oc_linked'
+    );
+    expect(rows.find((r) => r.transferId === 'aot_mine_offsite_linked')?.acceptBlockedReason).toBe(
+      CONNECT_CLIENT_TRANSFER_REFUSAL
+    );
+  });
+
+  /**
+   * 🔴 THE `select` MUST ASK FOR THE COLUMN. This is the assertion the old whole-row fake
+   * could not make: with projection in place, deleting `connectClientId: true` from the
+   * service's select makes the row come back without it and the verdict silently becomes
+   * `null` for everybody. Pinned on the ARGUMENTS as well, so the reason a failure happened
+   * is legible rather than "one offer stopped being blocked".
+   */
+  it('🔴 the query SELECTS connectClientId off the joined listing', async () => {
+    await listMyPendingTransfers(ME, NOW);
+    const args = mockDb.appOwnershipTransfer.findMany.mock.calls[0][0] as {
+      select: { appListing: { select: Record<string, unknown> } };
+    };
+    expect(args.select.appListing.select).toMatchObject({ connectClientId: true, kind: true });
   });
 });

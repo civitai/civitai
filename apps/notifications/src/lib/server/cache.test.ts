@@ -52,6 +52,7 @@ describe('notification cache redis-error counting', () => {
 
   it('counts the increment op under operation="increment"', async () => {
     const before = await opValue('increment');
+    fakeRedis.exists.mockResolvedValueOnce(1);
     fakeRedis.hIncrBy.mockRejectedValueOnce(new Error('boom'));
 
     await expect(notificationCache.incrementUser(7, 'Comment')).rejects.toThrow('boom');

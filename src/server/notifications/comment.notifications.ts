@@ -1,7 +1,125 @@
-import { isEmpty, startCase } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
+import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+  notThreadMuted,
+} from '~/server/notifications/base.notifications';
+import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
+
+/**
+ * SQL fragment resolving an app-store listing's public SLUG for a CommentsV2 thread.
+ *
+ * Every OTHER thread entity is id-addressed, so its URL is built straight from
+ * `threadParentId` (the id the thread row already carries). App-listing pages are
+ * SLUG-addressed (`/apps/store-preview/<slug>`) while `Thread.appListingId` holds
+ * `app_listings.serial_id` — an INTEGER surrogate that appears nowhere in the URL. So the
+ * slug has to be joined in, and `appListingSlug` carried in `details` beside the ids.
+ *
+ * LEFT JOIN, and the caller pairs it with `appListingSlugResolved` below: an app-listing
+ * thread whose listing row does not resolve must be DROPPED rather than emitted with a
+ * `/apps/store-preview/undefined` link.
+ *
+ * `expr` is the SQL expression naming the thread's `appListingId` — `root."appListingId"`
+ * where only the root thread is in scope, `COALESCE(root."appListingId", t."appListingId")`
+ * where the entity parent may sit on either.
+ */
+export const appListingSlugJoin = (expr: string) =>
+  `LEFT JOIN "app_listings" al ON al."serial_id" = ${expr}`;
+
+/**
+ * Companion guard for `appListingSlugJoin`. Keeps every non-app-listing thread, and keeps an
+ * app-listing thread only when the join produced a slug.
+ *
+ * 🔴 This is NOT the old blanket `appListingId IS NULL` exclusion it replaced. That one dropped
+ * EVERY app-listing thread because no URL could be built for any of them; this one drops only the
+ * rows the join failed on (structurally unreachable today — `slug` is `NOT NULL` and the FK is
+ * `ON DELETE SET NULL`, so a resolvable `appListingId` always has a slug).
+ */
+export const appListingSlugResolved = (expr: string) => `(${expr} IS NULL OR al.slug IS NOT NULL)`;
+
+/**
+ * The canonical owner of an app listing, in SQL — the raw-SQL mirror of
+ * `resolveCanonicalListingOwner` in `~/server/services/blocks/app-access.service`.
+ *
+ * 🔴 OWNERSHIP IS NOT ONE COLUMN. It depends on the listing's KIND:
+ *   - `onsite`  → the owner is `OauthClient.userId`, reached as `AppBlock.app.userId`.
+ *                 `app_listings.user_id` is a DENORMALIZED COPY there and can go stale —
+ *                 `acceptTransfer` calls it "the denormalized follow-up, where a 0-count is a
+ *                 legitimate desync". It stays the FALLBACK, because a listing whose block
+ *                 carries a dangling `app_id` still needs an owner.
+ *   - anything else (incl. `offsite`) → the column IS the owner, unconditionally. An unknown
+ *                 kind falls through to the column deliberately, matching the service's
+ *                 fail-closed behaviour.
+ *
+ * Reading the column alone is latent-wrong rather than wrong today (measured: 0 of 21 onsite
+ * listings diverge), but 17 of 21 onsite listings are the shape that could — and a divergence
+ * would send the listing name, slug and a commenter's username to the PREVIOUS owner while the
+ * real one silently got nothing. That is a disclosure, not just a miss, so it is resolved here
+ * rather than commented around.
+ *
+ * Requires `al`, plus `LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"` and
+ * `LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"` to be in scope.
+ */
+export const APP_LISTING_OWNER_SQL = `CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END`;
+
+/**
+ * Human-readable noun for a thread type in notification copy.
+ *
+ * `threadType` is an entity KEY. Most read as English by accident of naming; the three that do
+ * not are listed here, because a user should never be shown an identifier.
+ *
+ * `model3d` is a REORDERING, not just a spacing fix — "3D model", matching what the owner-facing
+ * `new-3d-model-comment` copy already calls it, so the same thing has one name across the whole
+ * notification family. It is also the one label whose first character is a DIGIT; the article is
+ * chosen from the noun by `withIndefiniteArticle`, so "a 3D model" falls out rather than being
+ * special-cased, and the test table pins it.
+ *
+ * ONE map, read by every consumer that names a thread in a sentence (`new-mention`,
+ * `new-comment-reply`, `new-thread-response`), so the same thread is called the same thing
+ * wherever the user meets it. It used to live at one call site only, which is exactly how two
+ * of the three shipped the raw key.
+ *
+ * 🔴 A `Map`, not an object literal, and that is a correctness choice rather than a style one.
+ * An object-literal lookup answers for keys it never declared — `labels['toString']` is a
+ * truthy Function, which `??` does not catch — so a `threadType` of `toString`/`constructor`
+ * would put a function body in a user-facing sentence. `Map.get` only ever returns what was
+ * `set`. (`threadUrlMap` below has the same object-literal shape and the same latent hazard;
+ * pre-existing and out of scope here, but do not copy it.)
+ */
+const THREAD_TYPE_LABELS = new Map<string, string>([
+  ['appListing', 'app listing'],
+  ['bountyEntry', 'bounty entry'],
+  ['comicProject', 'comic'],
+  ['model3d', '3D model'],
+]);
+
+export const threadTypeLabel = (threadType: string): string =>
+  THREAD_TYPE_LABELS.get(threadType) ?? threadType;
+
+/**
+ * `"an app listing"` / `"a model"` — a noun with its indefinite article.
+ *
+ * 🔴 It takes the NOUN, never a thread type, and that signature is the guard rather than a
+ * style choice. The article must agree with the word actually printed, and the way to
+ * guarantee that is to leave the article-picker nothing else to read: no `threadType` is in
+ * scope here, so "article derived from the raw entity key" is not expressible.
+ *
+ * The previous shape — a label computed at the call site with `label[0]` tested beside it —
+ * left that mutation available and *unkillable*: rebinding it to `threadType[0]` changed no
+ * output, because every reachable thread type and its label start with letters of the same
+ * vowel-ness. Composing the two functions removes the expression instead of testing it.
+ */
+export const withIndefiniteArticle = (noun: string): string =>
+  `${['a', 'e', 'i', 'o', 'u'].includes(noun[0]) ? 'an' : 'a'} ${noun}`;
+
+/** The noun a thread is called in copy, article included: `"an app listing"`, `"a model"`. */
+export const threadTypeWithArticle = (threadType: string): string =>
+  withIndefiniteArticle(threadTypeLabel(threadType));
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   const queryString = QS.stringify({
@@ -20,8 +138,23 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bounty: `/bounties/${threadParentId}?${queryString}`,
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
+    crucible: `/crucibles/${threadParentId}?${queryString}`,
+    storyline: `${storylineUrl(threadParentId)}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
+    comicProject: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
+    // The one SLUG-addressed entry — see `appListingSlugJoin`. `threadParentId` is NOT the
+    // address here (it is `app_listings.serial_id`, which the URL never contains), so this
+    // branch reads `details.appListingSlug` instead and shares `getListingDetailHref` with
+    // the store cards so a route rename cannot move one without the other.
+    //
+    // No slug ⇒ `undefined`, i.e. the same "unaddressable" outcome an unknown threadType
+    // gets. A missing slug must never render as `/apps/store-preview/undefined`, and
+    // `undefined` here also leaves `commentDedupeKeyIfAddressable` free for a purpose-built
+    // notification, exactly as the `'comment'` fallback does.
+    appListing: details.appListingSlug
+      ? `${getListingDetailHref(details.appListingSlug)}?${queryString}`
+      : undefined,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -45,9 +178,16 @@ export const commentDedupeKeyByVersion = `concat('comment:', case when details->
  * replace one that works.
  *
  * `threadType` resolves to the `'comment'` fallback for any `Thread` entity `threadUrlMap` doesn't
- * address (comicProject, clubPost, model3dReview today). Those threads stay unclaimed, which is what
- * lets a purpose-built owner notification like `new-comic-comment` own the key instead. V1 rows carry no
- * `threadType` and build their URL from `modelId`, so they always render and always claim.
+ * address (clubPost, model3dReview today). Those threads stay unclaimed, which is what lets a
+ * purpose-built owner notification own the key instead. V1 rows carry no `threadType` and build their
+ * URL from `modelId`, so they always render and always claim.
+ *
+ * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
+ * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
+ * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
+ * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
+ * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *
  * Add a `Thread` entity column WITHOUT a `threadUrlMap` entry and this keeps the dedupe correct on its
  * own — that omission is exactly how the mention/challenge regression got in.
@@ -79,7 +219,7 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
+      url: getModelCommentThreadUrl({ modelId: details.modelId, commentId: details.commentId }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
@@ -98,6 +238,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."parentId" IS NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
+          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-model:owner:v1:', details->>'commentId') "key",
@@ -116,9 +257,11 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${
-        details.parentId ?? details.commentId
-      }&highlight=${details.commentId}`,
+      url: getModelCommentThreadUrl({
+        modelId: details.modelId,
+        commentId: details.parentId ?? details.commentId,
+        highlight: details.commentId,
+      }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comment_response AS (
@@ -138,6 +281,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE m."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != p."userId"
+          AND ${notBlockedBetween('p."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-response:owner:v1:', details->>'commentId') "key",
@@ -177,6 +321,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."parentId" IS NOT NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
+          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-nested:user:v1:', details->>'commentId') "key",
@@ -196,7 +341,9 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} replied to a ${details.threadType} comment you made`,
+        message: `${details.username} replied to ${threadTypeWithArticle(
+          details.threadType
+        )} comment you made`,
         url,
       };
     },
@@ -219,7 +366,10 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
-                root."model3dId"
+                root."crucibleId",
+                root."storylineId",
+                root."model3dId",
+                root."comicProjectId"
              ),
             'threadType', CASE
                 WHEN root."imageId" IS NOT NULL THEN 'image'
@@ -232,9 +382,18 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN root."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN root."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN root."model3dId" IS NOT NULL THEN 'model3d'
+                WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
+                -- App-store listing threads are SLUG-addressed, so this arm keys on the
+                -- JOINED slug rather than on an id column. al only joins through
+                -- root."appListingId", so a non-null slug already means: this is an
+                -- appListing thread AND its listing resolved.
+                WHEN al.slug IS NOT NULL THEN 'appListing'
                 ELSE 'comment'
                 END,
+             'appListingSlug', al.slug,
              'commentParentId', t."commentId",
              'commentParentType', 'comment',
             'username', u.username
@@ -244,12 +403,15 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "CommentV2" pc ON pc.id = t."commentId"
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('root."appListingId"')}
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
-          -- Exclude appListing (app-store listing) threads: they are addressed by
-          -- SLUG, not the id this query has, so threadUrlMap can't build a reply
-          -- URL (→ url:undefined). appListing reply notifications are deferred
-          -- until a slug-resolving URL exists. (appListingId lives on the root.)
-          AND root."appListingId" IS NULL
+          AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
+          AND ${notThreadMuted('pc."userId"', 't.id')}
+          -- appListing (app-store listing) threads DO emit replies now — the join above
+          -- resolves the slug threadUrlMap needs. This drops only the rows that join
+          -- failed on, so we never ship an unlinkable notification. (appListingId lives
+          -- on the root here.)
+          AND ${appListingSlugResolved('root."appListingId"')}
       )
       SELECT
         concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
@@ -276,7 +438,11 @@ export const commentNotifications = createNotificationProcessor({
 
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} responded to a ${startCase(
+        // Was `a ${startCase(threadType)}` — Title Case mid-sentence, with a hardcoded "a" that
+        // was already wrong for every vowel-initial type ("a Article thread", "a Image thread").
+        // The shared label + article fixes the article for all of them and stops `appListing`
+        // printing as a raw key.
+        message: `${details.username} responded to ${threadTypeWithArticle(
           details.threadType
         )} thread you're in`,
         url,
@@ -285,7 +451,10 @@ export const commentNotifications = createNotificationProcessor({
     prepareQuery: ({ lastSent }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
-          UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId")) "ownerId",
+          UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId" AND ${notBlockedBetween(
+            'cu."userId"',
+            'c."userId"'
+          )})) "ownerId",
           JSONB_BUILD_OBJECT(
             'modelId', c."modelId",
             'commentId', c.id,
@@ -302,7 +471,10 @@ export const commentNotifications = createNotificationProcessor({
         UNION
 
         SELECT DISTINCT
-          UNNEST((SELECT ARRAY_AGG("userId") FROM "CommentV2" cu WHERE cu."threadId" = c."threadId" AND cu."userId" != c."userId")) "ownerId",
+          UNNEST((SELECT ARRAY_AGG("userId") FROM "CommentV2" cu WHERE cu."threadId" = c."threadId" AND cu."userId" != c."userId" AND ${notBlockedBetween(
+            'cu."userId"',
+            'c."userId"'
+          )} AND ${notThreadMuted('cu."userId"', 't.id')})) "ownerId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'commentId', c.id,
@@ -318,7 +490,10 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."crucibleId",
+                root."storylineId",
                 root."model3dId",
+                root."comicProjectId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -329,7 +504,10 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
-                t."model3dId"
+                t."crucibleId",
+                t."storylineId",
+                t."model3dId",
+                t."comicProjectId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -342,9 +520,15 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+              WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
+              -- SLUG-addressed; see the same arm in new-comment-reply above.
+              WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'
             END,
+             'appListingSlug', al.slug,
              'commentParentId', COALESCE(
                 t."imageId",
                 t."modelId",
@@ -356,6 +540,8 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -370,6 +556,8 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN t."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
@@ -379,16 +567,14 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Thread" t ON t.id = c."threadId"
         JOIN "User" u ON c."userId" = u.id
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
         WHERE c."createdAt" > '${lastSent}'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          -- Exclude appListing (app-store listing) threads — same reason as
-          -- new-comment-reply above: no slug-resolving URL yet, so a reply here
-          -- would emit a notification with url:undefined. Guard BOTH the root and
-          -- the immediate thread (the entity parent may sit on either here).
-          AND root."appListingId" IS NULL
-          AND t."appListingId" IS NULL
+          -- appListing threads emit here too, via the joined slug. COALESCE over BOTH the
+          -- root and the immediate thread, because the entity parent may sit on either.
+          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
       )
       SELECT
         concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
@@ -438,6 +624,8 @@ export const commentNotifications = createNotificationProcessor({
       WHERE m."userId" > 0
         AND c."createdAt" > '${lastSent}'
         AND c."userId" != r."userId"
+        AND ${notBlockedBetween('r."userId"', 'c."userId"')}
+          AND ${notThreadMuted('r."userId"', 't.id')}
       )
       SELECT
         concat('new-review-response:owner:v2:', details->>'commentId') "key",
@@ -510,6 +698,8 @@ export const commentNotifications = createNotificationProcessor({
         WHERE i."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != i."userId"
+          AND ${notBlockedBetween('i."userId"', 'c."userId"')}
+          AND ${notThreadMuted('i."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-image:owner:v2:', details->>'commentId') "key",
@@ -572,6 +762,8 @@ export const commentNotifications = createNotificationProcessor({
           -- any first batch to ~7 days (~500 rows at the measured 3/hour) however far the cursor drifted.
           AND c."createdAt" > NOW() - INTERVAL '7 days'
           AND c."userId" != p."userId"
+          AND ${notBlockedBetween('p."userId"', 'c."userId"')}
+          AND ${notThreadMuted('p."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-post:owner:v2:', details->>'commentId') "key",
@@ -582,6 +774,127 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_post_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
+    `,
+  },
+  'new-app-listing-comment': {
+    displayName: 'New comments on your app listings',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your app listing: "${details.listingName}"`,
+      // 🔴 THE OWNER'S SUBMISSIONS VIEW, **NOT** the public listing detail page — a deliberate
+      // reversal of the issue's suggestion.
+      //
+      // Kept for the record, because it is a real measurement and it is what the issue's
+      // suggestion was rejected on at the time: `/apps/store-preview/<slug>` gates on
+      // `hasAppsStoreAccess`, which rolls out to `moderators` OR `app-dev-testers` only, and of
+      // the 4 listing owners on prod at 2026-08-20 one was in NEITHER cohort — so a deep link
+      // 404s for the very person being notified. #4160's three types escaped this because their
+      // recipient had already commented in the thread and had therefore already proven they
+      // could open the page; this is the first app-listing notification pushed to an owner
+      // UNCONDITIONALLY, so it cannot borrow that assumption.
+      //
+      // ⚠️ THAT MEASUREMENT NO LONGER SEPARATES THE TWO DESTINATIONS — see below. It rules the
+      // public page out for that owner; it rules the chosen one out for them as well.
+      //
+      // 🔴 THE COHORT ARGUMENT THAT USED TO SIT HERE IS VOID, AND IS NOT REPLACED BY ANOTHER
+      // ONE. It ran: `/apps/mine` gates on `isAppDeveloper` alone, so it needs "the developer
+      // cohort rather than the narrower store-access one", making it the better destination
+      // than a store-gated page. `/apps/mine` no longer exists — the consolidation moved this
+      // constant to `/apps/build`, whose gate is `canAccessAppsBuild` =
+      // `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+      // (`shared/utils/app-blocks-access.ts`). Store access is now a hard AND, so this
+      // destination REQUIRES the very term the paragraph above rejects, and then requires
+      // more on top of it. Its admitted cohort is therefore a strict SUBSET of
+      // `/apps/store-preview/<slug>`'s — narrower, not wider, which is the exact opposite
+      // of what the old reason claimed.
+      //
+      // What still picks it is CONTENT, not reachability. This notification is about the
+      // owner's own submission, and state C of `/apps/build` is that submissions table — the
+      // moderation state, the reason a mod supplied, the edit link. The public detail page
+      // renders the listing as a visitor sees it and carries none of that. It is also where
+      // every other owner-facing app-listing notification lands, via this same shared
+      // constant, so a route rename moves all of them at once.
+      //
+      // On whether the narrowing can strand the recipient: it cannot, under the live Flipt
+      // config, and the proof is recorded once at `OWNER_SUBMISSIONS_URL` rather than restated
+      // here. The short form is that `app-blocks-author` and the store flags roll out to the
+      // SAME segments, so an author always clears the store term.
+      url: OWNER_SUBMISSIONS_URL,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_app_listing_comment AS (
+        SELECT DISTINCT
+          ${APP_LISTING_OWNER_SQL} "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'commentId', c.id,
+            'appListingSlug', al.slug,
+            'listingName', al.name,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        -- TOP-LEVEL comments only. A reply's own thread is keyed by its parent COMMENT and carries
+        -- no "appListingId", so it never matches — replies stay with new-comment-reply /
+        -- new-thread-response.
+        --
+        -- 🔴 THIS PREDICATE IS BEHAVIOURALLY REDUNDANT, AND THAT IS DELIBERATE. The
+        -- app_listings join below is an INNER join on al."serial_id" = t."appListingId", and NULL
+        -- never equals anything, so a NULL "appListingId" is already excluded by the join itself:
+        -- removing this line produces BYTE-IDENTICAL result rows — executed against a real
+        -- Postgres 16 fixture by the #4184 audit, not reasoned about here.
+        --
+        -- So a mutant that deletes it SURVIVES because it is UNREACHABLE — no input can make the
+        -- guard change the answer — NOT because a test forgot to assert it. The distinction has
+        -- opposite remedies: an unasserted mutant wants a new assertion, an unreachable one wants
+        -- nothing (adding a test for it would be vacuous by construction). Kept as
+        -- defence-in-depth so the intent survives a future refactor that makes the join LEFT or
+        -- reorders it — at which point the redundancy ends and this becomes load-bearing.
+        JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL
+        JOIN "app_listings" al ON al."serial_id" = t."appListingId"
+        -- Ownership chain for the onsite kind — see APP_LISTING_OWNER_SQL. LEFT, because an
+        -- offsite listing has no block and an onsite one may carry a dangling app_id; both must
+        -- still fall back to the column rather than drop the row.
+        LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
+        LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
+        WHERE ${APP_LISTING_OWNER_SQL} > 0
+          -- Only APPROVED listings. The destination reads through
+          -- \`appListings.getAppDetail\`, which is approved-only, so a comment on a draft /
+          -- rejected / moderator-removed listing would notify its owner toward a NotFound.
+          -- Measured on prod: only 14 of 28 listings are approved. Mirrors the sibling raw-SQL
+          -- consumer (appListing.metrics.sql.ts).
+          AND al."status" = 'approved'
+          -- Never a shadow revision. \`beginListingRevision\` clones an approved parent as a
+          -- hidden draft; the clone freezes \`user_id\` at clone time and no ownership write
+          -- revisits it, so a shadow can name a STALE owner. Not reachable today (shadows are
+          -- draft, so the status filter already excludes them) — belt and braces, and it
+          -- matches every Prisma-side ownership read.
+          AND al."revision_of_id" IS NULL
+          AND c."createdAt" > '${lastSent}'
+          -- Two floors, for the reason new-post-comment carries them: this type has no cursor row
+          -- until its first successful run, so it inherits the job's GLOBAL last-run — new Date(0)
+          -- on a fresh DB, and stale by the outage duration after any send-notifications outage.
+          AND c."createdAt" > '2026-08-19'
+          -- The rolling window is the one that never goes stale: it bounds any first batch to
+          -- ~7 days however far the cursor drifted.
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          -- A commenter never notifies themselves for their own listing.
+          AND c."userId" != ${APP_LISTING_OWNER_SQL}
+          -- Argument ORDER is load-bearing: (recipient, actor). Swapped, the owner's Hide stops
+          -- suppressing and the commenter's starts — a silent inversion of who gets muted.
+          AND ${notBlockedBetween(APP_LISTING_OWNER_SQL, 'c."userId"')}
+          AND ${notThreadMuted(APP_LISTING_OWNER_SQL, 't.id')}
+      )
+      SELECT
+        concat('new-comment-app-listing:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-app-listing-comment' "type",
+        details
+      FROM new_app_listing_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment');
     `,
   },
   'new-article-comment': {
@@ -613,6 +926,8 @@ export const commentNotifications = createNotificationProcessor({
         WHERE a."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != a."userId"
+          AND ${notBlockedBetween('a."userId"', 'c."userId"')}
+          AND ${notThreadMuted('a."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-article:owner:v2:', details->>'commentId') "key",
@@ -652,6 +967,8 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."createdAt" > '2024-02-24'
           AND c."userId" != b."userId"
+          AND ${notBlockedBetween('b."userId"', 'c."userId"')}
+          AND ${notThreadMuted('b."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-bounty:owner:v2:', details->>'commentId') "key",
@@ -704,6 +1021,8 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '2026-08-06'
           AND c."createdAt" > NOW() - INTERVAL '7 days'
           AND c."userId" != be."userId"
+          AND ${notBlockedBetween('be."userId"', 'c."userId"')}
+          AND ${notThreadMuted('be."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-bounty-entry:owner:v2:', details->>'commentId') "key",
@@ -742,6 +1061,8 @@ export const commentNotifications = createNotificationProcessor({
         WHERE ch."createdById" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != ch."createdById"
+          AND ${notBlockedBetween('ch."createdById"', 'c."userId"')}
+          AND ${notThreadMuted('ch."createdById"', 't.id')}
       )
       SELECT
         concat('new-comment-challenge:owner:v2:', details->>'commentId') "key",
@@ -752,6 +1073,90 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_challenge_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-challenge-comment');
+    `,
+  },
+  'new-crucible-comment': {
+    displayName: 'New comments on your crucibles',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      // The name is null until the text has passed review as safe for everyone.
+      message: `${details.username} commented on your crucible${
+        details.crucibleName ? `: "${details.crucibleName}"` : ''
+      }`,
+      url: `/crucibles/${details.crucibleId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_crucible_comment AS (
+        SELECT DISTINCT
+          cr."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'crucibleId', cr.id,
+            'crucibleName', CASE WHEN cr.ingestion = 'Scanned' AND NOT cr."textNsfw" THEN cr.name END,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."crucibleId" IS NOT NULL
+        JOIN "Crucible" cr ON cr.id = t."crucibleId"
+        WHERE cr."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != cr."userId"
+          AND ${notBlockedBetween('cr."userId"', 'c."userId"')}
+          AND ${notThreadMuted('cr."userId"', 't.id')}
+      )
+      SELECT
+        concat('new-comment-crucible:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId" "userId",
+        'new-crucible-comment' "type",
+        details
+      FROM new_crucible_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-crucible-comment');
+    `,
+  },
+  'new-storyline-comment': {
+    displayName: 'New comments on your storylines',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your storyline: "${details.storylineTitle}"`,
+      url: `${storylineUrl(details.storylineId)}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_storyline_comment AS (
+        SELECT DISTINCT
+          s."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'storylineId', s.id,
+            'storylineTitle', s.title,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."storylineId" IS NOT NULL
+        JOIN "Storyline" s ON s.id = t."storylineId"
+        WHERE s."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != s."userId"
+          AND NOT s."tosViolation"
+          AND ${notBlockedBetween('s."userId"', 'c."userId"')}
+          AND ${notThreadMuted('s."userId"', 't.id')}
+      )
+      SELECT
+        concat('new-comment-storyline:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId" "userId",
+        'new-storyline-comment' "type",
+        details
+      FROM new_storyline_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-storyline-comment');
     `,
   },
   // Model3D comments — mirror the Model 3-tier (`new-comment` /
@@ -783,6 +1188,8 @@ export const commentNotifications = createNotificationProcessor({
         WHERE m3d."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m3d."userId"
+          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
+          AND ${notThreadMuted('m3d."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-model3d:owner:v2:', details->>'commentId') "key",
@@ -828,6 +1235,8 @@ export const commentNotifications = createNotificationProcessor({
         WHERE root."model3dId" IS NOT NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != pc."userId"
+          AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
+          AND ${notThreadMuted('pc."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-response-model3d:owner:v2:', details->>'commentId') "key",
@@ -874,6 +1283,8 @@ export const commentNotifications = createNotificationProcessor({
           AND m3d."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m3d."userId"
+          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
+          AND ${notThreadMuted('m3d."userId"', 't.id')}
       )
       SELECT
         concat('new-comment-nested-model3d:user:v2:', details->>'commentId') "key",

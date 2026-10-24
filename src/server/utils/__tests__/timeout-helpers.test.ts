@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { withTimeoutFallback } from '../timeout-helpers';
 
 // A promise that never settles — simulates a wedged/parked async call (e.g. a
-// ClickHouse read that hangs until the client's own 30s default).
+// ClickHouse read that hangs until the client's own 300s request_timeout).
 const never = () => new Promise<never>(() => {});
 
 describe('withTimeoutFallback', () => {

@@ -1,0 +1,761 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  countRows,
+  feedbackKysely,
+  freshFeedbackDb,
+  freshPreMigrationDb,
+  readFeedback,
+  seedBug,
+  seedFeedback,
+  seedUser,
+} from './feedback-pglite.harness';
+
+/**
+ * `feedback.service.ts`, EXECUTED against a real Postgres carrying the real migrations.
+ *
+ * Every case here is about WHICH ROWS MOVE. A mocked query builder can be asked what it was told
+ * and nothing else, so it cannot distinguish "the UPDATE was scoped on the status the operator was
+ * looking at" from "the UPDATE was scoped on the id alone" — and those two differ only when a
+ * second moderator is mid-verdict, which is exactly when it matters.
+ */
+
+/**
+ * ⚠️ ONE DIMENSION THIS TIER CANNOT SEE, recorded so nobody reads a green run as covering it.
+ * Both getters below resolve to the SAME PGlite client, because PGlite is a single in-process
+ * database with no replica. So every `dbRead` vs `dbWrite` choice in the service is unpinned here:
+ * a mutant swapping either direction survives, including `feedbackExists(dbWrite, …)`, which is
+ * what decides whether a refusal says "that report is gone" or "someone else already triaged it".
+ * Those call sites are verified by reading them, not by this suite — except `feedbackRowQuery`'s,
+ * which `feedback-read-your-writes.pglite.test.ts` pins against a separate replica database.
+ */
+const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+
+vi.mock('../db', () => ({
+  get dbRead() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+  get dbWrite() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+}));
+
+const service = await import('../feedback.service');
+
+let db: PGlite;
+let reporter: number;
+let moderator: number;
+
+beforeEach(async () => {
+  db = await freshFeedbackDb();
+  dbHandle.current = feedbackKysely(db);
+  reporter = await seedUser(db, 'kaeru');
+  moderator = await seedUser(db, 'mod');
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  dbHandle.current = null;
+  await db.close();
+});
+
+describe('triageFeedback', () => {
+  it('moves the row and stamps who handled it', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    const result = await service.triageFeedback({
+      id,
+      status: 'dismissed',
+      expectedStatus: 'new',
+      note: 'retired surface',
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: true, changed: true });
+    const row = await readFeedback(db, id);
+    expect(row.status).toBe('dismissed');
+    expect(row.triageNote).toBe('retired surface');
+    expect(row.handledById).toBe(moderator);
+    expect(row.handledAt).not.toBeNull();
+  });
+
+  /**
+   * 🔴 THE CONCURRENCY GUARD. Without `AND "status" = $expectedStatus` this returns
+   * `{ changed: true }` and silently replaces a colleague's verdict — with a green screen over it.
+   */
+  it('changes NOTHING when the row already moved under the operator', async () => {
+    const id = await seedFeedback(db, { userId: reporter, status: 'actioned' });
+
+    const result = await service.triageFeedback({
+      id,
+      status: 'dismissed',
+      expectedStatus: 'new',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: true, changed: false });
+    expect((await readFeedback(db, id)).status).toBe('actioned');
+  });
+
+  it('separates a row that is GONE from one another moderator moved', async () => {
+    const result = await service.triageFeedback({
+      id: 9999,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'gone' });
+  });
+
+  /**
+   * 🔴 AN ABSENT NOTE LEAVES THE COLUMN STANDING; A BLANK ONE CLEARS IT. The panel's note box was
+   * removed and the status buttons now post no `note` field at all, so a `SET "triageNote" = NULL`
+   * on every status click would blank the column with the save reporting success — and nothing in
+   * this app could put it back: no second copy is stored, and `ModActivity` has no column for it.
+   *
+   * ⚠️ Measured: production holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them.
+   * The column has no writer left, so this pins the CONTRACT for whatever writes it next rather
+   * than protecting text that exists.
+   *
+   * Asserted against a ROW rather than against the call, because the defect is what the UPDATE
+   * WRITES. A mocked builder can only be asked what it was told, and `undefined` handed to a `.set()`
+   * is exactly the value whose meaning a builder decides.
+   *
+   * Both halves in one case so neither can pass alone: the status HAS to move — a guard that
+   * preserved the note by writing nothing at all would be a different and worse defect.
+   *
+   * ⚠️ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE DIFFERENCE IS WORTH THE LINE.
+   * Measured against the pre-change service: it passes there too, because Kysely already drops
+   * `undefined` values from a `.set()` — what the old signature did was make `undefined`
+   * unexpressible, so the ACTION collapsed an absent field to `null` before the service ever saw it.
+   * The red→green half of this pair therefore lives in
+   * `routes/feedback/__tests__/feedback-actions.test.ts`. What this case pins is the behaviour that
+   * action now DEPENDS on — a Kysely upgrade that started emitting `SET "triageNote" = NULL` for an
+   * undefined value would break the guarantee with nothing else to notice.
+   */
+  it('leaves an existing triageNote untouched when no note is given, and clears it when one is blank', async () => {
+    const id = await seedFeedback(db, { userId: reporter, triageNote: 'dupe of #1187' });
+
+    const absent = await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      moderatorId: moderator,
+    });
+
+    expect(absent).toEqual({ ok: true, changed: true });
+    const afterAbsent = await readFeedback(db, id);
+    expect(afterAbsent.status).toBe('reviewed');
+    expect(afterAbsent.triageNote).toBe('dupe of #1187');
+    expect(afterAbsent.handledById).toBe(moderator);
+
+    // The control. `null` is a caller saying "clear it", and it must still mean that — otherwise
+    // this test passes over a service that has simply stopped writing the column at all.
+    await service.triageFeedback({
+      id,
+      status: 'actioned',
+      expectedStatus: 'reviewed',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).triageNote).toBeNull();
+  });
+
+  /**
+   * 🔴 Moving a row back to `new` CLEARS the handler. Stamping it would leave "handled by
+   * <moderator>" on a row sitting in the unhandled queue — a claim the screen cannot support.
+   */
+  it('clears handledById and handledAt when a row goes back to `new`', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await service.triageFeedback({
+      id,
+      status: 'actioned',
+      expectedStatus: 'new',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    const result = await service.triageFeedback({
+      id,
+      status: 'new',
+      expectedStatus: 'actioned',
+      note: 'reopened',
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: true, changed: true });
+    const row = await readFeedback(db, id);
+    expect(row.status).toBe('new');
+    expect(row.handledById).toBeNull();
+    expect(row.handledAt).toBeNull();
+  });
+
+  /**
+   * 🔴 THE LINK SURVIVES A REOPEN. Clearing it here was tried and reverted: `handledById` and
+   * `handledAt` record who acted, which a reopen retracts, but the link records that this report
+   * is ABOUT that issue, which a reopen does not make false. Clearing it destroyed that with no
+   * way back — the number is stored nowhere else — and orphaned a `Bug` that
+   * `promoteFeedbackToBug` rolls back a transaction rather than create.
+   */
+  it('keeps the issue link when a row goes back to `new`, and still clears the handler', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+
+    await service.triageFeedback({
+      id,
+      status: 'new',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    const row = await readFeedback(db, id);
+    expect(row.bugId).toBe(promoted.bugId);
+    expect(row.handledById).toBeNull();
+    expect(row.handledAt).toBeNull();
+  });
+
+  /** The sibling panel is the only place the association is readable; a reopen must not empty it. */
+  it('leaves a reopened row visible to its siblings', async () => {
+    const first = await seedFeedback(db, { userId: reporter });
+    const second = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id: first,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    await service.linkFeedbackToBug({ id: second, bugId: promoted.bugId, moderatorId: moderator });
+
+    await service.triageFeedback({
+      id: first,
+      status: 'new',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    const siblings = await service.getSiblingFeedback({ bugId: promoted.bugId, excludeId: second });
+    expect(siblings.map((r) => r.id)).toEqual([first]);
+  });
+
+  it('keeps the issue link on any status that is not `new`', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+
+    await service.triageFeedback({
+      id,
+      status: 'dismissed',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).bugId).toBe(promoted.bugId);
+  });
+
+  it('touches only the row it names', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const other = await seedFeedback(db, { userId: reporter });
+
+    await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, other)).status).toBe('new');
+  });
+
+  it('records the mod activity only when a row actually moved', async () => {
+    const id = await seedFeedback(db, { userId: reporter, status: 'actioned' });
+
+    await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: null,
+      moderatorId: moderator,
+    });
+    expect(await countRows(db, 'ModActivity')).toBe(0);
+
+    await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+    expect(await countRows(db, 'ModActivity')).toBe(1);
+  });
+});
+
+describe('promoteFeedbackToBug', () => {
+  it('inserts a Bug that satisfies every NOT NULL the real table declares, and links it', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    const result = await service.promoteFeedbackToBug({
+      id,
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      moderatorId: moderator,
+    });
+
+    expect(result).toMatchObject({ ok: true, created: true });
+    const bug = await db.query<{
+      id: number;
+      title: string;
+      summary: string;
+      status: string;
+      publishedAt: Date | null;
+      resolvedAt: Date | null;
+      content: string | null;
+      updatedAt: Date | null;
+    }>('SELECT * FROM "Bug"');
+    expect(bug.rows).toHaveLength(1);
+    expect(bug.rows[0]).toMatchObject({
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      status: 'Open',
+      // 🔴 NULL is what keeps the reporter's words off the public Known Issues board — `getBugs`
+      // hides an unpublished Bug from anyone without the `bugsEdit` flag.
+      publishedAt: null,
+      resolvedAt: null,
+      // 🔴 NULL deliberately. `content` is stored and rendered as HTML; the feedback message is
+      // plain text a user typed, and this app does not go through the sanitising zod schema.
+      content: null,
+    });
+    // `updatedAt` is `@updatedAt` in Prisma — a CLIENT-side stamp. The column is NOT NULL with no
+    // database default and this app installs no updatedAt plugin, so omitting it is a 23502.
+    expect(bug.rows[0].updatedAt).not.toBeNull();
+
+    const row = await readFeedback(db, id);
+    expect(row.bugId).toBe(bug.rows[0].id);
+    expect(row.status).toBe('actioned');
+    expect(row.handledById).toBe(moderator);
+  });
+
+  /**
+   * 🔴 AGAINST THE REAL COLUMN, NOT A MOCK, AND THAT IS THE POINT OF PUTTING IT HERE. The action
+   * test already pins that the URL reaches this service — but "the service was called with it" and
+   * "the column holds it" are different claims, and only the second one is what the main app's
+   * ClickUp webhook reads. `resolveBugsByClickupTaskId` finds the entry to close by matching this
+   * column, so an insert that dropped the field would leave an issue that can never auto-close,
+   * and every mock-level test would still be green.
+   */
+  it('persists the ClickUp URL on the real column the completion webhook matches', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j',
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBe('https://app.clickup.com/t/8459928/868kfwm3j');
+  });
+
+  /**
+   * The other half, and it is not the same test: a promotion with no task linked must leave the
+   * column NULL rather than an empty string, so "no task" has one spelling on the column the
+   * webhook reads.
+   *
+   * Both spellings of "no task", because the parameter is optional and a caller may write either.
+   *
+   * ⚠️ THEY DO NOT REACH THE COLUMN BY DIFFERENT ROUTES, AND AN EARLIER VERSION OF THIS DOCSTRING
+   * CLAIMED THEY DID. Kysely omits an `undefined` column from the INSERT entirely, so with or
+   * without the `?? null` default both spellings end as NULL — measured by deleting the default
+   * and watching all three ClickUp tests stay green. So this pair pins the OBSERVABLE (either way
+   * of saying "no task" lands as NULL, never ''), and pins the default itself NOT AT ALL. Said
+   * plainly rather than left implicit: a reader who believed the old sentence would think the
+   * default was covered.
+   */
+  it.each([
+    ['omitted entirely', {}],
+    ['passed as an explicit null', { clickupUrl: null }],
+  ])('leaves the ClickUp column NULL when the task link is %s', async (_label, extra) => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      ...extra,
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBeNull();
+  });
+
+  /**
+   * 🔴 `AND "bugId" IS NULL` makes double-promotion impossible — and the Bug insert must roll back
+   * WITH it, or a second click leaves an orphan row on the table the public board reads.
+   */
+  it('refuses a second promotion and leaves no orphan Bug behind', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+
+    const result = await service.promoteFeedbackToBug({
+      id,
+      title: 'a second one',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'already-linked' });
+    expect(await countRows(db, 'Bug')).toBe(1);
+  });
+
+  /**
+   * The `gone` branch reached from INSIDE the promote transaction. Distinct from
+   * `linkFeedbackToBug`'s twin: this one resolves its reason against the open transaction rather
+   * than a separate client, and it must roll the Bug insert back with it.
+   */
+  it('reports a report that vanished mid-promotion as gone, and leaves no Bug behind', async () => {
+    const result = await service.promoteFeedbackToBug({
+      id: 9999,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'gone' });
+    expect(await countRows(db, 'Bug')).toBe(0);
+  });
+});
+
+describe('linkFeedbackToBug', () => {
+  it('attaches a second report to an issue that already exists', async () => {
+    const first = await seedFeedback(db, { userId: reporter });
+    const second = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id: first,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the first promotion should have succeeded');
+
+    const result = await service.linkFeedbackToBug({
+      id: second,
+      bugId: promoted.bugId,
+      moderatorId: moderator,
+    });
+
+    expect(result).toMatchObject({ ok: true, created: false });
+    expect(await countRows(db, 'Bug')).toBe(1);
+    expect((await readFeedback(db, second)).bugId).toBe(promoted.bugId);
+  });
+
+  it('reports a DELETED report as gone, not as a conflict over an issue', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    await db.query('DELETE FROM "Feedback" WHERE "id" = $1', [id]);
+
+    const result = await service.linkFeedbackToBug({
+      id,
+      bugId: promoted.bugId,
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'gone' });
+  });
+
+  it('refuses an issue number that does not exist, rather than writing a dangling link', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    const result = await service.linkFeedbackToBug({ id, bugId: 4242, moderatorId: moderator });
+
+    expect(result).toEqual({ ok: false, reason: 'no-such-bug' });
+    expect((await readFeedback(db, id)).bugId).toBeNull();
+  });
+});
+
+/**
+ * The predicate the page's degraded empty state turns on. Tested HERE rather than through `load`,
+ * because the route suite drives that branch with its own stub — so the branch and the
+ * discrimination are pinned separately, and neither can go stale behind the other.
+ */
+describe('isMissingTriageColumns', () => {
+  /**
+   * 🔴 AGAINST A REAL DRIVER ERROR, not a hand-built object. Every other case here that feeds the
+   * predicate an ERROR-SHAPED value constructs `{ code, message }` itself, which pins the
+   * predicate's logic and says nothing about whether `pg` puts `code` where the predicate looks.
+   * (The last case in this block deliberately feeds it non-error values, so the qualifier is
+   * load-bearing rather than decorative.) This one runs the real query against the real
+   * pre-migration table and asserts on whatever comes back.
+   */
+  it('fires on the error a genuinely unmigrated table actually raises', async () => {
+    const pre = await freshPreMigrationDb();
+    const previous = dbHandle.current;
+    dbHandle.current = feedbackKysely(pre);
+    try {
+      await seedUser(pre, 'someone');
+      const caught = await service.getFeedbackList({ statuses: [] }).then(
+        () => null,
+        (e: unknown) => e
+      );
+
+      expect(caught).not.toBeNull();
+      // The code is top level on `DatabaseError`; `createKyselyClients` uses a stock
+      // `PostgresDialect` over `pg.Pool`, which does not wrap it.
+      expect((caught as { code?: string }).code).toBe('42703');
+      expect(String((caught as { message?: string }).message)).toContain('does not exist');
+      expect(service.isMissingTriageColumns(caught)).toBe(true);
+    } finally {
+      dbHandle.current = previous;
+      await pre.close();
+    }
+  });
+
+  it('accepts the undefined-column code when the message names a triage column', () => {
+    for (const column of ['triageNote', 'handledById', 'handledAt', 'bugId'])
+      expect(
+        service.isMissingTriageColumns({
+          code: '42703',
+          message: `column f.${column} does not exist`,
+        })
+      ).toBe(true);
+  });
+
+  /**
+   * 🔴 THE POINT OF NARROWING IT. The page answers with one specific instruction — apply THIS
+   * migration — and `42703` is raised by any reference to any absent column. Matching the code
+   * alone would give that answer to a typo in an unrelated edit, with the `catch` suppressing the
+   * error that would otherwise have named it.
+   */
+  it('declines a 42703 about some OTHER column, so the page cannot misdirect', () => {
+    expect(
+      service.isMissingTriageColumns({
+        code: '42703',
+        message: 'column f.nsfwLevel does not exist',
+      })
+    ).toBe(false);
+  });
+
+  it('rejects every other database error, so an outage cannot render as an empty queue', () => {
+    // 57P01 admin shutdown, 08006 connection failure, 42P01 undefined TABLE, 23505 unique violation.
+    for (const code of ['57P01', '08006', '42P01', '23505', '', '4270'])
+      expect(
+        service.isMissingTriageColumns({ code, message: 'column f.bugId does not exist' })
+      ).toBe(false);
+  });
+
+  it('rejects a value that is not an error object at all', () => {
+    for (const bad of [null, undefined, '42703', 42703, {}])
+      expect(service.isMissingTriageColumns(bad)).toBe(false);
+  });
+});
+
+describe('reads', () => {
+  /**
+   * 🔴 THREE rows at `limit: 2`, never two at `limit: 1`. The cursor is the LAST item's id, and at
+   * a page size of one the first and last elements of a page are the same object — so a fixture
+   * built that way cannot distinguish `items[items.length - 1].id` from `items[0].id`, and the
+   * mutant that swaps them SURVIVES a green run.
+   *
+   * What the swap actually costs, walked against this harness rather than reasoned about: the
+   * cursor becomes the page's HIGHEST id, so page N+1 starts one id below page N's FIRST row.
+   * Seven rows at `limit: 3` paged 7-6-5 / 6-5-4 / 5-4-3 / 4-3-2 / 3-2-1 — every id still reached,
+   * each turn repeating all but one row and advancing by one. At `FEEDBACK_PAGE_SIZE` 50 that is
+   * 49 of 50 repeated per turn and a queue that drains 50× slower. NOTHING becomes unreachable;
+   * an earlier version of this comment said 49 rows did, and that was never derived.
+   */
+  it('lists newest first, joins the reporter and pages on a keyset', async () => {
+    const oldest = await seedFeedback(db, {
+      userId: reporter,
+      createdAt: '2026-07-01T00:00:00.000Z',
+    });
+    const middle = await seedFeedback(db, {
+      userId: reporter,
+      createdAt: '2026-08-01T00:00:00.000Z',
+    });
+    const newest = await seedFeedback(db, {
+      userId: reporter,
+      createdAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    const first = await service.getFeedbackList({ statuses: ['new'], limit: 2 });
+    expect(first.items.map((r) => r.id)).toEqual([newest, middle]);
+    expect(first.items[0].username).toBe('kaeru');
+    // The LAST row of the page, not the first — the page boundary, not its start.
+    expect(first.nextCursor).toBe(middle);
+
+    const second = await service.getFeedbackList({
+      statuses: ['new'],
+      limit: 2,
+      cursor: first.nextCursor,
+    });
+    expect(second.items.map((r) => r.id)).toEqual([oldest]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it('treats an empty status selection as every status, not as none', async () => {
+    await seedFeedback(db, { userId: reporter, status: 'dismissed' });
+
+    expect((await service.getFeedbackList({ statuses: [] })).items).toHaveLength(1);
+    expect((await service.getFeedbackList({ statuses: ['new'] })).items).toHaveLength(0);
+  });
+
+  it('filters by area', async () => {
+    await seedFeedback(db, { userId: reporter, area: 'apps-marketplace' });
+    await seedFeedback(db, { userId: reporter, area: 'bitdex-image-feed' });
+
+    const rows = await service.getFeedbackList({ statuses: [], area: 'bitdex-image-feed' });
+    expect(rows.items.map((r) => r.area)).toEqual(['bitdex-image-feed']);
+  });
+
+  it('counts only `new` for the sidebar badge', async () => {
+    await seedFeedback(db, { userId: reporter });
+    await seedFeedback(db, { userId: reporter, status: 'dismissed' });
+
+    expect(await service.countNewFeedback()).toBe(1);
+  });
+
+  it('reports the areas that actually have rows, including a retired one', async () => {
+    await seedFeedback(db, { userId: reporter, area: 'bitdex-image-feed' });
+
+    expect(await service.getFeedbackAreas()).toEqual(['bitdex-image-feed']);
+  });
+
+  it('lists the sibling reports on one issue and excludes the row being read', async () => {
+    const first = await seedFeedback(db, { userId: reporter });
+    const second = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id: first,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    await service.linkFeedbackToBug({
+      id: second,
+      bugId: promoted.bugId,
+      moderatorId: moderator,
+    });
+
+    const siblings = await service.getSiblingFeedback({
+      bugId: promoted.bugId,
+      excludeId: first,
+    });
+    expect(siblings.map((s) => s.id)).toEqual([second]);
+  });
+
+  it('surfaces the linked issue’s CURRENT title and status on the row', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'Sort resets',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    // What the inbound ClickUp webhook does to `Bug.status` — the entire point of routing a
+    // promoted report through `Bug` is that the moderator sees this answer.
+    await db.query('UPDATE "Bug" SET "status" = $1 WHERE "id" = $2', ['Complete', promoted.bugId]);
+
+    const [row] = (await service.getFeedbackList({ statuses: [] })).items;
+    expect(row.bugTitle).toBe('Sort resets');
+    expect(row.bugStatus).toBe('Complete');
+  });
+});
+
+/**
+ * 🔴 THE READ HALF OF THE SEAM BOTH ROUTES SIT ON. `/feedback` and `/feedback/<id>` render the same
+ * panel, so both have to satisfy its prerequisites — and this is the shape of divergence typecheck
+ * cannot see: a missing prop fails at the call site, a diverged CONDITION does not. The conditions
+ * live here, once, and are exercised against real rows here rather than restated against a mock in
+ * either route's suite.
+ */
+describe('feedbackPanelExtras', () => {
+  // `as const`, so the value is `true` and not `boolean` — `PermissionSet` is keyed to the literal.
+  const withGrant = { 'feedback.bug.promote': true } as const;
+
+  it('loads the picker’s options for an UNLINKED row held by someone who may promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues.map((i) => i.title)).toEqual(['attachments 500 on upload']);
+    expect(extras.siblings).toEqual([]);
+  });
+
+  /**
+   * The attach form is not rendered without the grant, so its options are a `Bug` query for a
+   * control nobody can see — on every report view, on both routes.
+   */
+  it('loads nothing for a caller who may not promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+
+    expect(await service.feedbackPanelExtras(row!, {})).toEqual({
+      siblings: [],
+      knownIssues: [],
+    });
+    // The control: the same row and the same `Bug` DO produce options once the grant is held, so
+    // the empty result above is the grant and not an empty table.
+    expect((await service.feedbackPanelExtras(row!, withGrant)).knownIssues).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE TWO READS ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION, and asserting both directions is what
+   * stops a "simplification" that loads both unconditionally. A LINKED row cannot be attached to a
+   * second issue (`linkInTransaction` requires `bugId IS NULL`), so its picker options are dead; an
+   * UNLINKED row has no siblings, because a sibling is defined by sharing its issue.
+   */
+  it('gives a LINKED row its siblings and no picker options', async () => {
+    const bugId = await seedBug(db, 'attachments 500 on upload');
+    const id = await seedFeedback(db, { userId: reporter, bugId });
+    const siblingId = await seedFeedback(db, {
+      userId: reporter,
+      bugId,
+      message: 'same thing on mobile',
+    });
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues).toEqual([]);
+    expect(extras.siblings.map((s) => s.id)).toEqual([siblingId]);
+  });
+});

@@ -80,6 +80,12 @@ export const ACTION_GLYPH_ICONS: Record<PrimaryActionGlyph, Icon> = {
  * front, would then paint a launch icon on the informational fallback. Not
  * reachable from today's `getDetailPrimaryAction` (every `open`/`visit` return
  * sets an href), which is precisely why it would be easy to introduce later.
+ *
+ * 🔴 There is no `'connect'` arm: `DetailActionMode` no longer has that member
+ * (#4208 deleted the dead Connect CTA). `PrimaryActionGlyph` KEEPS its `'connect'`
+ * glyph because `cardActionGlyph` still maps `ListingCtaAction`'s own `'connect'`
+ * for totality — the two vocabularies are no longer identical, and that is
+ * deliberate rather than an oversight.
  */
 export function detailActionGlyph(mode: DetailActionMode): PrimaryActionGlyph {
   switch (mode) {
@@ -87,8 +93,6 @@ export function detailActionGlyph(mode: DetailActionMode): PrimaryActionGlyph {
       return 'launch';
     case 'visit':
       return 'external';
-    case 'connect':
-      return 'connect';
     case 'info':
       return 'info';
   }
@@ -106,8 +110,12 @@ export function detailActionGlyph(mode: DetailActionMode): PrimaryActionGlyph {
  * `'connect'` at all: an off-site connect listing now takes the `'visit'` arm
  * when it carries an https `externalUrl` and `'detail'` when it does not, so the
  * `'connect'` arm remains unreachable from live data and is mapped for totality
- * over the type. (The DETAIL view-model does still emit `connect`, for a connect
- * listing with no destination — `detailActionGlyph`'s arm is live.)
+ * over the type.
+ *
+ * 🔴 The DETAIL view-model no longer emits `connect` either — #4208 removed that
+ * mode outright. So NOTHING produces a connect glyph today. This arm survives
+ * only because `ListingCtaAction` still declares the member; if that type is ever
+ * cleaned up too, delete the glyph rather than finding it a new caller.
  */
 export function cardActionGlyph(action: ListingCtaAction): PrimaryActionGlyph {
   switch (action) {

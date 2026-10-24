@@ -23,9 +23,6 @@ const {
   mockUpdateSettings,
   mockToggleEnabled,
   mockIsAppBlocksEnabled,
-  mockDbReadAppBlockFindUnique,
-  mockDbWriteModelFindUnique,
-  mockDbWriteSubscriptionFindUnique,
   mockGetUserBuzzAccounts,
 } = vi.hoisted(() => ({
   mockListUserSubscriptions: vi.fn(),
@@ -36,9 +33,6 @@ const {
   mockUpdateSettings: vi.fn(async () => undefined),
   mockToggleEnabled: vi.fn(async () => undefined),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
-  mockDbReadAppBlockFindUnique: vi.fn(),
-  mockDbWriteModelFindUnique: vi.fn(),
-  mockDbWriteSubscriptionFindUnique: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
 
@@ -60,29 +54,6 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: mockDbReadAppBlockFindUnique } },
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: mockDbWriteModelFindUnique },
-    blockUserSubscription: { findUnique: mockDbWriteSubscriptionFindUnique },
-  },
-}));
-// Mock the heavy peer modules the router imports so the import graph
-// stays cheap and we don't accidentally hit live deps.
-// blocks.router transitively pulls in many redis-cache modules (resource-data.redis,
-// caches.ts, ...) that read REDIS_KEYS/REDIS_SYS_KEYS.<GROUP>.<KEY> AT IMPORT TIME.
-// importActual the @civitai/redis PACKAGE — it's side-effect-free (only exports the
-// key constants + factory; connections happen when createRedisClients() is CALLED,
-// which only the ~/server/redis/client shim does at import) → the COMPLETE real key
-// tree, so no hand-trimmed subset can go stale. (Replaces the old completeKeys Proxy,
-// which covered REDIS_KEYS but not REDIS_SYS_KEYS.)
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
-  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
-});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -128,6 +99,12 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.set.mockImplementation(async () => undefined);
+const mockDbReadAppBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
+const mockDbWriteModelFindUnique = dbMock.dbWrite.model.findUnique;
+const mockDbWriteSubscriptionFindUnique = dbMock.dbWrite.blockUserSubscription.findUnique;
 
 function authedCtx(userId: number, isModerator = true) {
   return {
@@ -191,7 +168,7 @@ describe('blocks.listMySubscriptions (guarded)', () => {
 
   // GA-relax (gotcha #66): the manage-page reflection queries are now
   // protectedProcedure (not moderatorProcedure) — a logged-in non-mod reads
-  // their OWN subscriptions, since /apps/installed is reachable by any user the
+  // their OWN subscriptions, since /apps/activity is reachable by any user the
   // per-user appBlocks flag admits. Scoped to ctx.user.id, so no cross-user read.
   it('allows a non-mod authed viewer — returns their own subscriptions', async () => {
     mockListUserSubscriptions.mockResolvedValue([]);
@@ -520,6 +497,23 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       expect(mockInstallOnModel).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', installedByUserId: OWNER_ID })
       );
+    });
+
+    // `{"s":"…"}` is 8 bytes of framing; each 日 is 3 UTF-8 bytes.
+    it('caps install settings at 4096 UTF-8 bytes', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
+      const settings = (extra: string) => ({ s: '日'.repeat(1_362) + extra });
+      await caller.installOnModel({ ...input, settings: settings('ab') });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
+      await expect(
+        caller.installOnModel({ ...input, settings: settings('abc') })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('settings exceeds 4KB'),
+      });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
     });
 
     it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED, never installs', async () => {

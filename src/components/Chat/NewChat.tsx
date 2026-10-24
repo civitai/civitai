@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
+import { Alert, Box, Button, Center, Divider, Group, Stack, Text, TextInput } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -8,12 +8,15 @@ import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
+import { MAX_CHAT_NAME_LENGTH } from '~/server/schema/chat.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewChat() {
   const selectedUsers = useChatStore((state) => state.selectedUsers);
+  const [groupName, setGroupName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [acking, setAcking] = useState(false);
   const currentUser = useCurrentUser();
@@ -63,6 +66,7 @@ export function NewChat() {
           return [{ ...data, createdAt: new Date(data.createdAt) }, ...old];
         });
 
+        setGroupName('');
         useChatStore.setState({
           isCreating: false,
           selectedUsers: [],
@@ -90,6 +94,8 @@ export function NewChat() {
     });
   };
 
+  const isGroup = selectedUsers.length > 1;
+
   const handleNewChat = () => {
     setIsCreating(true);
     if (!currentUser) {
@@ -100,8 +106,10 @@ export function NewChat() {
       });
       return;
     }
+    const trimmedName = groupName.trim();
     mutate({
       userIds: [...selectedUsers.map((u) => u.id!), currentUser.id],
+      name: isGroup && trimmedName.length ? trimmedName : undefined,
     });
   };
 
@@ -143,11 +151,10 @@ export function NewChat() {
           supportedIndexes={['users']}
           onItemSelected={(_entity, item) => {
             const newUsers = [...selectedUsers, item as SearchIndexDataMap['users'][number]];
-            // TODO make this a constant
-            if (newUsers.length > 9) {
+            if (newUsers.length > MAX_CHAT_MEMBERS - 1) {
               showErrorNotification({
                 title: 'Maximum users reached',
-                error: { message: 'You can select up to 9 users' },
+                error: { message: `You can select up to ${MAX_CHAT_MEMBERS - 1} users` },
                 autoClose: false,
               });
               return;
@@ -164,6 +171,17 @@ export function NewChat() {
             .slice(4)}
         />
       </Box>
+      {isGroup && (
+        <Box px="sm" pt="sm">
+          <TextInput
+            label="Group name"
+            placeholder="Optional"
+            value={groupName}
+            maxLength={MAX_CHAT_NAME_LENGTH}
+            onChange={(e) => setGroupName(e.currentTarget.value)}
+          />
+        </Box>
+      )}
       <Box p="sm" style={{ flexGrow: 1 }}>
         {selectedUsers.length === 0 ? (
           <Center mt="md">
@@ -196,6 +214,7 @@ export function NewChat() {
           variant="light"
           color="gray"
           onClick={() => {
+            setGroupName('');
             useChatStore.setState({ isCreating: false, selectedUsers: [] });
           }}
         >

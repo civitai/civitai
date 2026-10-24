@@ -3,6 +3,7 @@ import { IconCode, IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { OnsiteReviewModalBody, type AnyRequest } from '~/components/Apps/OnsiteReviewModal';
 import { OffsiteReviewModalBody, type OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import type { CombinedReviewPayload } from '~/components/Apps/unifiedReviewRow';
 
 /**
@@ -58,53 +59,66 @@ export function CombinedReviewModal({
   const onsiteRequest: AnyRequest | undefined = selection?.onsiteRequest;
   const listingRow: OffsitePendingRow | undefined = selection?.listingRow;
 
+  // 🔴 SECOND HOST OF THE NESTED SCREENSHOT VIEWER, AND IT NEEDS THE SAME PAIR AS
+  // `OffsiteReviewModal`. This shell renders `OffsiteReviewModalBody`, which carries
+  // the listing preview — so `AppListingDetailBody`'s screenshot gallery can open a
+  // full-screen `Modal` inside THIS one. Without the stack, one Escape closes both
+  // and takes the moderator's in-flight code AND media review with it; without the
+  // focus-return pair, closing this modal drops a keyboard moderator on `<body>`.
+  // Both are properties of nesting, not of this component, so both live here.
+  useOpenerFocusReturn(!!selection);
+
   return (
-    <Modal
-      opened={!!selection}
-      onClose={() => {
-        if (busyCode.current || busyMedia.current) return;
-        onClose();
-      }}
-      title={
-        selection ? (
-          <Group gap={6}>
-            <Text fw={600}>{selection.onsiteRequest.slug}</Text>
-            <Badge color="indigo" size="sm" variant="light" data-testid="combined-review-kind-badge">
-              App + media
-            </Badge>
-          </Group>
-        ) : null
-      }
-      size="xl"
-      centered
-    >
-      {selection && onsiteRequest && listingRow && (
-        <Stack gap="xl">
-          <Stack gap="sm" data-testid="combined-review-code-section">
-            <SectionHeader icon={<IconCode size={14} />} title="App code review" />
-            <OnsiteReviewModalBody
-              key={`code-${onsiteRequest.id}`}
-              selection={{ request: onsiteRequest, mode: 'pending' }}
-              onClose={onClose}
-              onActioned={selection.onActioned}
-              busyRef={busyCode}
-            />
-          </Stack>
+    <Modal.Stack>
+      <Modal
+        stackId="combined-review"
+        returnFocus={false}
+        opened={!!selection}
+        onClose={() => {
+          if (busyCode.current || busyMedia.current) return;
+          onClose();
+        }}
+        title={
+          selection ? (
+            <Group gap={6}>
+              <Text fw={600}>{selection.onsiteRequest.slug}</Text>
+              <Badge color="indigo" size="sm" variant="light" data-testid="combined-review-kind-badge">
+                App + media
+              </Badge>
+            </Group>
+          ) : null
+        }
+        size="xl"
+        centered
+      >
+        {selection && onsiteRequest && listingRow && (
+          <Stack gap="xl">
+            <Stack gap="sm" data-testid="combined-review-code-section">
+              <SectionHeader icon={<IconCode size={14} />} title="App code review" />
+              <OnsiteReviewModalBody
+                key={`code-${onsiteRequest.id}`}
+                selection={{ request: onsiteRequest, mode: 'pending' }}
+                onClose={onClose}
+                onActioned={selection.onActioned}
+                busyRef={busyCode}
+              />
+            </Stack>
 
-          <Divider />
+            <Divider />
 
-          <Stack gap="sm" data-testid="combined-review-media-section">
-            <SectionHeader icon={<IconPhoto size={14} />} title="Listing media" />
-            <OffsiteReviewModalBody
-              key={`media-${listingRow.id}`}
-              request={listingRow}
-              onClose={onClose}
-              onActioned={selection.onActioned}
-              busyRef={busyMedia}
-            />
+            <Stack gap="sm" data-testid="combined-review-media-section">
+              <SectionHeader icon={<IconPhoto size={14} />} title="Listing media" />
+              <OffsiteReviewModalBody
+                key={`media-${listingRow.id}`}
+                request={listingRow}
+                onClose={onClose}
+                onActioned={selection.onActioned}
+                busyRef={busyMedia}
+              />
+            </Stack>
           </Stack>
-        </Stack>
-      )}
-    </Modal>
+        )}
+      </Modal>
+    </Modal.Stack>
   );
 }

@@ -72,6 +72,15 @@ export type ImageV2Stats = {
   collectedCountAllTime: number;
   tippedAmountCountAllTime: number;
   viewCountAllTime: number;
+  /**
+   * The ClickHouse read produced no row for this image, so every count above is a
+   * placeholder rather than a measurement.
+   *
+   * One flag and not five nullable counts: `getImageMetricsObject` builds all seven
+   * fields from a single row, so a count can never be unresolved on its own. A
+   * per-count shape would be able to represent states the read cannot produce.
+   */
+  statsUnknown: boolean;
 };
 export type ImageV2Model = Omit<Prisma.ImageGetPayload<typeof imageV2Model>, 'meta'> &
   ImageV2NavigationProps & { postTitle: string | null; stats: ImageV2Stats };

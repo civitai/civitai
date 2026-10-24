@@ -81,8 +81,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         type: 'modelVersions',
         ids: props.resources,
       });
-    }
-    else generationGraphPanel.open();
+    } else generationGraphPanel.open();
 
     generationFormStore.setType('image');
 
@@ -100,6 +99,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         style={{
           backgroundImage: `url(${getEdgeUrl(props.coverUrl, {
             width: DEFAULT_EDGE_IMAGE_WIDTH * 2.5,
+            optimized: true,
           })})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',

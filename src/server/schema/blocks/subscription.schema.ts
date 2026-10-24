@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
 import {
@@ -16,10 +17,7 @@ import {
  *     every model page they visit. The SQL joins on the current viewer's
  *     userId.
  */
-export const subscriptionScopeSchema = z.enum([
-  'publisher_all_my_models',
-  'viewer_personal',
-]);
+export const subscriptionScopeSchema = z.enum(['publisher_all_my_models', 'viewer_personal']);
 export type SubscriptionScope = z.infer<typeof subscriptionScopeSchema>;
 
 /**
@@ -42,6 +40,16 @@ export const subscriptionTargetsSchema = z.object({
   targetModelIds: z.array(z.number().int().positive()).max(64).nullable().default(null),
 });
 
+/** Max UTF-8 bytes of a block's JSON `settings`, here and in blocks.router. */
+export const BLOCK_SETTINGS_BYTES_MAX = 4096;
+
+/**
+ * Whether `settings` serialises to at most `BLOCK_SETTINGS_BYTES_MAX` UTF-8 bytes. A `const`
+ * so the block-token schema scan can read it from blocks.router's `settingsSchema`.
+ */
+export const blockSettingsWithinCap = (settings: unknown): boolean =>
+  jsonLengthWithin([settings], BLOCK_SETTINGS_BYTES_MAX, { unit: 'utf8' });
+
 /**
  * Wire shape for `blocks.upsertSubscription`. Settings are validated through
  * the per-block-id schema map at the service layer; the router-level shape
@@ -55,10 +63,10 @@ export const upsertSubscriptionSchema = z
     enabled: z.boolean().default(true),
     ...subscriptionTargetsSchema.shape,
   })
-  .refine(
-    (value) => Buffer.byteLength(JSON.stringify(value.settings), 'utf8') <= 4096,
-    { message: 'settings exceeds 4KB', path: ['settings'] }
-  );
+  .refine((value) => blockSettingsWithinCap(value.settings), {
+    message: 'settings exceeds 4KB',
+    path: ['settings'],
+  });
 export type UpsertSubscriptionInput = z.infer<typeof upsertSubscriptionSchema>;
 
 /**
@@ -87,7 +95,7 @@ export type UpsertSubscriptionInput = z.infer<typeof upsertSubscriptionSchema>;
  * `availableVersions` is the list of approved publish_request versions
  * for the underlying app, newest-first. Empty when the app has no
  * recorded publish requests (pre-W1 hackathon rows). Powers the version
- * Select on /apps/installed for pinned subscriptions.
+ * Select on /apps/activity for pinned subscriptions.
  */
 export type SubscriptionRecord = {
   id: string;
@@ -187,11 +195,6 @@ export type AvailableBlock = {
   // computed `https://<slug>.<APPS_DOMAIN>` liveUrl, hides Install + scopes, and
   // flags the app as off-site. NULL = a normal on-platform app. Always https://.
   externalUrl: string | null;
-  // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
-  // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
-  // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
-  avgRating: number | null;
-  reviewCount: number;
   // Card cover image: the FIRST publisher-supplied screenshot's PUBLIC display
   // URL, or NULL when the app shipped no screenshots. Built via the SAME
   // `toPublicScreenshots` projection the detail page uses (opaque gated route,
@@ -233,31 +236,31 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
 
 /**
  * F-E marketplace sort options:
- *   - `rating` (DEFAULT) — Bayesian-shrinkage avg rating DESC (a few-review 5★
- *                          app can't outrank a many-review 4.x app; 0-review
- *                          apps sit mid-pack at the global mean `m`). Ties fall
- *                          back to install_count then id.
- *   - `popular`          — install_count DESC (distinct-user installs).
- *   - `newest`           — current_version_deployed_at DESC, falling back to
- *                          created_at for pre-W2 rows with no deploy timestamp.
- *   - `name`             — manifest name ASC (case-insensitive).
+ *   - `popular` (DEFAULT) — install_count DESC (distinct-user installs).
+ *   - `newest`            — current_version_deployed_at DESC, falling back to
+ *                           created_at for pre-W2 rows with no deploy timestamp.
+ *   - `name`              — manifest name ASC (case-insensitive).
+ *
+ * There is deliberately NO `rating` option. It used to be the default and was
+ * a Bayesian-shrinkage sort over the 5-star `AppBlockReview` table, which has
+ * been removed — the store's review signal is the thumbs-based
+ * `AppListingReview` rollup, sorted by `appListings.listAvailable`'s own
+ * `top-rated` key (see `app-listing.service.ts`).
  */
-export const marketplaceSortSchema = z.enum(['rating', 'popular', 'newest', 'name']);
+export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
 export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
 
 export const listAvailableSchema = z.object({
-  slotId: z
-    .enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra'])
-    .optional(),
+  slotId: z.enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra']).optional(),
   query: z.string().max(200).optional(),
   // F-E E3: mod-assigned category filter. Validated against the single-source
   // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share
   // ONE list — adding a category is a one-line const edit, no schema migration.
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
-  // F-E marketplace: sort order; defaults to `rating` (Bayesian-shrinkage avg
-  // rating desc) so the best-reviewed apps surface first; 0-review apps sit
-  // mid-pack at the global mean (not unfairly buried).
-  sort: marketplaceSortSchema.default('rating'),
+  // F-E marketplace: sort order; defaults to `popular` (install_count desc).
+  // It used to default to a Bayesian `rating` sort over the removed 5-star
+  // `AppBlockReview` table; `popular` is the surviving install-signal default.
+  sort: marketplaceSortSchema.default('popular'),
   cursor: z.string().max(64).optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
@@ -399,34 +402,6 @@ export type AppSpendCapConfig = {
   effective: { dailyBuzz: number; velocityMaxGens: number };
 };
 
-// ---------------------------------------------------------------------------
-// F-E marketplace REVIEWS (5-star) — schemas.
-// ---------------------------------------------------------------------------
-
-/** Upsert (create-or-update) the viewer's review for an app block. */
-export const upsertAppBlockReviewSchema = z.object({
-  appBlockId: z.string().min(1).max(64),
-  rating: z.number().int().min(1).max(5), // STARS
-  recommended: z.boolean().optional(),
-  details: z.string().max(10000).nullish(),
-});
-export type UpsertAppBlockReviewInput = z.infer<typeof upsertAppBlockReviewSchema>;
-
-/** Keyset-paginated list of an app's reviews (newest first). */
-export const listAppBlockReviewsSchema = z.object({
-  appBlockId: z.string().min(1).max(64),
-  cursor: z.number().int().positive().optional(),
-  limit: z.number().int().min(1).max(50).default(20),
-});
-export type ListAppBlockReviewsInput = z.infer<typeof listAppBlockReviewsSchema>;
-
-/** MOD-ONLY: flip `exclude` on a review (keeps abuse out of the aggregate). */
-export const setAppReviewExcludedSchema = z.object({
-  id: z.number().int().positive(),
-  exclude: z.boolean(),
-});
-export type SetAppReviewExcludedInput = z.infer<typeof setAppReviewExcludedSchema>;
-
 /**
  * MOD-ONLY current marketplace metadata for one app_block — returned by
  * `blocks.getMarketplaceMeta` so the review-page curation form can render the
@@ -550,9 +525,6 @@ export type PublicAppDetail = {
   contentRating: string | null;
   version: string | null;
   installCount: number;
-  // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review app.
-  avgRating: number | null;
-  reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
   // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, the detail

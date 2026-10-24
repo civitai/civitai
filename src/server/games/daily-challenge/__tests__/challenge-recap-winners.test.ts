@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Openrouter from '~/server/services/ai/openrouter';
 import type { JudgingConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // 🔴 The recap named the wrong people. `generateWinners` writes the prose AND picks winners; when
 // an engine supplies the places the caller discards the picks, but nothing reconciled the PROSE
@@ -21,7 +22,6 @@ vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   openrouter: { getJsonCompletionWithUsage },
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/services/challenge-category.service', () => ({
   resolveRubricBlock: vi.fn().mockResolvedValue(''),
 }));

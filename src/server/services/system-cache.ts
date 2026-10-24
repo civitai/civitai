@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import { FEED_TAG_BAR_TAG_NAMES } from '~/server/common/feed-tag-bar.constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   redis,
@@ -91,40 +92,45 @@ export type SystemModerationTag = {
 // in-proc memo cuts both the redis GET and the msgpackr decode per call. This
 // key is NOT redis.del-invalidated anywhere (only the 4h EX), so the extra
 // in-proc TTL is purely additive to the already-eventual 4h staleness.
-const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(async () => {
-  const cachedTags = await redis.packed.get<SystemModerationTag[]>(
-    REDIS_KEYS.SYSTEM.MODERATED_TAGS
-  );
-  if (cachedTags) return cachedTags;
+const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(
+  async () => {
+    const cachedTags = await redis.packed.get<SystemModerationTag[]>(
+      REDIS_KEYS.SYSTEM.MODERATED_TAGS
+    );
+    if (cachedTags) return cachedTags;
 
-  log('getting moderation tags');
-  const tags = await dbRead.tag.findMany({
-    where: { nsfwLevel: { gt: NsfwLevel.PG } },
-    select: { id: true, name: true, nsfwLevel: true },
-  });
+    log('getting moderation tags');
+    const tags = await dbRead.tag.findMany({
+      where: { nsfwLevel: { gt: NsfwLevel.PG } },
+      select: { id: true, name: true, nsfwLevel: true },
+    });
 
-  const tagsOnTags = await dbRead.tagsOnTags.findMany({
-    where: { fromTagId: { in: tags.map((x) => x.id) }, type: 'Parent' },
-    select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
-  });
+    const tagsOnTags = await dbRead.tagsOnTags.findMany({
+      where: { fromTagId: { in: tags.map((x) => x.id) }, type: 'Parent' },
+      select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
+    });
 
-  const normalizedTagsOnTags = tagsOnTags
-    .map(({ fromTagId, toTag }) => {
-      const parentTag = tags.find((x) => x.id === fromTagId);
-      if (!parentTag) return null;
-      return { ...toTag, nsfwLevel: parentTag.nsfwLevel, parentId: fromTagId };
-    })
-    .filter(isDefined);
+    const normalizedTagsOnTags = tagsOnTags
+      .map(({ fromTagId, toTag }) => {
+        const parentTag = tags.find((x) => x.id === fromTagId);
+        if (!parentTag) return null;
+        return { ...toTag, nsfwLevel: parentTag.nsfwLevel, parentId: fromTagId };
+      })
+      .filter(isDefined);
 
-  const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
+    const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
-  await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
+    await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
 
-  log('got moderation tags');
-  return combined;
-}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
+    log('got moderation tags');
+    return combined;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
 
 export async function getModeratedTags(): Promise<SystemModerationTag[]> {
   return getModeratedTagsMemo();
@@ -327,33 +333,38 @@ export async function getCategoryTags(type: CategoryTagType) {
 // real value (redis hit, or a DB fetch that rewrites the key) or throws on a
 // redis/DB failure — it never swallows an error into an empty list — so the
 // in-proc memo only ever caches a genuine value. Not redis.del-invalidated.
-const getBlockedBrowsingTagsMemo = createTtlMemo<{ id: number; name: string }[]>(async () => {
-  const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
-  if (cached) {
-    // Fail open on a corrupt ops-set value (this getter is on the hot feed +
-    // tag-page path); fall through to the DB fetch, which rewrites the key.
-    try {
-      const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed)) return parsed as { id: number; name: string }[];
-    } catch (err) {
-      logSysRedisFailOpen('read-degraded', 'getBlockedBrowsingTags', err, {
-        cachedSample: cached.slice(0, 64),
-      });
+const getBlockedBrowsingTagsMemo = createTtlMemo<{ id: number; name: string }[]>(
+  async () => {
+    const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
+    if (cached) {
+      // Fail open on a corrupt ops-set value (this getter is on the hot feed +
+      // tag-page path); fall through to the DB fetch, which rewrites the key.
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed as { id: number; name: string }[];
+      } catch (err) {
+        logSysRedisFailOpen('read-degraded', 'getBlockedBrowsingTags', err, {
+          cachedSample: cached.slice(0, 64),
+        });
+      }
     }
-  }
 
-  log('getting blocked browsing tags');
-  const tags = await dbRead.tag.findMany({
-    where: { id: { in: BLOCKED_BROWSING_TAG_IDS } },
-    select: { id: true, name: true },
-  });
-  await redis.set(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, JSON.stringify(tags), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
+    log('getting blocked browsing tags');
+    const tags = await dbRead.tag.findMany({
+      where: { id: { in: BLOCKED_BROWSING_TAG_IDS } },
+      select: { id: true, name: true },
+    });
+    await redis.set(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, JSON.stringify(tags), {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
 
-  log('got blocked browsing tags');
-  return tags;
-}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
+    log('got blocked browsing tags');
+    return tags;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
 
 export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
   return getBlockedBrowsingTagsMemo();
@@ -361,25 +372,105 @@ export async function getBlockedBrowsingTags(): Promise<{ id: number; name: stri
 
 // Global, effectively static (['woman', 'women']) home-page tag exclusion.
 // Not redis.del-invalidated; resolves to a real value or throws.
-const getHomeExcludedTagsMemo = createTtlMemo<{ id: number; name: string }[]>(async () => {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+const getHomeExcludedTagsMemo = createTtlMemo<{ id: number; name: string }[]>(
+  async () => {
+    const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
+    if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
-  log('getting home excluded tags');
-  const tags = await dbWrite.tag.findMany({
-    where: { name: { in: ['woman', 'women'] } },
-    select: { id: true, name: true },
-  });
-  await redis.set(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS, JSON.stringify(tags), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
+    log('getting home excluded tags');
+    const tags = await dbWrite.tag.findMany({
+      where: { name: { in: ['woman', 'women'] } },
+      select: { id: true, name: true },
+    });
+    await redis.set(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS, JSON.stringify(tags), {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
 
-  log('got home excluded tags');
-  return tags;
-}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
+    log('got home excluded tags');
+    return tags;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
 
 export async function getHomeExcludedTags() {
   return getHomeExcludedTagsMemo();
+}
+
+export type FeedTagBarTag = { id: number; name: string; nsfwLevel: number };
+
+// The image/video feed tag bar's chips, resolved from the curated names.
+//
+// 🔴 `nsfwLevel` is the PARENT-TAG ROLLUP, not `Tag."nsfwLevel"`. A tag's effective level
+// is raised by attaching it to a mature parent in `TagsOnTags` — no app path writes the
+// column directly — so reading the column alone reports a stale level FOREVER, not for a
+// cache window, and `useApplyHiddenPreferences` would keep showing the chip at every
+// browsing level. `getTags` resolves it with this same COALESCE (tag.service.ts); the two
+// must agree or the bar disagrees with every other tag surface about the same tag.
+//
+// Deliberately does NOT filter `unfeatured` or clamp to PG the way `getTags` does with no
+// `query`: `furry` is unfeatured and is the highest-demand chip on the bar. The curated
+// list is the gate here; hidden preferences are applied client-side.
+const getFeedTagBarTagsMemo = createTtlMemo<FeedTagBarTag[]>(
+  async () => {
+    const cached = await redis.get(REDIS_KEYS.SYSTEM.FEED_TAG_BAR_TAGS);
+    if (cached) return JSON.parse(cached) as FeedTagBarTag[];
+
+    // `= ANY($1)` rather than `Prisma.join`: the names go as one array parameter, so this
+    // module needs no `@prisma/client` import. Most services pull in system-cache, so its
+    // load graph is worth keeping narrow.
+    log('getting feed tag bar tags');
+    const rows = await dbRead.$queryRaw<FeedTagBarTag[]>`
+      SELECT t.id,
+             t.name,
+             COALESCE(
+               (
+                 SELECT MAX(pt."nsfwLevel")
+                 FROM "TagsOnTags" tot
+                 JOIN "Tag" pt ON tot."fromTagId" = pt.id
+                 WHERE tot."toTagId" = t.id
+               ),
+               t."nsfwLevel"
+             )::int "nsfwLevel"
+      FROM "Tag" t
+      WHERE t.name = ANY(${FEED_TAG_BAR_TAG_NAMES as unknown as string[]})
+    `;
+
+    // Curated display order, not the DB's. A name that resolves to no row is dropped —
+    // the drift guard for that is the constants test plus the review of this list, since
+    // a chip vanishing is visible and a wrong level is not.
+    const byName = new Map(rows.map((t) => [t.name, t]));
+    const tags = FEED_TAG_BAR_TAG_NAMES.map((name) => byName.get(name)).filter(isDefined);
+
+    await redis.set(REDIS_KEYS.SYSTEM.FEED_TAG_BAR_TAGS, JSON.stringify(tags), {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
+
+    log('got feed tag bar tags');
+    return tags;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
+
+export async function getFeedTagBarTags() {
+  return getFeedTagBarTagsMemo();
+}
+
+/**
+ * Drops the cached chip list. The edge response is purged separately by
+ * `bustFeedTagBarTagsCache` in tag.service, which is where the tag mutations live —
+ * without both, a corrected nsfwLevel could not be pushed at all: the redis blob holds
+ * for 4h and the edge response for an hour.
+ *
+ * `clear()` is per-pod. Other pods pick the change up within
+ * SYSTEM_CACHE_INPROC_TTL_MS of the redis key going away, same as every other blob here.
+ */
+export async function clearFeedTagBarTagsCache() {
+  getFeedTagBarTagsMemo.clear();
+  await redis.del(REDIS_KEYS.SYSTEM.FEED_TAG_BAR_TAGS);
 }
 
 export async function setLiveNow(isLive: boolean) {

@@ -109,7 +109,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // from `block.manifest.settings` would therefore render NO fields. Fetch the
   // install-needed bits (settings meta + declared scopes) from the
   // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
-  // The "Manage" path (/apps/installed) passes the FULL manifest, so its
+  // The "Manage" path (/apps/activity) passes the FULL manifest, so its
   // `manifest.settings` is already populated; the fetched value matches it.
   const { data: installConfig, isLoading: installConfigLoading } =
     trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });

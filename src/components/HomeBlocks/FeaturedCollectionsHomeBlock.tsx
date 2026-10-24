@@ -2,14 +2,18 @@ import { AspectRatio, Box, Skeleton } from '@mantine/core';
 import { useMemo } from 'react';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { PostCard } from '~/components/Cards/PostCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
-import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -18,9 +22,9 @@ import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; blockIndex: number };
 
-export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
+export const FeaturedCollectionsHomeBlock = ({ homeBlockId, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -35,6 +39,7 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
       <HomeBlockWrapper py={32}>
         <FeaturedCollectionSection
           pick={{ collection: null, items: [], rows: 2, limit: 8 }}
+          order={dedupeOrder(blockIndex)}
           isLoading
         />
       </HomeBlockWrapper>
@@ -43,10 +48,10 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
 
   return (
     <>
-      {picks.map((pick) =>
+      {picks.map((pick, subIndex) =>
         pick.collection ? (
           <HomeBlockWrapper key={pick.collection.id} py={32}>
-            <FeaturedCollectionSection pick={pick} />
+            <FeaturedCollectionSection pick={pick} order={dedupeOrder(blockIndex, subIndex)} />
           </HomeBlockWrapper>
         ) : null
       )}
@@ -54,19 +59,20 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
   );
 };
 
-type SectionProps =
+type SectionProps = { order: number } & (
   | { pick: PickedFeaturedCollection; isLoading?: false }
   | {
       pick: { collection: null; items: []; rows: number; limit: number; maxPerUser?: number };
       isLoading: true;
-    };
+    }
+);
 
-function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
+function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
   const { collection, items: rawItems } = pick;
   const rows = pick.rows;
   const maxPerUser = pick.maxPerUser;
 
-  const shuffled = useMemo(() => shuffle(rawItems ?? []), [rawItems]);
+  const shuffled = useMemo(() => shuffle([...(rawItems ?? [])]), [rawItems]);
   const shuffledData = useMemo(() => shuffled.map((x: { data: unknown }) => x.data), [shuffled]);
   const firstType = (shuffled[0] as { type?: string } | undefined)?.type ?? 'image';
   const type = firstType as 'image' | 'model' | 'post' | 'article';
@@ -76,7 +82,24 @@ function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
     data: shuffledData as any,
   });
 
-  const items = useCappedItems(filtered as { user?: { id: number } | null }[], rows, maxPerUser);
+  // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
+  // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
+  // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
+  // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const items = useDedupedCappedItems(
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+      entity: type,
+    }) as {
+      id: number;
+      user?: { id: number } | null;
+    }[],
+    {
+      order,
+      entity: type,
+      rows,
+      maxPerUser,
+    }
+  );
 
   const title = collection?.name ?? 'Collection';
   const link = collection ? `/collections/${collection.id}` : '#';
@@ -102,26 +125,28 @@ function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
         </div>
       ) : (
         <div className={classes.grid}>
-          <ImagesProvider
-            hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={type === 'image' ? (items as any) : undefined}
-          >
-            <ReactionSettingsProvider
-              settings={{
-                hideReactionCount: collection?.mode === CollectionMode.Contest,
-                hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
-              }}
+          <RemixFlyoutLayoutProvider layout="side">
+            <ImagesProvider
+              hideReactionCount={collection?.mode === CollectionMode.Contest}
+              images={type === 'image' ? (items as any) : undefined}
             >
-              {(items as any[]).map((item: any, idx: number) => (
-                <div key={item.id ?? idx} className="p-2">
-                  {type === 'model' && <ModelCard data={item} forceInView />}
-                  {type === 'image' && <ImageCard data={item} />}
-                  {type === 'post' && <PostCard data={item} />}
-                  {type === 'article' && <ArticleCard data={item} />}
-                </div>
-              ))}
-            </ReactionSettingsProvider>
-          </ImagesProvider>
+              <ReactionSettingsProvider
+                settings={{
+                  hideReactionCount: collection?.mode === CollectionMode.Contest,
+                  hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
+                }}
+              >
+                {(items as any[]).map((item: any, idx: number) => (
+                  <div key={item.id ?? idx} className="p-2">
+                    {type === 'model' && <ModelCard data={item} forceInView />}
+                    {type === 'image' && <ImageCard data={item} />}
+                    {type === 'post' && <PostCard data={item} />}
+                    {type === 'article' && <ArticleCard data={item} />}
+                  </div>
+                ))}
+              </ReactionSettingsProvider>
+            </ImagesProvider>
+          </RemixFlyoutLayoutProvider>
         </div>
       )}
     </div>

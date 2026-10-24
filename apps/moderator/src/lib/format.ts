@@ -1,0 +1,153 @@
+export const LINK_CLASS = 'text-blue-4 hover:underline';
+export const LINK_BUTTON =
+  'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
+/** A secondary link beside a primary one — an external "↗" next to the row's own link. */
+export const MUTED_LINK_CLASS = 'text-dark-2 text-xs hover:underline';
+
+/**
+ * Local time, its zone named, and the UTC equivalent — in the text, not a tooltip.
+ *
+ * The zone was never stated, so two moderators in different countries read the same row as different
+ * times and neither could tell. Both are printed because the two uses are different: local is what
+ * matches the moderator's own clock, UTC is what matches logs, ClickHouse and what everyone else sees.
+ * A `title` tooltip would carry UTC for free, but this team reports by screenshot and a tooltip does
+ * not appear in one.
+ *
+ * Dropped when the viewer is already on UTC, where the suffix would restate the line.
+ */
+export const dateTime = (value: Date | string | null) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  // Spelled out rather than dateStyle/timeStyle: ECMA-402 forbids combining those with any
+  // individual component, and `timeZoneName` alongside them throws TypeError on every call.
+  const local = date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC') return local;
+  const utc = date.toLocaleTimeString('en-GB', {
+    timeZone: 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${local} (${utc} UTC)`;
+};
+
+export const num = (value: number) => value.toLocaleString();
+
+export const ordinal = (n: number): string => {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
+
+/**
+ * "1 finding" / "2 findings" — a count and the noun it counts, agreeing.
+ *
+ * Here beside `num` because a count and its noun are one piece of text, and because this app spells
+ * the same three lines out by hand in about thirty places. Two things go wrong every time it is
+ * re-typed: the count skips `num`, so a four-figure total renders `1000` next to a `1,000` on the
+ * same screen; and the ternary is written against the wrong operand often enough that `1 items` has
+ * shipped. `many` covers the nouns a bare `s` gets wrong (`entry`/`entries`) and the verbs that go
+ * with them (`is`/`are`).
+ *
+ * 🔴 ONLY FOR NOUNS THIS APP WRITES. Text that arrives from another system — a detector's `reason`,
+ * an imported note — is rendered verbatim, `item(s)` and all. Rewriting a producer's sentences makes
+ * the screen disagree with the payload it is reporting.
+ */
+export const plural = (count: number, one: string, many = `${one}s`): string =>
+  `${num(count)} ${count === 1 ? one : many}`;
+
+/**
+ * Milliseconds for a UTC timestamp that may or may not carry its zone marker.
+ *
+ * 🔴 ClickHouse returns `YYYY-MM-DD HH:MM:SS` unzoned and means UTC; `Date.parse` reads that shape as
+ * LOCAL. Never call `Date.parse` on a ClickHouse timestamp directly — both shapes come through here.
+ */
+export const utcMs = (value: string): number =>
+  Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
+
+/**
+ * "3 hours ago" / "11 months ago". An absolute timestamp is precise and says nothing about whether a
+ * value is fresh: a resume point reading "Sep 8, 2025" is a year stale, and no one reads that off the
+ * date while working. Retool put the same phrasing on its own sweep button.
+ */
+export const relativeTime = (value: Date | string | null): string => {
+  if (!value) return '—';
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return '—';
+  const seconds = Math.round((then - Date.now()) / 1000);
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['year', 31_536_000],
+    ['month', 2_592_000],
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+  ];
+  const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [unit, size] of units)
+    if (Math.abs(seconds) >= size) return fmt.format(Math.round(seconds / size), unit);
+  return fmt.format(seconds, 'second');
+};
+
+/** "12m" / "5h" / "3d": for a badge or caption, where `relativeTime`'s phrasing is too long. */
+export const shortAge = (value: Date | string, now = Date.now()): string => {
+  const minutes = Math.max(0, Math.floor((now - new Date(value).getTime()) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+};
+
+/**
+ * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so
+ * rendering it raw shows a moderator the markup — and any filter matching on it matches the tags, which
+ * made a search for "p" hit every row. Strips tags and decodes the handful of entities that survive.
+ *
+ * Deliberately NOT a route to `{@html}`: this is display and search text for hostile user input, and
+ * the only safe thing to do with it is stop treating it as markup.
+ */
+export const plainText = (value: string | null | undefined): string =>
+  (value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * A server row as it arrives over `/api/*`: `Date` becomes `string`, everything else is unchanged.
+ *
+ * Importing a TYPE from `$lib/server` is erased at build and pulls no database client into the client
+ * bundle — only value imports do. Hand-copying these shapes instead is what let `ResourceReview.nsfw`
+ * and `Bounty.type` exist server-side and be invisible to the panel rendering them.
+ */
+export type Jsonified<T> = {
+  [K in keyof T]: T[K] extends Date
+    ? string
+    : T[K] extends Date | null
+    ? string | null
+    : T[K] extends object
+    ? Jsonified<T[K]>
+    : T[K];
+};
+
+/** Scales through the units, unlike a fixed MB divisor — a 3 GB training set read "3072.0 MB". */
+export const bytes = (kb: number): string => {
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = kb;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+};

@@ -1,10 +1,26 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import {
   CommentNotificationPriority,
+  appListingSlugJoin,
+  appListingSlugResolved,
   commentDedupeKeyByVersion,
+  threadTypeLabel,
   threadUrlMap,
+  withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
+
+// Edits re-emit the comment's key, relying on UserNotification's unique (notificationId, userId) to
+// skip people already told. Those rows are cleaned up, so don't widen the window to old comments.
+// An author can still edit a comment moderation removed, hence the visibility filters.
+const liveCommentCreatedOrEditedSince = (lastSent: string) =>
+  `c."createdAt" > '${lastSent}'::timestamp - interval '1 day'
+          AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')
+          AND c."tosViolation" = false
+          AND c.hidden IS NOT TRUE`;
 
 // Moveable (possibly)
 
@@ -17,10 +33,19 @@ export const mentionNotifications = createNotificationProcessor({
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
         const url = threadUrlMap(details);
+        // The shared `threadTypeLabel` names the ENTITY; `'comment thread'` is this sentence's
+        // own shaping of the unaddressable fallback ("…on a comment thread" reads, "…on a
+        // comment" does not) and stays local — folding it into the shared map would give the
+        // reply consumers "a comment thread comment you made".
+        //
+        // The article comes from `withIndefiniteArticle`, which is handed the noun and nothing
+        // else, so it cannot disagree with the word printed beside it. See its docstring.
+        const noun =
+          details.threadType === 'comment' ? 'comment thread' : threadTypeLabel(details.threadType);
         return {
-          message: `${details.username} mentioned you in a comment on a${
-            ['a', 'e', 'i', 'o', 'u'].includes(details.threadType[0]) ? 'n' : ''
-          } ${details.threadType === 'comment' ? 'comment thread' : details.threadType}`,
+          message: `${details.username} mentioned you in a comment on ${withIndefiniteArticle(
+            noun
+          )}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -40,6 +65,10 @@ export const mentionNotifications = createNotificationProcessor({
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          -- The recipient is produced by unnest() in this select list, so it can't be referenced
+          -- from these WHERE clauses. Each branch carries its author out instead, and the block
+          -- filter runs once on the outer query where both sides are finally in scope.
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'mentionedIn', 'comment',
@@ -56,7 +85,10 @@ export const mentionNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."crucibleId",
+                root."storylineId",
                 root."model3dId",
+                root."comicProjectId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -67,7 +99,10 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
-                t."model3dId"
+                t."crucibleId",
+                t."storylineId",
+                t."model3dId",
+                t."comicProjectId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -80,9 +115,16 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+              WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
+              -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
+              -- rather than an id column — see appListingSlugJoin.
+              WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'
             END,
+             'appListingSlug', al.slug,
              'commentParentId', COALESCE(
                 t."imageId",
                 t."modelId",
@@ -94,6 +136,8 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -108,6 +152,8 @@ export const mentionNotifications = createNotificationProcessor({
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN t."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
@@ -117,20 +163,21 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-        WHERE (c."createdAt" > '${lastSent}')
+        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
+        WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          -- Same appListing exclusion the reply processors carry: those threads are addressed by SLUG,
-          -- so threadUrlMap can't build a URL for them yet.
-          AND root."appListingId" IS NULL
-          AND t."appListingId" IS NULL
+          -- Same slug-resolution guard the reply processors carry: those threads are addressed by
+          -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
+          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
 
         UNION
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'comment',
             'modelId', c."modelId",
@@ -144,13 +191,14 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
-          AND (c."createdAt" > '${lastSent}')
+          AND ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
 
         UNION
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(m.description, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          m."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'model',
             'modelId', m.id,
@@ -171,7 +219,7 @@ export const mentionNotifications = createNotificationProcessor({
         -- working URL. Three ways it doesn't:
         --   * mentionedIn = 'model' — a model DESCRIPTION mention, no comment behind it at all
         --   * v2 threadType 'comment' — the fallback for a thread entity threadUrlMap can't address
-        --     (comicProject, clubPost, ...), which renders a dead link
+        --     (clubPost, model3dReview, ...), which renders a dead link
         --   * v1 parentType 'review' — prepareMessage bails and returns undefined, so the row renders as
         --     NOTHING. Left unguarded this silently swallows the new-comment the user should have got.
         -- Anything excluded here still delivers as its own (lower-priority) notification, unchanged.
@@ -187,6 +235,7 @@ export const mentionNotifications = createNotificationProcessor({
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
+        AND ${notBlockedBetween('r."ownerId"', 'r."actorId"')}
     `,
   },
 });

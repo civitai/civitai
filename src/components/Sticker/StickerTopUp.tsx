@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import { useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import { STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 const DEFAULT_QUANTITY = 10;
 
@@ -25,21 +25,16 @@ export function StickerTopUp({
   onPurchased?: () => void;
 }) {
   const [quantity, setQuantity] = useState(DEFAULT_QUANTITY);
-  const queryUtils = trpc.useUtils();
-  const purchase = trpc.cosmetic.purchaseStickerUses.useMutation({
-    onSuccess: async (result) => {
+  const purchase = useBuyStickerUses({
+    onSuccess: (result) => {
       showSuccessNotification({
         title: 'Uses added',
         message: `Added ${numberWithCommas(result.quantity)} uses of :${sticker.slug}:`,
       });
-      await Promise.all([
-        queryUtils.cosmetic.getStickerBalances.invalidate(),
-        queryUtils.user.getCosmetics.invalidate(),
-      ]);
       onPurchased?.();
     },
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not buy uses', error: new Error(error.message) }),
+    onError: (message) =>
+      showErrorNotification({ title: 'Could not buy uses', error: new Error(message) }),
   });
 
   // A sticker sold before per-use pricing existed has no top-up price, and the

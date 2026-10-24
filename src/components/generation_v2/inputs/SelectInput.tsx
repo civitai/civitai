@@ -11,9 +11,10 @@ interface PresetOption {
   value: string;
 }
 
-export interface SelectInputProps extends Omit<SelectProps, 'value' | 'onChange'> {
-  value?: string | null;
-  onChange?: (value: string) => void;
+export interface SelectInputProps<V extends string = string>
+  extends Omit<SelectProps, 'value' | 'onChange'> {
+  value?: V | null;
+  onChange?: (value: V) => void;
   presets?: PresetOption[];
   /** Alternative to `data` - will be mapped to `data` for Mantine Select */
   options?: SelectProps['data'];
@@ -57,7 +58,7 @@ function PresetOptions({ options, value, onChange, disabled }: PresetOptionsProp
 // Component
 // =============================================================================
 
-export function SelectInput({
+export function SelectInput<V extends string = string>({
   value,
   onChange,
   presets,
@@ -66,7 +67,7 @@ export function SelectInput({
   options,
   data,
   ...props
-}: SelectInputProps) {
+}: SelectInputProps<V>) {
   const hasPresets = presets && presets.length > 0;
   // Support both `options` and `data` - prefer `data` if both provided
   const selectData = data ?? options;
@@ -81,7 +82,9 @@ export function SelectInput({
               disabled={disabled}
               options={presets}
               value={value}
-              onChange={(v) => onChange?.(v)}
+              // preset/select values come from this component's own options,
+              // so the string really is a V
+              onChange={(v) => onChange?.(v as V)}
             />
           </Group>
         ) : (
@@ -95,7 +98,7 @@ export function SelectInput({
         data={selectData}
         value={value ?? null}
         onChange={(newValue) => {
-          if (newValue) onChange?.(newValue);
+          if (newValue) onChange?.(newValue as V);
         }}
         allowDeselect={false}
         disabled={disabled}

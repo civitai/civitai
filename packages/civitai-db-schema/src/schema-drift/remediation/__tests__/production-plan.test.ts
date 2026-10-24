@@ -12,9 +12,8 @@ import { countDeletes, countUpdates, planSql, relation } from './helpers';
  * The headline test: plan the real schema against the committed production catalog.
  *
  * 🔴 THE ASSERTION THIS SUITE EXISTS FOR is `emits UPDATEs and zero DELETEs for the SetNull
- * relations`. Its predecessor, hardcoded to DELETE, would have destroyed roughly 23,500
- * live rows across these relations — 610 articles, 519 user accounts, 591 user profiles,
- * 21,815 threads — where the schema asks only for a reference to be cleared.
+ * relations`. Its predecessor, hardcoded to DELETE, would have destroyed live articles, user
+ * accounts and user profiles where the schema asks only for a reference to be cleared.
  *
  * A zero on its own would be worthless. The Cascade suite below is the positive control:
  * the SAME plan, the SAME helper, the SAME catalog, reporting a non-zero DELETE count. The
@@ -39,8 +38,7 @@ const schema = parsePrismaSchema(schemaSource);
  * exclusion list (`Article.coverId`) and the one refused for a NOT NULL column
  * (`ChallengeEvent.createdById`, which has its own test below).
  *
- * Every entry is a relation whose orphan rows carry real user data. `Thread.imageId` alone
- * is 21,815 rows.
+ * Every entry is a relation whose orphan rows carry real user data.
  */
 const SET_NULL_RELATIONS = [
   'Challenge.eventId',
@@ -52,8 +50,6 @@ const SET_NULL_RELATIONS = [
   'Collection.imageId',
   'CosmeticShopSection.imageId',
   'PurchasableReward.coverImageId',
-  'Thread.challengeId',
-  'Thread.imageId',
   'User.profilePictureId',
   'UserProfile.coverImageId',
 ];
@@ -65,6 +61,7 @@ const SET_NULL_RELATIONS = [
 // this campaign. Pinning it as an intended DELETE target meant the tests were blessing a
 // plan that would revert a 2024 architectural decision — precisely the error recorded
 // against the CollectionItem fix. It is now on the exclusion list.
+// Thread.*: an entity-less thread is an orphan nothing can render, so its entity FKs declare Cascade.
 const CASCADE_RELATIONS = [
   'DownloadHistory.modelVersionId',
   'ImageEngagement.imageId',
@@ -75,6 +72,8 @@ const CASCADE_RELATIONS = [
   'ImageTool.imageId',
   'ModelBaseModelMetric.modelId',
   'TagsOnImageVote.imageId',
+  'Thread.challengeId',
+  'Thread.imageId',
 ];
 
 /** Orphan counts stand in for a live measurement so the plan reaches its statements. */
@@ -142,14 +141,14 @@ describe('🔴 the SetNull relations', () => {
 
   it('clears the declared column, and only that column', () => {
     expect(sql).toContain('UPDATE "User" t SET "profilePictureId" = NULL');
-    expect(sql).toContain('UPDATE "Thread" t SET "imageId" = NULL');
+    expect(sql).toContain('UPDATE "Collection" t SET "imageId" = NULL');
     expect(sql).toContain('UPDATE "UserProfile" t SET "coverImageId" = NULL');
   });
 
   it('writes ON DELETE SET NULL into each constraint', () => {
     expect(sql).toContain(
-      'ALTER TABLE "Thread" ADD CONSTRAINT "Thread_imageId_fkey"\n' +
-        '  FOREIGN KEY ("imageId") REFERENCES "Image"("id")\n' +
+      'ALTER TABLE "User" ADD CONSTRAINT "User_profilePictureId_fkey"\n' +
+        '  FOREIGN KEY ("profilePictureId") REFERENCES "Image"("id")\n' +
         '  ON UPDATE CASCADE ON DELETE SET NULL NOT VALID;'
     );
   });
@@ -293,11 +292,53 @@ describe('the default report stays a survey, and --verbose still means something
   const dflt = formatPlan(plan).split('\n');
   const verbose = formatPlan(plan, { verbose: true }).split('\n');
 
-  it('default is materially SHORTER than --verbose', () => {
+  const hidden = plan.relations.filter(
+    (r) => r.outcome === 'satisfied' && r.prerequisites.length > 0
+  );
+
+  it('the default HIDES the per-relation blocks --verbose expands', () => {
     // The N2 fix regressed this: every one of the ~408 validity-unknown relations carried
     // a prerequisite, none were hidden, and the default report became byte-identical to
     // --verbose — burying the ~68 relations an operator actually chooses between.
-    expect(dflt.length).toBeLessThan(verbose.length / 2);
+    //
+    // 🔴 THIS USED TO BE `dflt.length < verbose.length / 2`, AND THAT RATIO DECAYS BY
+    // CONSTRUCTION — the same decay this file's own header names for the totals it
+    // refused to pin. The catalog snapshot is FROZEN and the schema is not, so every
+    // table added since the snapshot yields a `refused` relation that appears in BOTH
+    // reports and pushes the ratio toward 1. It first went red on a change that added
+    // two tables and altered nothing about the report: the shape was unchanged, the
+    // corpus was not (measured at that point: 4216 default vs 8276 verbose, i.e. 4216
+    // against a 4138 ceiling — over by 78 lines, which is the seven new relations).
+    // Left as a ratio it is a countdown, and the next person to add a table pays it.
+    //
+    // So it asserts the PROPERTY the ratio was a proxy for instead: the validity-unknown
+    // population is expanded per-relation under --verbose and withheld from the default
+    // survey. Under the N2 regression every one of them appears in both, which is what
+    // makes this fail there — and it cannot be defeated by the corpus merely growing.
+    expect(hidden.length, 'positive control: there is a population to hide').toBeGreaterThan(50);
+
+    const dfltText = dflt.join('\n');
+    const verboseText = verbose.join('\n');
+    const expanded = hidden.filter((r) => verboseText.includes(r.key));
+    const leaked = hidden.filter((r) => dfltText.includes(r.key));
+
+    expect(expanded.length, '--verbose must expand every hidden relation').toBe(hidden.length);
+    // ⚠️ NOT zero, and deliberately not: the check is a SUBSTRING match on the relation
+    // key, so a key that happens to occur inside an unrelated line reads as a leak.
+    // Exactly one does today (`ModelMetric.modelId`). A half-population bound is immune
+    // to that and still unambiguous about the regression, which puts ALL of them in the
+    // default report.
+    expect(leaked.length, 'the default must withhold the hidden population').toBeLessThan(
+      hidden.length / 2
+    );
+  });
+
+  it('--verbose is materially LONGER, by at least a line per hidden relation', () => {
+    // The size half of the same property, expressed against the hidden population rather
+    // than against the report's total size — so it grows with the corpus instead of
+    // decaying against it. Byte-identical reports (the N2 regression) give a difference
+    // of zero and fail here.
+    expect(verbose.length - dflt.length).toBeGreaterThanOrEqual(hidden.length);
   });
 
   it('POSITIVE control: --verbose really does list the hidden ones', () => {
@@ -330,6 +371,31 @@ describe('the default report stays a survey, and --verbose still means something
         r.prerequisites.every((p) => p.code === 'constraint-validity-unknown'),
         `${r.key} carries a relation-specific prerequisite and must not be hidden`
       ).toBe(true);
+    }
+  });
+
+  it('lists a relation refused only for a missing table by key, with its detail behind --verbose', () => {
+    // Every model added after the catalog snapshot lands here; a detail block per relation
+    // is what grew the default report back toward --verbose.
+    const missing = plan.relations.filter(
+      (r) =>
+        r.refusals.some((x) => x.code === 'table-not-in-catalog') &&
+        r.refusals.every((x) =>
+          [
+            'table-not-in-catalog',
+            'referenced-table-not-in-catalog',
+            'column-not-in-catalog',
+          ].includes(x.code)
+        )
+    );
+    expect(missing.length).toBeGreaterThan(0); // positive control on the population
+
+    const detailHeader = (r: (typeof missing)[number]) =>
+      `${r.key}  ->  ${r.refTable}(${r.refColumns.join(', ')})`;
+    for (const r of missing) {
+      expect(dflt.join('\n'), `${r.key} must still be named by default`).toContain(r.key);
+      expect(dflt, `${r.key} detail belongs behind --verbose`).not.toContain(detailHeader(r));
+      expect(verbose).toContain(detailHeader(r));
     }
   });
 });

@@ -19,16 +19,16 @@ import { TRPCError } from '@trpc/server';
  * 400/401/403/429 as-is and leaving any OTHER unexpected non-5xx status as a hard
  * error (so a genuine bug is NOT silently masked as a retry-able 503).
  *
- * The heavy training.service import graph (@aws-sdk, @civitai/client, orchestrator
+ * The heavy training.service import graph (@aws-sdk, @civitai/orchestration-client, orchestrator
  * caller, s3, redis, db) is stubbed so the module imports in node; the real
  * `~/server/utils/errorHandling` TRPCError mapping runs end-to-end (NOT mocked).
- * `handleError` (from the mocked @civitai/client) is given a small real-ish impl
+ * `handleError` (from the mocked @civitai/orchestration-client) is given a small real-ish impl
  * so `messages` is a string, matching the production shape.
  */
 
 // Heavy import-graph deps — trivial stubs so training.service imports in node.
 // `handleError` derives the user-facing message string from the client error.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   handleError: vi.fn((e: unknown) => {
     if (typeof e === 'string') return e;
     if (e && typeof e === 'object') {
@@ -39,16 +39,18 @@ vi.mock('@civitai/client', () => ({
     return undefined;
   }),
 }));
-vi.mock('@aws-sdk/lib-storage', () => ({ Upload: class {} }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+// See the note in training-status.sysredis-soft.test.ts: `default` is required for the
+// pre-bundled CJS interop, and its absence shows up as a near-empty collect, not a failure.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {};
+  return { Upload, default: { Upload } };
+});
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
-  sysRedis: { hGet: vi.fn() },
-  withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
-}));
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts.
+// It was only ever import-graph scaffolding here — `toOrchestratorError` is a pure mapper and
+// touches no client — so the local stub bought nothing and hid the real REDIS_SYS_KEYS table
+// behind a one-entry copy of it.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/schema/training.schema', () => ({ trainingServiceStatusSchema: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
@@ -61,9 +63,13 @@ vi.mock('~/utils/s3-utils', () => ({
   isB2Url: vi.fn(),
   parseKey: vi.fn(),
 }));
-vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
+vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
+  getOrchestratorCaller: vi.fn(),
+}));
 
 import { toOrchestratorError } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // toOrchestratorError has a `never` return — capture the thrown value.
 const capture = (error: unknown): unknown => {

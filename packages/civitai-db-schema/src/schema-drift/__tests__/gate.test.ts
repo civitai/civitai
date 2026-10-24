@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { runTsxCli, type CliRun } from './support/tsx-cli';
 import { compareSchemaToCatalog } from '../compare';
 import {
   absorbedEscalations,
@@ -22,20 +21,27 @@ import {
 import { parsePrismaSchema } from '../parse-prisma-schema';
 import type { DbCatalog, DriftFinding } from '../types';
 
-const run = promisify(execFile);
-
 const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
-const tsx = join(packageRoot, 'node_modules/.bin/tsx');
 const gateCli = join(packageRoot, 'src/schema-drift/gate-cli.ts');
 const realSchema = join(packageRoot, 'prisma/schema.full.prisma');
-const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
+const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json';
 const snapshot = join(packageRoot, snapshotRelative);
 const baselineRelative = 'src/schema-drift/drift-baseline.json';
 
 const catalog = JSON.parse(readFileSync(snapshot, 'utf8')) as DbCatalog;
 const schemaSource = readFileSync(realSchema, 'utf8');
 const report = compareSchemaToCatalog(parsePrismaSchema(schemaSource), catalog);
+
+// 2026-08-03 is the only real catalog BEHIND the schema (missing columns, no ON DELETE/UPDATE
+// data). The gate-logic tests below need that backlog; the current capture has zero pending
+// findings and cannot exercise the pending tier, escalation, or the actions-not-compared path.
+const legacySnapshotRelative =
+  'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
+const legacyCatalog = JSON.parse(
+  readFileSync(join(packageRoot, legacySnapshotRelative), 'utf8')
+) as DbCatalog;
+const legacyReport = compareSchemaToCatalog(parsePrismaSchema(schemaSource), legacyCatalog);
 
 function finding(overrides: Partial<DriftFinding> & Pick<DriftFinding, 'kind'>): DriftFinding {
   return {
@@ -110,6 +116,23 @@ describe('fingerprint', () => {
     expect(fingerprint(cascade)).toBe(fingerprint(restrict));
   });
 
+  it('DOES fold the actions into a referential-action fingerprint', () => {
+    // 58 inert ON UPDATE mismatches are baselined; an ON DELETE flip on one of those relations
+    // is a new hazard and must not inherit the entry's pass.
+    const onUpdateOnly = finding({
+      kind: 'referential-action',
+      columns: ['appBlockId'],
+      field: 'appBlock',
+      declared: 'ON DELETE SetNull ON UPDATE Cascade',
+      actual: 'ON DELETE SetNull ON UPDATE NoAction',
+    });
+    const onDeleteToo = { ...onUpdateOnly, declared: 'ON DELETE Cascade ON UPDATE Cascade' };
+    expect(fingerprint(onDeleteToo)).not.toBe(fingerprint(onUpdateOnly));
+    expect(
+      fingerprint({ ...onUpdateOnly, actual: 'ON DELETE Cascade ON UPDATE NoAction' })
+    ).not.toBe(fingerprint(onUpdateOnly));
+  });
+
   it('separates findings that differ only in column order', () => {
     const ab = finding({ kind: 'uniqueness', columns: ['a', 'b'], field: undefined });
     const ba = finding({ kind: 'uniqueness', columns: ['b', 'a'], field: undefined });
@@ -129,6 +152,7 @@ describe('tierOf', () => {
   it('treats nullability and uniqueness as enforced', () => {
     expect(tierOf(finding({ kind: 'nullability' }), catalog)).toBe('enforced');
     expect(tierOf(finding({ kind: 'uniqueness' }), catalog)).toBe('enforced');
+    expect(tierOf(finding({ kind: 'referential-action' }), catalog)).toBe('enforced');
   });
 
   it('splits a missing foreign key on whether the database has the columns', () => {
@@ -283,11 +307,11 @@ describe('tierOf', () => {
   });
 });
 
-describe('evaluateGate against the real schema and snapshot', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+describe('evaluateGate against the real schema and the 2026-08-03 backlog', () => {
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('reproduces the whole baseline and reports nothing new', () => {
-    const result = evaluateGate(report, catalog, baseline);
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(result.newEnforced).toEqual([]);
     expect(result.newPending).toEqual([]);
     expect(result.resolved).toEqual([]);
@@ -298,7 +322,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
   });
 
   it('tiers the 2026-08-03 backlog the way the README describes it', () => {
-    const known = new Set(catalog.columns.map((c) => `${c.table} ${c.column}`));
+    const known = new Set(legacyCatalog.columns.map((c) => `${c.table} ${c.column}`));
     // Pending is "the snapshot has no column to hang a constraint on": every missing column,
     // plus any missing FK still waiting on one of its own columns. Nullability and uniqueness
     // are emitted only for surface the differ found, so they are never pending.
@@ -315,20 +339,19 @@ describe('evaluateGate against the real schema and snapshot', () => {
   });
 
   it('reports no referential-action finding, because this catalog cannot support one', () => {
-    // The 45 live ON UPDATE drifts are absorbed by being structurally unmeasurable here, not
-    // by being waved through — and the count of what could not be compared is carried into
-    // the result so the verdict can say so instead of printing a clean zero.
-    const result = evaluateGate(report, catalog, baseline);
+    // Unmeasurable here, not waved through: the uncompared count is carried into the result so
+    // the verdict cannot print a clean zero.
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(baseline.entries.some((e) => e.kind === 'referential-action')).toBe(false);
     expect(result.referentialActionUnknown).toBeGreaterThan(400);
   });
 
   it('blocks a NEW finding on a column the database already has', () => {
     const trimmed: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'uniqueness'),
     };
-    const result = evaluateGate(report, catalog, trimmed);
+    const result = evaluateGate(legacyReport, legacyCatalog, trimmed);
     expect(result.newEnforced).toHaveLength(1);
     expect(result.newEnforced[0].kind).toBe('uniqueness');
     expect(result.newPending).toEqual([]);
@@ -336,10 +359,10 @@ describe('evaluateGate against the real schema and snapshot', () => {
 
   it('only warns about a NEW finding whose column is not in the snapshot', () => {
     const trimmed: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'missing-column'),
     };
-    const result = evaluateGate(report, catalog, trimmed);
+    const result = evaluateGate(legacyReport, legacyCatalog, trimmed);
     expect(result.newEnforced).toEqual([]);
     expect(result.newPending.length).toBeGreaterThan(0);
     expect(new Set(result.newPending.map((f) => f.kind))).toEqual(new Set(['missing-column']));
@@ -347,7 +370,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
 
   it('lists a baseline entry the run no longer reports, without blocking', () => {
     const withGhost: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: [
         ...baseline.entries,
         {
@@ -361,7 +384,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
         },
       ],
     };
-    const result = evaluateGate(report, catalog, withGhost);
+    const result = evaluateGate(legacyReport, legacyCatalog, withGhost);
     expect(result.resolved.map((e) => e.table)).toEqual(['NoSuchTable']);
     expect(result.newEnforced).toEqual([]);
   });
@@ -372,7 +395,7 @@ describe('referencedTarget parses compare.ts output', () => {
   // `declared` string that compare.ts formats. If that format ever changes, the parse returns
   // null, every missing-FK fingerprint collapses to `?`, and distinct findings silently merge
   // into one. This makes that a red suite instead of a silent degradation.
-  const missingFks = report.findings.filter((f) => f.kind === 'missing-foreign-key');
+  const missingFks = legacyReport.findings.filter((f) => f.kind === 'missing-foreign-key');
 
   it('resolves a target for EVERY missing foreign key in the real report', () => {
     expect(missingFks.length).toBeGreaterThanOrEqual(37); // positive control on the loop below
@@ -381,7 +404,12 @@ describe('referencedTarget parses compare.ts output', () => {
   });
 
   it('resolves targets that are real model tables, not fragments', () => {
-    const tables = new Set(catalog.tables);
+    // Schema tables count too: a relation to a table created after the snapshot was captured
+    // is a real target, not a fragment.
+    const tables = new Set([
+      ...legacyCatalog.tables,
+      ...parsePrismaSchema(schemaSource).models.map((m) => m.table),
+    ]);
     const targets = new Set(missingFks.map((f) => referencedTarget(f) as string));
     expect(targets.size).toBeGreaterThan(1);
     // Every parsed target should name a real table; a regex that grabbed the wrong span
@@ -396,7 +424,7 @@ describe('referencedTarget parses compare.ts output', () => {
 });
 
 describe('tier escalation', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('blocks a baseline finding whose tier rose from pending to enforced', () => {
     // The migration-landed-without-its-constraint case: the finding was accepted while its
@@ -405,13 +433,13 @@ describe('tier escalation', () => {
     const enforcedEntry = baseline.entries.find((e) => e.tier === 'enforced');
     expect(enforcedEntry).toBeDefined();
     const downgraded = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === enforcedEntry?.fingerprint ? { ...e, tier: 'pending' as const } : e
       ),
     };
 
-    const result = evaluateGate(report, catalog, downgraded);
+    const result = evaluateGate(legacyReport, legacyCatalog, downgraded);
     expect(result.escalated).toHaveLength(1);
     expect(result.escalated[0].from).toBe('pending');
     expect(result.escalated[0].to).toBe('enforced');
@@ -423,7 +451,7 @@ describe('tier escalation', () => {
   });
 
   it('does not treat an unchanged tier as an escalation', () => {
-    const result = evaluateGate(report, catalog, baseline);
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(result.escalated).toEqual([]);
     expect(blocking(result)).toEqual([]);
   });
@@ -432,12 +460,12 @@ describe('tier escalation', () => {
     const pendingEntry = baseline.entries.find((e) => e.tier === 'pending');
     expect(pendingEntry).toBeDefined();
     const upgraded = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === pendingEntry?.fingerprint ? { ...e, tier: 'enforced' as const } : e
       ),
     };
-    expect(evaluateGate(report, catalog, upgraded).escalated).toEqual([]);
+    expect(evaluateGate(legacyReport, legacyCatalog, upgraded).escalated).toEqual([]);
   });
 });
 
@@ -513,13 +541,13 @@ describe('snapshotAge', () => {
 });
 
 describe('absorbedEscalations', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('reports a pending -> enforced transition a refresh would swallow', () => {
     const target = baseline.entries.find((e) => e.tier === 'enforced');
     expect(target).toBeDefined();
     const previous: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' as const } : e
       ),
@@ -535,13 +563,16 @@ describe('absorbedEscalations', () => {
 
   it('does not report enforced -> pending, or an entry that is merely new', () => {
     const flipped: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) => ({ ...e, tier: 'enforced' as const })),
     };
     // every pending entry became enforced above, so the reverse direction must be silent
+    expect(baseline.entries.some((e) => e.tier === 'pending')).toBe(true);
     expect(absorbedEscalations(flipped, baseline)).toEqual([]);
     // an entry absent from the previous baseline is new, not escalated
-    expect(absorbedEscalations({ catalog: snapshotRelative, entries: [] }, baseline)).toEqual([]);
+    expect(absorbedEscalations({ catalog: legacySnapshotRelative, entries: [] }, baseline)).toEqual(
+      []
+    );
   });
 });
 
@@ -570,30 +601,18 @@ describe('assertMeasuredSomething', () => {
   });
 });
 
-interface Run {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-
 /**
  * Drive the real entry point as a process. The functions above are the gate's logic; this is
  * what CI actually invokes, exit code and all — and an exit code is the only part of it CI
  * reads.
  */
-async function gate(args: string[]): Promise<Run> {
-  try {
-    const { stdout, stderr } = await run(tsx, [gateCli, ...args], {
-      cwd: packageRoot,
-      // The gate has no database code path; this asserts it does not grow one by accident.
-      env: { ...process.env, DATABASE_URL: '' },
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    return { code: 0, stdout, stderr };
-  } catch (error) {
-    const e = error as { code?: number; stdout?: string; stderr?: string };
-    return { code: e.code ?? -1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-  }
+async function gate(args: string[]): Promise<CliRun> {
+  return runTsxCli(gateCli, args, {
+    cwd: packageRoot,
+    // The gate has no database code path; this asserts it does not grow one by accident.
+    env: { ...process.env, DATABASE_URL: '' },
+    maxBuffer: 32 * 1024 * 1024,
+  });
 }
 
 // Every case below spawns the real entry point as a PROCESS, so each pays a cold tsx
@@ -612,6 +631,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   let dir: string;
   let driftedSchema: string;
   let pendingSchema: string;
+  let onDeleteSchema: string;
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'drift-gate-cli-'));
@@ -634,14 +654,25 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
         '  description         String?\n  gateProbeNewColumn  String?'
       )
     );
+
+    // An ON DELETE change on a relation whose ON UPDATE mismatch is already baselined.
+    onDeleteSchema = join(dir, 'on-delete.prisma');
+    writeFileSync(
+      onDeleteSchema,
+      schemaSource.replace(
+        'appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)',
+        'appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: Cascade)'
+      )
+    );
   });
 
-  it('the two probe schemas actually differ from the real one', () => {
+  it('the probe schemas actually differ from the real one', () => {
     // Positive control on every CLI assertion below: a `.replace` that matched nothing would
     // write the unmodified schema and the "blocks" test would pass or fail for reasons that
     // have nothing to do with the gate.
     expect(readFileSync(driftedSchema, 'utf8')).not.toBe(schemaSource);
     expect(readFileSync(pendingSchema, 'utf8')).not.toBe(schemaSource);
+    expect(readFileSync(onDeleteSchema, 'utf8')).not.toBe(schemaSource);
   });
 
   it('exits 0 on the committed schema, and says what it reproduced', async () => {
@@ -658,6 +689,13 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     expect(result.stdout).toMatch(/NEW, enforced \(blocking\)\s+: 1/);
     expect(result.stdout).toMatch(/nullability\s+Model\.description/);
     expect(result.stderr).toMatch(/BLOCKED/);
+  });
+
+  it('exits 1 on an ON DELETE change to a relation already baselined for ON UPDATE', async () => {
+    const result = await gate(['--schema', onDeleteSchema]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toMatch(/NEW, enforced \(blocking\)\s+: 1/);
+    expect(result.stdout).toMatch(/referential-action\s+app_block_publish_requests\.app_block_id/);
   });
 
   it('exits 0 but warns when the change only adds drift awaiting a migration', async () => {
@@ -743,7 +781,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   it('prints the snapshot capture date on every run, not only when it is stale', async () => {
     const result = await gate([]);
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-08-03 \(\d+ day\(s\) old\)/);
+    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-10-20 \(\d+ day\(s\) old\)/);
   });
 
   it('warns loudly when the snapshot carries no capture date', async () => {
@@ -890,7 +928,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     it('prints the snapshot age, which is the command run right after a recapture', async () => {
       const path = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', path]);
-      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-08-03 \(\d+ day\(s\) old\)/);
+      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-10-20 \(\d+ day\(s\) old\)/);
     });
   });
 

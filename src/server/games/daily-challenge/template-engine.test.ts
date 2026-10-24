@@ -44,6 +44,7 @@ describe('resolveTemplate', () => {
     reviewPrompt: 'Rate this image.',
     theme: 'sunset landscape',
     themeElements: 'warm orange hues, horizon line, golden hour lighting',
+    resourceConcept: 'wide desert vistas at dusk',
   };
 
   it('replaces variables in string content', () => {

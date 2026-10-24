@@ -752,6 +752,26 @@ describe('the gate, end to end: a broken checker must never PASS', () => {
     expect(res.all).not.toContain('PASS —');
   });
 
+  // A wrapper that NEVER LAUNCHES, which is a different failure from one that runs and exits
+  // non-zero. It is worth its own case because the neighbouring class bit us elsewhere: an
+  // `execFile` on an extensionless `node_modules/.bin` script never started on Windows, and the
+  // ENOENT landed in the same `code` field as a real exit status, so a process that never ran
+  // reported as one that exited 2.
+  //
+  // The gate is structurally immune to that shape rather than defended against it: it spawns
+  // `process.execPath` — always present — and passes the wrapper as an ARGUMENT, so a missing
+  // wrapper is node's own exit 1 with no diagnostics, which the FAILURE-TO-RUN rule already owns.
+  // There is no resolved-binary lookup anywhere in this path to fail silently. This pins that.
+  it('a wrapper that does not exist -> exit 3, never a pass', () => {
+    const res = runGate(
+      path.join(dir, 'no-such-wrapper.mjs'),
+      fixtureBaseline('b-missing', BASE_FILES)
+    );
+    expect(res.status).toBe(3);
+    expect(res.all).toContain('CANNOT MEASURE');
+    expect(res.all).not.toContain('PASS —');
+  });
+
   it('a run killed by a signal -> exit 3', () => {
     const res = runGate(
       wrapperStub('killed', 'process.kill(process.pid, "SIGKILL");'),

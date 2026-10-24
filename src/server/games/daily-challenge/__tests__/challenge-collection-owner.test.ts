@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
-const { mockDbRead, mockGetChallengeConfig } = vi.hoisted(() => ({
-  mockDbRead: { challengeJudge: { findUnique: vi.fn() } },
+const { mockGetChallengeConfig } = vi.hoisted(() => ({
   mockGetChallengeConfig: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
   getChallengeConfig: mockGetChallengeConfig,
 }));

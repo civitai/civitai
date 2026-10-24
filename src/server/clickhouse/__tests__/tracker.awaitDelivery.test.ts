@@ -9,18 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * that a counter moved — and nothing else in the suite notices.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
-    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
-    CLICKHOUSE_HOST: undefined,
-    CLICKHOUSE_USERNAME: undefined,
-    CLICKHOUSE_PASSWORD: undefined,
-    IS_BUILD: true,
-    LOGGING: [],
-  },
-}));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
@@ -30,6 +19,7 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 
 import { Tracker } from '../client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const metric = () => ({
   entityType: 'Image' as const,
@@ -38,8 +28,18 @@ const metric = () => ({
   metricValue: 100,
 });
 
+/**
+ * The parameters are declared on the mock's type rather than left to inference: a
+ * bare `vi.fn(async () => …)` is a zero-arg signature, which makes `mock.calls` the
+ * empty tuple and every `calls[0][1]` below unreadable.
+ */
+type FetchStub = (
+  url: string,
+  init?: { signal?: AbortSignal }
+) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+
 const respond = (status: number) =>
-  vi.fn(async () => ({ ok: status < 400, status, text: async () => '' }));
+  vi.fn<FetchStub>(async () => ({ ok: status < 400, status, text: async () => '' }));
 
 let fetchMock: ReturnType<typeof respond>;
 
@@ -81,9 +81,7 @@ describe('awaitDelivery', () => {
 
     // Nothing configures an undici dispatcher, so an unsignalled fetch inherits
     // a 300s header timeout — three of those on one row is a wedge, not a retry.
-    const signals = fetchMock.mock.calls.map(
-      (call) => (call as [string, { signal?: AbortSignal }])[1].signal
-    );
+    const signals = fetchMock.mock.calls.map((call) => call[1]?.signal);
     expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
     // One signal hoisted out of the loop would be worse than none: `fetch`
     // rejects immediately on an already-aborted signal, so the first slow
@@ -99,8 +97,11 @@ describe('fire and forget', () => {
     // The dispatch is not awaited, so let its first attempt reach fetch.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const [, init] = fetchMock.mock.calls[0] as [string, { signal?: AbortSignal }];
-    expect(init.signal).toBeUndefined();
+    const [, init] = fetchMock.mock.calls[0];
+    // Asserted present first: `init?.signal` on a missing init is also undefined,
+    // and would pass this without the request ever having been made.
+    expect(init).toBeDefined();
+    expect(init?.signal).toBeUndefined();
   });
 
   // LAST on purpose. Its retry chain outlives the test by ~750ms and `fetch` is

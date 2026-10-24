@@ -1,9 +1,10 @@
 import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
+import { guardPool } from './pool-guard';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
-export type { RawBuilder } from 'kysely';
+export type { Generated, RawBuilder } from 'kysely';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.
@@ -27,6 +28,14 @@ function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
   types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
   types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+  // TIMESTAMP (oid 1114) is `timestamp without time zone`, which pg's default parser reads as LOCAL
+  // time. db-helpers.ts registers a UTC parser for the same oid, so the main app and any Kysely app
+  // read the SAME COLUMN hours apart — which is how a scheduled sale twice appeared to start in the
+  // future to one app and in the past to the other. These columns are written as UTC instants; read
+  // them that way everywhere.
+  // Byte-identical to db-helpers.ts's parser on purpose: two near-copies of a date transform is how
+  // the two apps disagreed in the first place.
+  types.setTypeParser(types.builtins.TIMESTAMP, (val) => new Date(val.replace(' ', 'T') + 'Z'));
   numericParsersRegistered = true;
 }
 
@@ -69,7 +78,11 @@ function forceSslNoVerify(connectionString?: string): string | undefined {
   return url.toString();
 }
 
-export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB> };
+/**
+ * `pool` is the PRIMARY pg pool backing `dbWrite`. Handed back because Kysely does not expose its
+ * dialect's pool, and an app that builds its own re-derives the SSL and sizing config this factory owns.
+ */
+export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB>; pool: Pool };
 
 export interface CreateKyselyClientsOptions extends PoolConfig {
   /** Pre-built write pool (primary). Overrides connectionString. */
@@ -92,11 +105,11 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
 
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions & { singleClient: true }
-): { db: Kysely<DB> };
+): { db: Kysely<DB>; pool: Pool };
 export function createKyselyClients<DB>(options?: CreateKyselyClientsOptions): KyselyReadWrite<DB>;
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions = {}
-): { db: Kysely<DB> } | KyselyReadWrite<DB> {
+): { db: Kysely<DB>; pool: Pool } | KyselyReadWrite<DB> {
   registerNumericTypeParsers();
 
   const {
@@ -115,14 +128,41 @@ export function createKyselyClients<DB>(
     ? forceSslNoVerify(replicaConnectionString)
     : replicaConnectionString;
 
+  // Pool sizing defaults for the connection-string path. Callers that pass only a connection string
+  // otherwise inherit pg's own defaults, and one of those is actively harmful: pg leaves
+  // `connectionTimeoutMillis` unset and treats that as "wait forever", so once the pool is exhausted
+  // every further caller queues indefinitely and never errors — a pool problem surfaces as an
+  // unbounded hang rather than a failure. A finite timeout makes it fail fast at the call site.
+  //
+  // These pools carry NO acquire-latency metric and NO retry: the error reaches the caller as-is,
+  // and a caller that wants either has to add it (see the transient-error retry in
+  // apps/notifications). `max`/`idleTimeoutMillis` match the sibling `createPool` factory;
+  // `connectionTimeoutMillis` is deliberately STRICTER than createPool (which defaults it to 0) and
+  // matches the value the monolith already runs in production.
+  //
+  // Caller-supplied values win — `poolConfig` is spread last.
+  // ORDER-DEPENDENT: this snapshots `poolConfig.connectionString`, so the `sslNoVerify` rewrite
+  // above must stay ABOVE it — otherwise the primary pool silently connects without
+  // `sslmode=no-verify`. Pinned by the sslNoVerify case in kysely.pool-defaults.test.ts.
+  const config: PoolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ...poolConfig,
+  };
+
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(poolConfig));
-  if (singleClient) return { db: primary };
+  // Pre-built pools are the caller's to guard (createPool pools already are).
+  const guard = (p: Pool) => guardPool(p, 'kysely');
+
+  const primaryPool = pool ?? guard(new Pool(config));
+  const primary = make(primaryPool);
+  if (singleClient) return { db: primary, pool: primaryPool };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? guard(new Pool({ ...config, connectionString: replicaString })))
       : primary;
-  return { dbRead, dbWrite: primary };
+  return { dbRead, dbWrite: primary, pool: primaryPool };
 }

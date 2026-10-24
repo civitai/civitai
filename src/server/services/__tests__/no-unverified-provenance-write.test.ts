@@ -19,9 +19,14 @@ const SRC = path.resolve(__dirname, '../../..');
 
 /** Write sites whose meta is read back off the row rather than supplied by a caller. */
 const DERIVED_FROM_ROW = [
-  // image.service.ts `updateImageResources`-style rewrite: spreads the stored
-  // meta and replaces `resources`, so no new claim can enter.
-  'meta: { ...meta, resources: metaResources }',
+  // image.service.ts `createImageResources`: spreads the stored meta and replaces
+  // `resources` + `unmatchedResources`, both derived from the row, so no caller
+  // claim can enter.
+  'meta: { ...meta, resources: metaResources, unmatchedResources }',
+  // backfill-lora-hashes.ts: `meta` is the row's own meta, re-read by the scan
+  // query, with only `hashes` and `resources` replaced from it. No caller supplies
+  // it, so no claim can enter.
+  'meta: { ...meta, hashes: nextHashes, resources: nextResources }',
 ];
 
 function walk(dir: string, files: string[] = []): string[] {

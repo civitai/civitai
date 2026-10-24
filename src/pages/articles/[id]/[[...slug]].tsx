@@ -19,15 +19,18 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ArticleProcessing } from '~/components/Article/ArticleProcessing';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import {
@@ -37,20 +40,22 @@ import {
 import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -61,9 +66,8 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
+import { getPublishedArticleIngestion } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
   ArticleIngestionStatus,
@@ -75,12 +79,21 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
-import { removeTags, slugit } from '~/utils/string-helpers';
+import { getArticleUrl, removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { useInView } from 'react-intersection-observer';
+import { isViewer } from '~/utils/is-viewer';
+
+const NOT_FOUND = Symbol('article-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -108,7 +121,25 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
-      const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
+      const fetched = await ssg.article.getById
+        .fetch({ id: result.data.id })
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+
+      // `getById` is viewer-scoped: it resolves for the owner and moderators and throws
+      // NOT_FOUND for everyone else, so this 404s a draft/hidden article for crawlers while
+      // its author still loads it. The ingestion check keeps a live article out of that branch —
+      // `getById` also throws NOT_FOUND while a published article is being re-scanned after an
+      // edit, and a 404 on an indexed URL is not a state to enter transiently. Any other
+      // failure keeps the 200 and lets the client refetch.
+      if (fetched === NOT_FOUND) {
+        const ingestion = await getPublishedArticleIngestion(result.data.id);
+        // Blocked is the one published state that can never resolve for the public, so it takes
+        // the 404 rather than serving an indexable shell that only ever renders NotFound.
+        if (ingestion === null || ingestion === ArticleIngestionStatus.Blocked)
+          return { notFound: true };
+      }
+
+      const article = fetched === NOT_FOUND ? null : fetched;
 
       if (article) {
         gating = { contentNsfwLevel: article.nsfwLevel };
@@ -162,6 +193,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
+  // `getById` hides a published article from non-owners until its images finish scanning, and a
+  // publish notification links straight into that window — so a refusal is not yet a 404. Poll
+  // while it is transient and pull the article back in once the scan lands, rather than leaving
+  // the reader on a dead end they have to reload out of.
+  const refused = !isLoading && !article && features.articles;
+  const { data: isProcessing, isInitialLoading: checkingProcessing } =
+    trpc.article.isProcessing.useQuery(
+      { id },
+      { enabled: refused, refetchInterval: (query) => (query.state.data === true ? 15_000 : false) }
+    );
+
   // Intersection observer for lazy loading comments
   const { ref: commentsRef, inView: commentsInView } = useInView({
     triggerOnce: true,
@@ -182,19 +224,26 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
   const isModerator = currentUser?.isModerator ?? false;
-  const isActualOwner = currentUser?.id === article?.user?.id;
+  const isActualOwner = isViewer(currentUser, article?.user?.id);
   const isOwner = isActualOwner || isModerator;
 
-  // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !features.articles && !article?.user.isModerator;
 
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
-  const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
-    { articleId: id },
-    { enabled: isActualOwner && features.articleRatingDispute, staleTime: 60_000 }
-  );
+  // The poll above stops the moment the scan window closes; this is what turns that into a
+  // rendered article without a reload. Only the true->false edge, so an article that was never
+  // processing (a real 404) doesn't refetch itself.
+  const wasProcessing = React.useRef(false);
+  useEffect(() => {
+    if (isProcessing) wasProcessing.current = true;
+    else if (wasProcessing.current) {
+      wasProcessing.current = false;
+      queryUtils.article.getById.invalidate({ id });
+    }
+  }, [isProcessing, id, queryUtils]);
+
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
 
@@ -225,7 +274,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const [image] = items;
 
   if (isLoading) return <PageLoader />;
-  if (!article || isBlocked || disableArticles) return <NotFound />;
+  if (!article) {
+    if (disableArticles) return <NotFound />;
+    if (checkingProcessing) return <PageLoader />;
+    return isProcessing ? <ArticleProcessing /> : <NotFound />;
+  }
+  if (isBlocked || disableArticles) return <NotFound />;
 
   const category = article.tags.find((tag) => tag.isCategory);
   const tags = article.tags.filter((tag) => !tag.isCategory);
@@ -273,7 +327,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           }}
         </ToggleArticleEngagement>
       </LoginRedirect>
-      <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
+      <ShareButton
+        url={getArticleUrl({ id: article.id, title: article.title })}
+        title={article.title}
+      >
         <LegacyActionIcon variant="subtle" color="gray">
           <IconShare3 />
         </LegacyActionIcon>
@@ -290,9 +347,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: article.coverImage?.url
-      ? getEdgeUrl(article.coverImage.url, { width: 1200 })
-      : undefined,
+    image: safeSchemaImageUrl(article.coverImage, { width: 1200 }),
     author:
       article.user.username && !article.user.deletedAt
         ? {
@@ -302,7 +357,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${article.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: article.publishedAt,
     dateModified: article.updatedAt,
     publisher: {
@@ -329,9 +384,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         description: truncate(articleBodyText, { length: 150 }),
         images: article?.coverImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
-        canonical: `/articles/${article.id}/${slugit(article.title)}`,
+        canonical: getArticleUrl({ id: article.id, title: article.title }),
         alternate: `/articles/${article.id}`,
         schema: articleSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Articles', path: '/articles' },
+          { name: article.title },
+        ]),
+        ogType: 'article' as const,
         deIndex: !article?.publishedAt || article?.availability === Availability.Unsearchable,
       }}
     >
@@ -363,6 +423,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Text>
                 </Tooltip>
               )}
+            {article.isOfficial && (
+              <>
+                <Divider orientation="vertical" />
+                <OfficialArticleBadge />
+              </>
+            )}
             {category && (
               <>
                 <Divider orientation="vertical" />
@@ -417,34 +483,20 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
             </AlertWithIcon>
           )}
-          {article.status === ArticleStatus.UnpublishedViolation && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
+          {article.scheduledAt && isOwner && (
+            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
               <div>
-                <Text weight={600} size="lg" mb="xs">
-                  This article has been unpublished due to a Terms of Service violation
-                </Text>
-                {article.metadata?.unpublishedReason &&
-                  article.metadata.unpublishedReason !== 'other' && (
-                    <Text>
-                      <strong>Reason:</strong>{' '}
-                      {
-                        unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
-                          ?.notificationMessage
-                      }
-                    </Text>
-                  )}
-                {article.metadata?.customMessage && (
-                  <Text>
-                    <strong>Additional details:</strong> {article.metadata.customMessage}
-                  </Text>
-                )}
-                {!isModerator && (
-                  <Text mt="sm" size="sm">
-                    If you believe this was done in error, please contact support.
-                  </Text>
-                )}
+                This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your
+                time. It stays hidden until then.
               </div>
             </AlertWithIcon>
+          )}
+          {article.status === ArticleStatus.UnpublishedViolation && (
+            <ArticleUnpublishedAlert
+              reason={article.metadata?.unpublishedReason}
+              customMessage={article.metadata?.customMessage}
+              showSupportHint={!isModerator}
+            />
           )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus
@@ -452,16 +504,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          {isActualOwner && features.articleRatingDispute && (
-            <ArticleOwnerRatingControls
-              articleId={article.id}
-              nsfwLevel={article.nsfwLevel}
-              myReview={myReview?.review ?? null}
-              canResubmit={myReview?.canResubmit ?? true}
-              derivedLevel={myReview?.derivedLevel ?? null}
-              derivedRatingDroppedBelowOverride={
-                myReview?.derivedRatingDroppedBelowOverride ?? false
-              }
+          <OwnerRatingControls
+            entityType="Article"
+            entityId={article.id}
+            isOwner={!!isActualOwner}
+          />
+          {article.status === ArticleStatus.Published && (
+            <FirstPublishCard
+              entityType="article"
+              entityId={article.id}
+              ownerId={article.user.id}
+              publishedAt={article.publishedAt}
             />
           )}
         </Stack>
@@ -472,43 +525,55 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <AspectRatio
                   ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
                 >
-                  <RoutedDialogLink
-                    name="imageDetail"
-                    state={{ imageId: image.id, withoutPost: true }}
-                    className="block size-full cursor-pointer"
-                  >
-                    <Center className="size-full">
-                      <div className="relative size-full">
-                        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                          {(safe) => (
-                            <>
-                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                              <ImageContextMenu
-                                image={image}
-                                noDelete={true}
-                                className="absolute right-2 top-2 z-10"
-                              />
-                              {!safe ? (
-                                <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                  <MediaHash {...image} />
-                                </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  className="h-full rounded-lg object-cover"
-                                  name={image.name}
-                                  alt={article.title}
-                                  type={image.type}
-                                  width={MAX_WIDTH}
-                                  anim={safe}
+                  {/*
+                    AspectRatio sizes every direct child, and ImageGuard2 renders
+                    the blur explainer as a sibling of its content — so the guard
+                    goes inside this div rather than around it, or the explainer
+                    becomes a second sized child positioned against the page
+                    instead of the cover. It is also the box the sticker overlay
+                    measures the media against, which needs one shared offset
+                    parent.
+                  */}
+                  <div className="relative size-full">
+                    <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                      {(safe) => (
+                        <>
+                          <RoutedDialogLink
+                            name="imageDetail"
+                            state={{ imageId: image.id }}
+                            className="block size-full cursor-pointer"
+                          >
+                            <Center className="size-full">
+                              <div className="relative size-full">
+                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                                <ImageContextMenu
+                                  image={image}
+                                  noDelete={true}
+                                  className="absolute right-2 top-2 z-10"
                                 />
-                              )}
-                            </>
-                          )}
-                        </ImageGuard2>
-                      </div>
-                    </Center>
-                  </RoutedDialogLink>
+                                {!safe ? (
+                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                                    <MediaHash {...image} />
+                                  </div>
+                                ) : (
+                                  <EdgeMedia
+                                    src={image.url}
+                                    className="h-full rounded-lg object-cover"
+                                    name={image.name}
+                                    alt={article.title}
+                                    type={image.type}
+                                    width={MAX_WIDTH}
+                                    anim={safe}
+                                  />
+                                )}
+                              </div>
+                            </Center>
+                          </RoutedDialogLink>
+                          <ArticleCoverStickers imageId={image.id} safe={safe} />
+                        </>
+                      )}
+                    </ImageGuard2>
+                  </div>
                 </AspectRatio>
               )}
 
@@ -573,148 +638,3 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 }
 
 export default Page(ArticleDetailsPage);
-
-type OwnerRatingReview = {
-  id: number;
-  status: 'Pending' | 'Actioned' | 'Unactioned' | string;
-  createdAt: Date | string;
-  resolvedAt: Date | string | null;
-  appliedLevel: number | null;
-  modComment?: string | null;
-};
-
-function ArticleOwnerRatingControls({
-  articleId,
-  nsfwLevel,
-  myReview,
-  canResubmit: canResubmitFromServer,
-  derivedLevel,
-  derivedRatingDroppedBelowOverride,
-}: {
-  articleId: number;
-  nsfwLevel: number;
-  myReview: OwnerRatingReview | null | undefined;
-  canResubmit: boolean;
-  derivedLevel: number | null;
-  derivedRatingDroppedBelowOverride: boolean;
-}) {
-  const ratingLabel = getBrowsingLevelLabel(nsfwLevel);
-
-  // A review is "pending" if it exists and has not been resolved.
-  const isPending = !!myReview && myReview.status === 'Pending';
-  const isResolved = !!myReview && myReview.status !== 'Pending';
-
-  // After resolution, the owner may submit again only after the article has
-  // been edited (server-side check mirrors this — see plan §11). The server
-  // returns `canResubmit` directly so the client doesn't have to redo the
-  // date math; trust it.
-  const canResubmit = !myReview || (isResolved && canResubmitFromServer);
-
-  // Owner-visible signal for a stale moderator override: the article has been
-  // edited (canResubmit is true) AND the system-derived rating has dropped
-  // below the override. Server gates this on having an active override + a
-  // resolvable derived level, so we only need to combine it with `canResubmit`
-  // here. We additionally require derivedLevel >= 1 — a text-only article can
-  // yield derivedLevel = 0 (no images, no floor), which has no canonical
-  // browsing-level label and would render as "?" in the banner copy and
-  // pre-fill the dispute modal with an invalid level. Owner can still open
-  // the dispute modal via the inline button in that case.
-  const showStaleOverrideBanner =
-    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null && derivedLevel >= 1;
-
-  const handleOpen = (initialSuggestedLevel?: number) => {
-    openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });
-  };
-
-  // Button label + state matrix:
-  //   no review  → "Request rating review" (enabled)
-  //   pending    → "Review pending" (disabled, with timestamp helper)
-  //   resolved, no edits since → "Last review <status> on <date>" (disabled, modComment tooltip)
-  //   resolved, edits since    → "Request rating review" (enabled — fresh dispute)
-  let button: React.ReactNode;
-  if (isPending) {
-    button = (
-      <Tooltip
-        label={
-          <span>
-            Submitted <DaysFromNow date={new Date(myReview!.createdAt)} />
-          </span>
-        }
-        withArrow
-      >
-        <Button variant="default" size="xs" disabled>
-          Review pending
-        </Button>
-      </Tooltip>
-    );
-  } else if (isResolved && !canResubmit) {
-    const resolvedDate = myReview!.resolvedAt ? formatDate(new Date(myReview!.resolvedAt)) : '';
-    const statusLabel =
-      myReview!.status === 'Actioned'
-        ? 'approved'
-        : myReview!.status === 'Unactioned'
-        ? 'declined'
-        : myReview!.status.toLowerCase();
-    const btn = (
-      <Button variant="default" size="xs" disabled>
-        Last review {statusLabel}
-        {resolvedDate ? ` on ${resolvedDate}` : ''}
-      </Button>
-    );
-    button = myReview!.modComment ? (
-      <Tooltip label={myReview!.modComment} withArrow multiline w={260}>
-        {btn}
-      </Tooltip>
-    ) : (
-      btn
-    );
-  } else {
-    button = (
-      <Button variant="default" size="xs" onClick={() => handleOpen()}>
-        Request rating review
-      </Button>
-    );
-  }
-
-  return (
-    <Stack gap="xs">
-      {showStaleOverrideBanner && (
-        <AlertWithIcon icon={<IconAlertCircle size={20} />} color="yellow" iconColor="yellow">
-          <Stack gap="xs">
-            <Text size="sm">
-              Your recent edits brought this article&apos;s content down to{' '}
-              <Text component="span" fw={600}>
-                {getBrowsingLevelLabel(derivedLevel!)}
-              </Text>
-              , but a previous moderator decision pinned the rating at{' '}
-              <Text component="span" fw={600}>
-                {ratingLabel}
-              </Text>
-              . Request a rating review and our system (or a moderator) will update it.
-            </Text>
-            <Group>
-              <Button
-                size="xs"
-                color="yellow"
-                variant="filled"
-                onClick={() => handleOpen(derivedLevel!)}
-              >
-                Request rating review
-              </Button>
-            </Group>
-          </Stack>
-        </AlertWithIcon>
-      )}
-      <Group gap="xs" align="center">
-        <Text size="sm" c="dimmed">
-          Rating:
-        </Text>
-        <Badge size="md" variant="filled" color="gray">
-          {ratingLabel}
-        </Badge>
-        {/* Hide the redundant inline CTA when the banner is rendering its own. */}
-        {showStaleOverrideBanner ? null : button}
-      </Group>
-    </Stack>
-  );
-}

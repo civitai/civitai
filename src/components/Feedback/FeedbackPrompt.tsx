@@ -2,12 +2,12 @@ import { ActionIcon, Button, Divider, Group, Paper, Text, Textarea } from '@mant
 import { IconAlertTriangle, IconX } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
+import { FeedbackAttachments } from '~/components/Feedback/FeedbackAttachments';
+import { useFeedbackSubmission } from '~/components/Feedback/useFeedbackSubmission';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 const cardStyle: CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
@@ -41,7 +41,7 @@ type FeedbackPromptProps = {
   placeholder?: string;
   /** Extra detail stored alongside the message so a one-line report is still actionable. */
   context?: CreateFeedbackInput['context'];
-  /** Caller's own condition — e.g. "BitDex actually served this page". */
+  /** Caller's own condition — e.g. "the index actually served this page". */
   active?: boolean;
 };
 
@@ -55,19 +55,12 @@ export function FeedbackPrompt({
   const currentUser = useCurrentUser();
   const [dismissed, setDismissed] = useState(() => readDismissed(area));
   const [open, setOpen] = useState(false);
-  const [message, setMessage] = useState('');
-  const [sent, setSent] = useState(false);
 
   const enabled = active && !!currentUser && !dismissed;
-  const { data } = trpc.feedback.getArea.useQuery({ area }, { enabled });
+  const feedback = useFeedbackSubmission({ area, context, enabled });
+  const { sent, message, setMessage, busy, canSubmit, handleSubmit } = feedback;
 
-  const createFeedback = trpc.feedback.create.useMutation({
-    onSuccess: () => setSent(true),
-    onError: (error) =>
-      showErrorNotification({ title: 'Feedback not sent', error: new Error(error.message) }),
-  });
-
-  if (!enabled || !data?.enabled) return null;
+  if (!enabled || !feedback.areaEnabled) return null;
 
   const handleClose = () => {
     if (open && !sent) {
@@ -127,17 +120,18 @@ export function FeedbackPrompt({
               size="sm"
               radius="xl"
               style={{ flexShrink: 0 }}
-              disabled={!message.trim()}
+              disabled={!canSubmit}
               // Mantine's disabled fill is near-invisible on this card surface.
               classNames={{
                 root: 'data-[disabled]:!bg-blue-6 data-[disabled]:!text-white data-[disabled]:!opacity-50',
               }}
-              loading={createFeedback.isPending}
-              onClick={() => createFeedback.mutate({ area, message: message.trim(), context })}
+              loading={busy}
+              onClick={handleSubmit}
             >
               Send feedback
             </Button>
           </Group>
+          <FeedbackAttachments feedback={feedback} px="sm" pb="sm" />
         </>
       )}
     </Paper>

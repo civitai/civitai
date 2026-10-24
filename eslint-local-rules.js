@@ -39,6 +39,34 @@
  *     it. I/O between it and `commit()` burns the same budget, invisibly.
  *   - a named (non-inline) callback, same as the Prisma gap noted below.
  *
+ * KNOWN GAPS in WHICH AWAITED EXPRESSIONS ARE READ (the shapes below are inside
+ * a correctly-detected callback; the rule simply cannot see the call):
+ *   - the awaited value came from a VARIABLE: `const p = bustUserSettings(id);
+ *     await p;` — resolving it needs scope analysis this rule does not do. Same
+ *     for an array built in a variable: `await Promise.all(jobs)`.
+ *   - a combinator argument that is neither an array literal nor an inline
+ *     `.map`/`.flatMap` callback: `await Promise.all(ids.map(makeJob))`,
+ *     `await Promise.all([...jobs, bust(id)])` (the SPREAD element specifically —
+ *     the sibling elements beside it ARE read).
+ *   - `await (cond ? bustUserSettings(id) : Promise.resolve())` — a conditional
+ *     is not unwrapped.
+ *   - a call reached through a locally aliased binding: `const b =
+ *     bustUserSettings; await b(id);` — detection is by CALLED NAME, never
+ *     resolved to an import.
+ * 🔴 A shape absent from BOTH lists above is NOT thereby covered. These are the
+ * ones someone went looking for; the honest summary of this rule is that it reads
+ * a curated set of syntactic shapes, so treat a clean run as "none of the shapes
+ * below the awaits I can read", not "no I/O in any transaction".
+ *
+ * DELIBERATELY out of scope, not a gap: an UN-AWAITED call —
+ * `void bustUserSettings(id)`, `logToAxiom({})` on its own line, or
+ * `bustUserSettings(id).catch(noop)`. Those do not consume the transaction's
+ * wall-clock budget, and "make pure-logging calls fire-and-forget" is one of the
+ * two fixes this rule's own message prescribes. Flagging them would flag the
+ * remedy. (A fire-and-forget write is a different hazard — it can outlive a
+ * rolled-back transaction — but it is not THIS rule's, and it has no timeout to
+ * blow.) Pinned by a `valid` case in the rule's test file.
+ *
  * Interactive transactions hold a DB connection open under a wall-clock
  * timeout (Prisma default 5000ms, or an explicit `{ timeout }`). An awaited
  * network call inside the callback (HTTP fetch, image scanner, Buzz API,
@@ -54,6 +82,34 @@
  * Detection is a curated denylist of known I/O call names (low false-positive,
  * extend as new I/O helpers appear). Calls on the transaction client itself
  * (`tx.*`, including `tx.$queryRaw` / `tx.$executeRaw`) are always allowed.
+ *
+ * An `await` is read through three wrappers before the denylist is consulted:
+ * `.catch()/.then()/.finally()`; `Promise.all/allSettled/race/any` over an ARRAY
+ * LITERAL, whose elements are then each read the same way; and an inline
+ * `.map`/`.flatMap` callback with a concise (non-block) body passed to one of
+ * those combinators. One `await` can therefore report several calls. The
+ * combinator forms were added because `await Promise.all([cache.refresh(id),
+ * bustUserSettings(id)])` — the exact line in model.service.ts that motivated
+ * adding those two names to the denylist — passes its I/O as ARGUMENTS and so
+ * was invisible to the plain awaited-call walk. Measured on the pre-change rule:
+ * that shape produced 0 hits while the three direct-await cases beside it all
+ * flagged. Read the two gap lists above for what this still does not see.
+ *
+ * Blast radius of adding the combinator forms, measured over every .ts/.tsx under
+ * `src/` and `packages/` (5,310 files, 0 parse errors) with the rule run in
+ * isolation, immediately before and after the change: 6 reports -> 7. The one new
+ * report is a TRUE positive that was invisible before —
+ * `invalidateManyImageExistence(imageIds)` (N Redis `set`s) sharing a
+ * `Promise.all` with a legitimate `tx.image.deleteMany` inside
+ * `deleteBountyEntry`'s Prisma transaction, src/server/services/bountyEntry.service.ts.
+ * It is left reported rather than fixed here: hoisting a cache invalidation out of
+ * a transaction is a behaviour change to bounty deletion and wants its own diff,
+ * the same treatment `bugReportCounter` got from no-module-scope-cache. The rule
+ * is 'warn' and the file pre-exists, so it annotates and blocks nothing — see the
+ * severity note in .eslintrc.js.
+ *
+ * Re-derive that census rather than trusting the numbers above; they move.
+ *
  * Intentional exceptions should use:
  *   // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>
  */
@@ -62,7 +118,6 @@ const IO_CALL_NAMES = new Set([
   'fetch',
   // image ingestion / scanner
   'ingestImage',
-  'ingestImageBulk',
   'createImageIngestionRequest',
   // orchestrator
   'submitWorkflow',
@@ -73,6 +128,7 @@ const IO_CALL_NAMES = new Set([
   'createMultiAccountBuzzTransaction',
   'refundTransaction',
   'refundMultiAccountTransaction',
+  'refundAllLegsByPrefix',
   'getMultiAccountTransactionsByPrefix',
   'deleteBidsForModelVersion',
   // observability (Axiom HTTP ingest)
@@ -82,6 +138,9 @@ const IO_CALL_NAMES = new Set([
   'updateDocs',
   'refresh', // *Cache.refresh(...) — Redis + cross-pool read
   'bust', // bustMvCache etc.
+  'bustUserSettings',
+  'getUserSettings',
+  'bustCache',
   'bustMvCache',
   'invalidateManyImageExistence',
   // email
@@ -91,6 +150,29 @@ const IO_CALL_NAMES = new Set([
 // Promise-combinator wrappers whose argument we should unwrap to find the
 // underlying call (e.g. `await foo().catch(() => null)` -> inspect `foo()`).
 const PASSTHROUGH_MEMBERS = new Set(['catch', 'then', 'finally']);
+
+/**
+ * `Promise.<x>(...)` statics that AWAIT their operands as a unit. An
+ * `await Promise.all([bust(id), refresh(id)])` puts both calls on the
+ * transaction's clock exactly as two consecutive `await`s would — the calls are
+ * ARGUMENTS rather than the awaited expression, which is the only reason the
+ * plain awaited-call walk missed them. `race`/`any` are included because the
+ * operands still all START inside the transaction; settling early does not
+ * cancel the losers, so their latency is on the same budget as the winner's.
+ */
+const PROMISE_COMBINATORS = new Set(['all', 'allSettled', 'race', 'any']);
+
+/**
+ * Array methods that invoke their callback SYNCHRONOUSLY, so
+ * `Promise.all(ids.map((i) => bust(i)))` really does run `bust` inside the
+ * transaction. Restricted to these two on purpose: a callback passed to anything
+ * else (`register(cb)`, `on('x', cb)`, `describe(cb)`) may be stored and run
+ * later, and reading it would report deferred work that never touches the
+ * transaction's budget. Only the CONCISE-body form needs reading here: the
+ * block-bodied `ids.map(async (i) => { await bust(i); })` is already reported by
+ * the function-stack walk, so reading it here too would report it twice.
+ */
+const EAGER_ITERATION_METHODS = new Set(['map', 'flatMap']);
 
 /** Walk a member chain to its root object identifier name (e.g. tx.user.x -> "tx"). */
 function rootObjectName(node) {
@@ -111,12 +193,74 @@ function calleeName(callExpr) {
   return null;
 }
 
+/** `Promise.all(...)` / `.allSettled` / `.race` / `.any`. */
+function isPromiseCombinatorCall(expr) {
+  const callee = expr.callee;
+  return (
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Promise' &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    PROMISE_COMBINATORS.has(callee.property.name)
+  );
+}
+
 /**
- * Resolve the "effective" I/O call inside an awaited expression, unwrapping
- * `.catch()/.then()/.finally()` passthroughs. Returns { name, node } or null.
+ * For a combinator argument, the expression(s) that are evaluated inside the
+ * transaction: an array literal's own elements, or an eagerly-invoked
+ * `.map`/`.flatMap` callback's concise body.
  */
-function resolveIoCall(expr, txParamNames) {
-  if (!expr || expr.type !== 'CallExpression') return null;
+function combinatorOperands(arg) {
+  if (!arg) return [];
+  if (arg.type === 'ArrayExpression') {
+    // Returned whole. A hole (`[, x]`) is null and a `...spread` is a
+    // SpreadElement — neither is a CallExpression, so `collectIoCalls` drops both
+    // on its own; filtering them here would be an unkillable no-op. The spread's
+    // own array stays unresolvable (KNOWN GAPS), but its SIBLINGS are read.
+    return arg.elements;
+  }
+  if (
+    arg.type === 'CallExpression' &&
+    arg.callee.type === 'MemberExpression' &&
+    arg.callee.property &&
+    arg.callee.property.type === 'Identifier' &&
+    EAGER_ITERATION_METHODS.has(arg.callee.property.name)
+  ) {
+    // The callback's BODY, whatever it is. A CONCISE body is an expression, so an
+    // I/O call there is read. A BLOCK body is a BlockStatement and a non-function
+    // argument has no `body` at all — `collectIoCalls` drops both, which is not an
+    // accident: the block-bodied form's `await` is already reported by the
+    // function-stack walk, and descending into it here would report the same call
+    // TWICE. (An earlier draft filtered these out explicitly; that filter could not
+    // be killed by any mutation, because it only ever removed nodes
+    // `collectIoCalls` was going to reject anyway.)
+    return (arg.arguments || []).map((cb) => cb.body);
+  }
+  return [];
+}
+
+/**
+ * Collect every I/O call an awaited expression puts on the transaction's clock,
+ * unwrapping `.catch()/.then()/.finally()` passthroughs and descending through
+ * `Promise.all([...])`-style combinators. Appends `{ name, node }` to `out`.
+ *
+ * Unbounded on purpose. Every recursive step moves STRICTLY to a child node
+ * (`expr.callee.object`, or an operand of `expr`), and a parsed ESLint AST is
+ * finite and acyclic, so the recursion terminates at the tree's own depth — the
+ * `walkSkippingFunctions` helper further down this file recurses the same way. A
+ * draft carried a `depth > 8` cut-off with a comment about self-referential
+ * sources blowing the stack; nothing can produce that input, and removing it,
+ * loosening it to 1000, and dropping its increment on the passthrough branch all
+ * survived the rule's 54-test suite. Only tightening it to 1 was caught, i.e. it
+ * only ever measured itself. It went the way of the two other guards this rule
+ * shed for the same reason — a guard nothing can kill is not protection, it is a
+ * comment claiming protection.
+ */
+function collectIoCalls(expr, txParamNames, out) {
+  if (!expr || expr.type !== 'CallExpression') return out;
   const name = calleeName(expr);
 
   // Unwrap promise passthroughs: await foo().catch(...) -> inspect foo()
@@ -126,15 +270,26 @@ function resolveIoCall(expr, txParamNames) {
     expr.callee.type === 'MemberExpression' &&
     expr.callee.object
   ) {
-    return resolveIoCall(expr.callee.object, txParamNames);
+    return collectIoCalls(expr.callee.object, txParamNames, out);
+  }
+
+  // `await Promise.all([bust(id), refresh(id)])` — the calls are arguments, not
+  // the awaited expression, but every one of them runs on the txn's budget.
+  if (isPromiseCombinatorCall(expr)) {
+    for (const arg of expr.arguments || []) {
+      for (const operand of combinatorOperands(arg)) {
+        collectIoCalls(operand, txParamNames, out);
+      }
+    }
+    return out;
   }
 
   // Allow calls on the transaction client itself: tx.*(...), tx.$queryRaw`...`
   const root = rootObjectName(expr.callee);
-  if (root && txParamNames.has(root)) return null;
+  if (root && txParamNames.has(root)) return out;
 
-  if (name && IO_CALL_NAMES.has(name)) return { name, node: expr };
-  return null;
+  if (name && IO_CALL_NAMES.has(name)) out.push({ name, node: expr });
+  return out;
 }
 
 const noIoInTransaction = {
@@ -232,8 +387,9 @@ const noIoInTransaction = {
       AwaitExpression(node) {
         if (txStack.length === 0) return;
         const txParamNames = txStack[txStack.length - 1];
-        const io = resolveIoCall(node.argument, txParamNames);
-        if (io) {
+        // One await can carry several I/O calls (`Promise.all([a(), b()])`), and
+        // each is a separate thing to move out — report them individually.
+        for (const io of collectIoCalls(node.argument, txParamNames, [])) {
           context.report({ node: io.node, messageId: 'ioInTx', data: { name: io.name } });
         }
       },
@@ -392,6 +548,34 @@ function isImportActualCallee(callee) {
     callee.property &&
     callee.property.type === 'Identifier' &&
     callee.property.name === 'importActual'
+  );
+}
+
+/**
+ * Is this CallExpression `Object.assign(...)`?
+ *
+ * Shared by the two factory analyzers below, which both have to reason about it
+ * for opposite reasons: `createOriginalAnalyzer` because ONE original-bearing
+ * argument preserves the module's exports, `createLiteralTrpcAnalyzer` because
+ * ONE hand-written-literal argument makes the result an enumeration. Extracted
+ * rather than open-coded twice — a predicate about AST shape duplicated per
+ * call site is the shape that ends up wrong at all but one of them.
+ *
+ * Matched by NAME, like every other callee check in this file. A local shadow
+ * named `Object` is not chased.
+ */
+function isObjectAssignCall(node) {
+  if (!node || node.type !== 'CallExpression') return false;
+  const callee = node.callee;
+  return !!(
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Object' &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'assign'
   );
 }
 
@@ -639,23 +823,14 @@ function createOriginalAnalyzer(factory, targetCanonical, filename) {
           if (isOriginalCall(expr)) return true;
           // `Object.assign(target, ...sources)` — every source's own enumerable
           // keys land on the result, so one original-bearing argument is enough.
-          const callee = expr.callee;
-          if (
-            callee.type === 'MemberExpression' &&
-            callee.object &&
-            callee.object.type === 'Identifier' &&
-            callee.object.name === 'Object' &&
-            callee.property &&
-            callee.property.type === 'Identifier' &&
-            callee.property.name === 'assign'
-          ) {
-            // A `...sources` argument needs no special case: `SpreadElement`
-            // is not an expression type this analysis accepts, so it falls
-            // through to `false` on its own. (An explicit exclusion here was
-            // redundant — no input could distinguish it.)
-            return (expr.arguments || []).some((arg) => isOriginalPreserving(arg));
-          }
-          return false;
+          //
+          // A `...sources` argument needs no special case: `SpreadElement` is
+          // not an expression type this analysis accepts, so it falls through to
+          // `false` on its own. (An explicit exclusion here was redundant — no
+          // input could distinguish it.)
+          return isObjectAssignCall(expr)
+            ? (expr.arguments || []).some((arg) => isOriginalPreserving(arg))
+            : false;
         }
 
         case 'ObjectExpression':
@@ -800,6 +975,465 @@ const noWholesaleModuleMock = {
           messageId: wholesale ? 'wholesaleMock' : 'unprovableMock',
           data: { module: specifier, shape: unprovable || 'ObjectExpression' },
         });
+      },
+    };
+  },
+};
+
+/**
+ * no-hand-enumerated-trpc-mock
+ *
+ * Flags a `vi.mock('~/utils/trpc', …)` whose `trpc` value is a hand-written
+ * OBJECT LITERAL instead of the Proxy-shaped stub `makeTrpcProxy` from
+ * test/trpcProxyStub.ts.
+ *
+ * ---------------------------------------------------------------------------
+ * Why this is a SIBLING of no-wholesale-module-mock and not an extension of it
+ * ---------------------------------------------------------------------------
+ *
+ * They guard two different surfaces, one level apart, and the distinction is the
+ * whole reason this rule has to exist separately:
+ *
+ *   no-wholesale-module-mock  -> the MODULE's export surface. Does the factory
+ *     spread the real module (`...(await importOriginal())`)? If not, an export
+ *     the factory omits is `undefined` for every importer in the test's module
+ *     graph, and the whole test FILE fails to LOAD: 0 tests collected, nothing
+ *     red.
+ *   this rule                 -> the `trpc` CLIENT's procedure surface, INSIDE
+ *     the object the factory returns. A correctly-spread factory still pins
+ *     `trpc` to the procedures the author happened to need, so a newly-added
+ *     query is `undefined.useQuery`, the component throws during RENDER, and the
+ *     test fails as a locator timeout naming the control it was reaching for.
+ *
+ * A mock can be perfect by the first rule and broken by this one — which is
+ * exactly what #4147 was, and why the issue (#4178) says the existing rule
+ * "has no view" of it. The two have different failure signatures, different
+ * fixes (spread the original vs. call `makeTrpcProxy`), and must be
+ * independently disable-able: a file that legitimately silences one of the
+ * sibling's documented false positives must still be covered by this check, and
+ * vice versa. Folding this into the sibling would also make a rule whose
+ * `modules` option is generic across five modules behave differently depending
+ * on WHICH module matched, and would put two unrelated remedies in one message.
+ *
+ * ---------------------------------------------------------------------------
+ * The failure mode, measured
+ * ---------------------------------------------------------------------------
+ *
+ * test/trpcProxyStub.ts opens with "A HAND-ENUMERATED `trpc` MOCK HAS NOW COST
+ * THIS REPO FOUR TIMES, AND THE FAILURE NEVER NAMES ITSELF", and lists the four.
+ * The reason it never names itself: the test does not fail on the missing
+ * procedure, it fails on `Cannot find element with locator: …`, which reads as
+ * "the feature is broken". #4147 took a three-way tree comparison to diagnose,
+ * and #4168 repaired that instance by adding the missing procedure to the mock —
+ * fixing the instance and not the class.
+ *
+ * A per-file comment was tried and did NOT work: the drawer test carried an
+ * explicit written rule saying to convert to a proxy if a fourth procedure was
+ * ever needed, and when `revokeScopes` became exactly that fourth procedure, the
+ * same session that wrote the rule added two more literals instead. Prose in a
+ * fixture cannot make the next author convert. That is the argument for a lint
+ * rule rather than another sentence.
+ *
+ * A runtime Proxy DEFAULT for every component test was measured and rejected
+ * before this rule was written: across the full component tier (296 files /
+ * 3279 tests, count asserted per run) a benign default produced 0 newly-failing,
+ * 0 newly-passing and 0 unstubbed procedures hit, so it buys nothing today —
+ * while making ~2058 tests assertable-through-a-default, which trpcProxyStub.ts
+ * already documents two silent vacuity traps for ("the defaults exist to stop a
+ * render crashing, never to be measured"). The gap was enforcement, not runtime
+ * behaviour. See #4178 for the numbers and the controls.
+ *
+ * The fix. 🔴 Note the RELATIVE specifier: `test/` sits outside `src/`, and the
+ * `~` alias points at `src/` only (tsconfig.json `paths`, and the single `~`
+ * alias in vitest.config.mts), so there is no aliased spelling of this import.
+ * All seven in-tree adopters use a relative path; the depth depends on your own
+ * file's location, and the one below is correct from `src/components/<Area>/`:
+ *
+ *   import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+ *
+ *   vi.mock('~/utils/trpc', async (importOriginal) => ({
+ *     ...(await importOriginal<typeof TrpcModule>()),
+ *     trpc: makeTrpcProxy({ 'blocks.listMyScopeGrants': { useQuery: mySpy } }),
+ *   }));
+ *
+ * Any path the test does not name answers with an inert hook instead of
+ * `undefined`, so a newly-added query degrades to "no data" and the component
+ * still renders. Canonical in-repo example:
+ * src/components/Apps/ScopeRevoke.browser.test.tsx
+ *
+ * ---------------------------------------------------------------------------
+ * What counts as Proxy-backed, and why the check reports ONLY a literal
+ * ---------------------------------------------------------------------------
+ *
+ * The ONLY thing reported is a value that resolves to an OBJECT LITERAL. There
+ * is no allowlist of approved shapes: `makeTrpcProxy(…)`, `new Proxy(…)` and
+ * every other call are accepted by FALLING THROUGH, not by being matched. Said
+ * plainly so the next reader does not go looking for a `makeTrpcProxy` check
+ * that is not there — and so nobody "tightens" the rule into one without
+ * re-reading the census below.
+ *
+ * Resolution does walk a few hops to find the literal: through `await`, through
+ * the factory's own `const`/assignment bindings (`const root = new Proxy(…);
+ * return { ...actual, trpc: root }` — the shape 8 files in the tree use), and
+ * through either branch of a conditional or logical expression.
+ *
+ * Reporting only the literal is a MEASURED decision, not a conservative default.
+ * A census of all 220 `vi.mock('~/utils/trpc', <inline factory>)` calls in `src/`
+ * found the `trpc` value is one of exactly three shapes — 201 object literals, 8
+ * `new Proxy`, 7 `makeTrpcProxy` — plus 4 factories that override no `trpc` key
+ * at all. There is no fourth shape to decide about, so reporting an unresolvable
+ * value (`trpc: buildTrpc()`, an import from another file) would add zero
+ * instances and a real false-positive surface. The deliberate consequence is a
+ * bypass: moving the literal behind a helper call silences this rule. Do not
+ * reach for it — use the disable comment below, which is greppable and carries
+ * your reason. Revisit if a fourth shape appears.
+ *
+ * ⚠️ #4178 states 204 hand-written literals, and BOTH numbers are right — they
+ * partition differently, so do not read the gap as this rule under-reporting by
+ * three. That figure came from a grep classifier (files calling
+ * `vi.mock('~/utils/trpc', …)`, minus files containing `makeTrpcProxy|new Proxy`
+ * anywhere). The difference is exactly `204 − 5 + 2`:
+ *   −4  factories that override no `trpc` key (they mock `trpcVanilla` or another
+ *       export), so there is no literal to flag;
+ *   −1  src/server/services/__tests__/no-wholesale-module-mock.test.ts, where the
+ *       `vi.mock('~/utils/trpc', …)` occurrences are fixture STRINGS inside
+ *       template literals rather than real calls — the grep counts them, an AST
+ *       walk does not;
+ *   +2  the two partially-proxied router maps named below, which the grep called
+ *       Proxy-backed and which this rule correctly reports.
+ *
+ * 🔴 A literal is reported even when its VALUES are proxies. `trpc: { cosmetic:
+ * new Proxy(…) }` protects the procedures under `cosmetic` and leaves the ROUTER
+ * level hand-enumerated, so the next component that reads `trpc.user.getById`
+ * crashes exactly as before. Two files in the tree have this shape and both are
+ * reported; `src/components/Sticker/__tests__/sticker-tray-search-sort.test.ts`
+ * says so in its own docblock ("it only NAMES the `cosmetic.*` ones; a query
+ * under another router still reds, as an opaque undefined-property error"), which
+ * is the report being right rather than noisy. Spreading a Proxy into a literal
+ * does not help either: a spread copies own enumerable keys, and `new Proxy({},
+ * …)` has none — the trap is lost, so the result really is an enumeration.
+ *
+ * Known gaps (deliberate). None has an instance in the tree today, and each is a
+ * SILENT pass rather than a report, so they are listed to be greppable rather
+ * than discovered by whoever next trips one:
+ *   - a factory passed by reference (`vi.mock(mod, factoryFn)`) is not analysed;
+ *   - a `trpc` value this rule cannot resolve to a literal (above) — including
+ *     these spellings, all measured at 0 reports:
+ *       `const { trpc: t } = vi.hoisted(() => ({ trpc: { … } })); … trpc: t`
+ *         (the idiomatic vitest shape, and the sibling names it as a gap too),
+ *       `const stubs = { trpc: { … } }; … trpc: stubs.trpc`  (member expression),
+ *       `const [stub] = [{ … }]; … trpc: stub`               (array destructure),
+ *       `get trpc() { return { … } }`  — the key IS read, but the property value
+ *         is a FunctionExpression, so nothing resolves to a literal;
+ *   - `makeTrpcProxy` is not matched at all: any non-literal is accepted by
+ *     falling through, so a local helper of that name is accepted too;
+ *   - only files ESLint already covers are seen at all, and `vi.mock` only
+ *     appears in test files, so no `overrides` entry is needed to scope it.
+ *
+ * ---------------------------------------------------------------------------
+ * Blast radius on the existing tree
+ * ---------------------------------------------------------------------------
+ *
+ * 201 files report today. That is NOT a permanently-red gate, and the reason is
+ * the shape of this repo's lint lane rather than this rule's severity: the only
+ * BLOCKING ESLint step is "ESLint (added files)" in .github/workflows/lint.yml,
+ * which lints `--diff-filter=A` paths only. The modified-file step is
+ * `continue-on-error: true`. So a legacy file reports as a PR annotation when
+ * someone touches it, and blocks nothing; a NEWLY ADDED test file with a
+ * hand-written literal is blocked, which is the authoring path this rule exists
+ * to close. No full-repo lint runs in CI in either lane (Actions or Tekton).
+ *
+ * A developer running `pnpm lint` / `pnpm eslint` locally DOES lint all of
+ * `src/` and will see those 201. They are pre-existing and are deliberately not
+ * migrated here — migration happens opportunistically when someone touches a
+ * file, which is a one-line change per file at that point.
+ *
+ * Intentional exceptions should use:
+ *   // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- <reason>
+ */
+const TRPC_MOCK_MODULE = '~/utils/trpc';
+/** The export inside that module whose procedure surface this rule guards. */
+const TRPC_CLIENT_EXPORT = 'trpc';
+
+/**
+ * Read a property's key as a string when it can be named STATICALLY.
+ *
+ * `{ trpc: … }`, `{ 'trpc': … }` and `{ ['trpc']: … }` are all the same
+ * property. The computed-with-string-literal form is included deliberately:
+ * excluding it makes `['trpc']` a one-character bypass of the whole rule.
+ *
+ * A computed key whose value is an expression (`{ [someKey]: … }`) genuinely
+ * cannot be named here, and returns null.
+ */
+function readStaticPropertyKey(property) {
+  if (property.type !== 'Property') return null;
+  const key = property.key;
+  if (!key) return null;
+  // `readModuleSpecifier` accepts an expressionless template literal for exactly
+  // this reason, and the same hazard applies to a key: without this,
+  // `{ [`trpc`]: … }` is another one-character bypass.
+  const literal = readModuleSpecifier(key);
+  if (literal !== null) return literal;
+  // A bare identifier is a key only when it is NOT computed — `{ [trpc]: … }`
+  // reads the variable `trpc`, which is not the property name `trpc`.
+  if (!property.computed && key.type === 'Identifier') return key.name;
+  return null;
+}
+
+/**
+ * Build the "does this expression resolve to a hand-written object literal?"
+ * predicate for one factory.
+ *
+ * Mirrors createOriginalAnalyzer's structure on purpose — same local-`const`
+ * tracking, same cycle guard — but asks the opposite question, so the handling
+ * of uncertainty is inverted too. The sibling must report what it cannot prove
+ * safe; this one stays quiet on what it cannot resolve (see the rule header).
+ *
+ * A name bound more than once keeps EVERY initialiser rather than being
+ * poisoned: if any of them is a literal, the literal can reach the return, and
+ * reporting it is correct. Poisoning would turn `let t = makeTrpcProxy(); t = {
+ * user: … };` into a silent pass.
+ */
+function createLiteralTrpcAnalyzer(factory) {
+  const locals = new Map();
+  if (factory.body && factory.body.type === 'BlockStatement') {
+    walkSkippingFunctions(factory.body, (n) => {
+      if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && n.init) {
+        if (!locals.has(n.id.name)) locals.set(n.id.name, []);
+        locals.get(n.id.name).push(n.init);
+      } else if (
+        n.type === 'AssignmentExpression' &&
+        n.left &&
+        n.left.type === 'Identifier' &&
+        n.right
+      ) {
+        if (!locals.has(n.left.name)) locals.set(n.left.name, []);
+        locals.get(n.left.name).push(n.right);
+      }
+    });
+  }
+
+  // `seen` is the in-progress set along the CURRENT path — the cycle guard.
+  // `memo` caches a finished verdict so a node shared by several paths is walked
+  // once.
+  //
+  // 🔴 Both are needed, and the memo is not an optimisation nit. Without it the
+  // walk is O(mᵏ): `locals` deliberately keeps EVERY initialiser of a name, and
+  // the conditional/logical arms recurse into both sides, so k chained aliases
+  // each assigned m times costs mᵏ predicate calls. Measured on a contrived
+  // 53-line factory (k=12, m=4): 1,230 ms for ONE file, with no output while it
+  // spins — a `pnpm eslint` that looks hung on a single test file is the only
+  // symptom. With the memo it is linear in the factory's node count.
+  //
+  // A verdict computed while a cycle was open is NOT cached: the cycle arm
+  // returns `false` for "unknown", and caching that could pin a node to `false`
+  // whose value another path would resolve to `true`. `cycleHit` tracks exactly
+  // that, so only cycle-free verdicts are memoised.
+  const seen = new Set();
+  const memo = new Map();
+  let cycleHit = false;
+
+  function isHandWrittenLiteral(node) {
+    const expr = unwrapExpression(node);
+    if (!expr || typeof expr.type !== 'string') return false;
+    if (memo.has(expr)) return memo.get(expr);
+    // Cycle guard: `const a = a` must terminate, not blow the stack.
+    if (seen.has(expr)) {
+      cycleHit = true;
+      return false;
+    }
+    const outerCycleHit = cycleHit;
+    cycleHit = false;
+    seen.add(expr);
+    try {
+      const verdict = classify(expr);
+      if (!cycleHit) memo.set(expr, verdict);
+      return verdict;
+    } finally {
+      seen.delete(expr);
+      cycleHit = cycleHit || outerCycleHit;
+    }
+  }
+
+  function classify(expr) {
+    {
+      switch (expr.type) {
+        case 'ObjectExpression':
+          // The reported shape. A spread inside it does not rescue it — see the
+          // header: spreading a Proxy copies own keys, and a Proxy has none.
+          return true;
+
+        case 'AwaitExpression':
+          return isHandWrittenLiteral(expr.argument);
+
+        case 'Identifier': {
+          const inits = locals.get(expr.name);
+          if (!inits) return false;
+          return inits.some((init) => isHandWrittenLiteral(init));
+        }
+
+        case 'ConditionalExpression':
+          // EITHER branch can be the value, so either being a literal is enough.
+          return isHandWrittenLiteral(expr.consequent) || isHandWrittenLiteral(expr.alternate);
+
+        case 'LogicalExpression':
+          return isHandWrittenLiteral(expr.left) || isHandWrittenLiteral(expr.right);
+
+        case 'SequenceExpression':
+          return isHandWrittenLiteral(expr.expressions[expr.expressions.length - 1]);
+
+        case 'CallExpression':
+          // `Object.assign(target, ...sources)` — the mirror of the arm the
+          // sibling analyzer already has. Every source's own enumerable keys
+          // land on the result, so ONE hand-written literal argument makes the
+          // result an enumeration. Without this, `Object.assign({}, { user: … })`
+          // is a one-word bypass of the whole rule, and `Object.assign` is the
+          // first thing an author reaches for when avoiding a spread.
+          //
+          // `.some` over EVERY argument, target included: copying a Proxy's own
+          // keys onto a plain `{}` target loses the trap entirely (a Proxy over
+          // `{}` has no own keys), so the target being a literal is the hazard
+          // too, not just a source.
+          //
+          // Deliberately not chased further: `Object.assign(makeTrpcProxy(), …)`
+          // returns the PROXY as its target and is therefore safe, but is
+          // reported here because one of its arguments is a literal. Zero
+          // instances in the tree, and it is one disable comment away — the same
+          // trade the sibling makes.
+          return isObjectAssignCall(expr)
+            ? (expr.arguments || []).some((arg) => isHandWrittenLiteral(arg))
+            : false;
+
+        default:
+          // `new Proxy(…)`, `makeTrpcProxy(…)`, any other call, a member
+          // expression, an identifier from outside the factory: not resolvable
+          // to a literal, so not reported.
+          return false;
+      }
+    }
+  }
+
+  /**
+   * Every ObjectExpression the factory's RETURN can evaluate to.
+   *
+   * 🔴 Why this exists rather than a bare `returned.type === 'ObjectExpression'`
+   * test: the resolution hops above were applied to the `trpc` PROPERTY VALUE but
+   * not to the return itself, which left three shapes escaping SILENTLY — and
+   * escaping the sibling rule too, so nothing reported them:
+   *
+   *   const mod = { ...(await importOriginal()), trpc: <literal> }; return mod;
+   *   return Object.assign({}, await importOriginal(), { trpc: <literal> });
+   *   return flag ? { ...actual, trpc: <literal> } : { ...actual, trpc: proxy };
+   *
+   * The sibling accepts all three as original-preserving (correctly — the export
+   * surface IS preserved), so the `trpc` literal inside them was unguarded. The
+   * first is the shape that matters: the sibling's own fixture table blesses
+   * `const out = { ...actual, trpc: {} }; return out;` as valid, so it is a
+   * documented-good authoring shape and an author can land there innocently.
+   *
+   * Same hops, same memo, same cycle guard — the walk is shared deliberately so
+   * the two directions cannot drift apart again.
+   */
+  function resolveReturnedObjects(node, into = [], guard = new Set()) {
+    const expr = unwrapExpression(node);
+    if (!expr || typeof expr.type !== 'string' || guard.has(expr)) return into;
+    guard.add(expr);
+    switch (expr.type) {
+      case 'ObjectExpression':
+        into.push(expr);
+        break;
+      case 'AwaitExpression':
+        resolveReturnedObjects(expr.argument, into, guard);
+        break;
+      case 'Identifier':
+        for (const init of locals.get(expr.name) || []) {
+          resolveReturnedObjects(init, into, guard);
+        }
+        break;
+      case 'ConditionalExpression':
+        resolveReturnedObjects(expr.consequent, into, guard);
+        resolveReturnedObjects(expr.alternate, into, guard);
+        break;
+      case 'LogicalExpression':
+        resolveReturnedObjects(expr.left, into, guard);
+        resolveReturnedObjects(expr.right, into, guard);
+        break;
+      case 'SequenceExpression':
+        resolveReturnedObjects(expr.expressions[expr.expressions.length - 1], into, guard);
+        break;
+      case 'CallExpression':
+        if (isObjectAssignCall(expr)) {
+          for (const arg of expr.arguments || []) resolveReturnedObjects(arg, into, guard);
+        }
+        break;
+      default:
+        break;
+    }
+    return into;
+  }
+
+  return { isHandWrittenLiteral, resolveReturnedObjects };
+}
+
+const noHandEnumeratedTrpcMock = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        "Require the `trpc` value in a vi.mock('~/utils/trpc') factory to be the Proxy-shaped makeTrpcProxy stub rather than a hand-written object literal — a literal answers `undefined` for every procedure nobody enumerated, so a newly-added query throws during render and the test fails as a locator timeout that never names the missing procedure.",
+      recommended: true,
+    },
+    schema: [],
+    messages: {
+      handEnumeratedTrpcMock:
+        "Hand-enumerated `trpc` mock. This object literal answers `undefined` for every procedure it does not list, so the day the component under test gains a query the read becomes `undefined.useQuery` and the component throws. In a browser/DOM suite that surfaces as every test in the file failing on `Cannot find element with locator: …` — naming the control it was reaching for, never the missing procedure; in a node-mode unit test you at least get the `TypeError: Cannot read properties of undefined (reading 'useQuery')`. That has cost this repo four times and once took a three-way tree comparison to diagnose. Use the Proxy-shaped stub instead, so an un-enumerated path answers with an inert hook: import `makeTrpcProxy` from `test/trpcProxyStub` — there is NO `~` alias for `test/`, so use a path relative to your own file, e.g. `import { makeTrpcProxy } from '../../../test/trpcProxyStub';` from `src/components/<Area>/` — then `trpc: makeTrpcProxy({ '<router>.<procedure>': { useQuery: mySpy } })`, naming only the procedures this test actually measures. 🔴 Never assert through the defaults (see the two silent vacuity traps in test/trpcProxyStub.ts). A direct `new Proxy(...)` is accepted too. Canonical example: src/components/Apps/ScopeRevoke.browser.test.tsx. If this literal is deliberate, silence it explicitly rather than reshaping it: `// eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- <reason>`.",
+    },
+  },
+  create(context) {
+    const filename = (context.filename || (context.getFilename && context.getFilename())) ?? null;
+    const target = canonicalModulePath(TRPC_MOCK_MODULE, filename);
+
+    return {
+      CallExpression(node) {
+        if (!isViMockCall(node)) return;
+
+        const [moduleArg, factory] = node.arguments;
+        const specifier = readModuleSpecifier(moduleArg);
+        if (!target || canonicalModulePath(specifier, filename) !== target) return;
+
+        // Only an inline function factory is analysable — same scope as the
+        // sibling rule, for the same reasons (automock and `{ spy: true }` keep
+        // the real client; a factory by reference may be defined anywhere).
+        if (!factory) return;
+        if (factory.type !== 'ArrowFunctionExpression' && factory.type !== 'FunctionExpression') {
+          return;
+        }
+
+        const { isHandWrittenLiteral, resolveReturnedObjects } = createLiteralTrpcAnalyzer(factory);
+
+        // One `trpc` property can be reachable from several returns (`if (flag)
+        // return mod; return mod;`). Report the PROPERTY once — the author has one
+        // edit to make, and two annotations on one line reads as a rule bug.
+        const reported = new Set();
+
+        for (const returned of collectFactoryReturns(factory)) {
+          if (!returned) continue;
+          for (const shape of resolveReturnedObjects(returned)) {
+            for (const property of shape.properties) {
+              if (readStaticPropertyKey(property) !== TRPC_CLIENT_EXPORT) continue;
+              if (!isHandWrittenLiteral(property.value)) continue;
+              if (reported.has(property)) continue;
+              reported.add(property);
+              // Report the property, not the whole `vi.mock` call: the literal is
+              // what has to change, and on a 200-line factory the call site's
+              // line is nowhere near it.
+              context.report({
+                node: property,
+                messageId: 'handEnumeratedTrpcMock',
+              });
+            }
+          }
+        }
       },
     };
   },
@@ -1416,9 +2050,124 @@ const noUnboundedPagingFake = {
   },
 };
 
+/**
+ * no-ssr-divergent-media-query
+ *
+ * Flags the hooks that answer a VIEWPORT/CONTAINER question during render and have
+ * no server answer, on surfaces where the server render must match the first client
+ * paint. It is deliberately NOT on by default: `useIsMobile` alone appears in 83
+ * files, and most of them are legitimate. Turn it on per-surface from `.eslintrc.js`
+ * `overrides` — the same shape `no-module-scope-cache` uses.
+ *
+ * WHY THESE FOUR. Each returns a value on the client that it cannot return on the
+ * server, so branching a RENDER on one produces markup that differs between the two
+ * and React reconciles it away (or bails out of hydration entirely):
+ *
+ *   useMediaQuery            no `window.matchMedia` on the server
+ *   useIsMobile              wraps the same question
+ *   useContainerQuery        needs a measured container
+ *   useContainerSmallerThan  wraps `useContainerQuery`; returns FALSE while
+ *                            `inlineSize === 0`, which is what the server always sees
+ *
+ * 🔴 `useContainerSmallerThan` IS THE ONE THAT MATTERS AND IT IS EASY TO OMIT. It is
+ * what `CollectionsLayout` — the in-repo rail precedent — uses for its own rail/drawer
+ * swap (`useContainerSmallerThan('sm')`). A rule banning the other three while the
+ * precedent everyone copies uses the fourth is an allowlist wearing a class ban's name.
+ *
+ * WHAT IT COVERS
+ *   - a direct call: `useMediaQuery('(min-width: 1300px)')`
+ *   - a member call: `hooks.useIsMobile()`
+ *   - an ALIASED import: `import { useMediaQuery as useMQ } from '@mantine/hooks'`
+ *     then `useMQ(...)` — the local name is resolved back through the import.
+ *
+ * WHAT IT DOES NOT COVER, stated rather than left to be discovered:
+ *   - a banned hook RE-EXPORTED from an intermediate module under a new name. The rule
+ *     is single-file (ESLint rules see one module at a time) and cannot follow that.
+ *   - widening the set FROM `.eslintrc.js`. There was an `extraHooks` option for that and
+ *     it is DELETED, unconfigured, having never named a hook anywhere. 🔴 Not merely
+ *     unused — the wrong SHAPE for the only job it could have had. Whether a hook has a
+ *     server answer is a property of the HOOK, not of the surface reading it, so a new one
+ *     belongs in `SSR_DIVERGENT_HOOKS` below; and because the rule is off by default and
+ *     switched on per-surface, adding a name there costs nothing anywhere it is not
+ *     enabled. A per-surface widener could therefore only ever express "this hook is
+ *     SSR-divergent here and safe elsewhere", which is not a thing that can be true.
+ *   - a call made through a value the rule cannot name statically — stored in an
+ *     object, passed as a prop, or assembled at runtime.
+ *   - the raw `window.matchMedia` API itself. That is deliberate: its UNGUARDED form
+ *     already throws `ReferenceError: window is not defined` under
+ *     `renderToStaticMarkup`, which `src/components/Apps/__tests__/appsPageLayoutRender.test.ts`
+ *     exercises (measured: an unguarded render-body read reds all 17 of its tests), and
+ *     its GUARDED form is a legitimate pattern in an effect.
+ */
+const SSR_DIVERGENT_HOOKS = new Set([
+  'useMediaQuery',
+  'useIsMobile',
+  'useContainerQuery',
+  'useContainerSmallerThan',
+]);
+
+const noSsrDivergentMediaQuery = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Disallow viewport/container hooks that have no server answer on surfaces where the server render must match the first client paint. Off by default; enable per-surface via .eslintrc overrides.',
+      recommended: false,
+    },
+    // No options. `additionalProperties: false` on an empty property set makes any option
+    // object a CONFIG error rather than something silently ignored — which is what the
+    // deleted `extraHooks` would otherwise become for anyone who still passes it.
+    schema: [{ type: 'object', properties: {}, additionalProperties: false }],
+    messages: {
+      ssrDivergentMediaQuery:
+        "`{{spelled}}` has NO SERVER ANSWER, so branching a render on it makes the server markup differ from the first client paint — a hydration mismatch on a surface that is configured not to tolerate one. ({{spelled}} resolves to `{{name}}`.) The rail/drawer swap on `/apps/*` is a CSS media query on purpose, precisely so React never has to know the breakpoint. If you genuinely need the breakpoint in JS, read it in a `useEffect` that only CLOSES something — an effect runs after paint and cannot decide what was rendered. If this call really is safe here, say why: // eslint-disable-next-line local-rules/no-ssr-divergent-media-query -- <reason>",
+    },
+  },
+  create(context) {
+    const banned = SSR_DIVERGENT_HOOKS;
+    /** local name -> the banned name it was imported as. */
+    const aliases = new Map();
+
+    return {
+      ImportDeclaration(node) {
+        for (const spec of node.specifiers) {
+          if (
+            spec.type === 'ImportSpecifier' &&
+            spec.imported &&
+            spec.imported.type === 'Identifier' &&
+            banned.has(spec.imported.name)
+          ) {
+            aliases.set(spec.local.name, spec.imported.name);
+          }
+        }
+      },
+      CallExpression(node) {
+        const callee = node.callee;
+        let spelled;
+        if (callee.type === 'Identifier') spelled = callee.name;
+        else if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+          spelled = callee.property.name;
+        }
+        if (!spelled) return;
+
+        const name = banned.has(spelled) ? spelled : aliases.get(spelled);
+        if (!name) return;
+
+        context.report({
+          node,
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name, spelled },
+        });
+      },
+    };
+  },
+};
+
 module.exports = {
+  'no-hand-enumerated-trpc-mock': noHandEnumeratedTrpcMock,
   'no-io-in-transaction': noIoInTransaction,
   'no-module-scope-cache': noModuleScopeCache,
+  'no-ssr-divergent-media-query': noSsrDivergentMediaQuery,
   'no-unbounded-paging-fake': noUnboundedPagingFake,
   'no-unloadable-image-fixture': noUnloadableImageFixture,
   'no-wholesale-module-mock': noWholesaleModuleMock,

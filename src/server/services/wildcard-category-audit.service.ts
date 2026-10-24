@@ -1,4 +1,4 @@
-import type { XGuardModerationOutput } from '@civitai/client';
+import type { XGuardModerationOutput } from '@civitai/orchestration-client';
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -553,9 +553,7 @@ export async function recomputeWildcardSetAuditStatus(setId: number): Promise<vo
 
   // Phase 2: `WildcardSet.usable = true` iff at least one Clean category
   // exists. Drives the canGenerate gate without sub-querying categories.
-  const nextUsable = categories.some(
-    (c) => c.auditStatus === WildcardSetCategoryAuditStatus.Clean
-  );
+  const nextUsable = categories.some((c) => c.auditStatus === WildcardSetCategoryAuditStatus.Clean);
 
   await dbWrite.wildcardSet.update({
     where: { id: setId },

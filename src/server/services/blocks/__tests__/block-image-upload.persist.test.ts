@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { validateListingImage } from '~/server/schema/blocks/app-listing.schema';
 import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import type * as S3Utils from '~/utils/s3-utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `blockImageUpload.persist` — DECLARED-vs-ACTUAL geometry (issue #3770).
@@ -24,8 +25,7 @@ const { mockCreateImage } = vi.hoisted(() => ({
 }));
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
@@ -245,6 +245,46 @@ describe('persistBlockUploadImage (measures the uploaded bytes)', () => {
     expect(arg.skipIngestion).toBeFalsy();
     expect('skipIngestion' in arg && arg.skipIngestion === true).toBe(false);
     expect(arg).toMatchObject({ url: KEY, type: 'image', name: 'cover.png' });
+  });
+});
+
+describe('persistBlockUploadImage provenance stamp (OPEN_IMAGE_UPLOAD bytes)', () => {
+  // `createImage` is mocked here, so these pin only the ARGUMENTS. That the stamp survives the
+  // real `createImage` (which drops any provenance key found in `metadata`) is proven in
+  // `block-image-upload.provenance-stamp.test.ts`.
+  const createArg = () =>
+    mockCreateImage.mock.calls[0][0] as {
+      metadata: Record<string, unknown>;
+      blockProvenance?: { key: string; appId: string } | null;
+    };
+
+  it('an app bytes upload passes the UPLOADED key as blockProvenance, never the published one', async () => {
+    storeObject(await flatPng(800, 450));
+    const { persistBlockUploadImage } = await import('../block-image-upload.service');
+
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      uploadedByAppId: 'appblk-alpha',
+    });
+
+    const arg = createArg();
+    // The published key would open the CROSS-USER gated read to this upload.
+    expect(arg.blockProvenance).toEqual({ key: 'blockUploadedAppId', appId: 'appblk-alpha' });
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
+    expect(arg.metadata.size).toEqual(expect.any(Number));
+  });
+
+  it('a viewer-picked upload carries no provenance stamp at all', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persist({ url: KEY });
+
+    const arg = createArg();
+    expect(arg.blockProvenance ?? null).toBeNull();
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
   });
 });
 

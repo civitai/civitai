@@ -10,22 +10,25 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    userCosmeticShopItemWishlist: { findMany: mocks.wishlistFindMany },
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
-  },
-  dbWrite: {
-    userCosmeticShopItemWishlist: {
-      findUnique: mocks.wishlistFindUnique,
-      createMany: mocks.wishlistCreateMany,
-      deleteMany: mocks.wishlistDeleteMany,
-    },
-  },
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 
 import { getWishlistedShopItemIds, toggleWishlistShopItem } from '../cosmetic-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.userCosmeticShopItemWishlist.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.wishlistFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemWishlist.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.wishlistFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemWishlist.createMany.mockImplementation((...args: unknown[]) =>
+  (mocks.wishlistCreateMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemWishlist.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.wishlistDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
 
 describe('toggleWishlistShopItem', () => {
   beforeEach(() => {

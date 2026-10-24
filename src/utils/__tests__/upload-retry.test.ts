@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { isTerminalCompleteStatus } from '~/utils/upload-retry';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  describePartFailure,
+  getPartRetryDelay,
+  isTerminalCompleteStatus,
+  RELAY_FALLBACK_MAX_BYTES,
+  resolveUploadRowStatus,
+  shouldRelayOnPartFailure,
+} from '~/utils/upload-retry';
 
 /**
  * `isTerminalCompleteStatus` is the ONE place both upload clients decide whether a
@@ -47,5 +54,360 @@ describe('isTerminalCompleteStatus', () => {
       .filter((s) => s >= 100)
       .filter(isTerminalCompleteStatus);
     expect(terminal).toEqual([409, 422]);
+  });
+});
+
+/**
+ * The backoff POLICY is only observable through the store as elapsed wall clock, so it had no
+ * cover at all: making 429 and 5xx non-retryable left every s3-upload.store test green. Pinned
+ * here, where the numbers can be read directly instead of waited for.
+ */
+describe('getPartRetryDelay', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('grows exponentially with the attempt, so a struggling backend gets backed off', () => {
+    const delays = [0, 1, 2].map((attempt) => getPartRetryDelay({ status: 503 }, attempt));
+    // ~1s, 2s, 4s, each plus up to 1s of jitter — asserted as bands, since the jitter is random.
+    expect(delays[0]).toBeGreaterThanOrEqual(1000);
+    expect(delays[0]).toBeLessThan(2000);
+    expect(delays[1]).toBeGreaterThanOrEqual(2000);
+    expect(delays[1]).toBeLessThan(3000);
+    expect(delays[2]).toBeGreaterThanOrEqual(4000);
+    expect(delays[2]).toBeLessThan(5000);
+  });
+
+  it('caps at a minute however many attempts have gone by', () => {
+    // Without a ceiling, attempt 20 is 2^20 seconds — the upload would never resume. The cap is
+    // applied to the base and the jitter is added after, so a minute is the floor of the capped
+    // value, not a hard ceiling.
+    const delay = getPartRetryDelay({ status: 503 }, 20);
+    expect(delay).toBeGreaterThanOrEqual(60_000);
+    expect(delay).toBeLessThan(61_000);
+  });
+
+  it('obeys a numeric Retry-After ahead of its own schedule', () => {
+    // The server's number is authoritative: retrying sooner than it asked is what turns a 429
+    // into a ban.
+    expect(getPartRetryDelay({ status: 429, retryAfter: '30' }, 0)).toBe(30_000);
+  });
+
+  it('caps a Retry-After the same way', () => {
+    expect(getPartRetryDelay({ status: 429, retryAfter: '3600' }, 0)).toBe(60_000);
+  });
+
+  it('reads an HTTP-date Retry-After as a delta from now', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    expect(getPartRetryDelay({ status: 429, retryAfter: 'Thu, 01 Jan 2026 00:00:20 GMT' }, 0)).toBe(
+      20_000
+    );
+  });
+
+  it('floors a Retry-After date that has already passed, rather than retrying instantly', () => {
+    // A skewed client clock can put the server's date in the past; hammering it immediately is
+    // the opposite of what the header asked for.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:01:00Z'));
+    expect(getPartRetryDelay({ status: 429, retryAfter: 'Thu, 01 Jan 2026 00:00:00 GMT' }, 0)).toBe(
+      1000
+    );
+  });
+
+  it('falls back to the schedule when Retry-After is unparseable', () => {
+    const delay = getPartRetryDelay({ status: 429, retryAfter: 'soon' }, 0);
+    expect(delay).toBeGreaterThanOrEqual(1000);
+    expect(delay).toBeLessThan(2000);
+  });
+});
+
+/**
+ * `describePartFailure` turns the fatal `UploadPartError` into the bounded object that
+ * rides in the `/api/upload/abort` body, so the server-side `s3-upload-abort` event can
+ * say WHY the client gave up — the field the 2026-09 image-upload investigation found
+ * missing ("the abort row carries no reason field"). Tested here rather than only
+ * through a client for the same reason as `isTerminalCompleteStatus` above: both upload
+ * clients call it, and one of them has no test file of its own.
+ */
+describe('describePartFailure', () => {
+  it('maps nothing to undefined', () => {
+    expect(describePartFailure(null)).toBeUndefined();
+    expect(describePartFailure(undefined)).toBeUndefined();
+  });
+
+  it('maps a user cancel to client-aborted, ahead of every other reading', () => {
+    // A cancel trips the workers, which can produce BOTH aborted and (from a racing
+    // loadend) a status — the cancel must win, or user churn reads as upload failures.
+    expect(describePartFailure({ status: 0, aborted: true })).toEqual({
+      kind: 'client-aborted',
+    });
+  });
+
+  it('maps a network error to network-error with its part number', () => {
+    expect(describePartFailure({ status: null, networkError: true, partNumber: 3 })).toEqual({
+      kind: 'network-error',
+      partNumber: 3,
+    });
+  });
+
+  it('maps a stalled part to stalled, ahead of the networkError it also carries', () => {
+    // 🔴 THE ORDER IS THE TEST. A stall sets `networkError` as well — that is what gets it past
+    // `shouldRelayOnPartFailure` — so a `networkError` check placed first swallows it and the
+    // two populations share one row. Checked after `aborted`, which a cancel must still win.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        partNumber: 4,
+      })
+    ).toEqual({ kind: 'stalled', partNumber: 4 });
+  });
+
+  it('omits the part number on a stall the caller could not attribute', () => {
+    expect(describePartFailure({ status: null, networkError: true, stalled: true })).toEqual({
+      kind: 'stalled',
+    });
+  });
+
+  it.each([
+    ['stalled', 'the transfer went quiet mid-body', false],
+    ['response-stalled', 'the host took every byte and never answered', true],
+  ])('maps a stall to %s when %s', (kind, _why, responsePhase) => {
+    // 🔴 ONE PRODUCER EACH, ASSERTED AS A PAIR. The two go quiet in different places and call for
+    // different fixes, and the only thing separating them is this flag — so a single-arm case
+    // would pass against a mapping hardwired to either kind.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        responsePhase,
+        partNumber: 7,
+      })
+    ).toEqual({ kind, partNumber: 7 });
+  });
+
+  it('maps an unattributed response-phase stall to response-stalled without a part number', () => {
+    expect(
+      describePartFailure({ status: null, networkError: true, stalled: true, responsePhase: true })
+    ).toEqual({ kind: 'response-stalled' });
+  });
+
+  it('maps an HTTP status to part-status with its part number', () => {
+    expect(describePartFailure({ status: 400, partNumber: 2 })).toEqual({
+      kind: 'part-status',
+      partNumber: 2,
+      status: 400,
+    });
+  });
+
+  it('omits the part number when the caller had none', () => {
+    expect(describePartFailure({ status: null, networkError: true })).toEqual({
+      kind: 'network-error',
+    });
+  });
+
+  it('maps an unlabelled status-less error to undefined rather than inventing a kind', () => {
+    expect(describePartFailure({ status: null })).toBeUndefined();
+  });
+});
+
+/**
+ * `shouldRelayOnPartFailure` gates the multipart upload's relay fallback: a client that
+ * cannot reach the storage host at the network layer may re-send the whole file through
+ * our own origin — the same rescue `useCFImageUpload` got in #4573, extended to the
+ * multipart path that `useMediaUpload` (the post-image flow) drives.
+ *
+ * 🔴 A status failure must NEVER relay: reaching the backend and being rejected is a
+ * real fault, and replaying the bytes through a second route would mask it. Only
+ * `networkError` — DNS, TLS, connection reset, the ERR_CONNECTION_RESET class the
+ * investigation traced — qualifies.
+ *
+ * 🔴 EVERY FIXTURE BELOW PASSES `userAborted: false`, AND THAT IS ONLY MEANINGFUL BECAUSE
+ * THE CALLER CAN NOW PRODUCE IT. The option used to be the caller's abort signal, which
+ * the caller's own teardown had always tripped by the time this gate was reached — so this
+ * suite was exercising a state production could never reach, and every case in it passed
+ * while the feature was inert. What proves the gate is REACHED at all lives at the seam,
+ * in `src/hooks/__tests__/useS3Upload.test.ts`; these pin the rules once it is.
+ */
+describe('shouldRelayOnPartFailure', () => {
+  const base = {
+    type: 'image',
+    backend: 'backblaze',
+    fileSize: 5 * 1024 * 1024,
+    userAborted: false,
+  };
+
+  it('relays a network-layer failure on the image backend', () => {
+    expect(shouldRelayOnPartFailure({ status: null, networkError: true }, base)).toBe(true);
+  });
+
+  it('relays the stall watchdog’s own error object, verbatim', () => {
+    // 🔴 THE EXACT OBJECT `useS3Upload` rejects with when the watchdog aborts a part — copied,
+    // not paraphrased. `aborted: false` is the load-bearing field: the watchdog calls
+    // `xhr.abort()`, so the abort handler could trivially record the user-cancel shape, and
+    // this predicate refuses on `err.aborted`. That one flag is the difference between a
+    // watchdog that rescues the upload and one that fires into a gate it cannot pass.
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true, aborted: false, stalled: true, partNumber: 1 },
+        base
+      )
+    ).toBe(true);
+  });
+
+  it('relays a response-phase stall too, for all that it is a distinct kind', () => {
+    // 🔴 THE KIND IS A DIAGNOSTIC, NOT A GATE. Splitting the abort stream must not narrow who
+    // gets rescued: a host that swallowed the bytes and never answered is as unreachable as one
+    // that went quiet mid-body, and both are exactly what the relay exists for.
+    expect(
+      shouldRelayOnPartFailure(
+        {
+          status: null,
+          networkError: true,
+          aborted: false,
+          stalled: true,
+          responsePhase: true,
+          partNumber: 1,
+        },
+        base
+      )
+    ).toBe(true);
+  });
+
+  it('does not relay a stall the person cancelled during', () => {
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true, aborted: false, stalled: true },
+        { ...base, userAborted: true }
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    ['', { status: null, networkError: true, aborted: true }],
+    ['', { status: 400 }],
+    ['', { status: 503 }],
+    ['', { status: null }],
+  ])('does not relay $1', (_n, err) => {
+    expect(shouldRelayOnPartFailure(err as never, base)).toBe(false);
+  });
+
+  it('does not relay when the user already cancelled', () => {
+    // ⚠ HONEST SCOPE. At the ONE production call site this combination is currently
+    // unreachable: the gate is evaluated synchronously right after the worker pool
+    // settles, and every path that sets the user flag before the fatal slot is filled
+    // ALSO fills that slot with `{ aborted: true, networkError: undefined }` — which the
+    // `!err.networkError` clause below refuses first, so neither this clause nor
+    // `err.aborted` ever executes there. Both are defence in depth, and this fixture is
+    // the only thing that exercises either. Kept because they state the rule, because
+    // `useCFImageUpload` may adopt this predicate, and because the multi-worker shape
+    // reopens the window — NOT because the production cancel path runs through them.
+    expect(
+      shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, userAborted: true })
+    ).toBe(false);
+  });
+
+  it.each(['model', 'training-images', 'default'] as const)(
+    'does not relay for type %s — the relay writes to the image bucket',
+    (type) => {
+      expect(
+        shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, type })
+      ).toBe(false);
+    }
+  );
+
+  it('does not relay for a backend the relay does not write to', () => {
+    expect(
+      shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, backend: 'b2' })
+    ).toBe(false);
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true },
+        { ...base, backend: undefined }
+      )
+    ).toBe(false);
+  });
+
+  it('relays a file exactly at the relay cap, and nothing above it', () => {
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true },
+        {
+          ...base,
+          fileSize: RELAY_FALLBACK_MAX_BYTES,
+        }
+      )
+    ).toBe(true);
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true },
+        {
+          ...base,
+          fileSize: RELAY_FALLBACK_MAX_BYTES + 1,
+        }
+      )
+    ).toBe(false);
+  });
+
+  it('the relay cap matches the route it posts to (10 MB, the Next body-truncation point)', () => {
+    expect(RELAY_FALLBACK_MAX_BYTES).toBe(10 * 1024 * 1024);
+  });
+});
+
+/**
+ * `resolveUploadRowStatus` is the OTHER predicate both upload clients need, and it
+ * was open-coded in both until it moved here. It answers one question — did the person
+ * stop this upload, or did it fail? — and getting it wrong is user-visible in both
+ * directions: a failure reported as a cancel hides a fault from whoever is counting
+ * errors, and a cancel reported as a failure puts a red badge on something the user did
+ * on purpose.
+ */
+describe('resolveUploadRowStatus', () => {
+  // THREE cases, not more. The seam tests in both clients already assert these outcomes
+  // through a real upload; what is pinned here is the one-line rule itself, at the three
+  // points that discriminate it — each kills a different mutation of
+  // `fatal.aborted || opts.userAborted`, and each is the ONLY one that kills its own.
+  //
+  // ⚠ "No fourth case is needed" is a claim about the SUITE, not this file. The realistic
+  // copy-paste mutation for this module — `!fatal.networkError || opts.userAborted`,
+  // which is the clause spelled out in `shouldRelayOnPartFailure` above — survives all
+  // three cases here and dies at the seam, in `useS3Upload.test.ts`'s
+  // "does not relay when the storage host answered with an HTTP status". Do not restore a
+  // fourth case for it: the seam owns that outcome, and duplicating it here is what this
+  // block was trimmed for.
+  //
+  // An enumerated ledger over the return values was also written and deleted: the
+  // signature is `'aborted' | 'error'`, so a third outcome is a compile error and the
+  // assertion could never go red. That is the vacuous-guard shape this whole PR is about.
+
+  it('reports a cancelled part as aborted', () => {
+    // Kills dropping `fatal.aborted` — the only case that does, since the other two have
+    // the user flag or neither.
+    expect(resolveUploadRowStatus({ status: null, aborted: true }, { userAborted: false })).toBe(
+      'aborted'
+    );
+  });
+
+  it('reports a network failure as an error', () => {
+    // 🔴 The regression, and the case that kills a predicate hardwired to 'aborted'. Both
+    // clients tear their own upload down on a fatal part failure, so a caller that passed
+    // its abort signal as `userAborted` made EVERY failed upload report as a cancel.
+    expect(
+      resolveUploadRowStatus({ status: null, networkError: true }, { userAborted: false })
+    ).toBe('error');
+  });
+
+  it('reports a cancel that raced a failure onto the fatal slot as aborted', () => {
+    // Kills dropping `opts.userAborted`. A non-retryable part failure lands on the fatal
+    // slot immediately, so a cancel in the same tick can never overwrite it — without the
+    // flag the row blames the upload for something the person did.
+    expect(resolveUploadRowStatus({ status: 400, partNumber: 2 }, { userAborted: true })).toBe(
+      'aborted'
+    );
   });
 });

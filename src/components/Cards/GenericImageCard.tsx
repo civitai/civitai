@@ -10,6 +10,27 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
+import { isImpressionEntityType } from '~/server/schema/track.schema';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+
+const isCosmeticEntity = (value?: string): value is CosmeticEntity =>
+  !!value && (Object.values(CosmeticEntity) as string[]).includes(value);
+
+/**
+ * The content this card's hat is worn on: the entity the card stands for, as getEntityCoverImage
+ * sends that entity's hat, not its cover image's. Anything that cannot wear one falls back to the image.
+ */
+export function getGenericCardWornOn(
+  imageId: number,
+  entityType?: string,
+  entityId?: number
+): EventDecorationEntity {
+  return entityId && isCosmeticEntity(entityType)
+    ? { entityType, entityId }
+    : { entityType: CosmeticEntity.Image, entityId: imageId };
+}
 
 export function GenericImageCard({
   image,
@@ -60,13 +81,24 @@ export function GenericImageCard({
 
   const isImageEntity = entityType === 'Image';
 
+  // This card is polymorphic — it renders a Model, Collection or Bounty behind a
+  // cover image as often as it renders an image. Reporting only the image would
+  // credit the cover and drop the thing the card is actually for. `entityType` is
+  // a loose string here, so it is narrowed against the tracked set rather than
+  // cast; an unrecognised value contributes nothing instead of a bad row.
+  const impressions: ImpressionTarget[] = [{ entityType: 'Image', entityId: image.id }];
+  if (entityId && isImpressionEntityType(entityType)) impressions.push({ entityType, entityId });
+
   const cardContent = (
     <FeedCard
+      impressions={impressions}
       style={{
         cursor: disabled ? 'initial' : undefined,
       }}
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
+      eventDecoration={image.eventDecoration?.data}
+      eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}
       aspectRatio="portrait"
       useCSSAspectRatio
     >

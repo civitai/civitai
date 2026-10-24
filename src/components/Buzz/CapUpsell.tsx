@@ -1,44 +1,30 @@
 import { Anchor, Button, Paper, Popover, Stack, Table, Text } from '@mantine/core';
 import type { CapTier } from '@civitai/buzz';
-import { capUpsellRows, shouldUpsellCap } from '@civitai/buzz';
+import { shouldUpsellAllowance, tierAllowanceRows } from '@civitai/buzz';
 
-// Turns a monetization cap from a dead end into an upgrade nudge, beside the input the creator is
-// pressing against. Deliberately quiet — a small link, not a banner — and absent until the value nears
-// the ceiling, or when the tier has nothing above it. `shouldUpsellCap` is shared with Creator Studio so
-// both surfaces appear at the same moment.
-//
-// `capFor` must be the SAME expression that bounds the input. Passing the function rather than a table is
-// what stops the popover quoting a number the field beside it contradicts — model type and media type are
-// already baked in by the caller.
+// Turns the monthly pricing allowance from a dead end into an upgrade nudge, beside the counter the
+// creator is pressing against. Deliberately quiet — a small link, not a banner — and absent until they
+// near their limit, or when the tier has nothing above it. `shouldUpsellAllowance` is shared with
+// Creator Studio so both surfaces appear at the same moment.
 export function CapUpsell({
-  value,
-  cap,
+  used,
+  limit,
   capTier,
-  capFor,
-  title,
-  perLabel,
+  title = 'Model versions you can monetize each month',
   expanded = false,
 }: {
-  value: number | null | undefined;
-  cap: number;
+  /** Slots spent this calendar month. */
+  used: number | null | undefined;
+  limit: number;
   capTier: CapTier;
-  capFor: (tier: CapTier) => number;
-  title: string;
-  /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
-  perLabel?: string;
-  /** Render the tiers inline rather than behind the trigger. For a creator already over their cap, who
-   * shouldn't have to click to learn what they're earning. */
+  title?: string;
+  /** Render the tiers inline rather than behind the trigger, for a creator already at their limit. */
   expanded?: boolean;
 }) {
-  if (!expanded && !shouldUpsellCap({ value, cap, tier: capTier })) return null;
+  if (!expanded && !shouldUpsellAllowance({ used, limit, tier: capTier })) return null;
 
-  const rows = capUpsellRows(capFor);
-  const fmt = (n: number) =>
-    !Number.isFinite(n)
-      ? 'Unlimited'
-      : perLabel
-      ? `${n.toLocaleString()} ⚡ / ${perLabel}`
-      : `${n.toLocaleString()} ⚡`;
+  const rows = tierAllowanceRows();
+  const fmt = (n: number | null) => (n == null ? 'Unlimited' : `${n.toLocaleString()} / month`);
 
   const body = (
     <Stack gap="xs">
@@ -64,7 +50,7 @@ export function CapUpsell({
                   fw={isCurrent ? 600 : 400}
                   c={isCurrent ? undefined : 'dimmed'}
                 >
-                  {fmt(row.cap)}
+                  {fmt(row.monthlyPrices)}
                 </Table.Td>
               </Table.Tr>
             );
@@ -95,7 +81,7 @@ export function CapUpsell({
     <Popover width={300} withArrow shadow="md" position="top-start" withinPortal>
       <Popover.Target>
         <Anchor component="button" type="button" size="xs">
-          Want to charge more?
+          Want to monetize more model versions?
         </Anchor>
       </Popover.Target>
       <Popover.Dropdown>{body}</Popover.Dropdown>

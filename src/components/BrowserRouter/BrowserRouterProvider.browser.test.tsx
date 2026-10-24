@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { BrowserRouterProvider, useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import Router from 'next/router';
+import {
+  BrowserRouterProvider,
+  setUsingNextRouter,
+  useBrowserRouter,
+} from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -25,10 +30,18 @@ import { renderWithProviders } from '../../../test/component-setup';
 // window `error` event, so an onError spy is NOT a reliable guard here.)
 
 function AsPathProbe() {
-  const { asPath } = useBrowserRouter();
-  return <div data-testid="aspath">{asPath}</div>;
+  const { asPath, query, state } = useBrowserRouter();
+  return (
+    <>
+      <div data-testid="aspath">{asPath}</div>
+      <div data-testid="imageid">{String(query.imageId)}</div>
+      <div data-testid="prev">{String(state?.prev?.asPath)}</div>
+    </>
+  );
 }
 const probeText = () => page.getByTestId('aspath').element().textContent;
+const imageIdText = () => page.getByTestId('imageid').element().textContent;
+const prevText = () => page.getByTestId('prev').element().textContent;
 
 describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari null state)', () => {
   test('a back navigation with null history.state degrades to the current location instead of crashing', async () => {
@@ -78,6 +91,166 @@ describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari n
       // handler ran and did not throw before updating).
       expect(probeText()).not.toBe('/search?query=cats');
     } finally {
+      window.history.replaceState(originalState, '');
+    }
+  });
+});
+
+// A back navigation onto `/images/[imageId]` from another dynamic route
+// (ClickUp 868kt41x7). Next owns this pop and repopulates its own `router.query`
+// with the path params of the route it just rendered — but the provider then
+// overwrote that on `routeChangeComplete` with state rebuilt in the popstate
+// handler, where `Router.pathname` was still the route being LEFT. The page,
+// which reads its id from the browser router, saw no `imageId` and rendered its
+// not-found branch; a refresh of the same URL loaded fine.
+describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
+  test("publishes Next's query for the route it just rendered", async () => {
+    const originalState = window.history.state;
+    const originalAsPath = Router.asPath;
+    const originalQuery = Router.query;
+    const on = vi.mocked(Router.events.on);
+    const passThrough = on.getMockImplementation();
+    const handlers: Array<(url: string) => void> = [];
+    on.mockImplementation(((event: string, fn: (url: string) => void) => {
+      if (event === 'routeChangeComplete') handlers.push(fn);
+      return passThrough?.(event as never, fn as never);
+    }) as typeof Router.events.on);
+
+    try {
+      renderWithProviders(
+        <BrowserRouterProvider>
+          <AsPathProbe />
+        </BrowserRouterProvider>
+      );
+
+      // Prove the popstate listener is live before the assertion that matters —
+      // it attaches in a mount effect, so a single early dispatch is lost and the
+      // test would pass against the broken code.
+      setUsingNextRouter(false);
+      const liveness = { as: '/models?sort=Newest', url: '/models?sort=Newest', state: {} };
+      window.history.replaceState(liveness, '');
+      await vi.waitFor(() => {
+        window.dispatchEvent(new PopStateEvent('popstate', { state: liveness }));
+        expect(probeText()).toBe('/models?sort=Newest');
+      });
+      expect(imageIdText()).toBe('undefined');
+
+      // The pop: leaving `/models/[id]`, landing on `/images/135356251`. Next
+      // takes this one, which is what defers the commit to `routeChangeComplete`.
+      setUsingNextRouter(true);
+      const popped = {
+        as: '/images/135356251',
+        url: '/images/135356251',
+        state: { prev: { asPath: '/models/827184' } },
+      };
+      window.history.replaceState(popped, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: popped }));
+
+      // Next finishes: it has interpolated `imageId` into its own query, and only
+      // then emits `routeChangeComplete`. Its `changeState` has already replaced
+      // `history.state` with its own shape — note there is no `state` key, so the
+      // entry's payload now exists only in the popstate snapshot.
+      window.history.replaceState(
+        { url: '/images/[imageId]', as: '/images/135356251', options: {}, __N: true, key: 'k' },
+        ''
+      );
+      Router.asPath = '/images/135356251';
+      Router.query = { imageId: '135356251' };
+      expect(handlers.length).toBeGreaterThan(0);
+      for (const handler of handlers) handler('/images/135356251');
+
+      await vi.waitFor(() => {
+        expect(probeText()).toBe('/images/135356251');
+      });
+      // The regression: this read `undefined` and `/images/[imageId]` rendered
+      // `<NotFound />`.
+      expect(imageIdText()).toBe('135356251');
+      // And the entry's payload survives, which routed dialogs are handed as props.
+      expect(prevText()).toBe('/models/827184');
+    } finally {
+      setUsingNextRouter(false);
+      Router.asPath = originalAsPath;
+      Router.query = originalQuery;
+      on.mockImplementation(passThrough ?? (() => undefined));
+      window.history.replaceState(originalState, '');
+    }
+  });
+});
+
+// After a hash-only back navigation, routed dialogs stopped opening (ClickUp
+// 868kta76n). `beforePopState` raises `usingNextRouter` for every pop it hands
+// to Next, and the flag was lowered only in the `routeChangeComplete` handler —
+// but Next's hash-only branch emits `hashChangeComplete` and returns, so the
+// flag stayed raised and the `locationchange` handler dropped every update after
+// it. Measured on a dev server: after `router.push('/images#probe')` and back, a
+// feed card changed the URL to `/images/139360504` and no dialog appeared;
+// without the pop the same click opened it every time.
+describe('BrowserRouterProvider after a hash-only navigation', () => {
+  test('keeps publishing location changes, so routed dialogs still open', async () => {
+    const originalState = window.history.state;
+    const on = vi.mocked(Router.events.on);
+    const passThrough = on.getMockImplementation();
+    const handlers: Record<string, Array<() => void>> = {};
+    on.mockImplementation(((event: string, fn: () => void) => {
+      (handlers[event] ??= []).push(fn);
+      return passThrough?.(event as never, fn as never);
+    }) as typeof Router.events.on);
+
+    try {
+      renderWithProviders(
+        <BrowserRouterProvider>
+          <AsPathProbe />
+        </BrowserRouterProvider>
+      );
+
+      setUsingNextRouter(false);
+      const liveness = { as: '/images', url: '/images', state: {} };
+      window.history.replaceState(liveness, '');
+      await vi.waitFor(() => {
+        window.dispatchEvent(new PopStateEvent('popstate', { state: liveness }));
+        expect(probeText()).toBe('/images');
+      });
+
+      // The hash-only pop: `beforePopState` hands it to Next, which emits
+      // `hashChangeComplete` and never `routeChangeComplete`.
+      setUsingNextRouter(true);
+
+      // Negative control for the raise itself: while the flag is up, an update
+      // must NOT land. Without this the test passes even if the gate it is about
+      // were deleted, because it only ever asserts that an update arrives.
+      const dropped = { as: '/images/999', url: '/images/999', state: {} };
+      window.history.replaceState(dropped, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [dropped] }));
+      // Give React a chance to commit before asserting the absence, or the probe
+      // reads the pre-dispatch DOM and the assertion cannot fail. (Measured: a
+      // synchronous read passed with the gate deleted.)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(probeText()).toBe('/images');
+
+      // No assertion on registration: if the listener is missing the loop is a
+      // no-op, the flag stays raised, and the behavioural assertion below is what
+      // reports it. Checking registration first would fail with a count instead.
+      for (const handler of handlers.hashChangeComplete ?? []) handler();
+
+      // What a routed dialog opening looks like: `browserRouter.push` dispatches
+      // `locationchange`, and the provider must still publish it.
+      const opened = {
+        as: '/images/139360504',
+        url: '/images?dialog=imageDetail&imageId=139360504',
+        state: {},
+      };
+      window.history.replaceState(opened, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [opened] }));
+
+      await vi.waitFor(() => {
+        expect(probeText()).toBe('/images/139360504');
+      });
+      // The regression: the flag was still raised, this update was dropped, and
+      // asPath stayed at '/images' with no dialog on screen.
+      expect(imageIdText()).toBe('139360504');
+    } finally {
+      setUsingNextRouter(false);
+      on.mockImplementation(passThrough ?? (() => undefined));
       window.history.replaceState(originalState, '');
     }
   });

@@ -13,8 +13,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *
  * 409-vs-204 decision for abort: aborting an already-gone upload is IDEMPOTENT — the
  * desired end-state (the upload no longer exists) ALREADY holds, so it's a success,
- * not a conflict. We return 204 (the sole caller, s3-upload.store.ts, fire-and-forgets
- * abort and ignores the response, so 204 is safe and terminal). Transient/real-fault
+ * not a conflict. We return 204 (both callers — s3-upload.store.ts and useS3Upload.tsx —
+ * ignore the response entirely, so 204 is safe and terminal). Transient/real-fault
  * mapping matches complete (503 / 500).
  *
  * Fails before the fix (everything is a raw 500); passes after.
@@ -38,11 +38,10 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
 }));
 
-// The real s3-utils imports ~/server/db/client (dbWrite); stub it so loading the
-// real module for `classifyS3MultipartError` doesn't spin up a real Prisma engine.
-vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
-
 import handler from '~/pages/api/upload/abort';
+// Mocked in ~/__tests__/setup as vi.fn(); imported here so it can be made to REJECT.
+import { logToAxiom } from '~/server/logging/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function makeRes() {
   const headers: Record<string, string> = {};
@@ -57,6 +56,10 @@ function makeRes() {
     },
     json(payload: unknown) {
       this.body = payload;
+      // A real `res.json()` ENDS the response. The double must too, or a `sent` predicate
+      // built on `body !== undefined || ended` is really measuring the payload: a handler
+      // answering `json(undefined)` reads as "not committed" and fails a correct route.
+      this.ended = true;
       return this;
     },
     end() {
@@ -88,7 +91,7 @@ function makeRes() {
   };
 }
 
-function makeReq() {
+function makeReq(overrides?: { body?: Record<string, unknown> }) {
   return {
     method: 'POST',
     body: {
@@ -97,6 +100,7 @@ function makeReq() {
       type: 'model',
       uploadId: 'test-upload-id',
       backend: 'b2',
+      ...overrides?.body,
     },
     headers: {},
     socket: { remoteAddress: '127.0.0.1' },
@@ -108,14 +112,30 @@ const s3Error = (props: Record<string, unknown>) =>
 
 beforeEach(() => {
   mockAbortMultipartUpload.mockReset();
+  // 🔴 Every `mock.calls.at(-1)` reader below is measuring the LAST log event, so a test whose
+  // own log never fired reads the preceding test's. Measured: with the success-path
+  // `logToAxiom` deleted from the handler, `passes the declarable value rescued through
+  // unchanged` stayed GREEN on the `rescued` left behind by the abort-error case above it.
+  vi.mocked(logToAxiom).mockClear();
 });
 
 describe('/api/upload/abort — error classification', () => {
-  it('happy path: abortMultipartUpload resolves → 200', async () => {
+  it('happy path: abortMultipartUpload resolves → 200 with an empty body', async () => {
+    // 🔴 The fixture is `undefined` because that is what the real collaborator returns —
+    // `abortMultipartUpload` is `Promise<void>` (see ~/utils/s3-utils). An earlier version used
+    // `{ ok: true, … }`, a shape it can never produce.
+    //
+    // ⚠️ WHAT THIS DOES AND DOES NOT PIN. `toBeUndefined()` kills `res.json({})`, but it is
+    // satisfied by sending NOTHING, so `json(result)` → `end()` and → `json(undefined)` both
+    // survive. Those two are production-inert — the handler's result really is `void` and the
+    // sole caller fire-and-forgets without reading the body (~/store/s3-upload.store.ts) — but
+    // do not read this case as pinning a pass-through. It pins "200, and no body content".
     mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(200);
+    expect(res.body).toBeUndefined();
+    expect(res.ended).toBe(true);
   });
 
   it('NoSuchUpload (already gone) → 204 idempotent success, not 500', async () => {
@@ -131,6 +151,11 @@ describe('/api/upload/abort — error classification', () => {
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(204);
     expect(res.ended).toBe(true);
+    // 🔴 A 204 MUST CARRY NO BODY, and `ended` alone no longer says that. Round 4 made the
+    // double's `json()` set `ended` (so a `sent` predicate would stop measuring the payload),
+    // which silently turned the assertion above into a tautology: `res.status(204).json({})`
+    // passed the whole suite. This is the assertion that distinguishes `.end()` from `.json()`.
+    expect(res.body).toBeUndefined();
   });
 
   it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
@@ -138,7 +163,7 @@ describe('/api/upload/abort — error classification', () => {
       s3Error({
         name: 'InvalidPart',
         message:
-          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+          "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
         $metadata: { httpStatusCode: 400 },
       })
     );
@@ -183,5 +208,223 @@ describe('/api/upload/abort — error classification', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(500);
+  });
+
+  /**
+   * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY. Every case above runs with a resolving
+   * `logToAxiom` (a `vi.fn()` from `~/__tests__/setup`), so none of them could see the
+   * 2026-08-23 failure: with Axiom's ingest host unreachable, the awaited log call above
+   * the classifier threw and this entire taxonomy became unreachable — 92 sampled 500s on
+   * a route whose normal 500 rate is zero. Mirrors the block in
+   * ./upload-complete-endpoint.test.ts, which carries the full mechanism.
+   *
+   * Asserts the handler settles cleanly AND the client's status — see the note in
+   * ./upload-complete-endpoint.test.ts on why `resolves` is load-bearing. Pre-fix, both
+   * cases observe `statusCode` 0.
+   */
+  describe('telemetry failure cannot change the client response', () => {
+    const withFailingLogger = async (res: ReturnType<typeof makeRes>) => {
+      vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+      try {
+        await expect(handler(makeReq(), res)).resolves.toBeUndefined();
+      } finally {
+        vi.mocked(logToAxiom).mockReset();
+      }
+    };
+
+    it('NoSuchUpload still classifies to 204 — the branch is reachable', async () => {
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(204);
+    });
+
+    it('a successful abort still returns 200', async () => {
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      const res = makeRes();
+      await withFailingLogger(res);
+      expect(res.statusCode).toBe(200);
+    });
+
+    /**
+     * 🔴 ORDERING, read directly. A status-only assertion cannot see the log being moved back
+     * ahead of the response once the log is contained — a mutation sweep proved that on the
+     * sibling sign-part route. This reads the response state AT LOG TIME.
+     */
+    it('ORDERING: the response is committed before either event is logged', async () => {
+      // `sent` proves COMMITMENT — the 204 arm uses `.end()` and never sets a body, so this
+      // must accept either. `res.status()` on its own writes nothing.
+      const seen: Array<{ name: string; statusAtLogTime: number; sent: boolean }> = [];
+      const res = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res.statusCode,
+          sent: res.body !== undefined || res.ended,
+        });
+      });
+      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
+      await handler(makeReq(), res);
+
+      const res2 = makeRes();
+      vi.mocked(logToAxiom).mockImplementation(async (d: Record<string, unknown>) => {
+        seen.push({
+          name: String((d as { name?: unknown }).name),
+          statusAtLogTime: res2.statusCode,
+          sent: res2.body !== undefined || res2.ended,
+        });
+      });
+      mockAbortMultipartUpload.mockRejectedValue(
+        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+      );
+      await handler(makeReq(), res2);
+      vi.mocked(logToAxiom).mockReset();
+
+      expect(seen).toEqual([
+        { name: 's3-upload-abort', statusAtLogTime: 200, sent: true },
+        { name: 's3-upload-abort-error', statusAtLogTime: 204, sent: true },
+      ]);
+    });
+  });
+});
+
+/**
+ * The client-side failure reason. The 2026-09 image-upload investigation (browser PUTs
+ * to Backblaze reset at the network layer, ~0.4% of daily image uploads) could only be
+ * diagnosed from a user's devtools screenshots because the abort event carried no
+ * reason. The multipart clients now send a bounded `failure` object in the abort body;
+ * the endpoint logs it verbatim on `s3-upload-abort` — SANITIZED, because it is
+ * caller-supplied JSON on an unauthenticated-body route: only the three known keys may
+ * through, with bounded values, so a crafted body cannot smuggle fields into the event
+ * stream.
+ */
+describe('/api/upload/abort — client failure reason', () => {
+  it('sanitizes the failure object: unknown keys, wrong types and out-of-range values are dropped', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          failure: {
+            kind: 'x'.repeat(64), // over the kind bound → dropped
+            partNumber: 1.5, // not an integer → dropped
+            status: 999, // out of range → dropped
+            stack: 'injected', // unknown key → dropped
+            __proto__: { polluted: true }, // never becomes an own key
+          },
+        },
+      }),
+      res
+    );
+
+    expect(res.statusCode).toBe(200);
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toBeUndefined();
+  });
+
+  it('keeps only what survives sanitization when some fields are valid', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: { failure: { kind: 'client-aborted', partNumber: 4, status: 999, junk: 1 } },
+      }),
+      res
+    );
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toEqual({ kind: 'client-aborted', partNumber: 4 });
+  });
+
+  // 🔴 Boundary fixtures, not spot checks: a bound mutated to exclude everything (or to
+  // admit everything) must move one of these. Each field is probed at both edges of its
+  // own bound — last-accepted and first-rejected — so a changed limit cannot survive.
+  it.each([
+    ['partNumber 1', { kind: 'network-error', partNumber: 1 }, 'partNumber'],
+    [
+      'partNumber 10000 (S3 part ceiling)',
+      { kind: 'network-error', partNumber: 10_000 },
+      'partNumber',
+    ],
+    ['status 100', { kind: 'part-status', status: 100 }, 'status'],
+    ['status 599', { kind: 'part-status', status: 599 }, 'status'],
+    ['kind at 32 chars', { kind: 'a'.repeat(32) }, 'kind'],
+  ])('keeps %s', async (_name, failure, key) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure } }), res);
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toHaveProperty(key);
+  });
+
+  it.each([
+    ['partNumber 10001', { kind: 'network-error', partNumber: 10_001 }, 'partNumber'],
+    ['partNumber 0', { kind: 'network-error', partNumber: 0 }, 'partNumber'],
+    ['status 99', { kind: 'part-status', status: 99 }, 'status'],
+    ['status 600', { kind: 'part-status', status: 600 }, 'status'],
+    ['kind at 33 chars', { kind: 'a'.repeat(33) }, 'kind'],
+    ['a non-object failure', 'network-error', 'kind'],
+  ])('drops %s', async (_name, failure, key) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure } }), res);
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure ?? {}).not.toHaveProperty(key);
+  });
+});
+
+/**
+ * The client's account of what the relay fallback did — caller-supplied JSON on an
+ * unauthenticated-body route, so it is narrowed against a closed set before it becomes a log
+ * field.
+ */
+describe('/api/upload/abort — relay fallback outcome', () => {
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it.each([
+    ['rescued'],
+    ['not_attempted'],
+    ['transport_error'],
+    ['aborted'],
+    ['non_2xx'],
+    ['bad_body'],
+  ])('passes the declarable value %s through unchanged', async (value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe(value);
+  });
+
+  it.each([
+    ['an unrecognised string', 'definitely_not_an_outcome'],
+    // 🔴 A SERVER bucket declared BY A CLIENT. `unknown` is the row a rollout is graded on — a
+    // falling `unknown` reads as stale bundles clearing — so a client able to write it could
+    // make the rollout look finished.
+    ['the server-only bucket unknown', 'unknown'],
+    ['the server-only bucket other', 'other'],
+    ['an empty string', ''],
+    ['a number', 7],
+    ['an array', ['rescued']],
+    ['an object', { reason: 'rescued' }],
+    ['null', null],
+  ])('maps %s to other rather than minting a field value', async (_name, value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('other');
+  });
+
+  it('reports an ABSENT outcome as unknown, so the field is never missing', async () => {
+    // 🔴 Always present, unlike `failure`: grouping aborts by this field needs one denominator,
+    // and an omitted key would split it across two shapes. `unknown` is also a real population
+    // here — a bundle predating the field, and the abort paths that never reach the relay.
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq(), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('unknown');
   });
 });

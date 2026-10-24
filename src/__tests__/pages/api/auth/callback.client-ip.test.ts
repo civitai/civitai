@@ -43,10 +43,8 @@ const { bridgeSpy } = vi.hoisted(() => ({ bridgeSpy: vi.fn() }));
 vi.mock('~/server/auth/oauth-bridge', () => ({
   HUB_BASE_URL: 'https://hub.test',
   OAUTH_BRIDGE_COOKIE: 'civ-bridge',
-  BRIDGE_PROBE_COOKIE: 'civ-probe',
   resolveSelfOrigin: vi.fn(() => 'https://spoke.test'),
   clearBridgeCookie: vi.fn(() => 'civ-bridge=; Max-Age=0'),
-  readBridgeProbe: vi.fn(() => undefined),
   completeFirstPartyCallback: (opts: unknown) => bridgeSpy(opts),
 }));
 vi.mock('@civitai/auth', () => ({ sessionCookieName: () => 'civ-token' }));
@@ -57,10 +55,9 @@ vi.mock('~/server/auth/civ-cookie', () => ({
   hasAnyLegacyCookie: vi.fn(() => false),
   cookieDomainForHost: vi.fn(() => '.civitai.test'),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 import handler from '~/pages/api/auth/callback';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function reqWith(
   headers: Record<string, string | string[]>,

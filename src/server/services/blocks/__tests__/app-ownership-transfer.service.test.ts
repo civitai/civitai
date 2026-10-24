@@ -542,9 +542,17 @@ describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
    * transfer; NOT moving it leaves ownership SPLIT between the listing and the client.
    * So the transfer is refused, with an error that says why.
    *
-   * Enforced twice — at initiate (fail fast) and IN-TX at accept — because an offer
-   * stays open for `transferExpiryDays` and a revision approve can LINK a client inside
-   * that window. An initiate-only check is simply false for the whole window.
+   * Enforced twice — at initiate (fail fast) and IN-TX at accept — because an offer stays
+   * open for `transferExpiryDays`, so the initiate-time read says nothing about the row at
+   * the instant of accept.
+   *
+   * 🔴 NOT because "a revision approve can LINK a client inside that window". That claim
+   * was false and #4126 removed it from all seven places it had been copied to: no writer
+   * can move `AppListing.connectClientId` from null to non-null on an EXISTING row. The
+   * accept-time arm below therefore drives a state today's product cannot produce — it is
+   * defence-in-depth against a future link flow, a migration or a direct DB write, and it
+   * is deliberately kept as such. Canonical account: the `acceptBlockedReason` docstring
+   * in `app-ownership-transfer.service.ts`.
    */
   it('the predicate is exported and states the rule in one place', () => {
     expect(
@@ -572,17 +580,52 @@ describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 the message NAMES the reason — "unlink the OAuth client first" is actionable', async () => {
-    // A bare FORBIDDEN would leave the owner with no idea what to do, and the whole
-    // point of refusing rather than guessing is that the human makes the call.
+  it('🔴 the message NAMES THE REASON, and instructs NO action the owner cannot take', async () => {
+    // A bare FORBIDDEN would leave the owner with no idea why, and the whole point of
+    // refusing explicitly is that the reason survives to the surface.
     expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/OAuth application/i);
-    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/Unlink the OAuth client first/i);
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/cannot be transferred/i);
+    // …and it names the CONSEQUENCE, which is the part that makes the refusal legible.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/credentials|split ownership/i);
+
+    // 🔴 NO REMEDY, DELIBERATELY — kept as a NEGATIVE assertion because this string used
+    // to end "Unlink the OAuth client first". 🔴 ITS ORIGINAL STATED REASON ("there is no
+    // unlink path in the product") IS FALSE and #4126 refuted it: deleting the OAuth
+    // client cascades `onDelete: SetNull` onto `AppListing.connectClientId`, so an
+    // owner-initiated route out exists today. DO NOT DELETE THIS GUARD ON DISCOVERING
+    // THAT — the decision to name no remedy was re-taken on its merits with the route
+    // known, and the four surviving reasons are recorded at the constant.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).not.toMatch(/unlink/i);
+
+    // 🔴 THE WHOLE STRING, NOT A WORD. An INVARIANT GUARD, not regression coverage: it is
+    // green on pre-#4126 code and pins a decision rather than a fixed bug. It exists
+    // because every assertion above is walkable by REWORDING — "remove the OAuth client
+    // first" or "delete your OAuth application first" satisfies `not.toMatch(/unlink/i)`
+    // and every positive regex here, while re-introducing exactly the always-on false
+    // instruction they were written to stop. The literal below is an INDEPENDENT copy, so
+    // editing the constant moves one side only and this fails. A cosmetic reword must pay
+    // for itself by updating this line — which is the point: it forces whoever changes the
+    // copy to read the decision record at the constant first.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toBe(
+      'This listing is linked to an OAuth application, so its ownership cannot be transferred: ' +
+        'moving it would either hand over that application’s credentials or split ownership ' +
+        'between the listing and the client.'
+    );
   });
 
-  it('🔴 ACCEPT re-asserts it: a client LINKED after the offer was made blocks the accept', async () => {
-    // The window this closes. The offer was created against a clean listing; a revision
-    // approve then linked a client. Nothing about the transfer row changed — only the
-    // listing did — so an initiate-time-only check would let it through.
+  it('🔴 ACCEPT re-asserts it: a listing that reads as linked at accept time blocks the accept', async () => {
+    // What this closes: the transfer row is unchanged and only the LISTING differs from
+    // what initiate saw, so an initiate-time-only check would let it through.
+    //
+    // 🔴 THE SETUP IS SYNTHETIC AND #4126 SAYS SO OUT LOUD. This mock returns a linked
+    // listing under a live offer; the comment here used to explain that state as "a
+    // revision approve then linked a client", which is FALSE — nothing in the product can
+    // move `AppListing.connectClientId` from null to non-null on an existing row, and
+    // initiate refuses a listing born linked. Reaching this state needs a direct DB write,
+    // a migration or a future link flow. That does not make the test worthless: it pins
+    // the accept-time gate as defence-in-depth, and without it the in-tx re-assert could
+    // be deleted with the suite still green. It IS a reason not to cite this test as
+    // evidence that the state is product-reachable.
     mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => {
       const t = liveTransfer();
       return {

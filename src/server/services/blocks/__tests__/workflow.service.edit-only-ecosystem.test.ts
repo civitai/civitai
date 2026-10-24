@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 // Type-only namespace import so the `importOriginal` generic below keeps FULL
 // module typing (the mock calls through to `actual.isWorkflowAvailable`) without
 // an inline `import()` type annotation, which `consistent-type-imports` forbids.
-import type * as WorkflowsConfig from '~/shared/data-graph/generation/config/workflows';
+import type * as WorkflowsConfig from '~/shared/generation/config/workflows';
 
 /**
  * The ECOSYSTEM-level half of the edit-only guard in
@@ -29,7 +29,7 @@ const { availability } = vi.hoisted(() => ({
   availability: { map: new Map<string, boolean>() },
 }));
 
-vi.mock('~/shared/data-graph/generation/config/workflows', async (importOriginal) => {
+vi.mock('~/shared/generation/config/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof WorkflowsConfig>();
   return {
     ...actual,
@@ -40,10 +40,9 @@ vi.mock('~/shared/data-graph/generation/config/workflows', async (importOriginal
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: { modelVersion: { findUnique: vi.fn() } } }));
-
 import { resolveBlockImageWorkflowType } from '../workflow.service';
 import { ECO } from '~/shared/constants/basemodel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // A stand-in ecosystem id; the mock decides its capabilities.
 const FAKE_ECO = 999001;
@@ -107,7 +106,7 @@ describe('edit-only ECOSYSTEM + no sourceImage', () => {
   // being the only way to exercise it.
   it('documents that no REAL image ecosystem is currently edit-only', async () => {
     setAvailability({});
-    const { isWorkflowAvailable } = await import('~/shared/data-graph/generation/config/workflows');
+    const { isWorkflowAvailable } = await import('~/shared/generation/config/workflows');
     const editOnly = Object.values(ECO).filter(
       (id) =>
         typeof id === 'number' &&

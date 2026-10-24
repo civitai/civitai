@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { autoCaptionSchema, autoLabelLimits } from '~/store/training.store';
 
 // Auto-label workflow batches map 1 step per image; the orchestrator can ingest larger
@@ -106,9 +106,19 @@ export const getAutoLabelWorkflowSchema = z.object({
   workflowId: z.string().min(1),
 });
 
+export type GetTrainingEpochArchiveInput = z.infer<typeof getTrainingEpochArchiveSchema>;
+export const getTrainingEpochArchiveSchema = z.object({
+  modelVersionId: z.number().positive(),
+});
+
 export const trainingServiceStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
   blockedModels: z.array(z.string()).optional().default(blockedCustomModels),
 });
 export type TrainingServiceStatus = z.infer<typeof trainingServiceStatusSchema>;
+
+export type GetTrainingRunStateInput = z.infer<typeof getTrainingRunStateSchema>;
+export const getTrainingRunStateSchema = z.object({
+  modelVersionId: z.number().positive(),
+});

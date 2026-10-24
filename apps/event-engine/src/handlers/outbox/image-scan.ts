@@ -1,10 +1,15 @@
+// The three disables below are all the same reason: the processor body is commented out until
+// the old ingestion service is removed from prod, and these are the bindings it uses.
 import { createOutboxHandler } from '../base'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { withKafka } from '@/services/spine'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { getImageUrl } from '@/utils/media';
 
 export const postHandler = createOutboxHandler<{url: string}>({
   entityTypes: ['Image'],
   events: ['TO_SCAN'],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   processor: async ({ event, entityId, actions, details }) => {
     // TODO briant: Enable this when we have the old ingestion service removed from prod
     // Do nothing until we remove old image ingestion
@@ -40,8 +45,9 @@ export const postHandler = createOutboxHandler<{url: string}>({
           metadata,
           input: {
             mediaUrl: args.url,
-            model: 'wd14-vit.v1',
-            threshold:0.5,
+            model:
+              'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar',
+            threshold: 0.55,
           }
         },
         {

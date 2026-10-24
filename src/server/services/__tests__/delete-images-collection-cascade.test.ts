@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // deleteImages used to clear CollectionItem rows itself, one concurrent statement per image. Each
 // deleted row fires collection_nsfw_level_change -> create_job_queue_record, an
@@ -6,11 +8,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // collection in opposite order deadlocked (40P01) on prod every run of remove-deleted-user-images.
 // CollectionItem.imageId is `onDelete: Cascade`, so the DELETE below already removes those rows.
 
-const { mockFindFirst, mockQueryRaw, mockCollectionItemDeleteMany } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
-  mockQueryRaw: vi.fn(async () => [] as unknown[]),
-  mockCollectionItemDeleteMany: vi.fn(async () => ({ count: 0 })),
-}));
+const mockFindFirst = dbMock.dbWrite.image.findFirst;
+const mockQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockCollectionItemDeleteMany = dbMock.dbWrite.collectionItem.deleteMany;
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -30,15 +30,6 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
     return undefined;
   }, handler);
 }
-
-const dbWrite = makePermissive({
-  image: makePermissive({ findFirst: mockFindFirst }),
-  collectionItem: makePermissive({ deleteMany: mockCollectionItemDeleteMany }),
-  $queryRaw: mockQueryRaw,
-});
-const dbRead = makePermissive();
-
-vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -67,23 +58,6 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
-}));
-
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/search-index', async (importOriginal) => ({

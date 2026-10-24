@@ -1,24 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbWrite } = vi.hoisted(() => ({
-  mockDbWrite: { $executeRaw: vi.fn(async () => 0) },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
-
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+const mockDbWrite = dbMock.dbWrite;
 
 beforeEach(() => {
   mockDbWrite.$executeRaw.mockClear();
 });
 
 describe('removeImageScanJobQueue', () => {
-  it('issues a delete when given image ids', async () => {
+  it('deletes only the ImageScan rows for those images', async () => {
     await removeImageScanJobQueue([1, 2, 3]);
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    // Tagged-template call: the interpolated ids array is the last binding.
-    const args = mockDbWrite.$executeRaw.mock.calls[0];
-    expect(args[args.length - 1]).toEqual([1, 2, 3]);
+    // Tagged-template call: [strings, ...values]. Joining the strings on a placeholder pins
+    // which column each value is compared against.
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      'DELETE FROM "JobQueue" WHERE type = ?::"JobQueueType" AND "entityType" = ?::"EntityType" AND "entityId" = ANY(?)'
+    );
+    expect(values).toEqual([JobQueueType.ImageScan, EntityType.Image, [1, 2, 3]]);
   });
 
   it('no-ops on an empty id list (no DB round-trip)', async () => {

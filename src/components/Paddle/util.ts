@@ -1,10 +1,8 @@
-import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import type {
-  GetPaddleAdjustmentsSchema,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
@@ -97,28 +95,6 @@ export const useHasPaddleSubscription = () => {
     hasPaddleSubscription,
     isLoading,
     isInitialLoading,
-  };
-};
-
-export const usePaddleAdjustmentsInfinite = (
-  input?: GetPaddleAdjustmentsSchema,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
-) => {
-  const { data, isLoading, ...rest } = trpc.paddle.getAdjustmentsInfinite.useInfiniteQuery(
-    { ...(input ?? {}) },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      trpc: { context: { skipBatch: true } },
-      ...withPlaceholderData(options),
-    }
-  );
-
-  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  return {
-    adjustments: flatData,
-    isLoading,
-    ...rest,
   };
 };
 

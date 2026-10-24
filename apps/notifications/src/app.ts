@@ -21,11 +21,13 @@ import {
   queryNotifications,
 } from './lib/server/operations';
 import { notifDbRead, notifDbWrite } from './lib/server/clients/db';
+import { health } from './lib/server/health';
 import { logLevel } from './env';
 
 /**
  * Build the Fastify server (no listen — server.ts calls listen; tests use `.inject`). Ops routes:
- *   - GET  /health      — no-dep liveness+readiness (must not touch DB/redis so it can't flap).
+ *   - GET  /health      — liveness+readiness. Never touches DB/redis itself; on a worker pod it returns
+ *                         503 when the worker's observed redis or poll-loop state says it is stuck.
  *   - GET  /pool-stats  — notif pool snapshots.
  *   - GET  /metrics     — Prometheus scrape, private-by-XFF.
  * Authed producer/read API (A + C), all shared-secret gated, all POST — the trusted caller (the monolith)
@@ -62,16 +64,22 @@ export async function buildServer(): Promise<FastifyInstance> {
       status < 400
         ? 'success'
         : status === 401
-          ? 'unauthorized'
-          : status === 400
-            ? 'rejected'
-            : status >= 500
-              ? 'error'
-              : 'client_error';
+        ? 'unauthorized'
+        : status === 400
+        ? 'rejected'
+        : status >= 500
+        ? 'error'
+        : 'client_error';
     httpRequestDurationSeconds.observe({ route, outcome }, reply.elapsedTime / 1000);
   });
 
-  app.get('/health', async () => ({ status: 'ok', service: 'notifications' }));
+  app.get('/health', async (_req, reply) => {
+    const report = health.check();
+    if (report.ok) return { status: 'ok', service: 'notifications' };
+    return reply
+      .code(503)
+      .send({ status: 'unhealthy', service: 'notifications', reasons: report.reasons });
+  });
 
   app.get('/pool-stats', async () => {
     const snapshot = (pool: ReturnType<typeof notifDbWrite>) => ({
@@ -80,7 +88,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       active: pool.totalCount - pool.idleCount,
       waiting: pool.waitingCount,
     });
-    return { write: snapshot(notifDbWrite()), read: snapshot(notifDbRead()), timestamp: Date.now() };
+    return {
+      write: snapshot(notifDbWrite()),
+      read: snapshot(notifDbRead()),
+      timestamp: Date.now(),
+    };
   });
 
   // EXPOSURE GUARD: any request carrying x-forwarded-for came through the public ingress; the in-cluster

@@ -27,7 +27,12 @@ export function ImageGenerationData({
     <CopyButton value={() => encodeMetadata(meta)}>
       {({ copy, copied, Icon, color }) => (
         <Text
-          className="flex cursor-pointer items-center gap-1 text-xs"
+          component="button"
+          type="button"
+          // Padded well past the label: in the collapsible header this sits on
+          // top of the collapse toggle, and a miss of a few pixels folded the
+          // section away instead of copying (Freshdesk 73048).
+          className="flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-xs hover:bg-gray-1 dark:hover:bg-dark-5"
           color={color}
           onClick={copy}
           data-activity="copy:image-meta"

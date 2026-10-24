@@ -1,77 +1,35 @@
 import { Stack, Table, Text } from '@mantine/core';
-import { feeToRatio, tierCapRows } from '@civitai/buzz';
+import { MAX_LICENSING_FEE, VIDEO_CAP_MULTIPLIER, tierAllowanceRows } from '@civitai/buzz';
 
-// Rendered from `tierCapRows()` rather than transcribed, so these numbers cannot drift from the caps the
-// server enforces. Creator Studio shows the same table (TierCapsTable.svelte) off the same helper.
+// Rendered from `tierAllowanceRows()` rather than transcribed, so these numbers cannot drift from what
+// the server enforces. Creator Studio shows the same table (TierCapsTable.svelte) off the same helper.
 const fmt = (n: number | null) => (n === null ? 'Unlimited' : n.toLocaleString());
 
-const feeRatio = (perGeneration: number, noun: string) => {
-  const { buzz, images } = feeToRatio(perGeneration);
-  return `${buzz.toLocaleString()} ⚡ / ${images} ${noun}${images === 1 ? '' : 's'}`;
-};
-
 export const TierCapsTable = () => {
-  const rows = tierCapRows();
+  const rows = tierAllowanceRows();
 
   return (
     <Stack gap="lg">
       <Stack gap={4}>
         <Text size="sm" fw={600}>
-          Licensing fees{' '}
+          Model versions you can monetize each month{' '}
           <Text component="span" size="sm" c="dimmed" fw={400}>
-            — earned per generation
+            — a licensing fee or paid access
           </Text>
         </Text>
-        <Table.ScrollContainer minWidth={520}>
+        <Table.ScrollContainer minWidth={320}>
           <Table striped withTableBorder verticalSpacing="xs" fz="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Tier</Table.Th>
-                <Table.Th ta="right">Checkpoint · image</Table.Th>
-                <Table.Th ta="right">Checkpoint · video</Table.Th>
-                <Table.Th ta="right">Other types · image</Table.Th>
-                <Table.Th ta="right">Other types · video</Table.Th>
+                <Table.Th ta="right">Monetized / month</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {rows.map((row) => (
                 <Table.Tr key={row.tier}>
                   <Table.Td fw={600}>{row.label}</Table.Td>
-                  <Table.Td ta="right">{feeRatio(row.image.feeCheckpoint, 'image')}</Table.Td>
-                  <Table.Td ta="right">{feeRatio(row.video.feeCheckpoint, 'video')}</Table.Td>
-                  <Table.Td ta="right">{feeRatio(row.image.feeOther, 'image')}</Table.Td>
-                  <Table.Td ta="right">{feeRatio(row.video.feeOther, 'video')}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      </Stack>
-
-      <Stack gap={4}>
-        <Text size="sm" fw={600}>
-          Paid access{' '}
-          <Text component="span" size="sm" c="dimmed" fw={400}>
-            — one-time price to unlock a version
-          </Text>
-        </Text>
-        <Table.ScrollContainer minWidth={420}>
-          <Table striped withTableBorder verticalSpacing="xs" fz="sm">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Tier</Table.Th>
-                <Table.Th ta="right">Image models</Table.Th>
-                <Table.Th ta="right">Video models</Table.Th>
-                <Table.Th ta="right">Permanent gates</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {rows.map((row) => (
-                <Table.Tr key={row.tier}>
-                  <Table.Td fw={600}>{row.label}</Table.Td>
-                  <Table.Td ta="right">{fmt(row.image.paidAccessPrice)} ⚡</Table.Td>
-                  <Table.Td ta="right">{fmt(row.video.paidAccessPrice)} ⚡</Table.Td>
-                  <Table.Td ta="right">{fmt(row.permanentGates)}</Table.Td>
+                  <Table.Td ta="right">{fmt(row.monthlyPrices)}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -81,13 +39,15 @@ export const TierCapsTable = () => {
 
       <Stack gap={4}>
         <Text size="xs" c="dimmed">
-          A version&apos;s base model decides whether it prices as image or video — video allows
-          more because it costs more to generate.
+          A licensing fee or a permanent paid-access price each count once, per version, the first
+          time you set one. Changing or removing a price you have already set costs nothing, and a
+          timed early-access window never counts.
         </Text>
         <Text size="xs" c="dimmed">
-          Caps limit how much you can charge, not whether you can charge. An existing price above
-          your cap keeps earning at the cap and is restored in full if you upgrade — it&apos;s never
-          rewritten.
+          How much you charge is the same at every tier: up to {MAX_LICENSING_FEE.toLocaleString()}{' '}
+          ⚡ per generation as a licensing fee (
+          {(MAX_LICENSING_FEE * VIDEO_CAP_MULTIPLIER).toLocaleString()} ⚡ for video models), and
+          any price you like for paid access.
         </Text>
       </Stack>
     </Stack>

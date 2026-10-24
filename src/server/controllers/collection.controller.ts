@@ -31,7 +31,6 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
-  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
@@ -39,6 +38,7 @@ import {
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
+  getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
@@ -53,15 +53,19 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
+import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { requestServableLevels } from '~/server/utils/browsing-level';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import {
@@ -70,6 +74,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
 } from '~/shared/utils/prisma/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 
@@ -169,14 +174,29 @@ export const getAllUserCollectionsHandler = async ({
   const { user } = ctx;
 
   try {
-    const collections = await getUserCollectionsWithPermissions({
-      input: {
-        ...input,
-        userId: user.id,
-      },
-    });
+    // Concurrent, not serial: the permission query and the pending-review
+    // aggregate hit independent backends and share only `user.id`. Both SSG
+    // prefetches run this inside getServerSideProps, so a second round trip
+    // lands straight on TTFB.
+    const [collections, counts] = await Promise.all([
+      getUserCollectionsWithPermissions({ input: { ...input, userId: user.id } }),
+      input.withPendingReviewCounts
+        ? getPendingCollectionReviewCounts({
+            userId: user.id,
+            levels: requestServableLevels(ctx),
+          }).catch(() => ({
+            total: 0,
+            byCollection: {} as Record<number, number>,
+          }))
+        : undefined,
+    ]);
 
-    return collections;
+    if (!counts) return collections;
+
+    return collections.map((collection) => ({
+      ...collection,
+      pendingReviewCount: counts.byCollection[collection.id] ?? 0,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }
@@ -205,6 +225,7 @@ export const getCollectionByIdHandler = async ({
         permissions,
         collaborators: [] as Collaborator[],
         pendingReviewCount: 0,
+        redPendingReviewCount: 0,
       };
     }
 
@@ -225,9 +246,22 @@ export const getCollectionByIdHandler = async ({
         })
       : [];
 
-    const pendingReviewCount = permissions.manage ? await getPendingReviewCount(collection.id) : 0;
+    // What only civitai.red can show, for the empty .com queue to point at. Computed whether or not
+    // the .com queue is empty now: reviewing its items leaves this number unchanged, so the cached
+    // value is still right once the manager has cleared them. Not for a restricted region, where
+    // civitai.red would hide the same items.
+    const pointToRed = ctx.features.isGreen && !!ctx.req && !isRegionRestricted(getRegion(ctx.req));
+    const [pendingReviewCount, allLevelsPendingReviewCount] = permissions.manage
+      ? await Promise.all([
+          getPendingReviewCount(collection.id, requestServableLevels(ctx)),
+          pointToRed ? getPendingReviewCount(collection.id, allBrowsingLevelsFlag) : 0,
+        ])
+      : [0, 0];
+    const redPendingReviewCount = pointToRed
+      ? Math.max(0, allLevelsPendingReviewCount - pendingReviewCount)
+      : 0;
 
-    return { collection, permissions, collaborators, pendingReviewCount };
+    return { collection, permissions, collaborators, pendingReviewCount, redPendingReviewCount };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -294,9 +328,13 @@ export const saveItemHandler = async ({
     }
 
     // Check ownership if only one collection is being modified
-    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
-      isDefined
-    );
+    const [itemId] = [
+      input.articleId,
+      input.modelId,
+      input.postId,
+      input.imageId,
+      input.model3dId,
+    ].filter(isDefined);
     if (input.collections.length === 1) {
       const [collection] = input.collections;
       const isOwner = await checkUserOwnsCollectionAndItem({
@@ -377,9 +415,13 @@ export const upsertCollectionHandler = async ({
       },
     });
 
-    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
-      isDefined
-    );
+    const [itemId] = [
+      input.articleId,
+      input.modelId,
+      input.postId,
+      input.imageId,
+      input.model3dId,
+    ].filter(isDefined);
     const isOwner = await checkUserOwnsCollectionAndItem({
       itemId,
       userId: user.id,
@@ -461,8 +503,8 @@ export const followHandler = ({
 
   try {
     return addContributorToCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -482,8 +524,8 @@ export const unfollowHandler = ({
 
   try {
     return removeContributorFromCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -558,6 +600,9 @@ export const addSimpleImagePostHandler = async ({
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
 
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
+    const assertPostOwnedBy = createPostOwnerCheck();
     const postImages = await Promise.all(
       images.map((image, index) =>
         addPostImage({
@@ -565,6 +610,7 @@ export const addSimpleImagePostHandler = async ({
           postId: post.id,
           index,
           user: ctx.user,
+          assertPostOwnedBy,
         })
       )
     );

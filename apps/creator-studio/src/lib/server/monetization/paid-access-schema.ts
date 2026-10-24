@@ -5,7 +5,7 @@ import {
   optionalBuzzField,
   requiredBuzzField,
   freePreviewsField,
-} from './form-fields';
+} from '../form-fields';
 // Relative, not `$lib`: this module is unit-tested by the app's plain node vitest project, which has no
 // SvelteKit plugin and so cannot resolve the alias — an aliased import here fails COLLECTION, which reads
 // as zero tests rather than as a failure.

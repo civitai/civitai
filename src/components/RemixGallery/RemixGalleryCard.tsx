@@ -1,3 +1,4 @@
+import { REMIX_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   ActionIcon,
   Anchor,
@@ -30,14 +31,14 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExplainer';
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
-import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
 import {
   dedupeGalleryItems,
   galleryDialogImages,
   trimToWholeRows,
   type RemixGalleryItem,
 } from '~/components/RemixGallery/remix-gallery.utils';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -155,27 +156,56 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // level has to travel with the request. It is also what resolves their
   // content addons server-side, so omitting it silently disables `disableMinor`
   // and their blocked-tag list as well as the level filter itself.
-  const browsingLevel = useBrowsingLevelDebounced();
+  //
+  // 🔴 The VIEWER's level, not `useBrowsingLevelDebounced`. `ImageDetail2` wraps
+  // this whole sidebar in a `BrowsingLevelProvider` set to the host image's own
+  // rating, and the ordinary hook would inherit that — scoping a list of other
+  // people's images to the rating of the image they are attached to. An entry
+  // above the host can never intersect it, so it was dropped for every viewer
+  // including the owner who approved and was paid for it, while the feed card's
+  // count (no override there) still counted it. That is the mismatch reported on
+  // 2026-08-29. Domain caps still apply; only the page override is skipped.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
 
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
-    { imageId },
+    { imageId, browsingLevel },
     { enabled }
   );
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.placement.getRemixGallery.useInfiniteQuery(
-      { imageId, browsingLevel },
-      {
-        enabled: enabled && !!visibility?.render,
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
-    );
+  // Asked only where there is something to list. `render` is true on nearly
+  // every image — an open gallery renders its pitch even when empty — so gating
+  // on it fetched an empty page on almost every image view. `hasEntries` is the
+  // gallery's own visibility predicate (`entryIsVisible`, same viewer level), so
+  // where it is false this query can only return nothing. The mutations that add
+  // an entry here (approving, submitting) invalidate the whole placement router,
+  // so `hasEntries` refetches, flips, and this runs.
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage: morePages,
+    isFetchingNextPage,
+  } = trpc.placement.getRemixGallery.useInfiniteQuery(
+    { imageId, browsingLevel },
+    {
+      enabled: enabled && !!visibility?.hasEntries,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
 
   if (!enabled || !visibility?.render) return null;
 
-  const items: RemixGalleryItem[] = dedupeGalleryItems(
-    data?.pages.flatMap((page) => page.items) ?? []
-  );
+  // 🔴 Drawn through `hasEntries`, never straight off `data`. Once it is false the
+  // query above is disabled, and a disabled query keeps its cached page and is
+  // skipped by invalidation — so when the last entry goes, `data` can still hold
+  // it. Today every remix mutation also refetches this page, but that is a
+  // property of each caller's invalidation, and one that narrowed it would leave
+  // a removed entry on screen, still clickable.
+  const listable = !!visibility.hasEntries;
+  const hasNextPage = listable && !!morePages;
+  const items: RemixGalleryItem[] = listable
+    ? dedupeGalleryItems(data?.pages.flatMap((page) => page.items) ?? [])
+    : [];
   // Trimming only applies while more entries are waiting. On the last page the
   // remainder is everything that is left, and dropping it would make entries
   // the owner was paid for permanently unreachable.
@@ -361,11 +391,14 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
             </Text>
           </Group>
           <Group gap={6} wrap="nowrap" className="overflow-x-auto">
-            {viewerPending.map((pending) =>
-              pending.image ? (
-                <SubmissionThumb key={pending.placementId} image={pending.image} />
-              ) : null
-            )}
+            {viewerPending.map((pending) => (
+              <QueueThumb
+                key={pending.placementId}
+                image={pending.image}
+                label="Open this remix in a new tab"
+                missing="This image is no longer available to preview"
+              />
+            ))}
           </Group>
           {/* No username: it wrapped this to two lines, and it was saying what
               the page already does — this card sits on that creator's own image.
@@ -374,7 +407,7 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
               landed on a tab that does not contain the thing being withdrawn. */}
           <Text size="xs" c="dimmed">
             Waiting on the creator. You can{' '}
-            <Anchor href="/user/remix-submissions?tab=sent" size="xs">
+            <Anchor href={REMIX_QUEUE_SENT_URL} size="xs">
               {viewerPending.length === 1 ? 'withdraw it' : 'withdraw them'}
             </Anchor>{' '}
             until they decide.

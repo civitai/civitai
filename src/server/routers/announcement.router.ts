@@ -1,17 +1,44 @@
-import { router, publicProcedure, moderatorProcedure, middleware } from '~/server/trpc';
 import {
+  router,
+  publicProcedure,
+  moderatorProcedure,
+  guardedProcedure,
+  protectedProcedure,
+  isFlagProtected,
+  middleware,
+} from '~/server/trpc';
+import {
+  dismissAnnouncementsSchema,
+  domainColorEnum,
   getAnnouncementsPagedSchema,
+  getDismissedAnnouncementsSchema,
+  getCreatorAnnouncementsSchema,
   getCurrentAnnouncementsSchema,
   upsertAnnouncementSchema,
+  upsertCreatorAnnouncementSchema,
+  mayAddAnnouncementActions,
 } from '~/server/schema/announcement.schema';
 import {
   deleteAnnouncement,
+  dismissAnnouncementsForUser,
   getAnnouncementsPaged,
+  getDismissedAnnouncementIds,
   getAnnouncementTargetUserIds,
   getCurrentAnnouncements,
   upsertAnnouncement,
 } from '~/server/services/announcement.service';
+import {
+  deleteCreatorAnnouncement,
+  getCreatorAnnouncements,
+  getFollowedAnnouncements,
+  getMutedAnnouncementCreators,
+  isAnnouncementCreatorMuted,
+  toggleAnnouncementMute,
+  upsertCreatorAnnouncement,
+} from '~/server/services/creator-announcement.service';
+import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { z } from 'zod';
 import { applyRequestDomainColor } from '~/server/middleware.trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -33,4 +60,96 @@ export const announcementRouter = router({
   getAnnouncementTargets: moderatorProcedure
     .input(getByIdSchema)
     .query(({ input }) => getAnnouncementTargetUserIds(input.id)),
+
+  // The account-level backstop for the device dismissal stores. Neither procedure is on the
+  // render path: the cookie still decides what the first frame shows, and these only reconcile
+  // the two stores for a signed-in user.
+  dismissAnnouncements: protectedProcedure
+    .input(dismissAnnouncementsSchema)
+    .mutation(({ ctx, input }) =>
+      dismissAnnouncementsForUser({ userId: ctx.user.id, ids: input.ids })
+    ),
+  getDismissedAnnouncements: protectedProcedure
+    .input(getDismissedAnnouncementsSchema.default({}))
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) =>
+      getDismissedAnnouncementIds({ userId: ctx.user.id, domain: input.domain })
+    ),
+
+  // Creator-authored announcements. Separate procedures on purpose: the moderator
+  // mutations above can set `domain` and `metadata.type`, and nothing on this path can
+  // reach either the sitewide banner or another author's rows.
+  getMyAllowance: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .query(({ ctx }) => getAnnouncementAllowance(ctx.user.id)),
+  getCreatorAnnouncements: publicProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(getCreatorAnnouncementsSchema)
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) => getCreatorAnnouncements({ ...input, viewerId: ctx.user?.id })),
+  getFollowedAnnouncements: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(
+      z
+        .object({
+          limit: z.number().min(1).max(50).default(20),
+          cursor: z.number().optional(),
+          // Stamped by applyRequestDomainColor from the request host, never by the client.
+          domain: domainColorEnum.optional(),
+        })
+        .default({ limit: 20 })
+    )
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) => getFollowedAnnouncements({ ...input, userId: ctx.user.id })),
+  getMutedCreators: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .query(({ ctx }) => getMutedAnnouncementCreators(ctx.user.id)),
+  isCreatorMuted: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(z.object({ creatorId: z.number() }))
+    .query(({ ctx, input }) =>
+      isAnnouncementCreatorMuted({ userId: ctx.user.id, creatorId: input.creatorId })
+    ),
+  upsertCreatorAnnouncement: guardedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(upsertCreatorAnnouncementSchema)
+    .mutation(({ ctx, input }) =>
+      upsertCreatorAnnouncement({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        isMember: mayAddAnnouncementActions(ctx.user),
+      })
+    ),
+  deleteCreatorAnnouncement: guardedProcedure.input(getByIdSchema).mutation(({ ctx, input }) =>
+    deleteCreatorAnnouncement({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
+  toggleAnnouncementMute: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await toggleAnnouncementMute({ ...input, userId: ctx.user.id });
+      // Recorded here rather than in the service because the tracker lives on the request
+      // context. Server-side on purpose: unlike the impression beacon, which authenticates
+      // nothing, this count cannot be inflated by anything but a real signed-in mutation.
+      if (result.changed)
+        ctx.track
+          .action(
+            {
+              type: result.muted ? 'Announcement_Mute' : 'Announcement_Unmute',
+              details: { creatorId: input.creatorId },
+            },
+            // No `ip`/`userAgent`. Unmuting removes the Postgres row, but `actions` has no
+            // TTL, so without this a reversible, private control leaves a permanent
+            // IP-stamped record of who muted whom. The chart needs a count per day; it does
+            // not need an actor.
+            { skipActorMeta: true }
+          )
+          .catch(() => undefined);
+      return result;
+    }),
 });

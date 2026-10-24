@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
+// 🔴 `import type`, not a value import. A top-level VALUE import in a browser-mode
+// test resolves a SECOND copy of React and fails the whole file with "Invalid hook
+// call", reported as `Tests no tests`. A type import is erased at compile time.
+import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
- * test (report-only in Tekton; the blocking gate for the pairing logic is the
+ * test (`Component tests` in CI; the node-tier gate for the pairing logic is the
  * `unifiedReviewRow` unit suite). Asserts:
  *  - BOTH stacked section headers render (App code review + Listing media);
  *  - the CODE section shows the agent ReportTabs (Scopes/Security/Code review);
@@ -36,11 +43,16 @@ const CODE_REQUEST = {
     scopes: ['user:read'],
     targets: [{ slotId: 'model.sidebar_top', priority: 10 }],
   },
-  fileSummary: { files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }], added: ['index.js'], removed: [], changed: [] },
+  fileSummary: {
+    files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }],
+    added: ['index.js'],
+    removed: [],
+    changed: [],
+  },
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const LISTING_ROW = {
@@ -57,7 +69,7 @@ const LISTING_ROW = {
     category: 'utility',
     contentRating: 'PG',
   },
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const SELECTION = {
@@ -69,7 +81,9 @@ const SELECTION = {
 
 const AGENT_REPORT = {
   status: 'complete',
-  codeReview: { findings: [{ severity: 'medium', title: 'A code finding', detail: 'code detail' }] },
+  codeReview: {
+    findings: [{ severity: 'medium', title: 'A code finding', detail: 'code detail' }],
+  },
   securityAudit: { findings: [] },
   scopeVerdicts: { scopes: [] },
 };
@@ -83,7 +97,9 @@ const ASSETS = {
   coverNsfwLevel: 1,
   iconScanStatus: 'scanned',
   coverScanStatus: 'scanned',
-  screenshots: [{ id: 's1', imageId: 3, order: 0, caption: null, nsfwLevel: 1, scanStatus: 'scanned' }],
+  screenshots: [
+    { id: 's1', imageId: 3, order: 0, caption: null, nsfwLevel: 1, scanStatus: 'scanned' },
+  ],
   completeness: { complete: true, missing: [] },
   hasBlockedAsset: false,
   hasPendingScan: false,
@@ -122,9 +138,32 @@ const LISTING_PREVIEW = {
     creator: { id: 7, username: 'dev-user', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    // The two fields the store-detail header + Details rail read. Present here because
+    // the real `projectListingDetail` always supplies them; the fixture is a stand-in
+    // for that projection and must not be thinner than it.
+    installCount: 0,
+    updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
+    // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads
+    // `detail.scopes.length` to decide whether to render the pre-launch permission
+    // disclosure, so omitting it makes this modal THROW on render rather than merely
+    // skip a section.
+    scopes: [],
+    // 🔴 REQUIRED FOR THE SAME REASON — the body reads `detail.connectScopes.length`
+    // for the off-site connect disclosure. `[]` is also the honest value: this is an
+    // ON-SITE fixture, and an on-site listing requests no OAuth-connect scopes.
+    connectScopes: [],
+    // The remaining fields the real projection always supplies. They are here to make
+    // the `satisfies` below reachable, not because this modal reads them.
+    collaborators: [],
+    sourceRepoUrl: null,
+    isBeta: false,
+    betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
-  },
+  } satisfies ListingDetail,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -132,7 +171,44 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAgenticReview: true }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -144,7 +220,15 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
 }));
 vi.mock('~/components/Apps/AgentReviewChat', () => ({ AgentReviewChat: () => null }));
 
-vi.mock('~/utils/notifications', () => ({
+// Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
+// because it actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, which this file reaches through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory then failed the WHOLE FILE at the browser's ESM link step:
+// `SyntaxError: The requested module '/src/utils/notifications.tsx' does not provide an export
+// named 'showWarningNotification'`. Spread the original; override only what is silenced. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
@@ -199,7 +283,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         getPublishRequestScreenshots: {
           useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
         },
-        getPublishRequestDiff: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
+        getPublishRequestDiff: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+        },
         getAgentReview: {
           useQuery: () => ({
             data: AGENT_REPORT,

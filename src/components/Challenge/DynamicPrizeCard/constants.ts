@@ -49,10 +49,6 @@ export function getBorder(scheme: ColorScheme, variant: ColorVariant) {
   return `1px solid ${getBorderColor(scheme, variant)}`;
 }
 
-export function getGlowGradient(variant: ColorVariant) {
-  return `radial-gradient(200px circle at var(--spotlight-x) 0px, ${SECTION_GLOWS[variant]}, transparent 70%)`;
-}
-
 export function getBackground(scheme: ColorScheme, variant: keyof typeof SECTION_BACKGROUNDS) {
   return SECTION_BACKGROUNDS[variant][scheme];
 }

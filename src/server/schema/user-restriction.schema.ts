@@ -28,14 +28,6 @@ export const resolveRestrictionSchema = z.object({
 });
 export type ResolveRestrictionInput = z.infer<typeof resolveRestrictionSchema>;
 
-export const addToAllowlistSchema = z.object({
-  trigger: z.string().min(1),
-  category: z.string().min(1),
-  reason: z.string().max(500).optional(),
-  userRestrictionId: z.number().optional(),
-});
-export type AddToAllowlistInput = z.infer<typeof addToAllowlistSchema>;
-
 export const debugAuditPromptSchema = z.object({
   prompt: z.string().min(1).max(10000),
   negativePrompt: z.string().max(10000).optional(),

@@ -1,4 +1,15 @@
-import { Button, Center, Grid, Group, Loader, Select, Stack, Text, TextInput, Title } from '@mantine/core';
+import {
+  Button,
+  Center,
+  Grid,
+  Group,
+  Loader,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconLayoutGrid, IconPlus, IconSearch } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -49,7 +60,6 @@ import { type ModelSlotId } from '~/shared/constants/slot-registry';
 type SlotFilter = ModelSlotId;
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
-  { value: 'rating', label: 'Top rated' },
   { value: 'popular', label: 'Most popular' },
   { value: 'newest', label: 'Newest' },
   { value: 'name', label: 'Name (A–Z)' },
@@ -60,7 +70,7 @@ export function MarketplaceBody() {
   const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
   const [category, setCategory] = useState<MarketplaceCategory | null>(null);
-  const [sort, setSort] = useState<MarketplaceSort>('rating');
+  const [sort, setSort] = useState<MarketplaceSort>('popular');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
@@ -69,9 +79,14 @@ export function MarketplaceBody() {
   // hydration mismatch); the real list is loaded in an effect after mount, and
   // updated whenever the viewer opens an app via handleOpen.
   const [recents, setRecents] = useState<RecentApp[]>([]);
+  // 🔴 Keyed by ACCOUNT (#4048): localStorage is per browser profile, so the
+  // store only hands back entries the CURRENT viewer wrote. `ownerId` is in the
+  // dep list so a sign-in / sign-out / account switch inside the SPA re-reads
+  // the (now different, usually empty) bucket instead of keeping the old rail.
+  const ownerId = currentUser?.id ?? null;
   useEffect(() => {
-    setRecents(getRecentlyOpenedApps());
-  }, []);
+    setRecents(getRecentlyOpenedApps(ownerId));
+  }, [ownerId]);
 
   // The marketplace listing is anon-CAPABLE (publicProcedure) — it fires for
   // any viewer who has the appBlocks flag, including a session-less one once
@@ -111,8 +126,7 @@ export function MarketplaceBody() {
   // CTA without a lag. The LISTING query below stays keyed on `debouncedSearch`
   // (we don't want to refetch on every keystroke) — only this UI-state flag is
   // made immediate.
-  const hasActiveFilters =
-    searchInput.length > 0 || category != null || slotFilter != null;
+  const hasActiveFilters = searchInput.length > 0 || category != null || slotFilter != null;
 
   // F-E E4 discovery rails — shown ABOVE the grid only on the unfiltered default
   // view (a "Featured" staff-pick rail + a "New" recently-deployed rail). When
@@ -170,7 +184,9 @@ export function MarketplaceBody() {
     // as the rest of the funnel so a non-developer never fires it. Threads the
     // `appBlocksAuthor` capability so the curated non-mod author cohort (not every
     // logged-in marketplace viewer) fires it too.
-    enabled: !!features.appBlocks && isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }),
+    enabled:
+      !!features.appBlocks &&
+      isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }),
   });
   const earningsByAppBlockId = useMemo(() => {
     type AppRow = { id: string; lifetimeShareCents: number };
@@ -228,18 +244,21 @@ export function MarketplaceBody() {
   //    never fires the install `onOpen`. The store dedups, so an app opened via
   //    both paths is recorded once.
   function recordRecent(block: AvailableBlock) {
-    // Enrich the recents entry with the block's name + cover image when they're
-    // already on hand (they are, on the AvailableBlock) so the shared app-chrome
-    // "Recently run" menu can render icon + name without a re-fetch. Both are
-    // optional in the store, so a null coverUrl/appName just falls back to the
-    // generic icon / blockId handle.
+    // Enrich the recents entry with the block's name when it's already on hand
+    // (it is, on the AvailableBlock) so the shared app-chrome "Recently run" menu
+    // can render it without a re-fetch; a null appName falls back to the blockId
+    // handle. The cover passed as `iconUrl` is NOT persisted — the recents store
+    // never keeps an icon url (see `RecentApp` in `recentlyOpenedAppsStore.ts`).
     setRecents(
-      recordRecentlyOpenedApp({
-        id: block.id,
-        blockId: block.blockId,
-        name: block.appName ?? undefined,
-        iconUrl: block.coverUrl ?? undefined,
-      })
+      recordRecentlyOpenedApp(
+        {
+          id: block.id,
+          blockId: block.blockId,
+          name: block.appName ?? undefined,
+          iconUrl: block.coverUrl ?? undefined,
+        },
+        ownerId
+      )
     );
   }
 
@@ -277,7 +296,7 @@ export function MarketplaceBody() {
           label="Sort"
           data={SORT_OPTIONS}
           value={sort}
-          onChange={(v) => setSort((v as MarketplaceSort) ?? 'rating')}
+          onChange={(v) => setSort((v as MarketplaceSort) ?? 'popular')}
           allowDeselect={false}
           w={170}
         />
@@ -320,13 +339,11 @@ export function MarketplaceBody() {
         />
       )}
 
-      {showRails &&
-        (featuredItems.length > 0 || newItems.length > 0) &&
-        gridItems.length > 0 && (
-          <Title order={3} mt="xs">
-            All apps
-          </Title>
-        )}
+      {showRails && (featuredItems.length > 0 || newItems.length > 0) && gridItems.length > 0 && (
+        <Title order={3} mt="xs">
+          All apps
+        </Title>
+      )}
 
       {isLoading ? (
         <Center py="xl">
@@ -358,7 +375,11 @@ export function MarketplaceBody() {
           </Grid>
           {hasNextPage && (
             <Center py="md">
-              <Button variant="default" loading={isFetchingNextPage} onClick={() => fetchNextPage()}>
+              <Button
+                variant="default"
+                loading={isFetchingNextPage}
+                onClick={() => fetchNextPage()}
+              >
                 Load more
               </Button>
             </Center>
@@ -447,7 +468,7 @@ function MarketplaceEmptyState({
   }
 
   // No apps exist at all (or, defensively, an empty view with no active
-  // filters) → friendly intro + Submit CTA for eligible viewers.
+  // filters) → friendly intro + Build CTA for eligible viewers.
   return (
     <Center py="xl">
       <Stack align="center" gap={8}>
@@ -455,18 +476,38 @@ function MarketplaceEmptyState({
           No apps yet
         </Text>
         <Text size="sm" c="dimmed" ta="center" maw={420}>
-          Apps add interactive panels to model pages — generation, games, utilities and
-          more. Be the first to publish one.
+          Apps add interactive panels to model pages — generation, games, utilities and more. Be the
+          first to publish one.
         </Text>
+        {/*
+          🔴 POINTS AT `/apps/build`, NOT `/apps/submit`, AND IT IS NOT A 404 RISK. This
+          renders only inside `/apps`, which already gates on `hasAppsStoreAccess`, and
+          `canSubmit` is `isAppDeveloper(...)` — so `canAccessAppsBuild` (store AND
+          author-or-getStarted) is satisfied by construction wherever this button exists.
+          `/apps/submit` would ALSO have worked for this exact cohort; the choice is about
+          IA and about measurement, not about access:
+            • ONE authoring door. The consolidation's whole point is that "start an app"
+              has a single entry; a second bare link to the mode selector re-creates the
+              two-doors layout it removed.
+            • BETTER LANDING. Whoever presses this has, by definition, an empty store in
+              front of them. If they have no apps either, `/apps/build` state B is
+              "ship your first app" — the coding-agent prompt first, the manual CLI setup
+              collapsed beneath it, and a secondary create button — rather than a bare type
+              picker. If they DO have apps, state C is their workbench. Both are strictly more
+              useful than the mode selector, and state B's create button is `/apps/submit`
+              anyway, so nothing is more than one click further away.
+            • MEASURABLE. The funnel events live on `/apps/build`; a direct jump to the
+              submit wizard is a create-flow entry nothing counts.
+        */}
         {canSubmit && (
           <Button
             component={Link}
-            href="/apps/submit"
+            href="/apps/build"
             leftSection={<IconPlus size={16} />}
             variant="light"
             size="xs"
           >
-            Submit an app
+            Build an app
           </Button>
         )}
       </Stack>

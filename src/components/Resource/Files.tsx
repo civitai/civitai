@@ -39,6 +39,7 @@ import { isEqual, startCase } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
+import { AddFromImportsButton } from '~/components/Moderation/HuggingFaceImport/AddFromImportsButton';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
@@ -50,13 +51,9 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import {
-  comfyFileTypeLabels,
-  filterFileTypeByExtension,
-  UNQUANTIZED_QUANT_TYPE,
-} from '~/utils/file-display-helpers';
+import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -64,7 +61,7 @@ import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 
 // Small inline dropzone for adding files within a section
 function InlineDropzone({
@@ -136,14 +133,16 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
   }
 }
 
-// TODO.Briant - compare file extension when checking for duplicate files
 export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
   const {
     files,
     linkedComponents,
     onDrop,
     dropzoneConfig,
+    sequentialUploads,
+    setSequentialUploads,
     baseModel,
+    modelVersionId,
     addLinkedComponent,
     removeLinkedComponent,
   } = useFilesContext();
@@ -180,8 +179,10 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     onDrop(droppedFiles, defaultType, skipInference);
   };
 
-  const primaryAccept = { 'mime/type': primary.extensions };
-  const additionalAccept = { 'mime/type': additional.extensions };
+  // iOS resolves `accept` entries to UTIs with no extension fallback, so a bare
+  // `.safetensors` greys out every file in the picker; octet-stream maps to `public.data`.
+  const primaryAccept = { 'application/octet-stream': primary.extensions };
+  const additionalAccept = { 'application/octet-stream': additional.extensions };
   const makeRejectHandler =
     (section: 'primary' | 'additional') => (rejectedFiles: FileRejection[]) => {
       const sectionConfig = section === 'primary' ? primary : additional;
@@ -222,6 +223,31 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     };
   const handleRejectPrimary = makeRejectHandler('primary');
   const handleRejectAdditional = makeRejectHandler('additional');
+
+  // `application/octet-stream` is what makes the picker usable on iOS, but it also matches
+  // any file the OS reports as octet-stream, whatever its extension. react-dropzone's
+  // attr-accept is the only other client-side type check and the upload API only screens
+  // against a denylist, so re-check the extension here before anything reaches onDrop.
+  const withExtensionGuard =
+    (section: 'primary' | 'additional', handle: (files: File[]) => void) =>
+    (droppedFiles: File[]) => {
+      const { extensions } = section === 'primary' ? primary : additional;
+      const accepted = droppedFiles.filter((file) =>
+        extensions.includes(`.${getFileExtension(file.name).toLowerCase()}`)
+      );
+      const rejected = droppedFiles.filter((file) => !accepted.includes(file));
+
+      if (rejected.length)
+        makeRejectHandler(section)(
+          rejected.map((file) => ({
+            file,
+            errors: [
+              { code: 'file-invalid-type', message: `${file.name} has an unsupported type` },
+            ],
+          }))
+        );
+      if (accepted.length) handle(accepted);
+    };
 
   const handleLinkResource = (resource: GenerationResource) => {
     const componentType = modelTypeToComponentType(resource.model.type);
@@ -285,16 +311,29 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           py="md"
           style={{ borderColor: 'rgba(34, 139, 230, 0.2)' }}
         >
-          <Group gap="xs">
-            <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
-            <Text fw={600} c="white">
-              Model Files
-            </Text>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
+            <Group gap="xs">
+              <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
+              <Text fw={600} c="white">
+                Model Files
+              </Text>
+            </Group>
+            {modelVersionId && <AddFromImportsButton modelVersionId={modelVersionId} />}
           </Group>
           <Text size="sm" c="dimmed" mt={4}>
             The main model files users will download. We&apos;ll show the best match based on their
             preferences.
           </Text>
+          {primary.maxFiles > 1 && (
+            <Switch
+              mt="sm"
+              size="xs"
+              label="Upload files one at a time"
+              description="Each file finishes and is saved before the next one starts. Slower, but if an upload fails the files already finished are kept."
+              checked={sequentialUploads}
+              onChange={(e) => setSequentialUploads(e.currentTarget.checked)}
+            />
+          )}
         </Card.Section>
         <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (
@@ -310,14 +349,14 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
               ))}
               <InlineDropzone
                 label="Add another model file variant"
-                onDrop={(dropped) =>
+                onDrop={withExtensionGuard('primary', (dropped) =>
                   handleInlineDrop(
                     dropped,
                     modelFiles,
                     primary.maxFiles,
                     primaryTypes.length === 1 ? primaryTypes[0] : undefined
                   )
-                }
+                )}
                 accept={primaryAccept}
                 maxFiles={primary.maxFiles}
                 onReject={handleRejectPrimary}
@@ -326,12 +365,12 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           ) : (
             <Dropzone
               accept={primaryAccept}
-              onDrop={(droppedFiles) => {
+              onDrop={withExtensionGuard('primary', (droppedFiles) => {
                 if (modelFiles.length + droppedFiles.length > primary.maxFiles) return;
                 if (files.length + droppedFiles.length > totalMaxFiles) return;
                 const defaultType = primaryTypes.length === 1 ? primaryTypes[0] : undefined;
                 onDrop(droppedFiles, defaultType);
-              }}
+              })}
               maxFiles={primary.maxFiles}
               onReject={handleRejectPrimary}
               className={classes.dropzone}
@@ -361,11 +400,21 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           py="md"
           style={{ borderColor: 'var(--mantine-color-dark-4)' }}
         >
-          <Group gap="xs">
-            <IconLayersLinked size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
-            <Text fw={600} c="white">
-              Additional Components
-            </Text>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
+            <Group gap="xs">
+              <IconLayersLinked size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
+              <Text fw={600} c="white">
+                Additional Components
+              </Text>
+            </Group>
+            {modelVersionId && (
+              <AddFromImportsButton
+                modelVersionId={modelVersionId}
+                types={additionalFileTypes}
+                label="Add components from imports"
+                title="Add components from Hugging Face imports"
+              />
+            )}
           </Group>
           <Text size="sm" c="dimmed" mt={4}>
             Components and files that accompany this model. Mark each as required or optional.
@@ -409,7 +458,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           <InlineDropzone
             label="Upload a component file"
             description={`Supports ${additional.extensions.join(', ')} files`}
-            onDrop={(dropped) =>
+            onDrop={withExtensionGuard('additional', (dropped) =>
               handleInlineDrop(
                 dropped,
                 additionalFiles,
@@ -417,7 +466,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                 additionalFileTypes.length === 1 ? additionalFileTypes[0] : undefined,
                 true
               )
-            }
+            )}
             accept={additionalAccept}
             maxFiles={additional.maxFiles}
             onReject={handleRejectAdditional}
@@ -1007,11 +1056,6 @@ function FileEditForm({
     }
   };
 
-  // Keep the file's own type selectable even when it's no longer offered, so a
-  // legacy type doesn't render as a blank Select.
-  const filterByFileExtension = (value: ModelFileType) =>
-    value === versionFile.type || filterFileTypeByExtension(value, versionFile.name);
-
   const handleReset = () => {
     updateFile(versionFile.uuid, {
       type: initialFile.type,
@@ -1051,12 +1095,15 @@ function FileEditForm({
           w={160}
           placeholder="Type"
           error={error?.type?._errors[0]}
-          data={fileTypes.filter(filterByFileExtension).map((x) => ({
-            label:
-              comfyFileTypeLabels[x] ??
-              getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
-            value: x,
-          }))}
+          data={getModelFileTypeOptions(versionFile.name, {
+            // A saved file can't become training data; only an upload can (assertFileTypeChangeAllowed).
+            types:
+              versionFile.id && initialFile.type !== 'Training Data'
+                ? fileTypes.filter((type) => type !== 'Training Data')
+                : fileTypes,
+            currentType: versionFile.type,
+            modelType: versionFile.modelType,
+          })}
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;

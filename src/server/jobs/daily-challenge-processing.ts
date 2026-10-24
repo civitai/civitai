@@ -1,6 +1,6 @@
 import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -78,12 +78,15 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  DEFAULT_REVIEW_MODEL,
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
+  generateResourceConcept,
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -102,12 +105,13 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
+import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import {
   refundUserChallengeFunds,
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   getChallengeBuzzType,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
@@ -159,6 +163,12 @@ type ChallengeCreationContext = {
   };
 };
 
+/**
+ * Showcase images handed to the resource-concept step. Four is enough to show what a resource
+ * renders across its versions without turning a per-challenge call into a per-challenge album.
+ */
+const RESOURCE_CONCEPT_IMAGE_COUNT = 4;
+
 type PreSelectedChallenge = {
   targetDate: Date;
   challengeDate: Date;
@@ -166,6 +176,8 @@ type PreSelectedChallenge = {
   resourceUserId: number;
   modelVersionIds: number[];
   image: { id: number; url: string };
+  /** Cover first, then further showcase images. Only the concept step reads past the first. */
+  showcaseImages: { id: number; url: string }[];
 };
 
 // Pre-compute shared context (runs 3 DB queries with Promise.all instead of 5 sequential)
@@ -258,7 +270,7 @@ async function selectResourceForDate(
       SELECT DISTINCT(ci."modelId") as id
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
-      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
+      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id AND gc.covered
       WHERE "collectionId" = ${ctx.sourceCollectionId}
       AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
@@ -278,7 +290,8 @@ async function selectResourceForDate(
       SELECT
         m.id as "modelId",
         u."username" as creator,
-        m.name as title
+        m.name as title,
+        m.description
       FROM "Model" m
       JOIN "User" u ON u.id = m."userId"
       WHERE m.id = ${randomResourceId.id}
@@ -287,25 +300,29 @@ async function selectResourceForDate(
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
-  // Get model versions and cover image in parallel
-  const [modelVersionRows, image] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT mv.id
+  const [modelVersionRows, showcaseImages] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; trainedWords: string[] }[]>`
+      SELECT mv.id, mv."trainedWords"
       FROM "ModelVersion" mv
       WHERE mv."modelId" = ${resource.modelId}
       AND mv.status = 'Published'
       ORDER BY mv.index ASC
     `,
-    getCoverOfModel(resource.modelId),
+    getShowcaseImagesOfModel(resource.modelId, RESOURCE_CONCEPT_IMAGE_COUNT),
   ]);
 
   return {
     targetDate,
     challengeDate,
-    resource,
+    resource: {
+      ...resource,
+      trainedWords: [...new Set(modelVersionRows.flatMap((v) => v.trainedWords ?? []))],
+    },
     resourceUserId: randomUser.userId,
     modelVersionIds: modelVersionRows.map((v) => v.id),
-    image,
+    // Same row getCoverOfModel returned: reordering the query below changes every challenge cover.
+    image: showcaseImages[0],
+    showcaseImages,
   };
 }
 
@@ -315,9 +332,19 @@ async function createChallengeFromSelection(
   selection: PreSelectedChallenge,
   ctx: ChallengeCreationContext
 ): Promise<number> {
-  const { resource, image, challengeDate, modelVersionIds, resourceUserId } = selection;
+  const { resource, image, showcaseImages, challengeDate, modelVersionIds, resourceUserId } =
+    selection;
   const { judgingConfig, config, prizeConfig } = ctx;
   const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+
+  // Sequenced before the article on purpose: the article's theme and themeElements ARE the judge's
+  // scoring anchor, and this is the only step that knows what the resource depicts.
+  const resourceConcept = await generateResourceConcept({
+    resource,
+    images: showcaseImages,
+    config: judgingConfig,
+  });
+  log('Resource concept:', resourceConcept ?? '(none derived)');
 
   // Run both AI calls in parallel - they share inputs but outputs are independent
   log('Generating AI content in parallel for', dayjs(challengeDate).format('YYYY-MM-DD'));
@@ -325,6 +352,7 @@ async function createChallengeFromSelection(
     generateCollectionDetails({ resource, image, config: judgingConfig }),
     generateArticle({
       resource,
+      resourceConcept,
       image,
       challengeDate: endsAt,
       allowedNsfwLevel: sfwBrowsingLevelsFlag,
@@ -397,6 +425,7 @@ async function createChallengeFromSelection(
       resourceUserId,
       resourceModelId: resource.modelId,
       themeElements: challengeContent.themeElements,
+      resourceConcept,
     },
   });
 
@@ -697,6 +726,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
+  const resourceConcept = challengeMetadata.resourceConcept;
   // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
   // review.
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
@@ -710,6 +740,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     collectionId: currentChallenge.collectionId,
     theme: currentChallenge.theme,
     themeElements,
+    resourceConcept,
     categories: userCategories,
   });
 
@@ -916,7 +947,17 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
   )`;
 
-  // Get entries approved since last reviewed
+  // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
+  // sampling and per-user cap (both sized for free dailies) must not leave one unjudged.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  // Paid challenges skip the since-last-review window: the watermark advances even when an
+  // entry's review fails, so a single provider error would otherwise leave it unjudged for good.
+  const reviewedSince = judgeAllEntries
+    ? Prisma.empty
+    : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
+
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -930,17 +971,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
-    AND ci."reviewedAt" >= ${lastReviewedAt}
+    ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
   log('Recent entries:', recentEntries.length);
-
-  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
-  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
-  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
-  // the participant cap. Free challenges keep the sampled selection below.
-  const judgeAllEntries =
-    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
 
   let toReview: typeof recentEntries;
   if (judgeAllEntries) {
@@ -1011,18 +1045,29 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         return;
       }
 
-      const review = await generateReview({
-        theme: currentChallenge.theme,
-        themeElements,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: judgingConfig,
-        categories: userCategories?.map((c) => ({
-          key: c.key,
-          name: c.label,
-          criteria: c.criteria,
-        })),
-        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+      const review = await reviewWithShadow({
+        shadow: config.reviewShadow,
+        context: {
+          challengeId: currentChallenge.challengeId,
+          imageId: entry.imageId,
+          nsfwLevel: entry.nsfwLevel,
+        },
+        run: (model) =>
+          generateReview({
+            theme: currentChallenge.theme,
+            themeElements,
+            resourceConcept,
+            creator: entry.username,
+            imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+            config: judgingConfig,
+            categories: userCategories?.map((c) => ({
+              key: c.key,
+              name: c.label,
+              criteria: c.criteria,
+            })),
+            nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+            model,
+          }),
       });
       log('Review prepared', entry.imageId, review);
 
@@ -1058,6 +1103,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
       log('Comment sent', entry.imageId);
 
@@ -1068,6 +1114,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
+          eventPoints: false,
         });
         log('Reaction sent', entry.imageId);
       } catch (error) {
@@ -1097,7 +1144,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       }
     } catch (error) {
       const err = error as Error;
-      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      logToAxiom({
+        type: 'daily-challenge-review-error',
+        message: err.message,
+        model: DEFAULT_REVIEW_MODEL,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+      });
       log('Failed to review entry', entry.imageId, error);
     }
   });
@@ -1604,6 +1657,7 @@ export async function pickWinnersForChallenge(
         collectionId: currentChallenge.collectionId,
         theme: currentChallenge.theme,
         themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
+        resourceConcept: parseChallengeMetadata(challengeJudgeRow?.metadata).resourceConcept,
         categories: userCategories,
       });
       const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
@@ -1821,14 +1875,13 @@ export async function pickWinnersForChallenge(
     // money, but the builder increments the duplicate-pick counter on its drop branch, and
     // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
     // dropped on exactly the flaky-payout run where the number matters most.
-    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+    const winnerPrizes = buildWinnerPrizes({
       challengeId: currentChallenge.challengeId,
       title: currentChallenge.title,
-      buzzType: winnerBuzzType,
       winners: winningEntries,
     });
-    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
-    log('Prizes sent');
+    const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
+    log('Prizes awarded');
 
     // 6. Distribute entry participation prizes
     const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
@@ -1904,11 +1957,9 @@ export async function pickWinnersForChallenge(
     //
     // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
     // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
-    // table — a partial-winner completion pays less and must report less. Note this is prize Buzz
-    // ATTEMPTED, not confirmed-settled: `createBuzzTransactionMany` silently drops any non-success,
-    // non-conflict result (e.g. insufficientFunds) from both of its result arrays, so a leg that did
-    // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
-    // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
+    // table — a partial-winner completion pays less and must report less. This is prize Buzz
+    // AWARDED, not paid: each winner claims theirs later. `winnerBuzzType` is the currency the
+    // pool was funded in, not the one a winner picks, and `challengeRecord` is already in scope —
     // neither needs a new query.
     recordChallengeCompleted({ source: challengeRecord?.source });
     recordChallengePrizePaidBuzz({
@@ -1932,6 +1983,7 @@ export async function pickWinnersForChallenge(
           challengeName: currentChallenge.title,
           position: entry.position,
           prize: entry.prize,
+          prizeId: awardedPrizes.find((prize) => prize.userId === entry.userId)?.id,
         },
       });
     }
@@ -2074,8 +2126,14 @@ async function duplicateImage(imageId: number, userId: number) {
   return newImage[0].id;
 }
 
-export async function getCoverOfModel(modelId: number) {
-  const [image] = await dbRead.$queryRaw<{ id: number; url: string }[]>`
+/**
+ * The model's SFW showcase images, best-first by the same ordering the cover has always used.
+ *
+ * One image was never enough to tell the concept step what a resource depicts: TagineXL's first
+ * showcase image is a closed tagine with no food in frame, which reads as generic cookware.
+ */
+export async function getShowcaseImagesOfModel(modelId: number, limit = 1) {
+  const images = await dbRead.$queryRaw<{ id: number; url: string }[]>`
     SELECT
       i.id, i."url"
     FROM "Image" i
@@ -2086,10 +2144,17 @@ export async function getCoverOfModel(modelId: number) {
     AND p."userId" = m."userId"
     AND i."nsfwLevel" = 1
     ORDER BY mv.index, p.id, i.index
-    LIMIT 1;
+    LIMIT ${limit};
   `;
-  if (!image) throw new Error('Failed to get cover image');
-  image.url = getEdgeUrl(image.url, { width: 1200, name: 'cover' });
+  if (!images.length) throw new Error(`No SFW showcase image found for model ${modelId}`);
+  return images.map((image) => ({
+    ...image,
+    url: getEdgeUrl(image.url, { width: 1200, name: 'cover' }),
+  }));
+}
+
+export async function getCoverOfModel(modelId: number) {
+  const [image] = await getShowcaseImagesOfModel(modelId, 1);
   return image;
 }
 

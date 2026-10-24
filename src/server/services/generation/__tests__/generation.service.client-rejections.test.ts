@@ -24,6 +24,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 // Collapse the heavy sibling-service graph — the arms under test are pure control
 // flow, but importing generation.service pulls in DB / search-index / image infra.
+import type * as ImageMediaVisibility from '~/server/utils/image-media-visibility';
+
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();
@@ -37,24 +39,11 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-const imageFindUnique = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    image: { findUnique: (...args: unknown[]) => imageFindUnique(...args) },
-    // No stored resource rows: `getResourceData([])` short-circuits, so the whole
-    // resource-enrichment path stays out of this test and `getBaseModelFromResources`
-    // returns undefined — which is what leaves `type` equal to `media.type`.
-    imageResourceNew: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  dbWrite: {},
-}));
+const imageFindUnique = dbMock.dbRead.image.findUnique;
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
-}));
-vi.mock('~/server/services/orchestrator/ecosystems/wan.handler', () => ({
-  wanBaseModelGroupIdMap: {},
 }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: {} }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
@@ -66,6 +55,15 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({ imagesForModelVersionsCache: {} }));
+// Visibility is covered by image-generation-data-visibility.behavior.test.ts.
+vi.mock('~/server/services/image-visibility.service', () => ({
+  assertImageVisibleToViewer: vi.fn(async () => ({ userId: 555, nsfwLevel: 1, postId: null })),
+}));
+vi.mock('~/server/utils/image-media-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageMediaVisibility>()),
+  viewerCanSeeImageMedia: vi.fn(async () => true),
+  viewerCanSeeSourceMedia: vi.fn(async () => true),
+}));
 vi.mock('~/server/services/generation/version-generation-state.service', () => ({
   getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),
 }));
@@ -77,6 +75,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import type { GetGenerationDataSchema } from '~/server/schema/generation.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('generation.service — caller rejections are TRPCErrors, not plain Errors', () => {
   it('an unsupported generation data type raises BAD_REQUEST with its own text', async () => {

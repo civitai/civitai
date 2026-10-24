@@ -12,7 +12,9 @@ import { newNotificationSignal, type NotificationCategory } from '@civitai/notif
 import { notifDbWrite } from '../lib/server/clients/db';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
 import { notificationCache } from '../lib/server/cache';
-import { signalsEndpoint } from '../env';
+import { health } from '../lib/server/health';
+import { dispatchPush } from './push';
+import { counterBumpTimeoutMs, signalsEndpoint } from '../env';
 import {
   notificationsFannedOutTotal,
   signalsDeliveryTotal,
@@ -46,9 +48,32 @@ const rowsToFetch = 3000;
 const insertBatchSize = 5000;
 const signalBatchSize = 500;
 const signalDelay = 500;
+// Consecutive failed counter bumps after which the rest of the tick stops trying. While redis is down
+// every bump fails, and even bounded ones add up over thousands of recipients.
+const counterFailuresBeforeSkip = 3;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Bump one recipient's unread counter within `counterBumpTimeoutMs`. Resolves whether it succeeded. */
+async function bumpCounter(userId: number, category: NotificationCategory): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => {
+      health.recordRedisFailure();
+      resolve(false);
+    }, counterBumpTimeoutMs);
+  });
+  const bumped = notificationCache.incrementUser(userId, category).then(
+    () => true,
+    () => false
+  );
+  try {
+    return await Promise.race([bumped, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Batch-claim query for due PendingNotification rows. `FOR UPDATE SKIP LOCKED` on the inner SELECT is the
@@ -254,8 +279,10 @@ export const create = async (row: PendingReturnRow): Promise<RetData[] | undefin
 // Exported for behavioral unit tests. Export-for-test only — logic unchanged.
 export const run = async () => {
   const rows = await getPending();
+  let counterFailures = 0;
   for (const row of rows) {
     const affectedUsers = await create(row);
+    health.markWorkerProgress();
     if (!affectedUsers) {
       workerPendingProcessedTotal.inc({ outcome: 'errored' });
       continue;
@@ -263,11 +290,23 @@ export const run = async () => {
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
     notificationsFannedOutTotal.inc(affectedUsers.length);
 
+    // Sibling of the signals POST below: runs after the DB write committed, on a recipient list
+    // that already passed the opt-out filter. Awaited (unlike signals) because it does its own
+    // pacing-sensitive outbound calls; it never throws.
+    await dispatchPush(
+      row.type,
+      row.details,
+      affectedUsers.map((u) => u.userId)
+    );
+
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
       for (const { userId, id, createdAt } of affectBatches[i]!) {
-        await notificationCache.incrementUser(userId, row.category);
+        // A failed or stuck counter bump must not cost the remaining recipients their signals.
+        if (counterFailures < counterFailuresBeforeSkip) {
+          counterFailures = (await bumpCounter(userId, row.category)) ? 0 : counterFailures + 1;
+        }
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
         // outcome counting — non-2xx AND network/throw both count as `failure` (the old server silently
         // POSTed to a non-existent endpoint; that drop is now scrapeable).
@@ -284,6 +323,7 @@ export const run = async () => {
             logAxiomError(e as Error);
           });
       }
+      health.markWorkerProgress();
       if (i < affectBatches.length - 1) await sleep(signalDelay);
     }
   }
@@ -296,6 +336,7 @@ export const run = async () => {
  */
 export function startWorker(): { stop: () => void } {
   let stopped = false;
+  health.markWorkerStarted();
 
   const scheduleTick = () => {
     if (stopped) return;
@@ -308,6 +349,7 @@ export function startWorker(): { stop: () => void } {
         logAxiomError(e as Error);
       } finally {
         end();
+        health.markWorkerProgress();
         const w = notifDbWrite();
         writePoolActive.set(w.totalCount - w.idleCount);
       }

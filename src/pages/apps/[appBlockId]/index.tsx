@@ -28,8 +28,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import {
   approvedListingSlugQuery,
   resolveLegacyAppRoute,
@@ -51,6 +53,7 @@ import {
 import { dbRead } from '~/server/db/client';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
@@ -87,19 +90,16 @@ import { trpc } from '~/utils/trpc';
  * at the hop. Named so it is a decision, not a surprise; forwarding them is a
  * one-line change if anyone wants it.
  *
- * 🔴 SOMETHING **IS** ORPHANED — an earlier draft of this change claimed nothing
- * was, and that was wrong. The legacy 5-star `AppBlockReview` WRITE form
- * (`<AppBlockReviews>` below) has exactly two hosts: this page, and
- * `AppDetailsModal`. `AppDetailsModal` is opened only from `AppBlockCard`;
- * `AppBlockCard` renders only from `MarketplaceBody` and `RecentlyOpenedApps`
- * (whose `RecentlyOpenedAppsView` itself renders only inside `MarketplaceBody`);
- * and `MarketplaceBody` has had NO importer in app code since `/apps` swapped to
- * `AppListingsMarketplaceBody` — it is retained purely as a documented one-line
- * rollback. So after this redirect the whole 5-star review surface has no
- * reachable entry point. Harmless today — `app_block_reviews` is empty in
- * production, and the store detail carries the listing review surface — but the
- * follow-up that deletes this body must decide the legacy review form's fate
- * explicitly rather than inherit a "still reachable" assumption that is false.
+ * 🔴 THE ORPHANED 5-STAR REVIEW FORM IS GONE. This page and `AppDetailsModal`
+ * were the only two hosts of the legacy `AppBlockReview` (5-star) write form,
+ * and both were unreachable — `AppDetailsModal` is opened only from
+ * `AppBlockCard`, which renders only from `MarketplaceBody` /
+ * `RecentlyOpenedAppsView`, and `MarketplaceBody` has had no importer in app
+ * code since `/apps` swapped to `AppListingsMarketplaceBody`. The whole
+ * `AppBlockReview` system (service, tRPC procs, Buzz reward, Bayesian `rating`
+ * sort and the `app_block_reviews` table) has been removed; the store's review
+ * surface is the thumbs-based `AppListingReview`. The `<AppBlockReviews>`
+ * section that used to render here was deleted with it.
  *
  * ⚠️ Two consequences of leaving those callsites alone, known and accepted:
  *   - An owner backing out of the editor on a PENDING app now lands on a real
@@ -221,18 +221,17 @@ export default function AppDetailPage() {
     { enabled: !!features.appBlocks && !!currentUser && !!appBlockId, retry: false }
   );
   const isOwner = !!ownerManifest;
-  // Subscriptions for THIS app — feeds the reviews write-form gate (an enabled
-  // install is required to review, mirroring the server gate).
-  const mySubsForApp = useMemo(
-    () => (mySubs ?? []).filter((sub) => sub.appBlockId === appBlockId),
-    [mySubs, appBlockId]
-  );
-
   if (!features.appBlocks) return <NotFound />;
 
   const detail = data as PublicAppDetail | undefined;
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
+  // 🔴 `<meta>` gets the PLAIN-TEXT PROJECTION, never the markdown source. The
+  // stored description is markdown (see `appListingDescriptionText.ts`), and a meta
+  // tag cannot render it — shipping the source put literal `**bold**` and
+  // backticks into og:description. The projection is built only from mdast text
+  // values, so it also cannot introduce markup into the tag.
+  const metaDescription = appListingDescriptionToPlainText(description);
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS (installModel `'none'`) — no
@@ -277,9 +276,6 @@ export default function AppDetailPage() {
       // external-link app shows no Install CTA — so carry the detail's value
       // (null here in practice).
       externalUrl: detail.externalUrl,
-      // Marketplace reviews — carry through from the detail (display-safe).
-      avgRating: detail.avgRating,
-      reviewCount: detail.reviewCount,
       // Card cover = the first public screenshot (the detail already carries the
       // projected gallery). Unused by the settings modal, but kept consistent.
       coverUrl: detail.screenshots[0]?.url ?? null,
@@ -300,7 +296,7 @@ export default function AppDetailPage() {
       */}
       <Meta
         title={`${name} — Civitai Apps`}
-        description={description || `${name} on the Civitai Apps marketplace.`}
+        description={metaDescription || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
       <Container size="md" py="md">
@@ -339,7 +335,7 @@ export default function AppDetailPage() {
                     )}
                     {detail.contentRating && (
                       <Badge variant="light" color="gray" size="sm">
-                        {detail.contentRating}
+                        {offsiteContentRatingLabel(detail.contentRating)}
                       </Badge>
                     )}
                   </Group>
@@ -429,11 +425,12 @@ export default function AppDetailPage() {
                 </Group>
               </Group>
 
-              {description && (
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                  {description}
-                </Text>
-              )}
+              {/* Markdown, via the shared renderer — see `appListingDescriptionText.ts`
+                  for the one rule. This surface used to be `pre-wrap` plain text
+                  while the listing detail body rendered the SAME stored string as
+                  markdown, so a description written with backticks showed literal
+                  backtick characters here and a code span there. */}
+              {description && <AppListingDescription description={description} />}
 
               {/* F-E E5 — publisher screenshot gallery. Public display URLs
                   (the gated /api/blocks/screenshot/... route); the images were
@@ -481,7 +478,7 @@ export default function AppDetailPage() {
                   <Stack gap="xs">
                     <Title order={4}>External site</Title>
                     <Text size="sm" c="dimmed">
-                      This app opens an external, off-site link in a new tab:{' '}
+                      This {STANDALONE_KIND_LABEL} app opens an external link in a new tab:{' '}
                       <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
                         {externalUrl!.replace(/^https?:\/\//, '')}
                       </Anchor>
@@ -591,21 +588,6 @@ export default function AppDetailPage() {
                   </Stack>
                 </>
               )}
-
-              <Divider />
-
-              {/* F-E marketplace REVIEWS — summary + (gated) write form + list.
-                  Rendered behind the same appBlocks flag as the rest of the page
-                  (the component also self-guards). The aggregate (avgRating /
-                  reviewCount) comes from getAppDetail; the write form shows only
-                  for a signed-in viewer with an enabled install (server-enforced
-                  gates mirrored client-side). */}
-              <AppBlockReviews
-                appBlockId={appBlockId}
-                avgRating={detail.avgRating}
-                reviewCount={detail.reviewCount}
-                subscriptions={mySubsForApp}
-              />
             </Stack>
           )}
         </Stack>

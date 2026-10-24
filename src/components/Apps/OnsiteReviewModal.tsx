@@ -17,24 +17,35 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
+import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
+  IconChartBar,
   IconCheck,
+  IconCoin,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
   IconLayoutGrid,
+  IconLock,
   IconShieldLock,
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
+import {
+  compactRelativeTime,
+  REVIEW_RELATIVE_TICK_MS,
+  useNowTick,
+} from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   FileDiffEntry,
   FileListPreview,
@@ -42,12 +53,20 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  parseManifestAnalytics,
+  type DeclaredEventProperty,
+} from '~/shared/constants/block-analytics.constants';
+import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -86,8 +105,6 @@ export type FileSummary = {
   changed: string[];
 };
 
-export type UserProfile = { id: number; username: string | null; image: string | null };
-
 export type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
@@ -103,7 +120,20 @@ export type ReviewedRequestCommon = {
   // PUSH-ORIGINATED requests (git-push, empty bundle) have no review-org
   // snapshot — this links the mod to the canonical repo at the exact pushed sha.
   pushCommitUrl?: string | null;
-  submittedBy: UserProfile;
+  submittedBy: ReviewUserChip;
+  /** Lifetime store opens for this app's listing, joined on slug by the list/detail
+   *  reads. Optional so a fixture need not spell it; `undefined` is "unknown", which the
+   *  queue renders identically to a null listing. */
+  playCount?: number | null;
+  /** CDN URLs for the app's store listing media, joined on slug by the same reads. */
+  iconUrl?: string | null;
+  coverUrl?: string | null;
+  /** The same media with levels, plus the civitai.red overrides, for the review's reveal. */
+  reviewMedia?: ListingReviewMedia | null;
+  /** Id of the slug-joined store listing; `null` when the request has none of its own. */
+  appListingId?: string | null;
+  /** Set when approving re-rates a listing from its imagery, starting from `declared`. */
+  approveRating?: { listingId: string; declared: string | null } | null;
 };
 
 export type PendingRequest = ReviewedRequestCommon;
@@ -111,20 +141,20 @@ export type PendingRequest = ReviewedRequestCommon;
 export type ApprovedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   approvalNotes: string | null;
-  reviewedBy: UserProfile | null;
+  reviewedBy: ReviewSubmitterChip;
   /** Build/deploy lifecycle for the approved version — `null` means either a
    *  legacy pre-feature row OR the STRANDED case (approved, but the build never
    *  started). Selected by `listApprovedRequests`; optional so older callers /
-   *  fixtures that omit it still typecheck. */
+   *  fixtures that omit it still typecheck. `deployDetail` is deliberately absent:
+   *  it carries the app's build-log excerpt, which moderator reads never select. */
   deployState?: string | null;
-  deployDetail?: string | null;
   deployUpdatedAt?: string | Date | null;
 };
 
 export type RejectedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
-  reviewedBy: UserProfile | null;
+  reviewedBy: ReviewSubmitterChip;
 };
 
 export type AnyRequest = PendingRequest | ApprovedRequest | RejectedRequest;
@@ -144,10 +174,306 @@ export function formatBytes(s: string): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-export function formatDate(d: string | Date | null | undefined): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString();
+/*
+  🔴 `formatDate` IS GONE, NOT MOVED. Its only two callers were the submitter line and the
+  decision alert's "· {date}", and both now render `ReviewRelativeTime` — a compact age with
+  the exact instant kept on `title` + `<time datetime>`. Leaving an exported formatter with
+  no callers is an invitation to re-introduce an absolute timestamp on one of these surfaces
+  and not the other. `~/utils/date-helpers` has the app-wide one if a caller genuinely needs
+  it.
+*/
+
+/**
+ * A timestamp shown as a COMPACT RELATIVE AGE with the exact instant kept on hover and
+ * exposed to a screen reader via `<time dateTime>`/`title`.
+ *
+ * 🔴 ONE LADDER FOR THE WHOLE `~/components/Apps` TREE — `compactRelativeTime`, whose own
+ * docstring records that a SECOND ladder in this directory was deleted for drifting (it
+ * stopped at days where this reads `1w`, and read the clock itself, so it needed faked
+ * timers to test). Do not write a third, and do not reach for `DaysFromNow`: that renders
+ * dayjs's long phrase, which is the width these surfaces exist to give back.
+ *
+ * 🔴 THE ABSOLUTE TIME IS KEPT, NOT REPLACED. "3h ago" is what a mod triaging a queue
+ * needs; the exact instant is what a moderation DECISION RECORD needs, and a review page is
+ * both. `UnifiedReviewList`'s age cell does exactly this, so the two surfaces agree.
+ */
+export function ReviewRelativeTime({
+  value,
+  now,
+  testId,
+}: {
+  value: string | Date | null | undefined;
+  /** Injected so every rung is reachable in a test without faking timers. */
+  now: Date;
+  testId?: string;
+}) {
+  if (!value) {
+    return (
+      <Text span size="xs" c="dimmed" data-testid={testId}>
+        —
+      </Text>
+    );
+  }
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const valid = Number.isFinite(date.getTime());
+  return (
+    <Text span size="xs" c="dimmed">
+      <time
+        dateTime={valid ? date.toISOString() : undefined}
+        title={valid ? date.toLocaleString() : undefined}
+        data-testid={testId}
+      >
+        {compactRelativeTime(date, now)}
+      </time>
+    </Text>
+  );
+}
+
+/**
+ * Submitter identity + age + bundle size for one review — the line directly under the
+ * page/modal title.
+ *
+ * 🔴 THE SAME `UserAvatar` THE QUEUE RENDERS, with the same props
+ * (`size="sm" withUsername linkToProfile`), so the submitter reads identically on the list
+ * and on the submission. The queue's cell is `UnifiedReviewList.tsx`'s Submitter column;
+ * the two now differ in nothing but their surrounding layout.
+ *
+ * 🔴 `user=`, NOT `userId=`. The request already carries `{ id, username, image }`, so the
+ * `userId` form's `trpc.user.getById` per render is pure waste — and it buys nothing,
+ * because that path hardcodes `cosmetics: []` so neither form renders a decoration frame.
+ * (Same note as the queue cell's, for the same reason.)
+ *
+ * 🔴 A SUBMITTER WITH NO USERNAME STILL RENDERS AS `#<id>`, because they are still an
+ * identity a moderator acts on and an empty cell is the one outcome that is not a decision.
+ *
+ * ⚠️ THE COMPONENT IS SHARED WITH THE QUEUE; THIS BRANCH IS NOT — `UnifiedReviewList`'s
+ * Submitter cell still spells its own `username ? <UserAvatar/> : #id` inline, because it
+ * needs a `stopPropagation` wrapper this line does not. So the predicate exists at two
+ * sites: tighten it here (render a deleted submitter as "deleted user", say) and the queue
+ * and the submission disagree about the same person, with both surfaces' tests green. The
+ * fix is for the queue cell to consume THIS component; it is not done here only because
+ * that file is a table cell with different layout needs, and this note is the handle for
+ * whoever does it.
+ */
+export function ReviewSubmitterMeta({
+  request,
+  now,
+}: {
+  request: Pick<ReviewedRequestCommon, 'submittedBy' | 'submittedAt' | 'bundleSizeBytes'>;
+  /** Injected so the age ladder is testable without faking timers. */
+  now: Date;
+}) {
+  const submitter = request.submittedBy;
+  return (
+    <Group gap="xs" align="center" wrap="wrap" data-testid="apps-review-submitter-meta">
+      {submitter?.username ? (
+        <UserAvatar user={submitter} size="sm" withUsername linkToProfile />
+      ) : (
+        <Text size="xs" c="dimmed" data-testid="apps-review-submitter-fallback">
+          {submitter ? `#${submitter.id}` : '—'}
+        </Text>
+      )}
+      <Text span size="xs" c="dimmed">
+        ·
+      </Text>
+      <ReviewRelativeTime
+        value={request.submittedAt}
+        now={now}
+        testId="apps-review-submitted-age"
+      />
+      <Text span size="xs" c="dimmed">
+        · {formatBytes(request.bundleSizeBytes)}
+      </Text>
+    </Group>
+  );
+}
+
+/**
+ * The read-only APPROVED / REJECTED banner for a decided submission — who decided, when,
+ * and the notes or reason they left.
+ *
+ * Renders `null` for a pending request, so a caller can mount it unconditionally. Extracted
+ * from `OnsiteReviewModalBody` so the review PAGE can render it OUTSIDE its tabs (a
+ * decision is a fact about the whole submission, not about one section) while the modal
+ * keeps it inline — ONE implementation, two placements.
+ */
+export function ReviewDecisionAlert({
+  selection,
+  now,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  now: Date;
+}) {
+  const { request, mode } = selection;
+  const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
+  const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
+  if (!approved && !rejected) return null;
+  const decided = (approved ?? rejected)!;
+  return (
+    <Alert
+      color={approved ? 'green' : 'red'}
+      variant="light"
+      icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
+      title={
+        <Group gap={6}>
+          <Text size="sm" fw={600}>
+            {approved ? 'Approved by' : 'Rejected by'}{' '}
+            {decided.reviewedBy
+              ? decided.reviewedBy.username
+                ? `@${decided.reviewedBy.username}`
+                : `#${decided.reviewedBy.id}`
+              : 'unknown'}
+          </Text>
+          <Text span size="xs" c="dimmed">
+            ·
+          </Text>
+          <ReviewRelativeTime
+            value={decided.reviewedAt}
+            now={now}
+            testId="apps-review-decided-age"
+          />
+        </Group>
+      }
+    >
+      {approved && approved.approvalNotes && (
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed">
+            Approval notes
+          </Text>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {approved.approvalNotes}
+          </Text>
+        </Stack>
+      )}
+      {approved && !approved.approvalNotes && (
+        <Text size="xs" c="dimmed" fs="italic">
+          No approval notes were recorded.
+        </Text>
+      )}
+      {rejected && rejected.rejectionReason && (
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed">
+            Rejection reason
+          </Text>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {rejected.rejectionReason}
+          </Text>
+        </Stack>
+      )}
+    </Alert>
+  );
+}
+
+/**
+ * The FILES section — the per-kind counts, the file-level add/change/remove list, and the
+ * lazy line-level code diff.
+ *
+ * 🔴 NO RAW-SOURCE DEEP-LINK HERE, and that is a fixed defect rather than an omission. The
+ * link that used to sit beside the counts was retired in #3498: in-review snapshots are
+ * private now, so an anonymous click 404s and a dead link is worse than no link.
+ * `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally still carried on the
+ * payload — a richer in-app file browser is being designed separately and will reuse them.
+ */
+export function ReviewFilesSection({
+  request,
+}: {
+  request: Pick<ReviewedRequestCommon, 'id' | 'fileSummary' | 'manifestDiffSummary'>;
+}) {
+  const fs = (request.fileSummary ?? {}) as FileSummary;
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Stack gap={4}>
+      <Text size="sm" fw={600}>
+        Files
+      </Text>
+      <Group gap={6}>
+        <Text size="sm">{fs.files?.length ?? 0} total</Text>
+        {(fs.added?.length ?? 0) > 0 && (
+          <Badge color="green" variant="light">
+            +{fs.added.length} added
+          </Badge>
+        )}
+        {(fs.changed?.length ?? 0) > 0 && (
+          <Badge color="yellow" variant="light">
+            ~{fs.changed.length} changed
+          </Badge>
+        )}
+        {(fs.removed?.length ?? 0) > 0 && (
+          <Badge color="red" variant="light">
+            −{fs.removed.length} removed
+          </Badge>
+        )}
+      </Group>
+      {mds.kind === 'update' && (
+        <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
+      )}
+      {/* Line-level code diff — LAZY, on BOTH surfaces. It stays behind its own switch
+          rather than opening with the Code tab: the diff response has no total-bytes cap
+          (300 files × 256 KiB/side), so a mod who opened this tab only to read the file
+          counts would pay for the whole fetch. One click is the right price for that. */}
+      <CodeDiffPanel publishRequestId={request.id} />
+    </Stack>
+  );
+}
+
+/** The manifest FIELD-LEVEL diff against the previously approved version. */
+export function ReviewManifestDiffSection({
+  request,
+}: {
+  request: Pick<ReviewedRequestCommon, 'manifestDiffSummary'>;
+}) {
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Stack gap={4}>
+      <Text size="sm" fw={600}>
+        Manifest diff
+      </Text>
+      {mds.kind === 'first-version' ? (
+        <Text size="xs" c="dimmed">
+          First version — full manifest below.
+        </Text>
+      ) : (
+        <ManifestDiffPreview diff={mds} />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * The AGENTIC MOD CODE-REVIEW section, with its full gate.
+ *
+ * 🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it. On-site PENDING only, and
+ * DARK unless the mod-only `app-blocks-agentic-review` CLIENT flag resolves — fail-closed,
+ * so an absent Flipt flag means this renders nothing. External/connect requests are out of
+ * scope and hidden. Two surfaces mount it now (the modal body and the page's Agent report
+ * tab); a copied `mode === 'pending' && !!features?.… && isOnsiteReviewRequest(…)` at each
+ * would be the same predicate twice, wrong at one of them eventually.
+ */
+export function ReviewAgentSection({
+  selection,
+  fallback = null,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  /**
+   * Rendered INSTEAD when the gate declines.
+   *
+   * 🔴 ONE PLACE KNOWS THE GATE, INCLUDING ITS NEGATIVE BRANCH. The review page puts this
+   * section behind a TAB, and a selected tab whose content is `null` paints a blank panel —
+   * which reads as a broken page rather than as "there is nothing here". The obvious fix (a
+   * second predicate at the tab, deciding whether to show a note) would be the same gate
+   * spelled twice, and one of the two copies would be wrong about the FLAG — a client
+   * feature flag the tab would have to re-read. So the caller hands the note DOWN and this
+   * component, which already holds every clause, chooses. The modal passes nothing: an
+   * absent section in a long scroll needs no explanation.
+   */
+  fallback?: ReactNode;
+}) {
+  const features = useFeatureFlags();
+  const { request, mode } = selection;
+  if (mode !== 'pending') return <>{fallback}</>;
+  if (!features?.appBlocksAgenticReview) return <>{fallback}</>;
+  if (!isOnsiteReviewRequest(request)) return <>{fallback}</>;
+  return <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,223 +573,94 @@ export function OnsiteReviewModalTitle({
 }
 
 /**
- * Interactive review body. Holds the transient approve/reject UI state
- * (`approvalNotes` / `rejectionReason` / `actionMode`) plus the approve/reject
- * mutations. The parent keys this on `selection.request.id`, so all of that
- * state is fresh on every request switch — no manual reset needed, and the
- * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ * ⚠️ THE SECTION ORDER BELOW WAS VERIFIED ONCE AGAINST `origin/main`, AND NOTHING PINS IT.
  *
- * EXPORTED (with {@link OnsiteReviewModalTitle}) so the per-submission review
- * PAGE (`/apps/review/<id>`, `appReviewPage` flag) can re-host the exact same
- * body WITHOUT the `<Modal>` shell — the page passes a resolved `selection`, an
- * `onClose` that redirects to the queue (Q6), and its own `busyRef`. Keep this
- * server-graph-free and free of modal-only assumptions so the modal and page
- * stay behaviour-identical (and so an off-site page could reuse the shared
- * sub-sections later). The modal shell above remains the only caller that wraps
- * it in `<Modal>`.
+ * Measured by reading both: at the base this function rendered an inline submitter line, an
+ * inline decision alert, then `ReviewPreviewPanel` → `AgentReviewPanel` →
+ * `ScreenshotsReviewPanel` → `CurationPanel` → `FileListPreview` → `ManifestDiffPreview` →
+ * `ManifestView` → `ReviewActionBar`. Every one of those is now an extracted component
+ * sitting in the same position, so the arrangement is unchanged while the leaves are shared
+ * with the review PAGE.
+ *
+ * 🔴 SO DO NOT FORK A PANEL FOR ONE SURFACE. Every panel here has ONE implementation,
+ * rendered by both the modal and the review page; what differs is the ARRANGEMENT, and the
+ * page's memoisation of its tab subtree. A
+ * per-surface copy would drift, and the drift would be invisible because each surface's own
+ * tests would stay green. This is the contract `ReviewDetailView` and the review page point
+ * at; it was deleted once by a commit that meant only to withdraw the ordering claim below,
+ * which left three live cross-references aimed at nothing.
+ *
+ * The parent keys this on `selection.request.id`; why that matters is written on the shell
+ * that sets it, above.
+ *
+ * 🔴 THAT IS A ONE-TIME MEASUREMENT, NOT A GUARANTEE, and saying so is the point. No test
+ * asserts this sequence, so reordering these is not covered. What IS covered is the leaves,
+ * which both surfaces render for real in their own suites.
  */
 export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
   onActioned,
-  hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   onClose: () => void;
-  /** Modal shell close-guard ref, passed through to the inline action bar.
-   *  Omitted by the page, which renders its own (sticky) action bar. */
+  /** Modal shell close-guard ref, passed through to the inline action bar. */
   busyRef?: { current: boolean };
   /** Forwarded to the inline `ReviewActionBar` — fired after a successful
-   *  approve/reject (e.g. the review page's tab paging reset). Optional + additive. */
+   *  approve/reject (e.g. the queue page's tab paging reset). Optional + additive. */
   onActioned?: () => void | Promise<void>;
-  /** Suppress the inline approve/reject footer so the page can render the actions
-   *  in its own sticky bottom bar (the modal keeps them inline). */
-  hideInlineActions?: boolean;
 }) {
-  const features = useFeatureFlags();
-
-  const { request, mode } = selection;
-
+  const { request } = selection;
   const manifest = request.manifest as Record<string, unknown>;
-  const fs = (request.fileSummary ?? {}) as FileSummary;
-  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-
-  const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
-  const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
+  const now = useNowTick(REVIEW_RELATIVE_TICK_MS);
 
   return (
     <Stack gap="md">
-        <Group gap="xs" align="flex-start">
-          <Text size="xs" c="dimmed">
-            Submitter:
-          </Text>
-          <Text size="xs">
-            {request.submittedBy.username ?? `#${request.submittedBy.id}`}
-          </Text>
-          <Text size="xs" c="dimmed">
-            ·
-          </Text>
-          <Text size="xs" c="dimmed">
-            {formatDate(request.submittedAt)}
-          </Text>
-          <Text size="xs" c="dimmed">
-            · {formatBytes(request.bundleSizeBytes)}
-          </Text>
-        </Group>
+      <ReviewSubmitterMeta request={request} now={now} />
 
-        {(approved || rejected) && (
-          <Alert
-            color={approved ? 'green' : 'red'}
-            variant="light"
-            icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
-            title={
-              <Group gap={6}>
-                <Text size="sm" fw={600}>
-                  {approved ? 'Approved by' : 'Rejected by'}{' '}
-                  {(approved ?? rejected)?.reviewedBy
-                    ? (approved ?? rejected)!.reviewedBy!.username
-                      ? `@${(approved ?? rejected)!.reviewedBy!.username}`
-                      : `#${(approved ?? rejected)!.reviewedBy!.id}`
-                    : 'unknown'}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  · {formatDate((approved ?? rejected)!.reviewedAt)}
-                </Text>
-              </Group>
-            }
-          >
-            {approved && approved.approvalNotes && (
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed">
-                  Approval notes
-                </Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {approved.approvalNotes}
-                </Text>
-              </Stack>
-            )}
-            {approved && !approved.approvalNotes && (
-              <Text size="xs" c="dimmed" fs="italic">
-                No approval notes were recorded.
-              </Text>
-            )}
-            {rejected && rejected.rejectionReason && (
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed">
-                  Rejection reason
-                </Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {rejected.rejectionReason}
-                </Text>
-              </Stack>
-            )}
-          </Alert>
-        )}
+      <ReviewDecisionAlert selection={selection} now={now} />
 
-        {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
-            mod-gated preview before approving. Pending requests only; dark
-            unless the mod-only review-sandbox flag is enabled. */}
-        {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+      {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
+            mod-gated preview before approving. The whole gate lives in
+            `ReviewPreviewSection`. */}
+      <ReviewPreviewSection selection={selection} />
 
-        {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
-            agent code-review/security-audit report before approving. On-site
-            PENDING only, and DARK unless the mod-only `app-blocks-agentic-review`
-            CLIENT flag is enabled (fail-closed: absent Flipt flag → does not
-            render, so the panel is inert on merge). External/connect requests are
-            out of P2 scope — hidden. */}
-        {mode === 'pending' &&
-          !!features?.appBlocksAgenticReview &&
-          isOnsiteReviewRequest(request) && (
-            <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
-          )}
+      {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
+            agent code-review/security-audit report before approving. The whole
+            gate lives in `ReviewAgentSection`. */}
+      <ReviewAgentSection selection={selection} />
 
-        {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
+      {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
             the submitted bundle) before approving. Renders for every mode so an
             approved app's screenshots can be re-checked too. */}
-        <ScreenshotsReviewPanel publishRequestId={request.id} />
+      <ScreenshotsReviewPanel publishRequestId={request.id} />
 
-        {/* F-E E4 curation — marketplace metadata (category / featured / order).
-            Only for an APPROVED request that has a linked app_block: featuring
-            is approved-only, and the meta lives on the app_block row. */}
-        {mode === 'approved' && request.appBlockId && (
-          <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
-        )}
+      {/* F-E E4 curation — marketplace metadata (category / featured / order).
+            The whole gate lives in `ReviewCurationSection`. */}
+      <ReviewCurationSection selection={selection} />
 
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Files
-          </Text>
-          <Group gap={6}>
-            <Text size="sm">{fs.files?.length ?? 0} total</Text>
-            {(fs.added?.length ?? 0) > 0 && (
-              <Badge color="green" variant="light">
-                +{fs.added.length} added
-              </Badge>
-            )}
-            {(fs.changed?.length ?? 0) > 0 && (
-              <Badge color="yellow" variant="light">
-                ~{fs.changed.length} changed
-              </Badge>
-            )}
-            {(fs.removed?.length ?? 0) > 0 && (
-              <Badge color="red" variant="light">
-                −{fs.removed.length} removed
-              </Badge>
-            )}
-          </Group>
-          {/* The raw-source deep-link that used to sit here has been retired
-              (#3498). In-review snapshots are private now, so an anonymous
-              click on it 404s — a dead link is worse than no link. Source
-              review happens in the "Show code diff" panel below, which reads
-              the submitted artifact server-side and needs no second login.
-              `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally
-              still carried on the payload: a richer in-app file browser is
-              being designed separately and will reuse them. */}
-          {mds.kind === 'update' && (
-            <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
-          )}
-          {/* Line-level code diff — lazy (only fetched when the mod toggles it
-              open) so the modal stays light by default. Bounded server-side;
-              binary / oversized / huge-diff files are labelled as not-shown
-              rather than linked out. */}
-          <CodeDiffPanel publishRequestId={request.id} />
-        </Stack>
+      <ReviewFilesSection request={request} />
 
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Manifest diff
-          </Text>
-          {mds.kind === 'first-version' ? (
-            <Text size="xs" c="dimmed">
-              First version — full manifest below.
-            </Text>
-          ) : (
-            <ManifestDiffPreview diff={mds} />
-          )}
-        </Stack>
+      <ReviewManifestDiffSection request={request} />
 
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Manifest
-          </Text>
-          <ManifestView manifest={manifest} />
-        </Stack>
-
-        {/* Approve/reject controls. Rendered inline here for the modal (its
-            footer, unchanged), and SUPPRESSED on the page (`hideInlineActions`),
-            which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
-            The bar self-suppresses for read-only approved/rejected history. */}
-        {!hideInlineActions && (
-          <ReviewActionBar
-            selection={selection}
-            onClose={onClose}
-            onActioned={onActioned}
-            busyRef={busyRef}
-          />
-        )}
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Manifest
+        </Text>
+        <ManifestView manifest={manifest} />
       </Stack>
+
+      {/* Approve/reject controls — the modal's footer, inline. The bar
+            self-suppresses for read-only approved/rejected history. */}
+      <ReviewActionBar
+        selection={selection}
+        onClose={onClose}
+        onActioned={onActioned}
+        busyRef={busyRef}
+      />
+    </Stack>
   );
 }
 
@@ -476,6 +673,24 @@ export function OnsiteReviewModalBody({
 // `app-blocks-review-sandbox` flag — when it's off, previewRequest throws
 // UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
 // ---------------------------------------------------------------------------
+
+export function ReviewPreviewSection({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /*
+    🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it — the same rule
+    `ReviewAgentSection` already states, applied to its two siblings. Two surfaces mount this
+    now (the modal body and the page's Preview tab); a copied `mode === 'pending' &&` at each
+    is one predicate twice, and `OnsiteReviewMode` carries a fourth value (`reports`) that
+    neither copy mentioned — so a decision about it had to be made in two places.
+  */
+  if (selection.mode !== 'pending') return null;
+  return (
+    <ReviewPreviewPanel publishRequestId={selection.request.id} slug={selection.request.slug} />
+  );
+}
 
 function ReviewPreviewPanel({
   publishRequestId,
@@ -525,18 +740,14 @@ function ReviewPreviewPanel({
           Review preview
         </Text>
         {state && (
-          <Badge
-            size="sm"
-            variant="light"
-            color={isLive ? 'green' : isFailed ? 'red' : 'blue'}
-          >
+          <Badge size="sm" variant="light" color={isLive ? 'green' : isFailed ? 'red' : 'blue'}>
             {state.replace('preview-', '')}
           </Badge>
         )}
       </Group>
       <Text size="xs" c="dimmed">
-        Run this pending version in a temporary, mod-only preview before approving.
-        Torn down automatically when you approve or reject.
+        Run this pending version in a temporary, mod-only preview before approving. Torn down
+        automatically when you approve or reject.
       </Text>
 
       <Group gap="xs">
@@ -609,13 +820,34 @@ function ReviewPreviewPanel({
         // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
         // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
         // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        // 🔴 THE FLEX COLUMN IS LOAD-BEARING, not styling. This panel is the only
+        // thing that bounds the preview's height, and `ReviewBlockPreviewHost`
+        // now passes `fit="fill"` to `PageBlockHost` — which resolves against
+        // this box. As a plain block container it bounded the height for
+        // `overflow: hidden` (i.e. it CLIPPED) without giving the host anything
+        // to fill, so the host sat at its `FILL_MIN_HEIGHT_PX` floor and left the
+        // rest of the panel empty. Drop `display: flex` and that is what comes
+        // back — a short preview in a tall box, which reads as a styling nit
+        // rather than a regression.
         <div
           style={{
             width: '100%',
             height: 420,
+            display: 'flex',
+            flexDirection: 'column',
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
-            overflow: 'hidden',
+            // 🔴 `auto`, NOT `hidden` — the scroll container of last resort.
+            // `fit="fill"` floors the host at `FILL_MIN_HEIGHT_PX`, so on a
+            // narrow window (where the read-only banner above it wraps to two or
+            // three rows) the host can still be a few px taller than the panel.
+            // Under `overflow: hidden` that residue was unreachable, which is the
+            // same class of defect as the original bug in a much narrower window
+            // — and the reason the run page's wrapper carries this too. It does
+            // not fire at ordinary modal widths: 420 minus a one-row banner
+            // leaves ~382, comfortably above the floor. Still clips to the
+            // rounded border, which is what `hidden` was here for.
+            overflow: 'auto',
           }}
         >
           <ReviewBlockPreviewHost
@@ -642,7 +874,24 @@ function ReviewPreviewPanel({
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
 
-function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
+/**
+ * 🔴 `size` IS THE WHOLE POINT OF THIS PANEL, NOT A STYLE KNOB. The comment above records why
+ * the panel exists: publisher-supplied images are an abuse vector and the moderator has to
+ * actually SEE them before approving. A gallery too small to assess is the same as not
+ * showing them — so the review PAGE, which has one submission and the whole screen, renders
+ * one image per row up to a tablet width instead of two.
+ *
+ * The modal keeps `'compact'`: it is a dialog sharing its width with a scrolling body, and
+ * two columns there is the readable arrangement. Same component, same lazy query, same
+ * `max-width: 100%` bound — only the column count differs.
+ */
+export function ScreenshotsReviewPanel({
+  publishRequestId,
+  size = 'compact',
+}: {
+  publishRequestId: string;
+  size?: 'compact' | 'review';
+}) {
   const features = useFeatureFlags();
   const { data, isLoading, error } = trpc.blocks.getPublishRequestScreenshots.useQuery(
     { publishRequestId },
@@ -680,15 +929,35 @@ function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string
           <Text size="xs" c="dimmed">
             Publisher-supplied images from the bundle — review before approving.
           </Text>
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+          {/*
+            🔴 ONE COLUMN ON THE REVIEW PAGE, AT EVERY WIDTH — not a different breakpoint.
+            The modal goes two-up at `sm` (768) because it is a dialog sharing its width with
+            a scrolling body. The page has one submission and the moderator's whole screen,
+            and the thing being judged is whether publisher-supplied art is acceptable: a
+            half-width thumbnail is the defect this panel's own header describes. A single
+            column makes each shot the full container width, which is roughly twice the
+            modal's at the same viewport.
+          */}
+          <SimpleGrid cols={size === 'review' ? 1 : { base: 1, sm: 2 }} spacing="sm">
             {items.map((shot) => (
-              <Card key={shot.index} withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+              <Card
+                key={shot.index}
+                withBorder
+                padding={0}
+                radius="md"
+                style={{ overflow: 'hidden' }}
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={shot.dataUrl}
                   alt={`Screenshot ${shot.index + 1}`}
+                  // 🔴 `loading="lazy"` STAYS. Bigger must not mean eagerly fetched: these are
+                  // base64 data URLs inlined in the query payload, and the panel only mounts
+                  // once the Preview tab is visited. Widening the column changes the layout,
+                  // not when the bytes are decoded.
                   loading="lazy"
-                  style={{ width: '100%', height: 'auto', display: 'block' }}
+                  data-testid={`apps-review-screenshot-${shot.index}`}
+                  style={{ width: '100%', maxWidth: '100%', height: 'auto', display: 'block' }}
                 />
               </Card>
             ))}
@@ -710,6 +979,23 @@ const CATEGORY_SELECT_DATA = MARKETPLACE_CATEGORIES.map((c) => ({
   value: c,
   label: MARKETPLACE_CATEGORY_LABELS[c],
 }));
+
+export function ReviewCurationSection({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /*
+    🔴 SAME RULE AS `ReviewPreviewSection` ABOVE. Featuring is approved-only and the meta
+    lives on the `app_block` row, so BOTH clauses are required — and if an approved request
+    ever resolves its `appBlockId` later, one surface would render the panel and the other
+    silently would not.
+  */
+  const { request, mode } = selection;
+  if (mode !== 'approved' || !request.appBlockId) return null;
+  // Keyed so the form's seeded local state resets when a different app's meta arrives.
+  return <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />;
+}
 
 function CurationPanel({ appBlockId }: { appBlockId: string }) {
   const features = useFeatureFlags();
@@ -784,8 +1070,7 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
           <>
             {!isApproved && (
               <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />}>
-                This app is{' '}
-                <Code>{meta?.status ?? 'unknown'}</Code> — only an approved app can be
+                This app is <Code>{meta?.status ?? 'unknown'}</Code> — only an approved app can be
                 featured. Category/order can still be set.
               </Alert>
             )}
@@ -850,13 +1135,13 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // server-side (text-only, byte/line/file caps); elided files are labelled with
 // WHY they were skipped rather than inlining unbounded content.
 //
-// The presentational panels (FileListPreview / FileDiffEntry / DiffHunkView /
-// ManifestDiffPreview) + the FileLineDiff type live in the server-free
+// The presentational panels (FileListPreview / FileDiffEntry / ManifestDiffPreview)
+// + the FileLineDiff type live in the server-free
 // `~/components/Apps/reviewDiffPanels` module so they can be unit tested in
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
+export function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
   const [show, setShow] = useState(false);
 
@@ -929,6 +1214,10 @@ const HANDLED_MANIFEST_KEYS = new Set([
   // description — not buried in the "Other manifest fields" raw-JSON disclosure.
   // The mod is the only gate on store-visible copy changing.
   'tagline',
+  // Store-visible OUTBOUND LINK, manifest-governed, published on approve — so it must
+  // be visible INLINE to the reviewer, not folded into the raw-JSON disclosure. A link
+  // the mod never actually looked at is the one thing this whole surface exists to stop.
+  'repository',
   'category',
   'type',
   'minApiVersion',
@@ -939,9 +1228,32 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'targets',
   'iframe',
   'settings',
+  // `ManifestAnalytics` renders a valid declaration completely (the parser rejects
+  // unknown keys). If the contract gains a field, render it there or remove this.
+  'analytics',
 ]);
 
-function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
+export function ManifestView({
+  manifest,
+  includeScopes = true,
+}: {
+  manifest: Record<string, unknown>;
+  /**
+   * Render the PERMISSIONS card inline, as part of the manifest view.
+   *
+   * 🔴 THE REVIEW PAGE PASSES `false`, AND THE CARD IS NOT LOST — it is HOISTED. Permissions
+   * are the page's DEFAULT tab (`ManifestScopes`, rendered directly), so leaving it here too
+   * would show the same card twice on one page, in two tabs, with no way to tell which one a
+   * mod was looking at. The modal keeps the default `true`: it has one scroll and no tabs,
+   * so the card's only home is here.
+   *
+   * 🔴 IT IS A BRANCH, NOT A DOCUMENTED FIELD. The page's Permissions tab and this flag are
+   * two halves of one move; flipping this to `true` without deleting the page's own card
+   * re-creates the duplicate, which is why the page's tab test asserts exactly ONE
+   * permissions card in the document.
+   */
+  includeScopes?: boolean;
+}) {
   const otherKeys = useMemo(
     () =>
       Object.keys(manifest)
@@ -956,7 +1268,15 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
   return (
     <Stack gap="sm">
       <ManifestIdentity manifest={manifest} />
-      <ManifestScopes manifest={manifest} />
+      {/* ABOVE the permissions panel deliberately. "This app now charges for
+          access" is a product decision the moderator is the only gate on, and the
+          permissions panel cannot show it for an app that already sells goods —
+          adding an unlock changes no scopes (see ManifestGoods' docblock). Renders
+          nothing at all when the manifest declares no `goods`, which is every app
+          approved to date. */}
+      <ManifestGoods manifest={manifest} />
+      <ManifestAnalytics manifest={manifest} />
+      {includeScopes && <ManifestScopes manifest={manifest} />}
       <ManifestTargets manifest={manifest} />
       <ManifestSettings manifest={manifest} />
       {/* Iframe + other-manifest-fields are collapsed-by-default disclosures:
@@ -1005,14 +1325,13 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
 
 function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const name = typeof manifest.name === 'string' ? manifest.name : null;
-  const description =
-    typeof manifest.description === 'string' ? manifest.description : null;
+  const description = typeof manifest.description === 'string' ? manifest.description : null;
   const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
+  const repository = typeof manifest.repository === 'string' ? manifest.repository : null;
   const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
-  const contentRating =
-    typeof manifest.contentRating === 'string' ? manifest.contentRating : null;
+  const contentRating = typeof manifest.contentRating === 'string' ? manifest.contentRating : null;
   const trustTier = typeof manifest.trustTier === 'string' ? manifest.trustTier : null;
   const renderMode = typeof manifest.renderMode === 'string' ? manifest.renderMode : null;
 
@@ -1042,7 +1361,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
               {category && (
                 <Tooltip label="Marketplace category">
                   <Badge color="gray" variant="light">
-                    {category}
+                    {marketplaceCategoryLabel(category)}
                   </Badge>
                 </Tooltip>
               )}
@@ -1052,7 +1371,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             {contentRating && (
               <Tooltip label="Content rating">
                 <Badge color={ratingColor(contentRating)} variant="filled">
-                  {contentRating}
+                  {offsiteContentRatingLabel(contentRating)}
                 </Badge>
               </Tooltip>
             )}
@@ -1072,6 +1391,16 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             )}
           </Group>
         </Group>
+        {/* Store-visible source-repository link (manifest-governed — goes live on
+            approve). PLAIN TEXT, deliberately NOT an anchor: a reviewer must be able to
+            READ the destination before deciding, and a one-click link out of a review
+            modal is exactly the affordance a hostile submission would want. Shown
+            VERBATIM (not normalised) so the mod sees what the author actually wrote. */}
+        {repository && (
+          <Text size="xs" c="dimmed" data-testid="apps-onsite-review-source-repo">
+            Source: <Code>{repository}</Code>
+          </Text>
+        )}
         {description && (
           <Text size="sm" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
             {description}
@@ -1113,7 +1442,7 @@ function trustColor(tier: string): string {
   }
 }
 
-function ManifestScopeRow({
+export function ManifestScopeRow({
   scope,
   justifications,
 }: {
@@ -1129,7 +1458,22 @@ function ManifestScopeRow({
       ? rawJustification.trim()
       : null;
   return (
-    <Stack gap={2}>
+    /*
+      🔴 THE SENSITIVITY IS ON THE ROW AS STATE, NOT ONLY AS A WORD. A guard that looks for
+      the string "Sensitive" is walkable by a REWORD — and worse, by any other feature that
+      happens to spell it (the consent prompt and the granted-permissions panels both render
+      the same `SensitiveScopeBadge`, so a document-wide text match cannot say WHICH scope it
+      belongs to). `data-scope` + `data-sensitive` pin the id and the attribute together, so
+      a test can assert "THIS scope is flagged and THAT one is not" against the DOM rather
+      than against copy, and the assertion survives a rewrite of the badge's label.
+    */
+    <Stack
+      gap={2}
+      data-testid="apps-review-scope-row"
+      data-scope={scope}
+      data-sensitive={sensitive ? 'true' : 'false'}
+      data-known={known ? 'true' : 'false'}
+    >
       <Group gap={8} align="flex-start" wrap="nowrap">
         <Badge
           variant={known ? 'light' : 'outline'}
@@ -1159,7 +1503,7 @@ function ManifestScopeRow({
   );
 }
 
-function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
+export function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
@@ -1179,7 +1523,7 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
   const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
   return (
-    <Card withBorder p="sm">
+    <Card withBorder p="sm" data-testid="apps-review-permissions">
       <Stack gap="xs">
         {scopes.length === 0 ? (
           <>
@@ -1199,8 +1543,8 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
               </Tooltip>
             </Group>
             <Text size="xs" c="dimmed" fs="italic">
-              No permissions requested — block can only consume host postMessage
-              data, no scope-gated platform APIs.
+              No permissions requested — block can only consume host postMessage data, no
+              scope-gated platform APIs.
             </Text>
           </>
         ) : (
@@ -1260,6 +1604,305 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   );
 }
 
+/**
+ * THE "THIS APP IS BECOMING PAID" PANEL.
+ *
+ * 🔴 IT IS INLINE, NOT IN THE "Other manifest fields" DISCLOSURE, AND THAT IS THE
+ * WHOLE POINT. `goods` used to land in that collapsed raw-JSON block, which is
+ * the same mistake `tagline` and `repository` above record: a manifest-governed
+ * fact the moderator is the only gate on, rendered somewhere nobody opens.
+ *
+ * What the sensitive-permissions panel above already covers, and what it does not:
+ * a FREE app declaring its first catalog must add `goods:purchase:self`, which IS
+ * a sensitive scope and so already demands a justification the mod reads. The case
+ * that panel CANNOT show is an app that ALREADY SELLS ordinary goods and adds an
+ * access unlock in v2 — its scope set does not change, so nothing new is justified
+ * and nothing new is flagged, while the product goes from "sells an item" to
+ * "charges for admission". That is the gap this card closes today. (It is EXPECTED
+ * that the scope requirement will later be relaxed for an unlock, which would widen
+ * the gap to the free-app case as well — stated as an expectation rather than as a
+ * cited design, and deliberately not the argument. This card keys on the KIND, so it
+ * holds either way.)
+ *
+ * 🔴 `goods` IS DELIBERATELY *NOT* ADDED TO `HANDLED_MANIFEST_KEYS`, so it still
+ * appears in the raw disclosure as well. That differs from how `tagline` and
+ * `repository` were handled, and the reason is fidelity: those are scalars this
+ * view renders completely, whereas a good carries an opaque `payload` that this
+ * card does NOT render (the platform never interprets it, but a moderator may
+ * well want to read it). Suppressing the raw copy would trade a complete view for
+ * a partial one. The duplication is the cheaper mistake.
+ *
+ * Renders the parser's ERRORS too, so an invalid catalog is reported in words
+ * rather than leaving the moderator to infer it from JSON that merely looks odd.
+ */
+function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
+  const { goods, errors } = parseManifestGoods(manifest as { goods?: unknown });
+  // Nothing declared and nothing malformed ⇒ no card. Every app approved to date
+  // is in this state, so an empty panel on every review would be pure noise.
+  if (manifest.goods === undefined || manifest.goods === null) return null;
+  if (goods.length === 0 && errors.length === 0) return null;
+
+  const unlocks = goods.filter((good) => good.kind === 'app_unlock');
+  const items = goods.filter((good) => good.kind !== 'app_unlock');
+
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        {unlocks.length > 0 && (
+          <Alert
+            icon={<IconLock size={16} />}
+            color="red"
+            variant="light"
+            title="This app is becoming PAID"
+          >
+            <Stack gap={4}>
+              <Text size="xs">
+                It declares an <Code>app_unlock</Code> good, so a viewer must buy access before
+                using it. Approving this version is what makes that true — check the price and the
+                stated reason below against the listing the viewer will see.
+              </Text>
+              {unlocks.map((unlock) => (
+                <Stack key={unlock.id} gap={2}>
+                  <Group gap={8} wrap="nowrap">
+                    {/* `numberWithCommas`, not `toLocaleString()`: this is MONEY, and
+                        the repo's money formatter is regex-based and therefore
+                        locale-STABLE. `toLocaleString()` renders 3100 as "3.100"
+                        under de-DE, which would also make the browser test's literal
+                        assertion depend on the runner's locale. */}
+                    <Badge color="red" variant="filled">
+                      {numberWithCommas(unlock.priceBuzz)} Buzz
+                    </Badge>
+                    <Text size="xs" fw={600}>
+                      {unlock.title}
+                    </Text>
+                    <Code>{unlock.id}</Code>
+                  </Group>
+                  {unlock.description && (
+                    <Text size="xs" c="dimmed">
+                      {unlock.description}
+                    </Text>
+                  )}
+                  <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                    <Text span fw={600}>
+                      Why this app charges:{' '}
+                    </Text>
+                    {/* 🔴 THE FALLBACK IS UNREACHABLE BY CONSTRUCTION, and is kept only
+                        so a missing rationale can never render as the literal
+                        "undefined" to a moderator. `unlocks` is derived from the
+                        ACCEPTED goods, and the parser rejects an `app_unlock` with no
+                        justification — so an unlock that reaches this line always has
+                        one, including on the arity-error path. Do not "fix" this by
+                        asserting the fallback in a test; it cannot be reached.
+                        ⚠️ Narrowly: it is the UNJUSTIFIED catalog that produces zero
+                        accepted unlocks and renders only the errors card. An
+                        ARITY-violating catalog is also invalid and DOES reach here —
+                        two accepted unlocks plus an error — so "invalid ⇒ no alert" is
+                        not true in general. */}
+                    {unlock.justification ?? '— none provided —'}
+                  </Text>
+                </Stack>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+
+        <Group gap={6}>
+          <IconCoin size={14} />
+          <Text size="sm" fw={600}>
+            Digital goods ({goods.length})
+          </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Entitlements the platform sells to a viewer for Buzz on this app's behalf. The catalog you approve is the catalog that can be sold — a price change needs a new version and another review. Sales split platform 30% / app owner 70%."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
+        </Group>
+
+        {items.length > 0 && (
+          <Stack gap={6}>
+            {items.map((good) => (
+              <Group key={good.id} gap={8} align="flex-start" wrap="nowrap">
+                <Badge variant="light" color="yellow">
+                  {numberWithCommas(good.priceBuzz)} Buzz
+                </Badge>
+                <Stack gap={0}>
+                  <Group gap={6} wrap="nowrap">
+                    <Text size="xs" fw={600}>
+                      {good.title}
+                    </Text>
+                    <Code>{good.id}</Code>
+                  </Group>
+                  {good.description && (
+                    <Text size="xs" c="dimmed">
+                      {good.description}
+                    </Text>
+                  )}
+                  {good.justification && (
+                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text span fw={600} c="dimmed">
+                        Why:{' '}
+                      </Text>
+                      {good.justification}
+                    </Text>
+                  )}
+                </Stack>
+              </Group>
+            ))}
+          </Stack>
+        )}
+
+        {errors.length > 0 && (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            title={`Goods catalog does not validate (${errors.length})`}
+          >
+            <Stack gap={2}>
+              <Text size="xs">
+                Nothing in this catalog can be sold while any entry is invalid — the purchase path
+                refuses the whole catalog, not just the bad entry.
+              </Text>
+              {errors.map((error) => (
+                <Text key={error} size="xs" c="orange" style={{ whiteSpace: 'pre-wrap' }}>
+                  {error}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+/**
+ * Read only through `parseManifestAnalytics`, the parser submit and the ingest cache
+ * use, so the card cannot list an event ingest would refuse.
+ */
+function ManifestAnalytics({ manifest }: { manifest: Record<string, unknown> }) {
+  // `undefined` only: the parser rejects `analytics: null`, so it must show as an error.
+  if (manifest.analytics === undefined) return null;
+  const { events, errors } = parseManifestAnalytics(manifest);
+  const entries = [...events.entries()];
+
+  return (
+    <Card withBorder p="sm" data-testid="apps-review-analytics">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconChartBar size={14} />
+          <Text size="sm" fw={600}>
+            Analytics events
+          </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Custom events the app may send about how viewers use it. Only the event names, properties and enum values declared here are recorded: an undeclared property or value is dropped, and an undeclared event is counted without its name. A change needs a new version and another review."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
+        </Group>
+
+        {errors.length > 0 ? (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            // No count: past the cap the parser appends a summary line, so `errors.length`
+            // would be wrong.
+            title="Analytics declaration does not validate"
+          >
+            <Stack gap={2}>
+              <Text size="xs">
+                This declaration is invalid, so the submission can&apos;t be approved until the
+                author fixes it.
+              </Text>
+              {errors.map((error) => (
+                <Text
+                  key={error}
+                  size="xs"
+                  c="orange"
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+                >
+                  {error}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        ) : entries.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            Declares analytics but no events.
+          </Text>
+        ) : (
+          <>
+            <Text size="xs" c="dimmed">
+              {entries.length === 1 ? '1 event declared' : `${entries.length} events declared`}. The
+              app can record only these names and enum values — no free text — but number properties
+              are unbounded.
+            </Text>
+            <Stack gap={8}>
+              {entries.map(([name, event]) => (
+                <Stack key={name} gap={2} data-testid="apps-review-analytics-event">
+                  <Code fw={600} style={{ alignSelf: 'flex-start', wordBreak: 'break-all' }}>
+                    {name}
+                  </Code>
+                  {event.description && (
+                    <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+                      {event.description}
+                    </Text>
+                  )}
+                  {event.properties.size === 0 ? (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      No properties
+                    </Text>
+                  ) : (
+                    <Stack gap={2} pl="sm">
+                      {[...event.properties.entries()].map(([propName, prop]) => (
+                        <AnalyticsPropertyRow key={propName} name={propName} property={prop} />
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function AnalyticsPropertyRow({
+  name,
+  property,
+}: {
+  name: string;
+  property: DeclaredEventProperty;
+}) {
+  return (
+    <Group gap={6} wrap="wrap" align="center" data-testid="apps-review-analytics-property">
+      <Code style={{ wordBreak: 'break-all' }}>{name}</Code>
+      <Badge size="xs" variant="light" color="gray">
+        {property.type}
+      </Badge>
+      {property.type === 'enum' &&
+        property.values.map((value) => (
+          // Quoted and `pre-wrap`, so whitespace is visible: "a", "a " and "a  b" are
+          // distinct declared values.
+          <Code key={value} c="blue" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+            {JSON.stringify(value)}
+          </Code>
+        ))}
+    </Group>
+  );
+}
+
 function ManifestTargets({ manifest }: { manifest: Record<string, unknown> }) {
   const targets = Array.isArray(manifest.targets)
     ? (manifest.targets as Array<Record<string, unknown>>)
@@ -1279,9 +1922,7 @@ function ManifestTargets({ manifest }: { manifest: Record<string, unknown> }) {
             const slotId = typeof t.slotId === 'string' ? t.slotId : '?';
             const priority = typeof t.priority === 'number' ? t.priority : null;
             const requiredContext = Array.isArray(t.requiredContext)
-              ? (t.requiredContext as unknown[]).filter(
-                  (c): c is string => typeof c === 'string'
-                )
+              ? (t.requiredContext as unknown[]).filter((c): c is string => typeof c === 'string')
               : [];
             const slotDesc = SLOT_DESCRIPTIONS[slotId];
             return (
@@ -1438,13 +2079,11 @@ function ManifestSettings({ manifest }: { manifest: Record<string, unknown> }) {
         </Group>
         <Stack gap={8}>
           {entries.map(([key, raw]) => {
-            const def =
-              raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+            const def = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
             const type = typeof def.type === 'string' ? def.type : '?';
             const widget = typeof def.widget === 'string' ? def.widget : null;
             const label = typeof def.label === 'string' ? def.label : null;
-            const description =
-              typeof def.description === 'string' ? def.description : null;
+            const description = typeof def.description === 'string' ? def.description : null;
             const scope = typeof def.scope === 'string' ? def.scope : null;
             const defaultVal = def.default;
             const min = typeof def.min === 'number' ? def.min : null;
@@ -1483,8 +2122,7 @@ function ManifestSettings({ manifest }: { manifest: Record<string, unknown> }) {
                 <Group gap={8} pl={4}>
                   {defaultVal !== undefined && (
                     <Text size="xs" c="dimmed">
-                      default:{' '}
-                      <Code style={{ fontSize: 10 }}>{JSON.stringify(defaultVal)}</Code>
+                      default: <Code style={{ fontSize: 10 }}>{JSON.stringify(defaultVal)}</Code>
                     </Text>
                   )}
                   {(min !== null || max !== null) && (

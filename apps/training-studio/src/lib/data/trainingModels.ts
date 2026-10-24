@@ -1,0 +1,1585 @@
+import type {
+  MingAiToolkitTrainingInput,
+  MossImageBaseAiToolkitTrainingInput,
+  MossImageSftAiToolkitTrainingInput,
+  Qwen21AiToolkitTrainingInput,
+  YuE2AiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
+/**
+ * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
+ * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
+ * 2026-09-25). That module lives in the main Next.js app's `src/`, which an
+ * `apps/*` package can't import, so it's mirrored here; when the trainer adds or
+ * changes a base model, re-mirror it by hand — keep the same version `key`,
+ * `air`, `baseModel`, ecosystem and `modelVariant`. (If `trainingModelInfo` ever
+ * moves into a shared `packages/civitai-*`, import it instead of this snapshot.)
+ *
+ * `flagKey` is NOT from the source — it's this app's per-model gate (the mirror of
+ * the main app's `<name>Training` Flipt flag). Set it on a new/experimental card so
+ * the model ships mod-only until its flag opens; a re-mirror must preserve it.
+ *
+ * Shape difference from the source: the trainer keys every entry flat; here we
+ * GROUP entries into one card per family, and the flat entries become that
+ * card's `versions` — which is how the redesign's Select step presents them
+ * (SD 1.5 → Standard/…; SDXL → Standard/Pony/Illustrious; Wan → 2.2/2.1;
+ * LTX → 2.5/2.3/2.0). Where the trainer splits a family across several `type`s
+ * (LTX, ZImage, ACE-Step), we keep the per-version `ecosystem` (which is what
+ * the orchestrator needs) and give the card a synthetic id. See
+ * docs/prototype/training-flow.html.
+ *
+ * Label type (tags vs captions) is DERIVED, not stored in the source: the
+ * booru-tag families (SD 1.5, SDXL and its Pony/Illustrious variants) caption
+ * with tags; everything newer uses natural-language captions. The Data step
+ * reads this to auto-pick the labeler — never asked.
+ *
+ * Coverage: every non-commented, non-disabled `trainingModelInfo` entry as of
+ * the mirror date. `sd3_medium/large` (commented out) and `wan_2_1_i2v_14b_720p`
+ * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
+ * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
+ * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
+ * `flux3klein` (2026-10-15) is the one card with NO source entry — Flux.3 Klein
+ * trains in the Training Studio only. `mossimage` (2026-10-16) likewise.
+ */
+
+export type LabelType = 'tag' | 'caption';
+export type Media = 'image' | 'video' | 'audio';
+
+const MEDIA_ITEM_NOUN: Record<Media, [singular: string, plural: string]> = {
+  image: ['image', 'images'],
+  video: ['video', 'videos'],
+  audio: ['audio clip', 'audio clips'],
+};
+
+/** "58 videos", "1 audio clip". */
+export function mediaCount(count: number, media: Media): string {
+  const [one, many] = MEDIA_ITEM_NOUN[media];
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}
+
+/** One selectable base-model version (a flat `trainingModelInfo` entry). */
+export interface ModelVersionInfo {
+  /** The `trainingModelInfo` key in the source (e.g. `flux_dev`, `pony`). */
+  key: string;
+  label: string;
+  note?: string;
+  air: string;
+  baseModel: string;
+  /** AI-Toolkit ecosystem + optional discriminated variant (source `aiToolkit`). */
+  ecosystem: string;
+  modelVariant?: string;
+  /** Training engine when it is NOT the default `ai-toolkit` — e.g. `flux2-dev` for Flux.2, which has no
+   * ai-toolkit ecosystem and trains via the `imageResourceTraining` path with an explicit base AIR. */
+  engine?: string;
+  /** Ecosystem-specific version selector (the `qwen` ecosystem's `version` field). The default and
+   * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
+  version?: string;
+  isNew?: boolean;
+}
+
+/** One base-model card (a family group). */
+export interface ModelCard {
+  /** Card id — the base-model `type`, or a synthetic family id where the source splits it. */
+  type: string;
+  name: string;
+  code: string;
+  media: Media;
+  /** The dataset label format this model's auto-labeler defaults to. */
+  label: LabelType;
+  /** True when the model can train on EITHER tags or captions — the Data step then offers a choice,
+   *  defaulting to `label`. Most models are single-format. */
+  bothLabels?: boolean;
+  description: string;
+  /** Free-text badge on the card — 'recommended', 'anime', 'latest', anything. Absent means no badge.
+   *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
+  flag?: string;
+  /** Flipt gate key. Absent → the card is shown to everyone (the default for established models). Present
+   *  → the card is offered only to users the host evaluated the flag `true` for (a new model ships dark,
+   *  moderators-only, until its flag opens — mirrors the main-app trainer's `<name>Training` flag). The
+   *  host resolves this per user — the shell in `/new`'s load, the main-app embed through
+   *  `studioModelFlagFeatures` (`src/utils/training.ts`), which must list every key used here; the client
+   *  filters on the resolved set. Card resolution
+   *  by id/AIR (`cardByType`, `findByAir`) is NOT gated — only the offer surfaces are. */
+  flagKey?: string;
+  /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
+   *  could be established. Hand-researched — re-check it when a card gains a version. */
+  released?: string;
+  /** Why the card is no longer offered. A retired card stays in the catalog so past runs still resolve
+   *  (`cardByType`, `findByAir`), but no offer surface lists it and a submit naming its base is refused. */
+  retired?: string;
+  /** Newest / preferred first — `versions[0]` is the default selection. */
+  versions: ModelVersionInfo[];
+}
+
+export const MODEL_CARDS: ModelCard[] = [
+  // ---- Image · captions ----
+  {
+    type: 'flux',
+    name: 'Flux',
+    code: 'FL',
+    media: 'image',
+    label: 'caption',
+    description: 'High-quality images and accurate text.',
+    released: '2024-08-01',
+    versions: [
+      {
+        key: 'flux_dev',
+        label: 'Dev',
+        note: 'best quality',
+        air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+        baseModel: 'Flux.1 D',
+        ecosystem: 'flux1',
+        modelVariant: 'dev',
+      },
+    ],
+  },
+  {
+    type: 'flux2',
+    name: 'Flux.2',
+    code: 'F2',
+    media: 'image',
+    label: 'caption',
+    description: 'Next-gen Flux. Highest fidelity.',
+    released: '2025-11-25',
+    versions: [
+      {
+        key: 'flux2_dev',
+        label: 'Dev',
+        note: 'latest',
+        air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
+        baseModel: 'Flux.2 D',
+        ecosystem: 'flux2',
+        engine: 'flux2-dev',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'flux2klein',
+    name: 'Flux.2 Klein',
+    code: 'FK',
+    media: 'image',
+    label: 'caption',
+    description: 'Efficient Flux.2 with faster generation.',
+    released: '2026-01-15',
+    versions: [
+      {
+        key: 'flux2klein_9b',
+        label: '9B Base',
+        note: 'higher quality',
+        air: 'urn:air:flux2klein:checkpoint:civitai:2322332@2612548',
+        baseModel: 'Flux.2 Klein 9B-base',
+        ecosystem: 'flux2klein',
+        modelVariant: '9b',
+      },
+      {
+        key: 'flux2klein_4b',
+        label: '4B Base',
+        note: 'efficient',
+        air: 'urn:air:flux2klein:checkpoint:civitai:2322332@2612552',
+        baseModel: 'Flux.2 Klein 4B-base',
+        ecosystem: 'flux2klein',
+        modelVariant: '4b',
+      },
+    ],
+  },
+  {
+    type: 'mossimage',
+    name: 'MOSS Image',
+    code: 'MO',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with OpenMOSS MOSS Image.',
+    released: '2026-10-11',
+    flag: 'new',
+    flagKey: 'moss-image-training',
+    // Base first: OpenMOSS recommends Base for training and SFT for generating.
+    versions: [
+      {
+        key: 'mossimage_base',
+        label: 'Base',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+        baseModel: 'MOSS Image',
+        ecosystem: 'mossImage' satisfies MossImageBaseAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'base' satisfies MossImageBaseAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
+      },
+      {
+        key: 'mossimage_sft',
+        label: 'SFT',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+        baseModel: 'MOSS Image',
+        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'flux3klein',
+    name: 'Flux.3 Klein',
+    code: 'F3',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Flux.3 Klein.',
+    released: '2026-10-13',
+    flag: 'new',
+    flagKey: 'flux3-klein-training',
+    versions: [
+      {
+        key: 'flux3klein',
+        label: 'Base',
+        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/orchestration-client` ships no
+        // Flux3Klein training input yet, so the ecosystem literal is unchecked.
+        air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+        baseModel: 'Flux.3 Klein-base',
+        ecosystem: 'flux3klein',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'chroma',
+    name: 'Chroma',
+    code: 'CH',
+    media: 'image',
+    label: 'caption',
+    description: 'Unfiltered, with real negative prompt control.',
+    released: '2025-08-22',
+    versions: [
+      {
+        key: 'chroma',
+        label: '1.0 HD',
+        air: 'urn:air:chroma:checkpoint:civitai:1330309@2164239',
+        baseModel: 'Chroma',
+        ecosystem: 'chroma',
+      },
+    ],
+  },
+  {
+    type: 'qwen',
+    name: 'Qwen-Image',
+    code: 'QW',
+    media: 'image',
+    label: 'caption',
+    description: 'Complex text and precise edits, English or Chinese.',
+    released: '2025-08-04',
+    versions: [
+      {
+        key: 'qwen_image',
+        label: 'Qwen-Image',
+        air: 'urn:air:qwen:checkpoint:civitai:1864281@2110043',
+        baseModel: 'Qwen',
+        ecosystem: 'qwen',
+        version: '2509',
+      },
+    ],
+  },
+  {
+    type: 'zimage',
+    name: 'ZImage',
+    code: 'ZI',
+    media: 'image',
+    label: 'caption',
+    description: 'Photoreal in seconds. The fastest option here.',
+    released: '2026-01-28',
+    flag: 'recommended',
+    versions: [
+      {
+        key: 'zimageturbo',
+        label: 'Turbo',
+        note: 'fast',
+        air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
+        baseModel: 'ZImageTurbo',
+        ecosystem: 'zimageturbo',
+      },
+      {
+        key: 'zimagebase',
+        label: 'Base',
+        air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
+        baseModel: 'ZImageBase',
+        ecosystem: 'zimagebase',
+      },
+    ],
+  },
+  {
+    type: 'hidream-o1',
+    name: 'HiDream O1',
+    code: 'HD',
+    media: 'image',
+    label: 'caption',
+    description: '2K output, editing and storyboards in one model.',
+    released: '2026-05-08',
+    versions: [
+      {
+        key: 'hidream_o1',
+        label: 'Standard',
+        air: 'urn:air:hidreamo1:checkpoint:civitai:2618495@2939946',
+        baseModel: 'HiDream-O1',
+        ecosystem: 'hidream-o1',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'ernie',
+    name: 'Ernie',
+    code: 'ER',
+    media: 'image',
+    label: 'caption',
+    description: 'Poster layouts and text in several languages.',
+    released: '2026-04-15',
+    versions: [
+      {
+        key: 'ernie',
+        label: 'Ernie',
+        air: 'urn:air:ernie:checkpoint:civitai:2548387@2863858',
+        baseModel: 'Ernie',
+        ecosystem: 'ernie',
+      },
+    ],
+  },
+  {
+    type: 'anima',
+    name: 'Anima',
+    code: 'AN',
+    media: 'image',
+    label: 'tag',
+    bothLabels: true,
+    description: 'The anime pick. Booru tags or plain English.',
+    released: '2026-05-15',
+    flag: 'anime',
+    versions: [
+      {
+        key: 'anima',
+        label: 'Base',
+        air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
+        baseModel: 'Anima',
+        ecosystem: 'anima',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'boogu',
+    name: 'Boogu',
+    code: 'BO',
+    media: 'image',
+    label: 'caption',
+    description: 'All-rounder: dense 2K text, editing, 4-step speed.',
+    released: '2026-06-16',
+    versions: [
+      {
+        key: 'boogu',
+        label: 'Base',
+        air: 'urn:air:boogu:repository:huggingface:Boogu/Boogu-Image-0.1-Base@main.tar',
+        baseModel: 'Boogu',
+        ecosystem: 'boogu',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'krea2',
+    name: 'Krea 2',
+    code: 'K2',
+    media: 'image',
+    label: 'caption',
+    description: 'The realism pick — skin, hair and light from real photos.',
+    released: '2026-06-22',
+    flag: 'latest',
+    versions: [
+      {
+        key: 'krea2',
+        label: 'Base',
+        air: 'urn:air:krea2:checkpoint:civitai:2656567@2983022',
+        baseModel: 'Krea 2',
+        ecosystem: 'krea2',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'mageflow',
+    name: 'Mage-Flow',
+    code: 'MF',
+    media: 'image',
+    label: 'caption',
+    description: 'Native 512 to 2048px at any aspect ratio, no cropping.',
+    released: '2026-07',
+    versions: [
+      {
+        key: 'mageflow',
+        label: '4B Base',
+        air: 'urn:air:mageflow:checkpoint:civitai:2812690@3172038',
+        baseModel: 'MageFlow',
+        ecosystem: 'mageflow',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'ideogram4',
+    name: 'Ideogram 4',
+    code: 'ID',
+    media: 'image',
+    label: 'caption',
+    description: 'Design work: logos, signage, layered typography.',
+    released: '2026-06-03',
+    versions: [
+      {
+        key: 'ideogram4',
+        label: 'Base',
+        air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
+        baseModel: 'Ideogram 4.0',
+        ecosystem: 'ideogram4',
+        isNew: true,
+      },
+    ],
+  },
+  // ---- Image · tags ----
+  {
+    type: 'sdxl',
+    name: 'SDXL',
+    code: 'XL',
+    media: 'image',
+    label: 'tag',
+    description: 'The largest LoRA and ControlNet library.',
+    released: '2023-07-26',
+    versions: [
+      {
+        key: 'sdxl',
+        label: 'Standard',
+        note: 'all purposes',
+        air: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+        baseModel: 'SDXL 1.0',
+        ecosystem: 'sdxl',
+      },
+    ],
+  },
+  // Illustrious & Pony are SDXL-derived but treated as their own base models on-site (creators look for
+  // them by name), so they're their own cards rather than SDXL versions.
+  {
+    type: 'illustrious',
+    name: 'Illustrious',
+    code: 'IL',
+    media: 'image',
+    label: 'tag',
+    description: 'Booru-tag anime with clean lines and a big style library.',
+    released: '2024-09',
+    versions: [
+      {
+        key: 'illustrious',
+        label: 'Illustrious',
+        air: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
+        baseModel: 'Illustrious',
+        ecosystem: 'sdxl',
+      },
+    ],
+  },
+  {
+    type: 'pony',
+    name: 'Pony',
+    code: 'PN',
+    media: 'image',
+    label: 'tag',
+    description: 'Anthro and stylised characters, deep LoRA back catalogue.',
+    released: '2024-01-07',
+    versions: [
+      {
+        key: 'pony',
+        label: 'Pony',
+        air: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
+        baseModel: 'Pony',
+        ecosystem: 'sdxl',
+      },
+    ],
+  },
+  {
+    type: 'sd15',
+    name: 'SD 1.5',
+    code: '1.5',
+    media: 'image',
+    label: 'tag',
+    description: 'Fastest and cheapest to iterate on.',
+    released: '2022-10-20',
+    versions: [
+      {
+        key: 'sd_1_5',
+        label: 'Standard',
+        note: 'all purposes',
+        air: 'urn:air:sd1:checkpoint:civitai:127227@139180',
+        baseModel: 'SD 1.5',
+        ecosystem: 'sd1',
+      },
+      {
+        key: 'semi',
+        label: 'Semi Real',
+        note: 'anime + realism',
+        air: 'urn:air:sd1:checkpoint:civitai:4384@128713',
+        baseModel: 'SD 1.5',
+        ecosystem: 'sd1',
+      },
+      {
+        key: 'realistic',
+        label: 'Realistic',
+        air: 'urn:air:sd1:checkpoint:civitai:81458@132760',
+        baseModel: 'SD 1.5',
+        ecosystem: 'sd1',
+      },
+      {
+        key: 'anime',
+        label: 'Anime',
+        air: 'urn:air:sd1:checkpoint:civitai:84586@89927',
+        baseModel: 'SD 1.5',
+        ecosystem: 'sd1',
+      },
+    ],
+  },
+  // ---- Video · captions ----
+  {
+    type: 'wan',
+    name: 'Wan',
+    code: 'WAN',
+    media: 'video',
+    label: 'caption',
+    description: 'Silent video with the deepest LoRA ecosystem.',
+    released: '2025-07-28',
+    versions: [
+      {
+        key: 'wan_2_2_t2v_a14b',
+        label: '2.2 T2V',
+        note: 'latest',
+        air: 'urn:air:wanvideo-22-t2v-a14b:checkpoint:civitai:1817671@2114154',
+        baseModel: 'Wan Video 2.2 T2V-A14B',
+        ecosystem: 'wan',
+        modelVariant: '2.2',
+        isNew: true,
+      },
+      {
+        key: 'wan_2_1_t2v_14b',
+        label: '2.1 T2V',
+        air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth',
+        baseModel: 'Wan Video 14B t2v',
+        ecosystem: 'wan',
+        modelVariant: '2.1',
+      },
+    ],
+  },
+  {
+    type: 'hunyuan',
+    name: 'Hunyuan',
+    code: 'HY',
+    media: 'video',
+    label: 'caption',
+    description: 'Cinematic video, quick to train.',
+    released: '2025-11-21',
+    retired:
+      'The orchestrator has no Hunyuan training path: a `wan` 2.1 run trains its own fixed Wan 2.1 base and drops this model, so the card produced Wan 2.1 LoRAs.',
+    versions: [
+      {
+        key: 'hy_720_fp8',
+        label: '720p [fp8]',
+        air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
+        baseModel: 'Hunyuan Video',
+        ecosystem: 'wan',
+        // The `wan` ecosystem is a discriminated union on `modelVariant`; Hunyuan prices under 2.1.
+        modelVariant: '2.1',
+      },
+    ],
+  },
+  {
+    type: 'ltx',
+    name: 'LTX',
+    code: 'LTX',
+    media: 'video',
+    label: 'caption',
+    description: 'Fast video with synced audio and multi-shot scenes.',
+    released: '2026-08-11',
+    versions: [
+      {
+        key: 'ltx25',
+        label: '2.5',
+        note: 'latest',
+        air: 'urn:air:ltxv25:repository:huggingface:Lightricks/LTX-Video@main.tar',
+        baseModel: 'LTXV 2.5',
+        ecosystem: 'ltx25',
+        isNew: true,
+      },
+      {
+        key: 'ltx23',
+        label: '2.3',
+        air: 'urn:air:ltxv23:checkpoint:civitai:2445735@2749908',
+        baseModel: 'LTXV 2.3',
+        ecosystem: 'ltx23',
+      },
+      {
+        key: 'ltx2',
+        label: '2.0',
+        air: 'urn:air:ltx2:checkpoint:civitai:2291192@2578325',
+        baseModel: 'LTXV2',
+        ecosystem: 'ltx2',
+      },
+    ],
+  },
+  {
+    type: 'minimaxh3',
+    name: 'MiniMax H3',
+    code: 'H3',
+    media: 'video',
+    label: 'caption',
+    description: 'Video with stereo sound and consistent characters.',
+    released: '2026-08-02',
+    flag: 'recommended',
+    versions: [
+      {
+        key: 'minimaxh3',
+        label: 'Base',
+        air: 'urn:air:minimaxh3:repository:huggingface:MiniMaxAI/MiniMax-H3@main.tar',
+        baseModel: 'MiniMax H3',
+        ecosystem: 'minimaxh3',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'ming',
+    name: 'Ming Image',
+    code: 'MI',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Ming Image Design.',
+    flagKey: 'ming-training',
+    versions: [
+      {
+        key: 'ming',
+        label: 'Base',
+        air: 'urn:air:ming:checkpoint:civitai:2961930@3355635',
+        baseModel: 'Ming Image Design 0.1',
+        ecosystem: 'ming' satisfies MingAiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'qwen21',
+    name: 'Qwen Image 2.1',
+    code: 'Q2',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Qwen Image 2.1.',
+    flagKey: 'qwen21-training',
+    versions: [
+      {
+        key: 'qwen21',
+        label: 'Base',
+        air: 'urn:air:qwen21:checkpoint:civitai:2954443@3352534',
+        baseModel: 'Qwen 2.1',
+        ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'yue2',
+    name: 'YuE2',
+    code: 'YE',
+    media: 'audio',
+    label: 'caption',
+    description: 'Music styles learned from audio captions and lyrics.',
+    flagKey: 'yue2-training',
+    versions: [
+      {
+        key: 'yue2',
+        label: 'Base',
+        air: 'urn:air:yue2:checkpoint:civitai:2944296@3337846',
+        baseModel: 'YuE2',
+        ecosystem: 'yue2' satisfies YuE2AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  // ---- Audio · captions ----
+  {
+    type: 'acestep',
+    name: 'ACE-Step',
+    code: 'ACE',
+    media: 'audio',
+    label: 'caption',
+    description: "Teach it a genre or an artist's sound from a few tracks.",
+    released: '2026-04-30',
+    flag: 'recommended',
+    // Studio-only key, NOT the old trainer's `audio-training`: ACE-Step is tested here and not there,
+    // so the two trainers' audio rollouts must be switchable independently.
+    flagKey: 'training-studio-audio-training',
+    versions: [
+      {
+        key: 'acestep_15',
+        label: '1.5 (3.5B)',
+        air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
+        baseModel: 'ACE Audio',
+        ecosystem: 'ace_step_15',
+      },
+      {
+        key: 'acestep_15_xl_base',
+        label: 'XL Base (4B)',
+        air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
+        baseModel: 'ACE Audio',
+        ecosystem: 'ace_step_15_xl',
+        modelVariant: 'base',
+      },
+      {
+        key: 'acestep_15_xl_sft',
+        label: 'XL SFT (4B)',
+        air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
+        baseModel: 'ACE Audio',
+        ecosystem: 'ace_step_15_xl',
+        modelVariant: 'sft',
+      },
+    ],
+  },
+];
+
+/** Media the training produces — the primary choice, like the prod trainer's image/video/audio toggle. */
+export const MEDIA_OPTIONS: { id: Media; name: string; icon: string }[] = [
+  { id: 'image', name: 'Image', icon: '🖼️' },
+  { id: 'video', name: 'Video', icon: '🎬' },
+  { id: 'audio', name: 'Audio', icon: '🎵' },
+];
+
+export const isMedia = (value: unknown): value is Media =>
+  MEDIA_OPTIONS.some((m) => m.id === value);
+
+/** LoRA "type" (Character/Style/Concept/Effect) → per-media recommended card + step tuning. */
+export interface LoraType {
+  id: string;
+  name: string;
+  icon: string;
+  /** Which media this type applies to. */
+  medias: Media[];
+  /** Recommended base-model card `type` per media. */
+  recommended: Partial<Record<Media, string>>;
+  /** Default per-item "seen" target used to compute a starting step count, per media. Image follows
+   *  Atif's 2026-09-21 guidance — 35 for characters, 50 for broader styles and concepts — which was
+   *  about image LoRAs only. Video and audio deliberately keep their own figures: he led with "the base
+   *  model matters a lot here", and those base models were not what he was reasoning about. Splitting
+   *  the target per media is what keeps one from being retuned by the other. */
+  seen: Partial<Record<Media, number>>;
+  /** Warn below this item count for this type. */
+  minImg: number;
+}
+
+export const LORA_TYPES: LoraType[] = [
+  {
+    id: 'character',
+    name: 'Character',
+    icon: '🧍',
+    medias: ['image', 'video'],
+    recommended: { image: 'zimage', video: 'minimaxh3' },
+    seen: { image: 35, video: 100 },
+    minImg: 10,
+  },
+  {
+    id: 'style',
+    name: 'Style',
+    icon: '🎨',
+    medias: ['image', 'video', 'audio'],
+    recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
+    seen: { image: 50, video: 150, audio: 150 },
+    minImg: 15,
+  },
+  {
+    id: 'concept',
+    name: 'Concept',
+    icon: '💡',
+    medias: ['image', 'video', 'audio'],
+    recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
+    seen: { image: 50, video: 150, audio: 150 },
+    minImg: 15,
+  },
+  {
+    id: 'effect',
+    name: 'Effect',
+    icon: '✨',
+    medias: ['video'],
+    recommended: { video: 'minimaxh3' },
+    seen: { video: 150 },
+    minImg: 20,
+  },
+];
+
+export const typesForMedia = (media: Media): LoraType[] =>
+  LORA_TYPES.filter((t) => t.medias.includes(media));
+
+/** LoRA type by id, falling back to the first type so callers never read `undefined`. */
+export const loraTypeById = (id: string): LoraType =>
+  LORA_TYPES.find((t) => t.id === id) ?? LORA_TYPES[0]!;
+
+/** The per-item "seen" target for a type in a given media. A type only carries figures for the medias
+ *  it covers; an unlisted pair is reachable only through `loraTypeById`'s unknown-id fallback, so it
+ *  takes the type's smallest figure rather than inventing one. */
+export const seenFor = (loraTypeId: string, media: Media): number => {
+  const { seen } = loraTypeById(loraTypeId);
+  return seen[media] ?? Math.min(...Object.values(seen));
+};
+
+export const cardByType = (type: string): ModelCard | undefined =>
+  MODEL_CARDS.find((c) => c.type === type);
+
+/** A gated card is visible only when its `flagKey` is in the viewer's enabled set; an ungated card always
+ *  is. */
+export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
+  !card.flagKey || enabledFlags.has(card.flagKey);
+
+/** The distinct gate keys used across the catalog. Empty when no card is gated. */
+export const catalogFlagKeys = (): string[] => [
+  ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
+];
+
+/** Cards for a media, minus any gated card the viewer can't see. `enabledFlags` omitted → no gating applied
+ *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). */
+export const cardsForMedia = (media: Media, enabledFlags?: ReadonlySet<string>): ModelCard[] =>
+  MODEL_CARDS.filter(
+    (c) => c.media === media && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
+  );
+
+/** True when this AIR is the base of a retired card. */
+export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
+
+/**
+ * The version label to show beside a card's name, blank when it only repeats it. A single-version card
+ * whose version carries the family name would otherwise read "Illustrious · Illustrious". Shared by the
+ * flow and the orchestrator row mapper so the rule is stated once.
+ */
+export function versionSuffix(cardName: string, versionLabel: string | undefined): string {
+  if (!versionLabel) return '';
+  return versionLabel.trim().toLowerCase() === cardName.trim().toLowerCase() ? '' : versionLabel;
+}
+
+/**
+ * How old a base model is, for the card. Relative inside six months ("3 months ago") because that is the
+ * window where recency is the point; absolute after it ("Aug 2024"), because "26 months ago" is arithmetic
+ * the reader has to do and a year is what they actually want to know. Month-only inputs (`YYYY-MM`, where
+ * the release day could not be established) anchor to the 1st, so they can read a few days young in the
+ * relative window — immaterial at this granularity, and never wrong in the absolute one.
+ */
+export function releasedLabel(released: string | undefined, now: Date = new Date()): string | null {
+  if (!released) return null;
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(released);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const then = new Date(Date.UTC(Number(y), Number(mo) - 1, d ? Number(d) : 1));
+  if (Number.isNaN(then.getTime())) return null;
+
+  const months =
+    (now.getUTCFullYear() - then.getUTCFullYear()) * 12 + (now.getUTCMonth() - then.getUTCMonth());
+  const absolute = then.toLocaleDateString('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  if (months >= 6 || months < 0) return absolute;
+
+  const days = Math.floor((now.getTime() - then.getTime()) / 86_400_000);
+  if (days < 7) return 'new this week';
+  if (days < 14) return 'last week';
+  if (days < 60) return `${Math.max(1, Math.round(days / 7))} weeks ago`;
+  return `${Math.max(2, months)} months ago`;
+}
+
+/** Resolve a training workflow's exact base model from the `air` on its training step. */
+export const findByAir = (
+  air: string
+): { card: ModelCard; version: ModelVersionInfo } | undefined => {
+  for (const card of MODEL_CARDS) {
+    const version = card.versions.find((v) => v.air === air);
+    if (version) return { card, version };
+  }
+  return undefined;
+};
+
+/** First card in an ecosystem (e.g. `sdxl`) — a coarser fallback when the exact `air` isn't in the catalog. */
+export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
+  MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
+
+const airEcosystem = (air: string): string | undefined => /^urn:air:([^:]+):/.exec(air)?.[1];
+
+/** First card whose catalog AIRs share this AIR's ecosystem segment (`urn:air:<eco>:…`). For runs whose
+ *  step carries no `ecosystem` field and trained on an AIR outside the catalog — the main app's legacy
+ *  `imageResourceTraining` runs (e.g. a `wanvideo` checkpoint the studio doesn't list). */
+export const cardByAirEcosystem = (air: string): ModelCard | undefined => {
+  const eco = airEcosystem(air);
+  return eco
+    ? MODEL_CARDS.find((c) => c.versions.some((v) => airEcosystem(v.air) === eco))
+    : undefined;
+};
+
+// ---- Advanced training parameters (AI-Toolkit) ----
+// VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
+// resolved for engine `ai-toolkit` the way the trainer does in getDefaultTrainingParams
+// (src/store/training.store.ts:287): `overrides[key].all.default ?? overrides[key]['ai-toolkit'].default ??
+// base.default`, keyed by ModelVersionInfo.key (== the main app's TrainingDetailsBaseModel override key).
+// Re-mirror by hand when the trainer's numbers change. Flux.2 (imageResourceTraining) takes NO
+// hyperparameters, so its version key is intentionally absent (the Review step hides the panel for it).
+
+/** AI-Toolkit epoch (= saved-checkpoint) bounds — flat for every model (TrainingParams.tsx `AI_TOOLKIT_EPOCHS`). */
+export const AI_TOOLKIT_EPOCHS = { min: 1, max: 20, step: 1 } as const;
+
+/** Per-run advanced defaults. `textEncoderLr: 0` means text-encoder training is off for that model
+ *  (the submit sets `trainTextEncoder = textEncoderLr > 0`). */
+export interface RunParamDefaults {
+  epochs: number;
+  unetLr: number;
+  textEncoderLr: number;
+  networkDim: number;
+  networkAlpha: number;
+  resolution: number;
+  batchSize: number;
+  lrScheduler: string;
+  optimizer: string;
+  /** 0 turns it off. The main trainer's base is 0.1, zeroed per model by its `overrides`. */
+  noiseOffset: number;
+}
+
+// Modern caption models cluster on the same values; SD-family and a few others deviate. Every field below
+// is the ai-toolkit-resolved value from the source (batchSize already clamped to `aiToolkitBatchMax`, and
+// `lrScheduler` normalized off the invalid-for-ai-toolkit `cosine_with_restarts` to `cosine`).
+export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
+  // — SD 1.5 family (tags) —
+  sd_1_5: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  semi: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  realistic: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 2,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  anime: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 1e-4,
+    networkDim: 16,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  // — SDXL family (tags) —
+  sdxl: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  pony: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  illustrious: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  // — Modern caption image models —
+  flux_dev: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  chroma: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 2,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  qwen_image: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 2,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  zimageturbo: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  zimagebase: {
+    epochs: 10,
+    unetLr: 1e-6,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'cosine',
+    optimizer: 'Automagic',
+  },
+  flux2klein_9b: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  flux2klein_4b: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Flux.2 Klein's defaults; the orchestrator fixes batch at 1 for mossImage.
+  mossimage_sft: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  mossimage_base: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Flux.2 Klein's defaults; the orchestrator fixes batch at 1 for flux3klein.
+  flux3klein: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  hidream_o1: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  anima: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ming: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  qwen21: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  yue2: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  boogu: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  krea2: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  mageflow: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ideogram4: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Ernie is newly added upstream with no param overrides — inherits the ai-toolkit base.
+  ernie: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 2,
+    noiseOffset: 0.1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  // — Video (caption) — resolution is fixed per ecosystem upstream —
+  wan_2_2_t2v_a14b: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  wan_2_1_t2v_14b: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  hy_720_fp8: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx25: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx23: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx2: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  minimaxh3: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // — Audio (caption) — no spatial resolution; kept at 512 to satisfy the schema —
+  acestep_15: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  acestep_15_xl_base: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  acestep_15_xl_sft: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+};
+
+// Fallback for a version key with no explicit entry (e.g. the "Custom…" version) — the modern-caption base.
+const PARAM_FALLBACK: RunParamDefaults = {
+  epochs: 10,
+  unetLr: 1e-4,
+  textEncoderLr: 0,
+  networkDim: 32,
+  networkAlpha: 32,
+  resolution: 1024,
+  batchSize: 1,
+  lrScheduler: 'constant',
+  optimizer: 'AdamW8Bit',
+  noiseOffset: 0,
+};
+
+/** SDXL-family cards (tags) allow bigger nets and higher resolution than the base ai-toolkit bounds. */
+const SDXL_FAMILY = new Set(['sdxl', 'pony', 'illustrious']);
+
+/** AI-Toolkit batch-size ceiling per card family (TrainingParams.tsx `aiToolkitBatchMax`). */
+function batchMaxForCard(cardType: string): number {
+  if (cardType === 'sdxl' || cardType === 'sd15' || SDXL_FAMILY.has(cardType)) return 4;
+  if (cardType === 'zimage' || cardType === 'ernie' || cardType === 'flux2klein') return 2;
+  return 1;
+}
+
+/** The advanced-param defaults for a chosen version (falls back to the card's primary version, then the
+ *  modern-caption base — so a "Custom…" pick still gets sensible per-family values). */
+export function paramsForVersion(card: ModelCard, versionKey: string): RunParamDefaults {
+  return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
+}
+
+/**
+ * Default step budget per version — VENDORED mirror of the main app's `aiToolkitStepDefault`
+ * (src/utils/training.ts). Fixed per base model, NOT scaled by dataset size (repeats absorb that);
+ * the source keys on the version's `TrainingBaseModelType`, and the catalog's version keys for the
+ * deviating bases coincide with those type names. Re-mirror by hand when the trainer's defaults
+ * change. Callers resolve a "Custom…" run to a catalog version before asking, so the only unknown
+ * keys are future unmirrored ones — those take the source's `otherwise` arm (2000).
+ */
+const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3']);
+export function versionStepDefault(versionKey: string): number {
+  return STEP_DEFAULT_3000.has(versionKey) ? 3000 : versionKey === 'anima' ? 1500 : 2000;
+}
+
+export interface ParamBound {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** Steps bounds — VENDORED from the main app's `targetSteps` field (`min: 1, max: 10000`) in
+ *  src/components/Training/Form/TrainingParams.tsx. Re-mirror by hand when the trainer's cap changes. */
+export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies ParamBound;
+
+/**
+ * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with
+ * `ValueError: Cannot unload text encoder if training text encoder` after ~20-30 min of looping,
+ * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
+ * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
+ */
+/** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
+ *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
+ *  only for these. */
+const CUSTOM_BASE_ECOSYSTEMS: ReadonlySet<string> = new Set(['anima', 'sd1', 'sdxl']);
+
+export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
+  CUSTOM_BASE_ECOSYSTEMS.has(ecosystem);
+
+/** A Custom run resolves to the card's primary version (`runVersion`), so that version's ecosystem
+ *  decides: the same ecosystem the submit check sees. */
+export const allowsCustomBase = (card: ModelCard): boolean =>
+  ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
+
+export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
+export const TE_TRAINING_UNSUPPORTED_REASON =
+  'its backend cannot train the text encoder, and a run that tries hangs without finishing.';
+
+/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
+ *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
+export function paramBounds(card: ModelCard): Record<string, ParamBound> {
+  const sdxl = SDXL_FAMILY.has(card.type);
+  const video = card.media === 'video';
+  const audio = card.media === 'audio';
+  const netMax = sdxl ? 256 : 128;
+  return {
+    epochs: { ...AI_TOOLKIT_EPOCHS },
+    unetLr: { min: 0, max: 1, step: 1e-5 },
+    textEncoderLr: { min: 0, max: 1, step: 1e-5 },
+    networkDim: { min: 1, max: netMax, step: 1 },
+    networkAlpha: { min: 1, max: netMax, step: 1 },
+    // Video/audio resolution is fixed upstream; images range per family.
+    resolution: video
+      ? { min: 960, max: 960, step: 1 }
+      : audio
+      ? { min: 512, max: 512, step: 1 }
+      : sdxl
+      ? { min: 1024, max: 2048, step: 64 }
+      : { min: 512, max: 1024, step: 64 },
+    batchSize: { min: 1, max: batchMaxForCard(card.type), step: 1 },
+  };
+}
+
+/** Per-card "from" price map keyed by `ModelCard.type`, quoted live from the orchestrator `whatif` (see
+ * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
+ * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
+export type FromPrices = Record<string, number>;
+
+/** The AI-Toolkit parameters beyond the core set, gated per model + dataset by
+ *  `extraParamCapabilities`: a field that does nothing for a model (tag shuffling on a caption
+ *  dataset) is hidden with its reason, and `minSnrGamma` is declared only on the SD-family inputs.
+ *  Mirrors the per-model `overrides` in `src/components/Training/Form/TrainingParams.tsx`. */
+export type ExtraParamField =
+  | 'shuffleTokens'
+  | 'keepTokens'
+  | 'minSnrGamma'
+  | 'noiseOffset'
+  | 'flipAugmentation';
+
+export const EXTRA_PARAM_FIELDS: ExtraParamField[] = [
+  'shuffleTokens',
+  'keepTokens',
+  'minSnrGamma',
+  'noiseOffset',
+  'flipAugmentation',
+];
+
+export interface ExtraParamCapability {
+  supported: boolean;
+  /** Shown to the user in place of the field. */
+  reason?: string;
+  bound?: ParamBound;
+}
+
+export interface ExtraParamDefaults {
+  shuffleTokens: boolean;
+  keepTokens: number;
+  minSnrGamma: number;
+  noiseOffset: number;
+  flipAugmentation: boolean;
+}
+
+/** Ecosystems whose ai-toolkit trainer takes Min SNR gamma — the main app only sends it for these two
+ *  (training.orch.ts), so it is never offered elsewhere. */
+const SD_FAMILY_ECOSYSTEMS = new Set(['sd1', 'sdxl']);
+
+/** The recommended values for the extra fields — the Review seed and the "Reset" target. Independent
+ *  of the dataset's label mode: an unsupported field keeps its default and is zeroed at submit. With a
+ *  trigger word the trigger leads every caption, so shuffling the rest while keeping the first tag is
+ *  recommended, as the in-app trainer does. */
+export function extraParamDefaults(
+  card: ModelCard,
+  versionKey: string,
+  hasTrigger = false
+): ExtraParamDefaults {
+  return {
+    shuffleTokens: hasTrigger,
+    keepTokens: hasTrigger ? 1 : 0,
+    minSnrGamma: 5,
+    noiseOffset: paramsForVersion(card, versionKey).noiseOffset,
+    flipAugmentation: false,
+  };
+}
+
+export function extraParamCapabilities(
+  card: ModelCard,
+  version: ModelVersionInfo,
+  labelMode: LabelType
+): Record<ExtraParamField, ExtraParamCapability> {
+  const image = card.media === 'image';
+  const tagOnly = {
+    supported: labelMode === 'tag',
+    reason: 'Only applies to tag datasets — this dataset uses captions.',
+  };
+  const imageOnly = { supported: image, reason: `Not used when training on ${card.media}.` };
+  return {
+    shuffleTokens: tagOnly,
+    keepTokens: { ...tagOnly, bound: { min: 0, max: 3, step: 1 } },
+    minSnrGamma: {
+      supported: SD_FAMILY_ECOSYSTEMS.has(version.ecosystem),
+      reason: 'Only SD 1.5 and SDXL-family training uses Min SNR gamma.',
+      bound: { min: 0, max: 20, step: 1 },
+    },
+    noiseOffset: { ...imageOnly, bound: { min: 0, max: 1, step: 0.01 } },
+    flipAugmentation: imageOnly,
+  };
+}

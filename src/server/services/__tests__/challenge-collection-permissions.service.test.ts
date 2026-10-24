@@ -1,17 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const JUDGE_USER_ID = 8_675_309;
 const CREATOR_USER_ID = 42;
 const COLLECTION_ID = 10;
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn(), collection: { findFirstOrThrow: vi.fn() } },
-  mockDbWrite: {
-    collection: { findUnique: vi.fn(), findFirstOrThrow: vi.fn(), delete: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 const {
   getUserCollectionPermissionsById,
@@ -100,6 +94,23 @@ describe('challenge collection permissions', () => {
       deleteCollectionById({ id: COLLECTION_ID, userId: CREATOR_USER_ID })
     ).rejects.toThrow();
     expect(mockDbWrite.collection.delete).not.toHaveBeenCalled();
+  });
+
+  it('detaches entrant posts before dropping the collection', async () => {
+    // The generic path every contest collection is actually deleted through; `deleteChallenge` is
+    // the narrow one.
+    mockDbRead.collection.findFirstOrThrow.mockResolvedValue({ id: COLLECTION_ID, mode: 'Contest' });
+
+    await deleteCollectionById({ id: COLLECTION_ID, userId: JUDGE_USER_ID, isModerator: true });
+
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    expect(strings.join('?')).toMatch(
+      /UPDATE "Post" SET "collectionId" = NULL\s+WHERE id IN \(\s*SELECT id FROM "Post" WHERE "collectionId" = \?/
+    );
+    expect(values[0]).toBe(COLLECTION_ID);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.collection.delete.mock.invocationCallOrder[0]
+    );
   });
 
   it('rejects the creator editing collection settings', async () => {

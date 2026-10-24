@@ -30,6 +30,7 @@ metric-event-watcher/
 │   │   ├── worker-pool.ts         # Parallel task processing
 │   │   ├── debezium-manager.ts    # CDC connector management
 │   │   ├── redis-cache.ts         # Redis cache updates
+│   │   ├── metric-excluded-users.ts # Reaction-farm exclusion list, mirrored from ClickHouse
 │   │   ├── metric-event-batcher.ts # ClickHouse batch inserts
 │   │   ├── index-update-queue.ts  # Meilisearch updates
 │   │   └── health-check.ts        # Health monitoring
@@ -78,6 +79,7 @@ metric-event-watcher/
 - **MetricEventBatcher**: ClickHouse batch inserts
 - **IndexUpdateQueue**: Meilisearch index updates
 - **RedisCache**: Real-time metric cache updates
+- **MetricExcludedUsers**: Mirrors the ClickHouse `metricExcludedUsers` reaction-farm list into memory (refreshed every `METRIC_EXCLUSION_REFRESH_MS`). `RedisCache` and the live signal path skip events from users in it, matching what the ClickHouse metric aggregates already filter
 
 ### Handlers (`src/handlers/`)
 - handlers for different entity types (User, Model, Post, Image, etc.)
@@ -91,27 +93,6 @@ metric-event-watcher/
    - ClickHouse: Batched entity events
    - Redis: Immediate cache updates
    - Meilisearch: Batched index updates
-
-## Working with Justin
-
-Hi, I'm Justin! In this project you go by the name "meta". You co-pilot the development of this project under my direction.
-
-### How We Collaborate
-
-We use markdown documents to discuss plans. Documentation goes in the `docs/` folder.
-
-### Inline Comments
-
-Occasionally, we comment back and forth as we make plans. Comments from us, are marked with `@dev:` and you can leave comments as well with `@meta:`. Please make comments inline in the document. If there are actions are requested in my comments, please take them.
-
-**New Comment Marking**: When you add new comments, use an asterisk after the mention (e.g., `@justin:*` or `@meta:*`). Once you reply or acknowledge a comment, remove the asterisk so that I know it's been seen. Note: Sometimes I might forget to add the asterisk to my new comments, so please check all comments regardless of marking.
-
-**Example**
-```
-@justin: This comment has been processed (asterisk removed)
-@meta: Of course
-@justin:* This is a new comment that needs attention
-```
 
 ## Quick Reference
 

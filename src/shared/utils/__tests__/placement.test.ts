@@ -3,8 +3,17 @@ import type { PlacementOutcome, PlacementStatus } from '~/shared/utils/placement
 import {
   clampDeclineFeeRate,
   declineFeeAmount,
+  effectiveFreeSlots,
   effectivePlacementPrice,
+  FREE_PLACEMENTS_PER_DAY,
+  FREE_SLOT_HOLDING_STATUSES,
+  freePlacementDayStart,
+  HOST_DECLINE_FEE_SETTING,
+  hostDeclineFeePercentRefusal,
+  isDeclineFeeHostAdjustable,
   isPlacementSurface,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
+  placementFreeSlotCap,
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
   PLACEMENT_SURFACES,
@@ -14,8 +23,10 @@ import {
   PLACEMENT_PRICE_STEP,
   placementPriceUsable,
   placementPriceTrack,
+  placementSurfaceAllowsZeroPrice,
   placementSurfaces,
   placementTransactionId,
+  resolveHostDeclineFeePercent,
   resolvePlacementSpace,
   splitPlacementPayment,
 } from '~/shared/utils/placement';
@@ -234,6 +245,83 @@ describe('declineFeeAmount', () => {
   it('is zero only when the rate is', () => {
     expect(declineFeeAmount(100, 0)).toBe(0);
   });
+
+  // `100 * 0.29` is 28.999999999999996 in floating point. A host who sets 29%
+  // keeps 29 of 100, not 28.
+  it('keeps the whole percent a host set, despite floating point', () => {
+    for (let percent = 0; percent <= 30; percent++)
+      for (const amount of [100, 200, 400, 800, 1500, 2100])
+        expect(`${percent}% of ${amount} = ${declineFeeAmount(amount, percent / 100)}`).toBe(
+          `${percent}% of ${amount} = ${
+            percent === 0 ? 0 : Math.max(1, Math.floor((amount * percent) / 100))
+          }`
+        );
+  });
+});
+
+describe('the host decline fee', () => {
+  it('is fixed at 30% for stickers, remixes and storylines, and adjustable for promotions', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [
+          surface,
+          [isDeclineFeeHostAdjustable(surface), PLACEMENT_SURFACES[surface].defaultDeclineFeeRate],
+        ])
+      )
+    ).toEqual({
+      sticker: [false, 0.3],
+      remixGallery: [false, 0.3],
+      galleryPromotion: [true, 0],
+      modelPromotion: [true, 0],
+      storyline: [false, 0.3],
+    });
+  });
+
+  it('defaults a promotion host who never chose to 0%', () => {
+    expect(resolveHostDeclineFeePercent('galleryPromotion', undefined)).toBe(0);
+    expect(resolveHostDeclineFeePercent('modelPromotion', {})).toBe(0);
+  });
+
+  it('reads each promotion surface from its own settings', () => {
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: 15 })
+    ).toBe(15);
+  });
+
+  it('clamps a hand-edited value into range rather than closing the space', () => {
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: 99 })
+    ).toBe(30);
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: -5 })
+    ).toBe(0);
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: '20' })
+    ).toBe(0);
+  });
+
+  it('has no host value to read on a fixed surface', () => {
+    expect(() => resolveHostDeclineFeePercent('sticker', {})).toThrow('not host-adjustable');
+  });
+
+  it('accepts whole percents from 0 to 30 and a reset, on promotions', () => {
+    for (const value of [0, 1, 29, 30, null])
+      expect(hostDeclineFeePercentRefusal('galleryPromotion', value)).toBeNull();
+  });
+
+  it('refuses anything outside that range', () => {
+    for (const value of [-1, 31, 100, 12.5, Number.NaN, '10', undefined])
+      expect([value, hostDeclineFeePercentRefusal('modelPromotion', value)]).toEqual([
+        value,
+        'The decline fee must be a whole percent from 0 to 30',
+      ]);
+  });
+
+  it('refuses every value on stickers and remixes, even 30% and a reset', () => {
+    for (const surface of ['sticker', 'remixGallery'] as const)
+      for (const value of [0, 30, null])
+        expect(hostDeclineFeePercentRefusal(surface, value)).toMatch(/is fixed$/);
+  });
 });
 
 describe('clampDeclineFeeRate', () => {
@@ -255,8 +343,8 @@ describe('clampDeclineFeeRate', () => {
 describe('pricing', () => {
   it('caps by score band and tier', () => {
     expect(placementPriceCap(0, 'free')).toBe(100);
-    expect(placementPriceCap(4_999, 'gold')).toBe(500);
-    expect(placementPriceCap(5_000, 'gold')).toBe(1_000);
+    expect(placementPriceCap(9_999, 'gold')).toBe(500);
+    expect(placementPriceCap(10_000, 'gold')).toBe(1_000);
     expect(placementPriceCap(1_000_000, 'free')).toBe(1_000);
   });
 
@@ -316,6 +404,14 @@ describe('space resolution', () => {
       // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
       // reads open, `canPlace` is true, and the escrow short-circuits: free
       // placements on every creator's work, platform-wide, by default.
+      //
+      // Exception: a zero-priceable surface defaults to free on purpose; its target is opt-in,
+      // since a continuation needs a storyline chapter to continue.
+      if (placementSurfaceAllowsZeroPrice(surface)) {
+        expect(defaultPrice, `${surface} defaults to charging`).toBe(0);
+        expect(defaultMode, `${surface} defaults to accepting without review`).toBe('review');
+        continue;
+      }
       expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
 
       // A default of `auto` removes the review step for every creator who never
@@ -328,6 +424,7 @@ describe('space resolution', () => {
     expect(resolvePlacementSpace('sticker', {})).toEqual({
       mode: PLACEMENT_SURFACES.sticker.defaultMode,
       price: PLACEMENT_SURFACES.sticker.defaultPrice,
+      freeSlots: PLACEMENT_SURFACES.sticker.defaultFreeSlots,
       settings: {},
     });
   });
@@ -405,7 +502,12 @@ describe('space resolution', () => {
       image: mode('auto'),
       user: mode('off', 250),
     });
-    expect(resolved).toEqual({ mode: 'auto', price: 250, settings: {} });
+    expect(resolved).toEqual({
+      mode: 'auto',
+      price: 250,
+      freeSlots: PLACEMENT_SURFACES.sticker.defaultFreeSlots,
+      settings: {},
+    });
   });
 
   it('merges settings per key, with the most specific level winning', () => {
@@ -431,16 +533,189 @@ describe('the surface table', () => {
 
   // Equality, not containment, so a third surface has to come here and be given
   // a decline rate and an expiry rather than silently inheriting someone else's.
-  it('is exactly the two surfaces this foundation was built for', () => {
-    expect([...placementSurfaces].sort()).toEqual(['remixGallery', 'sticker']);
+  it('is exactly the surfaces that have been given their own rates', () => {
+    expect([...placementSurfaces].sort()).toEqual([
+      'galleryPromotion',
+      'modelPromotion',
+      'remixGallery',
+      'sticker',
+      'storyline',
+    ]);
+  });
+
+  /**
+   * 🔴 Only the storyline surface may be priced at zero. Elsewhere the floor is the spam gate and
+   * their free tier is a deliberately scarce exception to it; a zero floor would allow unlimited
+   * free submissions with no allowance or slot cap. Pinned by value, so moving any floor is a
+   * deliberate edit here.
+   */
+  it('keeps the price floor on every surface that has one', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [surface, PLACEMENT_SURFACES[surface].serverMinPrice])
+      )
+    ).toEqual({
+      sticker: 50,
+      remixGallery: 50,
+      galleryPromotion: 50,
+      modelPromotion: 50,
+      storyline: 0,
+    });
+    expect(placementSurfaces.filter(placementSurfaceAllowsZeroPrice)).toEqual(['storyline']);
+  });
+
+  // The free path refuses these surfaces, so the resolver must not advertise a free slot on one.
+  it('gives a zero-priced surface no free slots by default', () => {
+    for (const surface of placementSurfaces.filter(placementSurfaceAllowsZeroPrice))
+      expect(PLACEMENT_SURFACES[surface].defaultFreeSlots).toBe(0);
   });
 
   it('gives every surface a usable decline rate and expiry', () => {
     for (const surface of placementSurfaces) {
       const config = PLACEMENT_SURFACES[surface];
-      expect(config.defaultDeclineFeeRate).toBeGreaterThanOrEqual(MIN_DECLINE_FEE_RATE);
-      expect(config.defaultDeclineFeeRate).toBeLessThanOrEqual(MAX_DECLINE_FEE_RATE);
+      const range = config.hostDeclineFeePercent;
+      // A host-set fee may be 0; a platform-fixed one is held to the operator band.
+      const [min, max] = range
+        ? [range.min / 100, range.max / 100]
+        : [MIN_DECLINE_FEE_RATE, MAX_DECLINE_FEE_RATE];
+      expect(config.defaultDeclineFeeRate).toBeGreaterThanOrEqual(min);
+      expect(config.defaultDeclineFeeRate).toBeLessThanOrEqual(max);
       expect(config.expiryHours).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('free capacity', () => {
+  // The two ends of the scale are decided and published; the middle is a
+  // judgement. Pinning both ends means a table edit that moves them is a
+  // deliberate change to this file rather than something a reviewer has to spot.
+  it('starts a new creator at one and tops out at ten', () => {
+    expect(placementFreeSlotCap(0, 'free')).toBe(1);
+    expect(placementFreeSlotCap(1_000_000, 'gold')).toBe(10);
+  });
+
+  it('never lets a lower tier or a lower score buy more slots', () => {
+    const tiers = ['free', 'bronze', 'silver', 'gold'] as const;
+    const scores = PLACEMENT_FREE_SLOT_CAP_TIERS.map((band) => band.minScore);
+
+    for (const score of scores)
+      for (let i = 1; i < tiers.length; i++)
+        expect(placementFreeSlotCap(score, tiers[i])).toBeGreaterThanOrEqual(
+          placementFreeSlotCap(score, tiers[i - 1])
+        );
+
+    for (const tier of tiers)
+      for (let i = 1; i < scores.length; i++)
+        expect(placementFreeSlotCap(scores[i], tier)).toBeGreaterThanOrEqual(
+          placementFreeSlotCap(scores[i - 1], tier)
+        );
+  });
+
+  // The same resolver as the price caps, deliberately — one mechanism, so a fix
+  // to the band-picking cannot land on one table and miss the other. This is what
+  // makes that reuse a fact rather than an intention.
+  it('is resolved by the price cap resolver, not a second one', () => {
+    for (const band of PLACEMENT_FREE_SLOT_CAP_TIERS)
+      expect(placementFreeSlotCap(band.minScore, 'gold')).toBe(
+        placementPriceCap(band.minScore, 'gold', PLACEMENT_FREE_SLOT_CAP_TIERS)
+      );
+  });
+
+  // The surface default is applied by the cascade and nowhere else, so an unset
+  // count never reaches this. Applying it here too had one read path defaulting
+  // three times, with two of them unreachable.
+  it('gives an unset space the surface default, in the cascade and only there', () => {
+    for (const surface of placementSurfaces)
+      expect(resolvePlacementSpace(surface, {}).freeSlots).toBe(
+        PLACEMENT_SURFACES[surface].defaultFreeSlots
+      );
+  });
+
+  // The distinction that lets this replace an on/off toggle instead of sitting
+  // beside one. Defaulting a stored 0 away would reopen a space its owner closed.
+  it('keeps an explicit zero through the cascade, which is the creator saying no', () => {
+    expect(
+      resolvePlacementSpace('sticker', { user: { mode: 'review', price: 100, freeSlots: 0 } })
+        .freeSlots
+    ).toBe(0);
+    expect(effectiveFreeSlots(0, 10)).toBe(0);
+  });
+
+  it('ceilings a stored count without rewriting it', () => {
+    expect(effectiveFreeSlots(8, 3)).toBe(3);
+  });
+
+  it('cannot go negative, however the cap is misconfigured', () => {
+    expect(effectiveFreeSlots(4, -2)).toBe(0);
+  });
+
+  it('resolves image over post over account, independently of price', () => {
+    const resolved = resolvePlacementSpace('sticker', {
+      image: { mode: 'review', price: null, freeSlots: 2 },
+      post: { mode: 'review', price: 300, freeSlots: 5 },
+      user: { mode: 'review', price: 500, freeSlots: 9 },
+    });
+
+    expect(resolved.freeSlots).toBe(2);
+    // The price came from the post while the count came from the image, which is
+    // the whole reason these resolve separately: an owner who set their capacity
+    // once should keep it on an image they later reprice.
+    expect(resolved.price).toBe(300);
+  });
+
+  it('falls through a level that has not chosen', () => {
+    const resolved = resolvePlacementSpace('sticker', {
+      image: { mode: 'review', price: 100 },
+      user: { mode: 'review', price: 500, freeSlots: 6 },
+    });
+
+    expect(resolved.freeSlots).toBe(6);
+  });
+
+  // Pending is the point of the feature: without it fifty people submit into
+  // four slots and the creator gets a fifty-item review queue.
+  it('holds a slot while a placement is pending, and releases every other status', () => {
+    expect([...FREE_SLOT_HOLDING_STATUSES].sort()).toEqual(['approved', 'pending']);
+  });
+
+  it('starts the day at midnight UTC, wherever the placer is', () => {
+    // Both probes sit INSIDE one UTC day and straddle every real offset: 04:00Z
+    // is the previous local day west of UTC, 20:00Z the next local day east of
+    // it. Midnight-aligned probes alone would prove nothing about the day
+    // boundary at all.
+    for (const at of ['2026-08-17T04:00:00.000Z', '2026-08-17T20:00:00.000Z'])
+      expect(freePlacementDayStart(new Date(at)).toISOString()).toBe('2026-08-17T00:00:00.000Z');
+
+    // The boundary itself, so the window is a day rather than merely aligned.
+    expect(freePlacementDayStart(new Date('2026-08-18T00:00:00.000Z')).toISOString()).toBe(
+      '2026-08-18T00:00:00.000Z'
+    );
+  });
+
+  /**
+   * The timezone independence itself, which the probes above cannot reach.
+   *
+   * On a UTC runner a local-day boundary and a UTC one are the SAME function, so
+   * no input can separate them — and CI is UTC with no `TZ` pinned. Rather than
+   * write a test named for a property it can only fail on a machine that never
+   * gates the PR, the implementation floors the epoch, which has no ambient
+   * timezone to read. This asserts that shape: every result lands on a whole
+   * multiple of a day, which a calendar-getter version cannot promise off UTC.
+   */
+  it('lands on a whole day boundary, with no timezone to read', () => {
+    const day = 24 * 3_600_000;
+    for (const at of [0, 1, 1_000, day - 1, day, 1_786_000_000_000, Date.now()])
+      expect(freePlacementDayStart(new Date(at)).getTime() % day).toBe(0);
+  });
+
+  it('floors rather than rounds, so the day never starts in the future', () => {
+    for (const at of ['2026-08-17T00:00:00.000Z', '2026-08-17T23:59:59.999Z'].map(
+      (iso) => new Date(iso)
+    ))
+      expect(freePlacementDayStart(at).getTime()).toBeLessThanOrEqual(at.getTime());
+  });
+
+  it('is one placement a day, which is what makes free scarce', () => {
+    expect(FREE_PLACEMENTS_PER_DAY).toBe(1);
   });
 });

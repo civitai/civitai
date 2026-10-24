@@ -2,10 +2,15 @@ import { randomBytes } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { emailVerificationEmail } from '~/server/email/templates/emailVerification.email';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { userUpdateCounter } from '~/server/prom/client';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds
 
@@ -47,13 +52,17 @@ export async function validateEmailChangeToken(token: string) {
     throw throwNotFoundError('User not found');
   }
 
+  // Verify-only flows — resend and onboarding — mint a token for the address the row already has,
+  // so equal addresses mean "prove it", not "change to it".
   return {
     ...verificationData,
     currentEmail: user.email,
+    isEmailChange: user.email !== verificationData.newEmail,
   } as {
     userId: number;
     newEmail: string;
     currentEmail: string;
+    isEmailChange: boolean;
     createdAt: string;
   };
 }
@@ -78,6 +87,8 @@ export async function verifyEmailChangeToken(token: string) {
 }
 
 export async function requestEmailChange(userId: number, newEmail: string) {
+  await assertEmailAllowed(newEmail);
+
   // Check if the new email is already in use
   const existingUser = await dbRead.user.findFirst({
     where: { email: newEmail },
@@ -106,16 +117,66 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   const token = await generateEmailVerificationToken(userId, newEmail);
 
   // Send verification email
-  await sendVerificationEmail(newEmail, user.username || 'User', token);
+  await sendVerificationEmail(newEmail, user.username || 'User', token, true);
 
-  // Invalidate the user's session to ensure they re-authenticate after email change
-  await refreshSession(userId, { caller: 'email-verification' });
+  // Best-effort refresh of the cached session shape. 🔴 `refreshSession` marks the user's tokens
+  // `refresh` and busts the shaped session-user entry; only `invalidateSession` marks them
+  // `invalid`, so this is not a logout. The verification email has already been SENT and the token
+  // issued, so a failed cache bust must not 500 this call — the user would see "failed",
+  // re-request, and receive a second email for work that already succeeded.
+  await refreshSession(userId, { caller: 'email-verification' }).catch(handleLogError);
 
   return { success: true, message: 'Verification email sent' };
 }
 
+/**
+ * Mint a token for `email` and send it. For a caller that already knows the address — the onboarding
+ * step, which has just written it — and so must not re-read a replica that may still hold the old row.
+ *
+ * 🔴 Deliberately NOT `assertEmailAllowed`, unlike `requestEmailChange`. Every writer of `User.email`
+ * already judged this address (#4432); re-judging it against a list that has moved since would leave
+ * the account unable to verify and therefore unable to ever post, with no way out. Same reasoning as
+ * the unchanged-address case in the onboarding step — see `email-domain-guard.call-sites.test.ts`.
+ */
+export async function issueEmailVerification(
+  userId: number,
+  email: string,
+  username: string | null,
+  isEmailChange = false
+) {
+  const token = await generateEmailVerificationToken(userId, email);
+  await sendVerificationEmail(email, username || 'User', token, isEmailChange);
+
+  return { success: true, message: 'Verification email sent' };
+}
+
+/**
+ * Send a verification link for the address the account ALREADY has.
+ *
+ * `requestEmailChange` refuses when the new address equals the current one, so it cannot serve the
+ * account that has to prove an address it never changed — which, since `emailVerificationRequired`
+ * gates on exactly that, is every account the gate catches.
+ */
+export async function sendEmailVerification(userId: number) {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { email: true, username: true, emailVerified: true },
+  });
+
+  if (!user) throw throwNotFoundError('User not found');
+  if (!user.email) throw throwBadRequestError('Your account has no email address to verify');
+  if (user.emailVerified) throw throwBadRequestError('Your email address is already verified');
+
+  return issueEmailVerification(userId, user.email, user.username);
+}
+
 export async function confirmEmailChange(token: string) {
   const { userId, newEmail } = await verifyEmailChangeToken(token);
+
+  // Primary, not the replica: an onboarding token is minted immediately after the address is
+  // written, and a lagging replica would report that as a change.
+  const existing = await dbWrite.user.findUnique({ where: { id: userId }, select: { email: true } });
+  const isEmailChange = existing?.email !== newEmail;
 
   // Clicking the token link sent to newEmail proves inbox ownership, so mark the email verified — not just
   // set it. emailVerified (not email) is what gates the last-login-method delete guard and hub magic-link
@@ -127,18 +188,35 @@ export async function confirmEmailChange(token: string) {
 
   userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });
 
-  // Invalidate the user's session after successful email change
-  await refreshSession(userId, { caller: 'email-verification' });
+  // Refresh the cached session shape: emailVerified always changes here, the address only on a
+  // change token. As above, a REFRESH, not a logout — see the note in `requestEmailChange`.
+  // 🔴 Best-effort is load-bearing here: the email column is already written AND the one-time token
+  // has been consumed, so a throw would report a permanent failure for a change that succeeded and
+  // that the user can no longer retry (the link is spent). Staleness is bounded by the session
+  // entry's own TTL; a misreported, unretryable write is not.
+  await refreshSession(userId, { caller: 'email-verification' }).catch(handleLogError);
 
-  return { success: true, message: 'Email address updated successfully' };
+  return {
+    success: true,
+    isEmailChange,
+    message: isEmailChange
+      ? 'Email address updated successfully'
+      : 'Email address verified successfully',
+  };
 }
 
-async function sendVerificationEmail(email: string, username: string, token: string) {
+async function sendVerificationEmail(
+  email: string,
+  username: string,
+  token: string,
+  isEmailChange: boolean
+) {
   const verificationUrl = `${env.NEXTAUTH_URL}/verify-email?token=${token}`;
 
   await emailVerificationEmail.send({
     to: email,
     username,
     verificationUrl,
+    isEmailChange,
   });
 }

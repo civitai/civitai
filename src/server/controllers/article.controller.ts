@@ -4,17 +4,13 @@ import type { ProtectedContext } from '~/server/createContext';
 import type {
   UpsertArticleInput,
   UnpublishArticleSchema,
-  RestoreArticleSchema,
   ArticleMetadata,
 } from '~/server/schema/article.schema';
-import {
-  unpublishArticleById,
-  upsertArticle,
-  restoreArticleById,
-} from '~/server/services/article.service';
+import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -35,6 +31,16 @@ export const upsertArticleHandler = async ({
     );
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
+    // 🔴 `isOfficial` is a provenance claim, so a non-moderator's value is DROPPED rather
+    // than refused: the edit form seeds itself from the article, so an owner editing a marked
+    // article sends the flag back and would be locked out with a bare UNAUTHORIZED.
+    // `upsertArticle` leaves the column alone when the field is undefined.
+    const { isOfficial, ...articleInput } = input;
+    const official = ctx.user.isModerator ? isOfficial : undefined;
+
+    if (input.scheduledAt && !ctx.features.articleScheduling)
+      throw throwBadRequestError('Scheduling articles is not available');
+
     const scanContent = ctx.features.articleImageScanning ?? false;
 
     // Capture the prior published state so we can tell a publish transition apart
@@ -50,7 +56,8 @@ export const upsertArticleHandler = async ({
       : false;
 
     const result = await upsertArticle({
-      ...input,
+      ...articleInput,
+      isOfficial: official,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       scanContent,
@@ -116,25 +123,5 @@ export async function unpublishArticleHandler({
   }
 }
 
-export async function restoreArticleHandler({
-  input,
-  ctx,
-}: {
-  input: RestoreArticleSchema;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id } = input;
-    const restoredArticle = await restoreArticleById({
-      id,
-      userId: ctx.user.id,
-    });
-    return {
-      ...restoredArticle,
-      metadata: restoredArticle.metadata as ArticleMetadata | null,
-    };
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-}
+// NOTE(moderator-migration): restoreArticleHandler removed — article restore is now a moderator-app
+// action (apps/moderator, Kysely). See docs/moderator-app/context-menu-mod-actions.md.

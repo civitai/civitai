@@ -1,6 +1,7 @@
 # Generator Announcements
 
 > Status: **Proposal** · Owner: Briant · Source: [ClickUp 868k0b98x](https://app.clickup.com/t/868k0b98x)
+> Not the same thing as [generator messages](./generator-messages.md), which shipped: those are non-blocking footer copy from their own store. This proposal is specifically the blocking OK-modal acknowledgment.
 
 ## Goal
 
@@ -46,17 +47,20 @@ generator modal.
 
 ### Acknowledgment
 
-The OK click reuses the **existing localStorage dismissal store**
+The OK click reuses the **existing device dismissal store**
 ([announcements.utils.ts](../../src/components/Announcements/announcements.utils.ts) — `dismissAnnouncements` /
-`useAnnouncementsStore`). The store already self-prunes ids that are no longer live, so this is
-sufficient — **no new table, no per-user DB tracking.**
+`useAnnouncementsStore`; a cookie since the SSR carousel work, not localStorage). That store still
+decides what renders, and it self-prunes ids that are no longer live.
 
-> Trade-off: dismissal is per-browser, so an announcement can reappear if the user switches
-> devices or clears storage. Acceptable given how short-lived these are.
+> A signed-in dismissal is also recorded against the account (`AnnouncementDismissal`) and merged
+> back into the device store once a session, so it survives a device switch. Signed out, and until
+> that merge lands, dismissal is still per-browser and clearing storage still resets it.
 
 ## Backend
 
-The only backend change is the schema. There is **no new model, migration, or mutation.**
+The only backend change for *this* feature is the schema: no new model, migration, or mutation.
+(The cross-device dismissal backstop added later has its own table and procedures — see
+`announcement.service.ts` — but nothing here depends on them.)
 
 1. **Schema** — add the `placement` metadata field (back-compat via the `'site'` default).
 2. **Service** — no change. `getCurrentAnnouncements` filtering is untouched; `placement` is read

@@ -1,7 +1,7 @@
 import { encode } from 'blurhash';
 import sharp from 'sharp';
 import * as z from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';

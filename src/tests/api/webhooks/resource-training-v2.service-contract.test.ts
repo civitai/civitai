@@ -19,7 +19,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // Real WorkflowStatus values + the client fns the REAL training.service imports
 // at module load (getConsumerBlobUploadUrl / getWorkflow / handleError /
 // submitWorkflow). Lowercase statuses so the handler's z.enum accepts them.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   WorkflowStatus: {
     unassigned: 'unassigned',
     preparing: 'preparing',
@@ -36,15 +36,8 @@ vi.mock('@civitai/client', () => ({
   submitWorkflow: vi.fn(),
 }));
 
-const { mockFindFirst, mockGetWorkflow } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
+const { mockGetWorkflow } = vi.hoisted(() => ({
   mockGetWorkflow: vi.fn(),
-}));
-
-// Mock ONLY the DB layer — the REAL service runs and throws the REAL typed errors.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { modelFile: { findFirst: mockFindFirst } },
 }));
 
 // Orchestrator workflow fetch the handler calls before the real service.
@@ -56,11 +49,6 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: any) => handler,
 }));
-
-const { mockLogToAxiom } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 // Heavy / connection-opening leaf deps the service + handler import at module
 // load but that the throw paths never execute — stub so import is cheap and no
@@ -74,7 +62,9 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
-vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
+vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
+  getOrchestratorCaller: vi.fn(),
+}));
 vi.mock('~/utils/s3-utils', () => ({
   deleteObject: vi.fn(),
   getB2S3Client: vi.fn(),
@@ -104,6 +94,10 @@ import {
   TrainingRecordNotFoundError,
   updateTrainingWorkflowRecords,
 } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockFindFirst = dbMock.dbWrite.modelFile.findFirst;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function createMocks(body: unknown = { workflowId: 'wf-3111039', status: 'succeeded' }) {
   const req = {
@@ -192,15 +186,18 @@ describe('resource-training-v2 — REAL service throws are acked by the handler 
         steps: [{ $type: 'somethingElse', metadata: { modelFileId: 1 } }],
       },
     ],
-  ])('sibling permanent case (%s) via REAL service → handler acks 200', async (_label, workflow) => {
-    mockGetWorkflow.mockResolvedValue(workflow);
-    const { req, res } = createMocks();
+  ])(
+    'sibling permanent case (%s) via REAL service → handler acks 200',
+    async (_label, workflow) => {
+      mockGetWorkflow.mockResolvedValue(workflow);
+      const { req, res } = createMocks();
 
-    await handler(req, res);
+      await handler(req, res);
 
-    expect(res._getStatusCode()).toBe(200);
-    expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
-  });
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
+    }
+  );
 
   it('transient DB failure in the REAL service (findFirst rejects) → still 500, NOT masked', async () => {
     mockFindFirst.mockRejectedValue(new Error('write CONN_RESET: db connection reset'));

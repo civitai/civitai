@@ -3,8 +3,7 @@
  *
  * The kind-aware badge / CTA / recommend-label logic for `AppListingCard`,
  * extracted into pure functions so the correctness gate lives in the node `unit`
- * project (the civitai browser-mode component suites are REPORT-ONLY / non-
- * blocking — so the real, blocking test coverage for this behaviour is here).
+ * project, which needs no browser.
  *
  * LIVE (P2d cut over): this view-model now backs the DEFAULT `/apps` store grid
  * (`AppListingsMarketplaceBody` → `AppListingCard`), reading the unified
@@ -21,22 +20,21 @@
  *     there when the viewer can actually open it) — the direct primary action.
  *   - on-site otherwise (no page, or page but no `appBlocksPages`) → **View
  *     details** → `/apps/store-preview/<slug>` (the unified P2c detail).
- *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
- *     external anchor (direct primary action). 🔴 The sub-kind does NOT decide
- *     this; the presence of a destination does — see below.
- *   - off-site with no usable target (missing / non-https url, either sub-kind)
- *     → **View details** → the unified detail (the DTO already null-guards
- *     non-https — we re-guard; the detail page shows the informational state).
+ *   - off-site with an https `externalUrl` → **Visit ↗** → external anchor
+ *     (direct primary action). 🔴 The presence of a destination decides this.
+ *   - off-site with no usable target (missing / non-https url) → **View
+ *     details** → the unified detail (the DTO already null-guards non-https —
+ *     we re-guard; the detail page shows the informational state).
  *
- * 🔴 Connect used to route to "View details" UNCONDITIONALLY, on the premise
- * that "the Connect affordance lives on the detail page". That affordance was a
- * dead stub, so the card handed the viewer a detail page with nothing on it —
- * the card half of the same defect. The detail now renders a real `Visit ↗` for
- * any off-site listing carrying an https `externalUrl` (see
- * `appListingDetailView`), so the card matches it: a connect listing with a
- * destination gets the direct Visit, and only a listing with NO destination
- * falls back to the detail. Card and detail must not disagree about whether an
- * app is reachable.
+ * 🔴 A listing with a linked OAuth client used to route to "View details"
+ * UNCONDITIONALLY, on the premise that "the Connect affordance lives on the
+ * detail page". That affordance was a dead stub, so the card handed the viewer a
+ * detail page with nothing on it — the card half of the same defect. The detail
+ * now renders a real `Visit ↗` for any off-site listing carrying an https
+ * `externalUrl` (see `appListingDetailView`), so the card matches it: an
+ * OAuth-connected listing with a destination gets the direct Visit, and only a
+ * listing with NO destination falls back to the detail. Card and detail must not
+ * disagree about whether an app is reachable.
  * Every CTA now has a working `href` (never actionless). The card ALSO links its
  * title to the detail (via `getListingDetailHref`) so the detail is reachable
  * even when the primary CTA is a direct Open / Visit.
@@ -46,21 +44,36 @@ import type {
   ListingCard,
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
-export type ListingBadgeKind = 'onsite' | 'connect' | 'external-link';
+export type ListingBadgeKind = 'onsite' | 'offsite';
 export type ListingBadge = { label: string; kind: ListingBadgeKind };
 
 /**
- * The kind badge: on-site apps read "App"; off-site splits into the two
- * sub-kinds — an OAuth "Connect app" vs a plain "Off-site" external link.
+ * The kind badge: on-site apps read "Embedded"; every off-site app reads "Standalone".
+ *
+ * 🔴 BOTH BRANCHES NOW RESOLVE FROM `listingKindLabels`. The onsite branch used to
+ * return a hardcoded `'App'` — the CORRECT-looking word, which is why no copy sweep
+ * ever surfaced it and why the ledger's retired-wording rule could not see it either.
+ * A literal here is what let this surface and `appListingDetailRows` disagree about
+ * the same listing before, so neither side spells the word any more.
+ *
+ * 🔴 Off-site used to fork into two BADGES — "Connect app" (a linked OAuth
+ * client) vs "Off-site" (no client) — derived from `connectClientId`. That fork
+ * is removed: `offsite` is one kind. (Those two names are the HISTORICAL labels;
+ * the surviving one has since been renamed "Standalone" as user-facing copy.)
+ * The word here is the SAME word the store's kind filter already uses
+ * (`KindFilterButtons`' "Standalone"), which is what makes the parent label true
+ * of the whole category again — under the fork it was only true of one child,
+ * while the submit flow REQUIRES an OAuth client and therefore minted nothing
+ * but the other one.
  */
 export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): ListingBadge {
-  if (card.kindData.kind === 'onsite') return { label: 'App', kind: 'onsite' };
-  return card.kindData.subKind === 'connect'
-    ? { label: 'Connect app', kind: 'connect' }
-    : { label: 'Off-site', kind: 'external-link' };
+  if (card.kindData.kind === 'onsite') return { label: EMBEDDED_KIND_LABEL, kind: 'onsite' };
+  return { label: STANDALONE_KIND_LABEL, kind: 'offsite' };
 }
 
 /**
@@ -69,13 +82,80 @@ export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): L
  * rather than a misleading "0% recommend". Otherwise a Steam-style
  * "N% recommend (M)" with the review count.
  */
-export function getRecommendLabel(
-  recommend: ListingRecommendRollup,
-  reviewCount: number
-): string {
+export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
   if (recommend.recommendPct == null) return 'No reviews yet';
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/**
+ * Play count → display label (`1 play` / `12.4k plays`), or `null` when the card
+ * should print no play stat at all.
+ *
+ * 🔴 TWO DIFFERENT REASONS FOR ABSENCE, ONE SHARED RENDERING — AND THE SHARING IS
+ * AN OPERATOR OVERRIDE, NOT A DERIVATION. Read this before "fixing" either case.
+ *
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so no on-platform request follows the
+ *     click and nothing observes it. There is no number, and there never will be
+ *     one for that listing.
+ *   · `0` — MEASURED, AND EMPTY. An on-site listing nobody has opened yet is a
+ *     genuine zero (the COALESCE-to-0 reading `app-listing.service.ts`'s
+ *     `cardOpenCount` documents). The number exists, is trustworthy, and is zero.
+ *
+ * These are NOT the same fact. The DTO keeps them apart deliberately and must keep
+ * doing so — `cardOpenCount`'s "do not over-null" paragraph exists to stop an
+ * on-site row being reported as unmeasurable. What the operator decided
+ * (2026-09-06) is only what the CARD DOES WITH THEM: **both render nothing**.
+ * "dont show 0 plays (just show nothing)" — a `0 plays` chip is noise on a browsing
+ * grid and reads as a verdict on the app rather than as an empty measurement.
+ *
+ * ⚠️ THIS REVERSES THE FIRST ROUND OF THIS PR, WHICH RENDERED "0 plays" FOR AN
+ * ON-SITE ZERO AND ARGUED AT LENGTH THAT IT MUST. That argument was about TRUTH —
+ * a zero is a measurement, not an absence — and it is still correct about the data
+ * model; it was simply not the call to make about the pixels. Recorded here rather
+ * than deleted, because the next reader will otherwise meet the zero case, think it
+ * is a truthiness accident, and "restore" it.
+ *
+ * 🔴 SO THE ZERO CASE IS SPELLED EXPLICITLY (`openCount === 0`) RATHER THAN LEFT TO
+ * `if (!openCount)`. The two are behaviourally identical here and that is exactly
+ * the problem: a bare falsy check reads as an oversight and carries none of the
+ * decision above. The explicit form is a signpost — anyone changing it has to
+ * notice they are changing something someone chose.
+ *
+ * ⚠️ AND BECAUSE IT IS A SIGNPOST, NO TEST CAN DEFEND IT — SAID PLAINLY RATHER THAN
+ * IMPLIED. `if (!openCount) return null` was MEASURED to survive the whole node
+ * suite (it is an equivalent mutant over `number | null`), so the spelling here is
+ * legibility, not a guarded invariant. Do not read the test file as pinning it. What
+ * the tests DO pin is the boundary either spelling produces: `null` → nothing, `0` →
+ * nothing, `1` → "1 play".
+ *
+ * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
+ * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
+ * only covered by the browser `component` project. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the node `unit` tier. Expressed as this
+ * function's return type it is pinned in `__tests__/appListingCardView.test.ts` — with `null`, `0`
+ * and `>0` as three separately-named cases — and the component is left with a branch that has
+ * nothing to get wrong.
+ *
+ * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
+ * `getRecommendLabel` above rather than an inconsistency. A review count is an
+ * exactness claim inside a parenthetical; a play count is a magnitude on a dense
+ * grid tile, where "12.4k" reads at a glance and "12,431" does not.
+ * `abbreviateNumber` is the repo-wide helper for that (`~/utils/number-helpers`) —
+ * what every other public count on the platform renders through — so this is reuse,
+ * not a second formatter.
+ *
+ * Pluralisation reads the RAW value, not the abbreviated string: exactly 1 is
+ * "1 play"; everything else — including 1000, which abbreviates to "1k" — is
+ * "plays". (0 no longer reaches the plural at all, but the branch is written for
+ * the value rather than for the reachable set, so it stays correct if the zero
+ * decision is ever reversed back.)
+ */
+export function getPlayCountLabel(openCount: number | null): string | null {
+  // Both arms are absence-on-screen; they are NOT the same fact. See above.
+  if (openCount == null || openCount === 0) return null;
+  return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
 }
 
 /**
@@ -137,24 +217,24 @@ export function getListingCta(
     return { label: 'View details', action: 'detail', href: detailHref, external: false };
   }
 
-  // Off-site — BOTH sub-kinds. The destination decides, not the sub-kind: a
-  // connect app is reached at its own address exactly like a plain external
-  // link (it starts its own OAuth flow from there). Mirrors
-  // `getDetailPrimaryAction`; do NOT reintroduce a sub-kind test above this
-  // line, or the card and the detail disagree again.
+  // Off-site — ONE kind. The destination decides: an OAuth-connected app is
+  // reached at its own address exactly like a plain external link (it starts its
+  // own OAuth flow from there). Mirrors `getDetailPrimaryAction`; do NOT
+  // reintroduce a `connectClientId` test above this line, or the card and the
+  // detail disagree again. (The card DTO does not even carry that field.)
   const href = safeExternalHref(card.kindData.externalUrl);
   if (href) {
     return { label: 'Visit', action: 'visit', href, external: true };
   }
-  // No usable external target (missing / non-https, either sub-kind) → the
-  // unified detail, which shows the informational / connect-stub state.
+  // No usable external target (missing / non-https) → the unified detail, which
+  // shows the informational / connect-stub state.
   return { label: 'View details', action: 'detail', href: detailHref, external: false };
 }
 
 // ---------------------------------------------------------------------------
 // Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
 // store card + detail. Mirrors the my-submissions edit gating
-// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// (`OffsiteSubmissionsList` `canEdit`): the
 // owner can edit an app that is still editable (NOT mod-removed / rejected).
 // ---------------------------------------------------------------------------
 
@@ -205,9 +285,48 @@ export function getOwnerEditHref(
   listingId: string
 ): string | null {
   if (kindData.kind === 'onsite') {
-    return kindData.appBlockId
-      ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit`
-      : null;
+    return kindData.appBlockId ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit` : null;
   }
   return `/apps/submit?edit=${encodeURIComponent(listingId)}`;
 }
+
+// ── Action-row geometry (S7) — RETIRED, and this note is the tombstone ──────
+//
+// 🔴 FIVE EXPORTS LIVED HERE. FOUR ARE DELETED; ONE MOVED. The distinction is the
+// whole point of writing this down, and an earlier draft of this note got it wrong
+// — it said "all five are deleted" and then listed four names plus a TEST, which is
+// not an export at all.
+//
+//   DELETED, no replacement anywhere:
+//     `LISTING_ROLLUP_MIN_WIDTH_PX` (70) — the rollup's enforced min-width floor
+//     `LISTING_ACTIONS_WIDEST_PX`   (184) — the measured widest action cluster
+//     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
+//     `listingRollupHideThreshold()`      — the function that derived it
+//
+//   MOVED, same name, new home:
+//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
+//     where the card reads it as the action row's `gap`. It is still live geometry;
+//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
+//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
+//     which is exactly the two-copies drift the geometry module exists to remove.
+//
+// Also deleted, though it was never an export: the spelling guard in
+// `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`
+// Tailwind class agreed with the JS constant.
+//
+// Every one of them existed to let the recommend rollup and the CTA share the
+// action row: a floor so a growing CTA could not starve the rollup, a container
+// query hiding the rollup where even the floor did not fit, a measured
+// action-cluster width to derive that threshold from, and a drift guard because a
+// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup up into
+// the card's meta block removed the competition, and with it the entire
+// apparatus. Deleting a derived number and its guard TOGETHER is the point — a
+// surviving constant with no consumer is the shape that gets "fixed" back into
+// use later.
+//
+// The geometry this card DOES still have — cover ratio, icon size, reserved title
+// lines, action-row height / padding / gap / control size — lives in
+// `~/components/Apps/appListingCardGeometry.ts`, which exists so the (later)
+// `AppListingCardSkeleton` reserves the same numbers by import rather than by
+// copy. This module is back to being the pure kind/CTA/label view-model its
+// header describes.

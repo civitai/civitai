@@ -50,9 +50,9 @@ export const labelDescriptions: { [p in LabelTypes]: React.ReactNode } = {
     <Stack gap={0}>
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
-      <Text mt="sm">
+      <Text component="div" mt="sm">
         Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
-        models.
+        models only.
       </Text>
     </Stack>
   ),
@@ -63,9 +63,9 @@ export const labelDescriptions: { [p in LabelTypes]: React.ReactNode } = {
         Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
         a setting sun.&quot;
       </Text>
-      <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
-        <Badge color="teal">Video</Badge> models.
+      <Text component="div" mt="sm">
+        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>,{' '}
+        <Badge color="teal">Video</Badge>, <Badge color="cyan">Audio</Badge>, and all newer models.
       </Text>
     </Stack>
   ),

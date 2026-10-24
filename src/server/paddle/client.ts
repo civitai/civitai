@@ -2,7 +2,6 @@ import type {
   CurrencyCode,
   ITransactionItemWithPrice,
   ITransactionItemWithPriceId,
-  ListAdjustmentQueryParameters,
   UpdateSubscriptionRequestBody,
 } from '@paddle/paddle-node-sdk';
 import { Environment, Paddle } from '@paddle/paddle-node-sdk';
@@ -206,18 +205,6 @@ export const cancelPaddleSubscription = (
 ) => {
   const paddle = getPaddle();
   return paddle.subscriptions.cancel(subscriptionId, { effectiveFrom });
-};
-
-export const getPaddleAdjustments = async (params: ListAdjustmentQueryParameters) => {
-  const paddle = getPaddle();
-  const perPage = params.perPage ?? 50;
-  const query = paddle.adjustments.list({
-    ...params,
-    perPage,
-  });
-
-  const data = await query.next();
-  return data;
 };
 
 export const updatePaddleCustomerEmail = async ({

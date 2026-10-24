@@ -1,5 +1,5 @@
 import pLimit from 'p-limit';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { isDefined } from '~/utils/type-guards';

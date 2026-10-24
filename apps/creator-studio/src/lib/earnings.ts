@@ -3,29 +3,42 @@
 
 export const EARNINGS_SOURCES = [
   'compensation',
+  'generationTip',
   'tip',
   'licenseFee',
   'accessSale',
   'cosmeticSale',
+  'otherCredit',
 ] as const;
 export type EarningsSource = (typeof EARNINGS_SOURCES)[number];
 
 export const SOURCE_LABEL: Record<EarningsSource, string> = {
   compensation: 'Generation compensation',
+  generationTip: 'Generation tips',
   tip: 'Tips',
   licenseFee: 'License fees',
   accessSale: 'Access sales',
   cosmeticSale: 'Cosmetic sales',
+  otherCredit: 'Other credits',
 };
 
 // Per-source line colors for the earnings trend chart (distinct hues; not the buzz-currency palette).
 export const SOURCE_COLOR: Record<EarningsSource, string> = {
   compensation: '#4dabf7',
+  generationTip: '#ffd43b',
   tip: '#f59f00',
   licenseFee: '#40c057',
   accessSale: '#9775fa',
   cosmeticSale: '#f783ac',
+  otherCredit: '#868e96',
 };
+
+// The buzz account types every buzz-only earnings read is restricted to — the trend series, the monthly table,
+// and the /earnings source cards and sales counts. Filter on this, NOT on `currencyMeta(c).family === 'buzz'`:
+// that treats an UNKNOWN currency as buzz, so a newly-added account type would land in one figure on a card and
+// not in the one beside it.
+export const BUZZ_CURRENCIES = ['yellow', 'blue', 'green', 'club'] as const;
+export const isBuzzCurrency = (c: string) => (BUZZ_CURRENCIES as readonly string[]).includes(c);
 
 // Currencies are the raw `toAccountType` values, never converted or merged (B8 / D1). `family` only drives visual
 // grouping/formatting (⚡ for buzz), never summing across families.

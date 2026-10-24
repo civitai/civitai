@@ -20,10 +20,11 @@ import {
   CHALLENGE_MIN_DURATION_HOURS,
   CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
+  RESOURCE_CONCEPT_MAX_LENGTH,
 } from '~/shared/constants/challenge.constants';
 import { JUDGING_ENGINES } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { infiniteQuerySchema } from './base.schema';
-import { imageSchema } from './image.schema';
+import { imageReferenceInputSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -137,6 +138,12 @@ export const challengeMetadataSchema = z.object({
   resourceModelId: z.number().optional(),
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
+  // Truncated rather than rejected: a `.max()` here would fail the whole safeParse and wipe the
+  // metadata column (see the note above). Cap rationale lives with RESOURCE_CONCEPT_MAX_LENGTH.
+  resourceConcept: z
+    .string()
+    .transform((s) => s.slice(0, RESOURCE_CONCEPT_MAX_LENGTH))
+    .optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
   // daily-challenge-processing. TWO readers, and the second is the one that matters:
@@ -473,7 +480,7 @@ export const upsertChallengeBaseSchema = z.object({
   theme: z.string().min(1),
   themeElements: z.array(z.string()).optional(),
   invitation: z.string().optional(),
-  coverImage: imageSchema,
+  coverImage: imageReferenceInputSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number()).default([]),
@@ -522,7 +529,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   theme: z.string().trim().min(1).max(100),
   themeElements: z.array(z.string().max(100)).max(20).optional(),
   invitation: z.string().max(300).optional(),
-  coverImage: imageSchema,
+  coverImage: imageReferenceInputSchema,
   // Capped at the browsable-levels flag (31): 32 is NsfwLevel.Blocked, and accepting it would
   // let a user create a Blocked-level challenge whose collection admits Blocked images.
   allowedNsfwLevel: z.number().min(1).max(allBrowsingLevelsFlag).default(sfwBrowsingLevelsFlag),
@@ -570,6 +577,13 @@ export type UserChallengeUpsertInput = z.infer<typeof userChallengeUpsertSchema>
 export type DeleteChallengeInput = z.infer<typeof deleteChallengeSchema>;
 export const deleteChallengeSchema = z.object({
   id: z.number(),
+});
+
+// Separate from `deleteChallengeSchema` because that one is also the event-delete input, which has
+// no notion of force and should not accept a parameter it ignores.
+export type ModeratorDeleteChallengeInput = z.infer<typeof moderatorDeleteChallengeSchema>;
+export const moderatorDeleteChallengeSchema = deleteChallengeSchema.extend({
+  force: z.boolean().optional(),
 });
 
 // Moderator: Quick actions
@@ -716,7 +730,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
-  coverImage: imageSchema.nullable().optional(),
+  coverImage: imageReferenceInputSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

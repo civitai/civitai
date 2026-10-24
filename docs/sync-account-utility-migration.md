@@ -1,5 +1,15 @@
 # `syncAccount` Utility Migration
 
+> **SUPERSEDED (2026-08).** The 12-site migration below landed; two of the files it names
+> (`MatureContentMigrationAlert.tsx`, `SensitiveShield.tsx`) no longer exist. Two things it says are now
+> wrong: there is no `redirectUrl` second arg / `sync-redirect` param, and the destination does not pull a
+> token from `/api/auth/sync` (deleted with the swap bridge) — it initiates the OAuth auth-code flow at
+> `/api/auth/authorize`. **And `syncAccount(url)` is no longer the API to reach for:** it derives the current
+> colour from `window.location.host`, so it silently no-ops during SSR and every server-rendered cross-colour
+> link shipped without the marker. Use `useSyncAccount()` (`src/hooks/useSyncAccount.ts`) in anything that
+> renders on the server; `syncAccountFor(url, colour, domains)` is the pure form. Kept for the bucket
+> rationale only.
+
 ## Background
 
 The `sync-account` query parameter signals to the destination domain which color

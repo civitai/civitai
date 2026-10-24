@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type { ListingEditContext } from './offsiteEditConfig';
 
 /**
@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
   removeScreenshot: vi.fn(),
+  setRedMedia: vi.fn(),
   invalidate: vi.fn(),
 }));
 
@@ -64,6 +65,7 @@ vi.mock('~/utils/trpc', () => {
         removeScreenshot: { useMutation: recording(mocks.removeScreenshot) },
         // ListingAssetStep procs not otherwise exercised.
         persistAssetImage: { useMutation: noopMutation },
+        setRedMedia: { useMutation: recording(mocks.setRedMedia) },
         ingestAssetFromUrl: { useMutation: noopMutation },
         ingestAssetFromDataUri: { useMutation: noopMutation },
         setIcon: { useMutation: noopMutation },
@@ -136,6 +138,7 @@ beforeEach(() => {
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
   mocks.removeScreenshot.mockClear();
+  mocks.setRedMedia.mockClear();
   mocks.invalidate.mockClear();
 });
 
@@ -177,6 +180,36 @@ describe('ExternalSubmitForm — edit mode', () => {
     );
     // No revision for a draft in-place edit.
     expect(mocks.submitRevision).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an APPROVED edit clears a civitai.red cover ON THE SHADOW, and Save submits that revision for review', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm
+        edit={makeApprovedCtx({
+          redMedia: {
+            available: true,
+            icon: { imageId: null, url: null },
+            cover: { imageId: 41, url: LOADABLE_IMAGE_DATA_URI },
+          },
+        })}
+      />
+    );
+    // URL → Details → Assets.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('apps-offsite-remove-red-cover').click();
+    await vi.waitFor(() =>
+      expect(mocks.setRedMedia).toHaveBeenCalledWith({
+        listingId: 'shadow-1',
+        slot: 'cover',
+        imageId: null,
+      })
+    );
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() =>
+      expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' })
+    );
+    expect(mocks.updateListing).not.toHaveBeenCalled();
   });
 
   test('an APPROVED edit writes the scalar patch to the SHADOW and submits the revision', async () => {
@@ -528,5 +561,61 @@ describe('ExternalSubmitForm (edit) — the kind-aware header', () => {
     await expect
       .element(page.getByTestId('apps-listing-edit-header-offsite'))
       .toHaveTextContent(/link/i);
+  });
+});
+
+describe('ExternalSubmitForm (edit) — source repository', () => {
+  const REPO = 'https://github.com/civitai/vitrine';
+
+  test('prefills the field and sends the edited value in the scalar patch', async () => {
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    // URL → Details (the source-repo input lives on Details, beside Description).
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    const input = page.getByTestId('apps-offsite-edit-source-repo');
+    await expect.element(input).toHaveValue(REPO);
+    await input.fill('https://gitlab.com/other/app');
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({ sourceRepoUrl: 'https://gitlab.com/other/app' }),
+      })
+    );
+  });
+
+  test('🔴 CLEARING the field sends an explicit null (an empty string would not clear it)', async () => {
+    const ctx = makeCtx({ scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO } });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('apps-offsite-edit-source-repo').fill('');
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    const arg = mocks.updateListing.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect('sourceRepoUrl' in arg.patch).toBe(true);
+    expect(arg.patch.sourceRepoUrl).toBeNull();
+  });
+
+  test('an INVALID link surfaces the server validator’s message and BLOCKS the save', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page
+      .getByTestId('apps-offsite-edit-source-repo')
+      .fill('https://raw.githubusercontent.com/o/r/main/x.sh');
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    await expect.element(page.getByText(/not an accepted source host/)).toBeInTheDocument();
+    expect(mocks.updateListing).not.toHaveBeenCalled();
+  });
+
+  test('the field’s help text warns that an edit needs moderator re-review', async () => {
+    // A source-repo change is MATERIAL, so on an approved listing it stages a shadow
+    // revision. An author who is not told that reads the unchanged live page as a bug.
+    renderWithProviders(<ExternalSubmitForm edit={makeApprovedCtx()} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByText(/moderator re-review/i)).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Loader, Menu, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Loader, Menu, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCopy,
@@ -26,12 +26,13 @@ import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
-import { IconEyeOff, IconExternalLink } from '@tabler/icons-react';
+import { CandidateImageModal, isUnlockableSlot } from '~/components/Comics/CandidateImageModal';
+import { PanelUnlockActions } from '~/components/Comics/PanelUnlockActions';
+import { IconEyeOff } from '@tabler/icons-react';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const nsfwBadgeColors: Record<number, string> = {
@@ -148,6 +149,7 @@ export function PanelCard({
   //    true and the result is downloaded into S3 inline.
   const requiresUnlock = status === 'RequireUnlock';
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
   const unlockHref =
     features.isGreen && redDomain
       ? syncAccount(`//${redDomain}/comics/project/${projectId}/chapter/${chapterPosition}`)
@@ -196,6 +198,7 @@ export function PanelCard({
   );
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
   const hasLockedCandidate = !!candidateSlots?.some((s) => s.requiresUnlock);
+  const hasUnlockableCandidate = !!candidateSlots?.some(isUnlockableSlot);
 
   // Polling continues for `RequireUnlock` (single-image blocked) AND for
   // `AwaitingSelection` panels that still have at least one locked candidate
@@ -249,6 +252,9 @@ export function PanelCard({
   // through panel.imageUrl or any other persisted field. On page refresh the
   // initial-fetch effect below pulls a fresh URL from the orchestrator.
   const [blurredPreviewUrl, setBlurredPreviewUrl] = useState<string | null>(null);
+  const [blockedReason, setBlockedReason] = useState<string | undefined>(
+    panel.metadata?.blockedReason
+  );
 
   // Poll server to check orchestrator status and download image when ready
   const isPollingRef = useRef(false);
@@ -285,6 +291,7 @@ export function PanelCard({
       if (typeof result.blurredPreviewUrl === 'string') {
         setBlurredPreviewUrl(result.blurredPreviewUrl);
       }
+      if (typeof result.blockedReason === 'string') setBlockedReason(result.blockedReason);
       if (
         result.status === 'Ready' ||
         result.status === 'Failed' ||
@@ -536,7 +543,7 @@ export function PanelCard({
           ) : imageUrl ? (
             <>
               <img
-                src={getEdgeUrl(imageUrl, { width: 450 })}
+                src={getEdgeUrl(imageUrl, { width: 450, optimized: true })}
                 alt={prompt}
                 className={styles.panelImage}
               />
@@ -556,6 +563,7 @@ export function PanelCard({
                             openSetBrowsingLevelModal({
                               imageId: panel.imageId,
                               nsfwLevel: panel.image.nsfwLevel as NsfwLevel,
+                              isOwner: true,
                               onSubmit: () => onRatingChange?.(),
                             });
                           }
@@ -708,7 +716,7 @@ export function PanelCard({
                   {candidateSlots.length} images ready
                 </Text>
                 <Text size="xs" c="dimmed" ta="center">
-                  {hasLockedCandidate ? 'Some need unlock — click to view' : 'Click to choose'}
+                  {hasUnlockableCandidate ? 'Some need unlock — click to view' : 'Click to choose'}
                 </Text>
               </div>
               <div className="absolute top-2 left-2">
@@ -751,52 +759,13 @@ export function PanelCard({
                     <Text size="xs" c="yellow" fw={700} ta="center">
                       Mature Content
                     </Text>
-                    {features.isGreen ? (
-                      <>
-                        <Text size="xs" c="dimmed" ta="center" px="xs">
-                          This generation can only be viewed on civitai.red.
-                        </Text>
-                        {unlockHref ? (
-                          <Button
-                            component="a"
-                            href={unlockHref}
-                            target="_blank"
-                            rel="noreferrer nofollow"
-                            size="compact-xs"
-                            color="red"
-                            variant="light"
-                            radius="xl"
-                            leftSection={<IconExternalLink size={12} />}
-                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                          >
-                            Unlock on civitai.red
-                          </Button>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <Text size="xs" c="dimmed" ta="center" px="xs">
-                          Unlock this content with{' '}
-                          <Text component="span" c="yellow" inherit>
-                            yellow
-                          </Text>{' '}
-                          Buzz!
-                        </Text>
-                        <Button
-                          size="compact-xs"
-                          color="yellow"
-                          variant="light"
-                          radius="xl"
-                          loading={unlockMutation.isPending}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            unlockMutation.mutate({ panelId: panel.id });
-                          }}
-                        >
-                          Unlock
-                        </Button>
-                      </>
-                    )}
+                    <PanelUnlockActions
+                      blockedReason={blockedReason}
+                      isGreen={!!features.isGreen}
+                      unlockHref={unlockHref}
+                      isUnlocking={unlockMutation.isPending}
+                      onUnlock={() => unlockMutation.mutate({ panelId: panel.id })}
+                    />
                     <button
                       className="mt-1 px-3 py-1 rounded text-xs bg-dark-6 hover:bg-dark-5 text-gray-300 flex items-center gap-1"
                       onClick={(e) => {
@@ -907,7 +876,7 @@ export function PanelCard({
           // forwarded for clean-but-mature tiles on green so the per-tile
           // redirect button can render even when no slot is `requiresUnlock`.
           onUnlock={
-            hasLockedCandidate && !features.isGreen
+            hasUnlockableCandidate && !features.isGreen
               ? () => unlockMutation.mutate({ panelId: panel.id })
               : undefined
           }

@@ -1,7 +1,7 @@
 /**
  * Generation Graph Store
  *
- * Store for passing generation data to the DataGraph-based form.
+ * Store for passing generation data into the generation form.
  * Handles opening the generation sidebar, fetching generation data,
  * and providing graph-compatible data to GenerationFormProvider.
  */
@@ -11,7 +11,7 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { remixStore } from '~/store/remix.store';
 import { trpcVanilla } from '~/utils/trpc';
@@ -54,8 +54,8 @@ export type GenerationGraphOpenInput =
 export interface GenerationGraphData {
   /** Params from step.metadata.params or fetched generation data */
   params: Record<string, unknown>;
-  /** Resources in full GenerationResource format */
-  resources: GenerationResource[];
+  /** Resources as the server handed them out */
+  resources: GenerationResourceValue[];
   /** Type of run (determines reset behavior in form provider) */
   runType: RunType;
   /** Optional remix reference */
@@ -156,7 +156,7 @@ function toEntryAction(runType: RunType): GeneratorEntryAction {
 // =============================================================================
 
 /** Apply resource substitutions (use substitute if original can't generate) */
-function substituteResource(item: GenerationResource): GenerationResource {
+function substituteResource(item: GenerationResourceValue): GenerationResourceValue {
   const { substitute, ...rest } = item;
   if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
   return rest;
@@ -359,9 +359,14 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
               }
             }
 
-            // Update remix store for similarity tracking
+            // Symmetric with `lastEntryAction` below: an open that establishes
+            // new form data and is NOT a remix must drop the previous remix, or
+            // the next submit attributes itself to whatever image the user last
+            // remixed (ClickUp 868m5acdq).
             if (isMedia && result.remixOfId) {
               remixStore.setRemix(result.remixOfId, result.params);
+            } else {
+              remixStore.clearRemix();
             }
 
             set((state) => {
@@ -448,9 +453,13 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
         if (typeof window !== 'undefined' && !location.pathname.startsWith('/generate'))
           useGenerationPanelStore.setState({ view: 'generate' });
 
-        // Update remix store for similarity tracking
+        // See `open` — patch/append are sub-flows inside an already-open
+        // session and must leave the current remix alone; the intentful entry
+        // points either establish a remix or end the previous one.
         if ((runType === 'remix' || runType === 'replay') && remixOfId) {
           remixStore.setRemix(remixOfId, params);
+        } else if (runType !== 'patch' && runType !== 'append') {
+          remixStore.clearRemix();
         }
 
         set((state) => {

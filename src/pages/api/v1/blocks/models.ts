@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
 import {
+  parseSubjectUserId,
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
@@ -19,6 +20,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 /**
  * GET /api/v1/blocks/models
@@ -53,6 +55,31 @@ import { constants } from '~/server/common/constants';
  * exact-origin CORS; it just skips the per-scope check. Anon (no token) → 401.
  * (Previously gated on `catalog:read`, retired as no-value friction.)
  *
+ * Filters beyond the public endpoint's subset (all filters AND together):
+ *
+ *   owner=mine|any (default any) — `mine` lists the SIGNED-IN viewer's own models. The user id
+ *     comes ONLY from the token's `sub` (`user:<id>`); an anonymous token gets 401, and no
+ *     `userId` / `username` query param is read. It is a filter, not a viewer: the owner's
+ *     unpublished models and Private-availability versions stay out, the maturity clamp and the
+ *     rate limit apply unchanged. With `query`, the owner filter is applied inside Meilisearch too
+ *     (`user.id`), otherwise the top-N hits across all users would be cut down to one user's
+ *     afterwards and pages would come back sparse or empty.
+ *     It deliberately does NOT reuse getModelsRaw's `username` filter, which serves profile pages:
+ *     that one throws NotFound for an unknown name and has its own version-visibility rules.
+ *     Every 200 echoes the applied mode as `metadata.owner` (`'mine'` or `'any'`; `'any'` when
+ *     the param is absent). A response without `metadata.owner` came from a server that predates
+ *     the param and ignored it, so its items are NOT owner-filtered.
+ *
+ *   modelVersionIds=1,2,3 — up to 100 positive ids; returns the models those versions belong to,
+ *     each narrowed to the requested versions, so a block can rehydrate saved cards by id. Same
+ *     clamp, Published-only and Public-only rules; a requested version that fails them is
+ *     omitted, and a model left with no version is omitted. Send it WITHOUT `query`: a text
+ *     query intersects the ids with that query's top-N Meilisearch hits, so a rehydrate that
+ *     also carries `query` can come back sparse or empty.
+ *
+ * Every response keeps only Public-availability versions (`publicVersionsOnly`), whichever
+ * filters are set. The block tool route (`blocks/tools.ts`, `search_models`) passes the same flag.
+ *
  * NOTE (advisory until #2670 merges): the authoritative `maxBrowsingLevel`
  * claim is MINTED by PR #2670 (color-domain maturity). Until #2670 lands,
  * tokens carry no claim → the clamp's fail-closed branch resolves EVERY token
@@ -61,9 +88,12 @@ import { constants } from '~/server/common/constants';
  * on `origin/main` primitives so it is not a stacked PR.
  */
 
+const MAX_MODEL_VERSION_IDS = 100;
+const PG_INT4_MAX = 2_147_483_647;
+
 // Subset of the public endpoint's param schema — the fields an in-block model
-// selector needs. Maturity is intentionally ABSENT: it comes ONLY from the
-// server-side clamp, never the client. (We don't even read `nsfw` /
+// selector needs — plus the block-only `owner`. Maturity is intentionally
+// ABSENT: it comes ONLY from the server-side clamp, never the client. (We don't even read `nsfw` /
 // `browsingLevel` from the query — see the clamp below.)
 const blockModelsSchema = z.object({
   query: z.string().optional(),
@@ -82,6 +112,16 @@ const blockModelsSchema = z.object({
     .union([z.literal('true'), z.literal('false')])
     .optional()
     .transform((v) => v === 'true'),
+  // Only the mode is read from the client. The user id behind `mine` comes from the token's
+  // `sub`, and no `userId` / `username` param is declared, so one sent in the query is dropped.
+  owner: z.enum(['mine', 'any']).default('any'),
+  // `1,2,3`, or repeated single-id params (`a=1&a=2`; a comma list inside a repeated param is a
+  // 400). Parsed with Number(), so `0x1f` / `1e3` are read as 31 / 1000. Each must be a positive
+  // int4 (the column type, so an out-of-range id is a 400 here rather than a database error), at
+  // most MAX_MODEL_VERSION_IDS of them.
+  modelVersionIds: commaDelimitedNumberArray(
+    z.number().int().positive().max(PG_INT4_MAX).array().max(MAX_MODEL_VERSION_IDS)
+  ).optional(),
 });
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -104,6 +144,23 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
+  // owner=mine: the id comes ONLY from the verified token subject.
+  let ownerUserId: number | undefined;
+  if (parsed.data.owner === 'mine') {
+    let subjectUserId: number | null;
+    try {
+      subjectUserId = parseSubjectUserId(claims.sub);
+    } catch {
+      res.status(403).json({ error: 'Invalid subject claim' });
+      return;
+    }
+    if (subjectUserId === null) {
+      res.status(401).json({ error: 'Sign-in required' });
+      return;
+    }
+    ownerUserId = subjectUserId;
+  }
+
   // Per-token rate limit (keyed on the stable blockInstanceId) — bounds a block
   // hammering this private,no-store (Cloudflare-uncacheable) catalog route onto
   // the origin. Fail-open + generous enough that a paginating selector never
@@ -121,13 +178,23 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   const regionRestricted = isRegionRestricted(getRegion(req));
   const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
-  const { query, types, baseModels, sort, limit, cursor, supportsGeneration } = parsed.data;
+  const { query, types, baseModels, sort, limit, cursor, supportsGeneration, modelVersionIds } =
+    parsed.data;
 
   let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
     try {
-      const meili = await resolveModelSearchIds({ query, cursor, limit, browsingLevel, types });
+      const meili = await resolveModelSearchIds({
+        query,
+        cursor,
+        limit,
+        browsingLevel,
+        types,
+        ownerUserId,
+        baseModels,
+        supportsGeneration,
+      });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
     } catch (e) {
@@ -156,6 +223,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         cursor: !query ? cursor : undefined,
         query,
         searchIds,
+        modelVersionIds,
         // The public endpoint lets the addon policy decide, which leaves minor
         // models visible under a SFW ceiling. Blocks stay strict on both axes.
         disableMinor: true,
@@ -172,6 +240,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         // personalization the block never asked for.
         user: undefined,
         baseUrlOrigin,
+        // Ownership is a FILTER here, never a viewer: the owner's own Private
+        // and unpublished versions stay out exactly as for anyone else.
+        ownerUserId,
+        publicVersionsOnly: true,
       }
     );
 
@@ -180,7 +252,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       items,
-      metadata: { nextCursor: effectiveNextCursor, nextPage },
+      // `owner` echoes the filter this server APPLIED, so a client can tell an owner-filtered
+      // page from one served by a server that does not know the param and ignored it.
+      metadata: { nextCursor: effectiveNextCursor, nextPage, owner: parsed.data.owner },
       // Echo the applied ceiling so the in-block selector can render an honest
       // "SFW only" affordance. Advisory only — the clamp is authoritative.
       maturity: { browsingLevel, sfwOnly: isSfwCeiling },
@@ -198,4 +272,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { endpoint: 'models', allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, {
+  endpoint: 'models',
+  allowOpaqueOrigin: true,
+  // Public, maturity-clamped catalog read. No requiredScope, no context binding, nothing
+  // scoped to the viewer and nothing written — a suspended app reaching this handler on an
+  // unreachable replica obtains public data clamped by a ceiling the TOKEN carries, which
+  // does not depend on the approval row. Refusing removes no takedown path; it only turns
+  // a replica blip into a fleet-wide 503 for a body that is public anyway.
+  onApprovalLookupFailure: 'serve',
+});

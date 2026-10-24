@@ -30,10 +30,6 @@ const {
   mockParseSubjectUserId,
   mockGetUserById,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
-  mockRedis,
-  mockSysRedis,
-  mockDbRead,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsReviewSandboxEnabled: vi.fn(),
@@ -46,15 +42,6 @@ const {
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockRedis: { get: vi.fn(), set: vi.fn() },
-  mockSysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    appBlockPublishRequest: { findMany: vi.fn() },
-  },
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -90,22 +77,11 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...a: unknown[]) => mockGetUserById(...a),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...a: unknown[]) => mockGetUserBuzzAccounts(...a),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -125,6 +101,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
   return Promise.resolve(!!opts?.user?.isModerator);

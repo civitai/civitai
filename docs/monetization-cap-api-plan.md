@@ -1,5 +1,13 @@
 # Monetization caps — API cleanup plan
 
+> ⚠️ **Superseded 2026-08-21 by the monetization revamp.** The per-tier caps this plan was cleaning up
+> were deleted, taking most of the 44-symbol surface with them (`getCapTiers`, `cappedTerms`,
+> `effectiveLicensingFee`, `maxLicensingFee`, `maxPaidAccessPrice`, `feeImageOptionsForCap`,
+> `tierCapRows`). The plan's main recommendation — one write guard covering fee, price and count —
+> shipped as `assertMonetizationWrite`. Every symbol count and consumer measurement below predates that
+> and is stale. Kept as the design record for why the guard was unified; re-measure before reviving any
+> remaining step. See [features/monetization-rules.md](features/monetization-rules.md).
+
 Status: proposal, nothing implemented.
 Scope: licensing fees + paid access caps across `@civitai/buzz`, the main app, and the creator-studio spoke.
 

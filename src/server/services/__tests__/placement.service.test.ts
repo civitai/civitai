@@ -4,26 +4,32 @@ import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
   MIN_OWNER_SHARE,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
+  isDeclineFeeHostAdjustable,
   placementSurfaces,
 } from '~/shared/utils/placement';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const findUnique = dbMock.dbRead.keyValue.findUnique;
+const queryRaw = dbMock.dbRead.$queryRaw;
 
-const findUnique = vi.fn();
-const queryRaw = vi.fn();
 const getCapTier = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique }, $queryRaw: queryRaw },
-}));
+const getCapTiers = vi.fn();
 
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier,
+  getCapTiers,
 }));
 
-const { getPlacementConfig, placementPriceRange, MIN_EXPIRY_HOURS, MAX_EXPIRY_HOURS } =
-  await import('~/server/services/placement.service');
+const {
+  getPlacementConfig,
+  placementPriceRange,
+  placementPriceRanges,
+  MIN_EXPIRY_HOURS,
+  MAX_EXPIRY_HOURS,
+} = await import('~/server/services/placement.service');
 
 const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
 
@@ -57,12 +63,20 @@ describe('getPlacementConfig', () => {
       });
       const config = await getPlacementConfig();
 
-      for (const surface of placementSurfaces) {
+      for (const surface of placementSurfaces.filter((s) => !isDeclineFeeHostAdjustable(s))) {
         const emitted = config.declineFeeRate(surface);
         expect(emitted).toBeGreaterThanOrEqual(MIN_DECLINE_FEE_RATE);
         expect(emitted).toBeLessThanOrEqual(MAX_DECLINE_FEE_RATE);
       }
     }
+  });
+
+  // One answer per surface. The operator floor would turn a 0% host into 5% here.
+  it('refuses to answer for a surface whose host sets the decline fee', async () => {
+    storedConfig({ declineFeeRates: { galleryPromotion: 0.3, modelPromotion: 0.3 } });
+    const config = await getPlacementConfig();
+    expect(() => config.declineFeeRate('galleryPromotion')).toThrow('set by its host');
+    expect(() => config.declineFeeRate('modelPromotion')).toThrow('set by its host');
   });
 
   it('rejects a cap table with no band at zero, which would price every new creator at 0', async () => {
@@ -170,5 +184,137 @@ describe('placementPriceRange', () => {
     const range = await placementPriceRange(1, 'sticker');
     expect(range.score).toBe(0);
     expect(range.max).toBe(100);
+  });
+});
+
+describe('placementPriceRanges', () => {
+  // Three creators in three different bands: neither score nor tier, score alone, and both.
+  const creators = [
+    { id: 1, score: 0, tier: null },
+    { id: 2, score: 25_000, tier: null },
+    { id: 3, score: 100_000, tier: 'gold' },
+  ];
+
+  it('answers each creator as placementPriceRange does, in two reads for the whole set', async () => {
+    queryRaw.mockResolvedValue(creators.map(({ id, score }) => ({ id, score })));
+    getCapTiers.mockResolvedValue(new Map(creators.map(({ id, tier }) => [id, tier])));
+    const ranges = await placementPriceRanges([1, 2, 3, 3], 'storyline');
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledWith([1, 2, 3]);
+
+    for (const { id, score, tier } of creators) {
+      queryRaw.mockResolvedValue([{ score }]);
+      getCapTier.mockResolvedValue(tier);
+      expect(ranges.get(id)).toEqual(await placementPriceRange(id, 'storyline'));
+    }
+    expect([...ranges.values()].map((range) => range.max)).toEqual([100, 500, 5_000]);
+  });
+
+  it('puts a creator with no stored score in the bottom band', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map([[9, null]]));
+    const ranges = await placementPriceRanges([9], 'storyline');
+    expect(ranges.get(9)).toMatchObject({ score: 0, tier: 'free', max: 100 });
+  });
+
+  it('reads each creator score by id, from the stored total', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map());
+    await placementPriceRanges([4, 5], 'storyline');
+    const [strings, ...values] = queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      `SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score FROM "User" WHERE id = ANY(?::int[])`
+    );
+    expect(values).toEqual([[4, 5]]);
+  });
+
+  it('uses a config it is handed instead of reading one, and prices the surface asked', async () => {
+    queryRaw.mockResolvedValue([{ id: 1, score: 0 }]);
+    getCapTiers.mockResolvedValue(new Map([[1, null]]));
+    const config = await getPlacementConfig();
+    findUnique.mockClear();
+    const ranges = await placementPriceRanges([1], 'sticker', config);
+    expect(findUnique).not.toHaveBeenCalled();
+    queryRaw.mockResolvedValue([{ score: 0 }]);
+    getCapTier.mockResolvedValue(null);
+    expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
+    expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);
+  });
+
+  it('reads nothing for no creators', async () => {
+    await expect(placementPriceRanges([], 'storyline')).resolves.toEqual(new Map());
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(getCapTiers).not.toHaveBeenCalled();
+  });
+});
+
+describe('the free-slot cap table', () => {
+  const band = (caps: Record<string, number>) => [{ minScore: 0, caps }];
+
+  it('is what decides the free-slot cap, not the price table', async () => {
+    storedConfig({
+      priceCapTiers: band({ free: 999, bronze: 999, silver: 999, gold: 999 }),
+      freeSlotTiers: band({ free: 3, bronze: 4, silver: 5, gold: 6 }),
+    });
+
+    const range = await placementPriceRange(1, 'sticker');
+
+    // Two numbers from two tables through one query. Reading `max` for both is
+    // the failure this separates: a creator's Buzz ceiling is in the hundreds,
+    // and applied to slots it would be hundreds of free placements per image.
+    expect(range.freeSlotCap).toBe(3);
+    expect(range.max).toBe(999);
+  });
+
+  it('takes a per-surface override over the shared one', async () => {
+    storedConfig({
+      freeSlotTiers: band({ free: 2, bronze: 2, silver: 2, gold: 2 }),
+      freeSlotTiersBySurface: {
+        remixGallery: band({ free: 7, bronze: 7, silver: 7, gold: 7 }),
+      },
+    });
+
+    expect((await placementPriceRange(1, 'sticker')).freeSlotCap).toBe(2);
+    expect((await placementPriceRange(1, 'remixGallery')).freeSlotCap).toBe(7);
+  });
+
+  /**
+   * The failure this closes is not "the override is ignored" — it is the override
+   * falling back to the wrong table.
+   *
+   * A stored table with no zero band is unusable, and the shared helper that
+   * detects that has to be handed the FREE-SLOT defaults. Handed the price ones
+   * instead, a single malformed config edit silently grants 500-1000 free
+   * placements per space, which is the price cap read as a slot count.
+   */
+  it('falls back to the compiled free-slot table when the stored one is unusable', async () => {
+    storedConfig({ freeSlotTiers: band({ free: 5, bronze: 5, silver: 5, gold: 5 }) });
+    const configured = (await placementPriceRange(1, 'sticker')).freeSlotCap;
+
+    storedConfig({
+      freeSlotTiers: [{ minScore: 5_000, caps: { free: 5, bronze: 5, silver: 5, gold: 5 } }],
+    });
+    const fellBack = (await placementPriceRange(1, 'sticker')).freeSlotCap;
+
+    expect(configured).toBe(5);
+    // Asserted by identity against the compiled table rather than against a
+    // literal, the same way the price side is: a number would also match the
+    // price table's bottom band on the day someone gets the fallback wrong.
+    expect(fellBack).toBe(PLACEMENT_FREE_SLOT_CAP_TIERS[0].caps.free);
+    expect(fellBack).not.toBe(PLACEMENT_PRICE_CAP_TIERS[0].caps.free);
+  });
+
+  it('refuses a fractional slot count the same way it refuses a fractional price', async () => {
+    storedConfig({ freeSlotTiers: band({ free: 1.5, bronze: 2, silver: 3, gold: 4 }) });
+
+    // The whole config fails to parse and every accessor falls back, which is the
+    // documented behaviour: a bad edit must not take the feature down.
+    expect((await placementPriceRange(1, 'sticker')).freeSlotCap).toBe(
+      PLACEMENT_FREE_SLOT_CAP_TIERS[0].caps.free
+    );
   });
 });

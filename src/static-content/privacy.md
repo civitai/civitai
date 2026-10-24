@@ -3,7 +3,7 @@ title: Privacy Policy
 description: "Civitai values the privacy of individuals who use our application, websites and related services. This privacy policy explains how we collect, use, and disclose information from users."
 ---
 
-**Last Updated**: February 1, 2024
+**Last Updated**: October 21, 2026
 
 Civit AI, Inc. (**"Civitai**," "**we**," "**our**," and/or "**us**") values the privacy of individuals who use our application, websites and related services (collectively, our "**Services**"). This privacy policy (the "**Privacy Policy**") explains how we collect, use, and disclose information from users of our Services ("**Users**" "**you**," and/or "**your**") to enable creators to share content with other creators and to continue to improve our Services. By using our Services, you agree to the collection, use, disclosure, and procedures this Privacy Policy describes. Beyond the Privacy Policy, your use of our Services is also subject to our [Terms of Service](/content/tos).
 
@@ -72,10 +72,14 @@ User Content. Our Services are a social service in which you can find, enjoy, an
 
 **Marketing Communications.** You can unsubscribe from our promotional emails via the link provided in the emails. Even if you opt out of receiving promotional messages from us, you will continue to receive administrative messages from us.
 
+**Deleting Your Account.** You may delete your account at any time from your account settings. When you do, your profile is no longer visible to other users. We may retain certain information for legitimate business purposes or where we believe it is required by applicable law.
+
 **If you choose not to provide us with information we request, some features of our Services may not work as intended.**
 
 ## Third Parties
 We use a third-party to provide monetization technologies for our site. You can review their privacy and cookie policy [here](https://www.snigel.com/privacy-policy/).
+
+Civit AI, Inc. participates in the IAB Europe Transparency & Consent Framework and complies with its Specifications and Policies. Civit AI, Inc. uses the Consent Management Platform with the identification number 9.
 
 Our Services may contain links to other websites, products, or services that we do not own or operate. We are not responsible for the privacy practices of these third parties. Please be aware that this Privacy Policy does not apply to your activities on these third-party services or any information you disclose to these third parties. We encourage you to read their privacy policies before providing any information to them.
 
@@ -83,7 +87,7 @@ Our Services may contain links to other websites, products, or services that we 
 We make reasonable efforts to protect your information by using physical and electronic safeguards designed to improve the security of the information we maintain. However, because no electronic transmission or storage of information can be entirely secure, we can make no guarantees as to the security or privacy of your information.
 
 ## Children's Privacy
-We do not knowingly collect, maintain, or use personal information from children under 13 years of age, and no part of our Services is directed to children. If you learn that a child has provided us with personal information in violation of this Privacy Policy, then you may alert us at [hello@civitai.com](mailto:hello@civitai.com).
+We do not knowingly collect, maintain, or use personal information from children under 13 years of age, and no part of our Services is directed to children. If you learn that a child has provided us with personal information in violation of this Privacy Policy, then you may alert us at [compliance@civitai.com](mailto:compliance@civitai.com).
 
 ## International Visitors
 Our Services are hosted in the United States ("**U.S.**") and intended for visitors located within the U.S. If you choose to use the Services from the European Union or other regions of the world with laws governing data collection and use that may differ from U.S. law, then please note that you are transferring your personal information outside of those regions to the U.S. for storage and processing. We may also transfer your data from the U.S. to other countries or regions in connection with storage and processing of data, fulfilling your requests, and operating the Services. By providing any information, including personal information, on or to the Services, you consent to such transfer, storage, and processing.
@@ -92,4 +96,4 @@ Our Services are hosted in the United States ("**U.S.**") and intended for visit
 We will post any adjustments to the Privacy Policy on this page, and the revised version will be effective when it is posted. If we materially change the ways in which we use or disclose personal information previously collected from you through the Services, we will notify you through the Services, by email, or other communication.
 
 ## Contact Information
-If you have any questions, comments, or concerns about our processing activities, please email us at [hello@civitai.com](mailto:hello@civitai.com).
+If you have any questions, comments, or concerns about our processing activities, or want to make a request about your personal information (such as access or deletion), please email us at [compliance@civitai.com](mailto:compliance@civitai.com).

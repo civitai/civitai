@@ -15,10 +15,11 @@
  *  - the shared image context menu (`ImageMenuItems` — its `ImageProps` type does
  *    not contain any of these fields),
  *  - the hidden-preferences `posts` branch (`useApplyHiddenPreferences`),
- *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which reads
- *    the SEEDED image objects directly (no refetch when the seed contains the
- *    target id — `ImageDetailProvider` uses `initialImages` as-is), so its read-set
- *    is load-bearing here and was traced explicitly.
+ *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which renders
+ *    these SEEDED objects as-is, so its read-set is load-bearing here and was traced
+ *    explicitly. It also loads the post's tail itself (`usePostImagesWithTail`), but
+ *    that arrives from `image.getInfinite` carrying the untrimmed shape — the trim
+ *    below constrains the seed only.
  *
  * 🔴 RETAINED deliberately — do NOT add these to the drop list:
  *  - `tagIds`  — the hidden-prefs `case 'posts'` branch filters on it

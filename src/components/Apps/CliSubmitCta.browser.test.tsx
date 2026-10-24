@@ -3,9 +3,12 @@ import { page, userEvent } from 'vitest/browser';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import {
   CIVITAI_CLI_GITHUB_URL,
+  CIVITAI_CLI_RELEASES_URL,
   CLI_CREATE_COMMAND,
   CLI_CREATE_SAMPLE_COMMAND,
   CLI_INSTALL_BREW,
+  CLI_INSTALL_GO,
+  CLI_INSTALL_NPM,
   CLI_SUBMIT_COMMAND,
 } from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -119,10 +122,34 @@ async function settleCopy() {
   } while (Date.now() < deadline);
 }
 
+/**
+ * 🔴 THE TWO FLOW-A DEFECTS THIS FILE NOW PINS.
+ *
+ * (1) The panel was headed "Recommended: use the Civitai CLI". "Recommended" implies
+ *     an alternative, and this page offers none — the manual ZIP flow does not exist
+ *     here. Advertising a choice that is not on offer sends the reader looking for
+ *     the other option. The heading is asserted BOTH ways: the honest text is present
+ *     AND the retired promise is absent, because "the new string renders" would also
+ *     pass if the old one still rendered beside it.
+ *
+ * (2) The only install path shown was `brew`, which stops a Windows developer at
+ *     step 1 of 3. Every route asserted below was verified against the CLI's own
+ *     release artefacts (see the provenance block in `cliCommands.ts`) — the tests
+ *     pin what the page CLAIMS, and the provenance is what makes the claim true.
+ */
 describe('CliSubmitCta (CLI-first submit primary CTA)', () => {
-  test('promotes the Civitai CLI as the recommended path', async () => {
+  test('🔴 the heading no longer promises an alternative that does not exist', async () => {
     renderWithProviders(<CliSubmitCta />);
-    await expect.element(page.getByText('Recommended: use the Civitai CLI')).toBeInTheDocument();
+    // Settle on the honest heading first, so the absence assertion below runs against
+    // a mounted tree rather than an empty one.
+    await expect
+      .element(page.getByText('Use the Civitai CLI', { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Recommended: use the Civitai CLI'))
+      .not.toBeInTheDocument();
+    // The word itself is gone from the panel, not merely moved out of the heading.
+    await expect.element(page.getByText(/Recommended/)).not.toBeInTheDocument();
   });
 
   test('renders the "Get the Civitai CLI" button linking to github.com/civitai/cli', async () => {
@@ -153,8 +180,45 @@ describe('CliSubmitCta (CLI-first submit primary CTA)', () => {
     await expect.element(page.getByText(`$ ${CLI_SUBMIT_COMMAND}`)).toBeInTheDocument();
   });
 
-  test('the install command is the brew tap one-liner', async () => {
+  /**
+   * 🔴 THE PLATFORM-COVERAGE GUARD. The literal one-liners are pinned, NOT derived
+   * from the constants they render — `expect(rendered).toBe(CLI_INSTALL_NPM)` would
+   * pass for any value the constant happened to hold, including a command that does
+   * not exist.
+   */
+  test('🔴 every platform has an install route (npm covers Windows)', async () => {
+    renderWithProviders(<CliSubmitCta />);
+    await expect.element(page.getByText('$ npm install -g @civitai/cli')).toBeInTheDocument();
+    await expect.element(page.getByText('$ brew install civitai/tap/civitai')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('$ go install github.com/civitai/cli/cmd/civitai@latest'))
+      .toBeInTheDocument();
+
+    // Each route says WHO it is for, so a reader can pick without guessing.
+    await expect
+      .element(page.getByText('Windows, macOS or Linux (needs Node):', { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('macOS or Linux, with Homebrew:', { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('From source (Go 1.25+):', { exact: true }))
+      .toBeInTheDocument();
+
+    // The no-toolchain route, and it names Windows explicitly.
+    const binary = page.getByTestId('apps-cli-install-binary');
+    await expect.element(binary).toBeInTheDocument();
+    expect(binary.element().textContent).toContain('Windows');
+    const releases = page.getByRole('link', { name: 'the CLI releases page' });
+    await expect.element(releases).toBeInTheDocument();
+    expect(releases.element().getAttribute('href')).toBe('https://github.com/civitai/cli/releases');
+  });
+
+  test('the install commands are the real one-liners', () => {
+    expect(CLI_INSTALL_NPM).toBe('npm install -g @civitai/cli');
     expect(CLI_INSTALL_BREW).toBe('brew install civitai/tap/civitai');
+    expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
+    expect(CIVITAI_CLI_RELEASES_URL).toBe('https://github.com/civitai/cli/releases');
     expect(CLI_CREATE_COMMAND).toBe('civitai app create');
     expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
   });

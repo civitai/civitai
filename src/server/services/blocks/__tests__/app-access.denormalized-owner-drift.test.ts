@@ -62,6 +62,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const make = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -94,8 +95,14 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead: make(), mockWrite: make(), seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,

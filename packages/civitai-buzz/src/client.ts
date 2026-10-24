@@ -36,11 +36,37 @@ import type {
 export class BuzzApiError extends Error {
   status: number;
   statusText: string;
-  constructor(status: number, statusText: string) {
+  /**
+   * The response body of a 4xx: parsed JSON, or the raw text when it is not JSON, or undefined
+   * when there was none or it could not be read. A 409 on a refund, for one, carries the refunds
+   * that already exist, which is the only way a caller can tell which legs are still owed.
+   * Never read for a 5xx. Not part of the message, so existing callers see no change.
+   *
+   * NON-ENUMERABLE on purpose: errors are logged and returned with `JSON.stringify`, which
+   * would otherwise copy the service's ledger data into every such log line and response.
+   */
+  declare body: unknown;
+  constructor(status: number, statusText: string, body?: unknown) {
     super(`[@civitai/buzz] request failed: ${status} ${statusText}`);
     this.name = 'BuzzApiError';
     this.status = status;
     this.statusText = statusText;
+    Object.defineProperty(this, 'body', { value: body, enumerable: false });
+  }
+}
+
+/** Never throws: a body that cannot be read is reported as absent, not as a new error. */
+async function readErrorBody(response: Response): Promise<unknown> {
+  try {
+    const text = await response.text();
+    if (!text) return undefined;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  } catch {
+    return undefined;
   }
 }
 
@@ -113,6 +139,17 @@ export type BuzzWriteOptions = {
    * milliseconds where a caller's own retry loop is usually far coarser.
    */
   shouldRetry?: (error: unknown) => boolean;
+};
+
+/**
+ * Per-call overrides for a read. Separate from `BuzzWriteOptions` rather than a widening
+ * of it: a GET is idempotent, so "retry everything" is the right default and `shouldRetry`
+ * has nothing to decide.
+ */
+export type BuzzReadOptions = {
+  timeoutMs?: number;
+  /** Per-call retry override. `0` sends the request once and rethrows. */
+  retries?: number;
 };
 
 /** Body for `refundTransaction`. */
@@ -241,7 +278,11 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
               status: response.status,
               statusText: response.statusText,
             });
-            throw new BuzzApiError(response.status, response.statusText);
+            const body =
+              response.status >= 400 && response.status < 500
+                ? await readErrorBody(response)
+                : undefined;
+            throw new BuzzApiError(response.status, response.statusText, body);
           }
           return (await response.json()) as T;
         },
@@ -333,9 +374,12 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       })
     );
 
-  const getTransactionByExternalId = (externalId: string) =>
+  /** `opts` is additive and optional: callers that pass nothing keep the client's
+   *  default retry budget and the absence of a deadline they have today. */
+  const getTransactionByExternalId = (externalId: string, opts?: BuzzReadOptions) =>
     request<BuzzTransactionResponse | null>(`/transactions/${externalId}`, undefined, {
       allow404: true,
+      ...opts,
     });
 
   const getAccountSummary = (
@@ -402,11 +446,13 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       })
     );
 
-  const listMultiTransactions = (query: ListMultiTransactionsQuery) =>
+  const listMultiTransactions = (query: ListMultiTransactionsQuery, opts?: BuzzReadOptions) =>
     request<ListMultiTransactionsResponse>(
       withQuery('/multi-transactions', {
         externalTransactionIdPrefix: query.externalTransactionIdPrefix,
-      })
+      }),
+      undefined,
+      opts
     );
 
   // ---- Transaction writes --------------------------------------------------

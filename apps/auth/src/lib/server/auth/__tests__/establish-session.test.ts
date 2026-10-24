@@ -13,7 +13,11 @@ const h = vi.hoisted(() => ({
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
 }));
 
-vi.mock('@civitai/auth', () => ({
+// Spread the real module and override only the signer: a hand-listed export list couples this test to
+// session.ts's whole transitive graph, and silently breaks the moment that graph grows (it did — `cookiePrefix`,
+// pulled in via pending-authz.ts). The real cookie helpers are pure env reads, so they need no stubbing.
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,
   sessionCookieName: () => 'civ-token',
   maybeCreateSessionSigner: () => ({
@@ -30,7 +34,9 @@ vi.mock('../device', () => ({
 }));
 
 import { establishSession } from '../session';
+import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionUser } from '@civitai/auth';
+import type { Cookies } from '@sveltejs/kit';
 
 const user = (id: number): SessionUser =>
   ({
@@ -43,18 +49,30 @@ const user = (id: number): SessionUser =>
     createdAt: new Date(),
     isModerator: false,
     muted: false,
-  }) as unknown as SessionUser;
+  } as unknown as SessionUser);
 
 // A minimal Cookies stub: in-memory get + a set that records the queued cookie.
-function makeCookies(initial: Record<string, string> = {}) {
+//
+// It implements the WHOLE `Cookies` interface (get/getAll/set/delete/serialize — five members) rather than
+// casting a partial object, so it is assignable to `establishSession`'s parameter with no cast at all. The
+// previous `as never` satisfied that parameter the blunt way, but `never` has no properties, so reading
+// `_store` back in an assertion was itself a type error.
+type CookiesStub = Cookies & { _store: Map<string, string> };
+
+function makeCookies(initial: Record<string, string> = {}): CookiesStub {
   const store = new Map(Object.entries(initial));
-  const set = vi.fn((name: string, value: string) => store.set(name, value));
   return {
     _store: store,
-    set,
+    set: vi.fn((name: string, value: string) => {
+      store.set(name, value);
+    }),
     get: (name: string) => store.get(name),
-    delete: vi.fn(),
-  } as never;
+    getAll: () => [...store].map(([name, value]) => ({ name, value })),
+    delete: vi.fn((name: string) => {
+      store.delete(name);
+    }),
+    serialize: (name: string, value: string) => `${name}=${value}`,
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());

@@ -56,7 +56,7 @@ describe('groupReplyThreads', () => {
         comment({ id: 200, threadId: 11 }),
         comment({ id: 101, threadId: 10 }),
       ],
-      hiddenCounts: {},
+      commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 5,
     });
@@ -70,7 +70,7 @@ describe('groupReplyThreads', () => {
     const result = groupReplyThreads({
       threads: [thread(10, 1, 1)],
       comments: [],
-      hiddenCounts: {},
+      commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 5,
     });
@@ -85,7 +85,12 @@ describe('groupReplyThreads', () => {
       comment({ id: 2, threadId: 10, reactionCount: 9 }),
       comment({ id: 3, threadId: 10, reactionCount: 5 }),
     ];
-    const args = { threads: [thread(10, 1, 1)], comments, hiddenCounts: {}, limit: 5 };
+    const args = {
+      threads: [thread(10, 1, 1)],
+      comments,
+      commentCounts: {},
+      limit: 5,
+    };
 
     expect(
       groupReplyThreads({ ...args, sort: ThreadSort.Oldest })[0].comments.map((c) => c.id)
@@ -107,7 +112,7 @@ describe('groupReplyThreads', () => {
         comment({ id: 3, threadId: 10, pinnedAt: new Date('2026-01-01') }),
         comment({ id: 4, threadId: 10, pinnedAt: new Date('2026-02-01') }),
       ],
-      hiddenCounts: {},
+      commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 2,
     });
@@ -126,7 +131,7 @@ describe('groupReplyThreads', () => {
       groupReplyThreads({
         threads: [thread(10, 1, 1)],
         comments,
-        hiddenCounts: {},
+        commentCounts: {},
         sort: ThreadSort.Oldest,
         limit: 2,
       })[0]
@@ -136,7 +141,7 @@ describe('groupReplyThreads', () => {
       groupReplyThreads({
         threads: [thread(10, 1, 1)],
         comments,
-        hiddenCounts: {},
+        commentCounts: {},
         sort: ThreadSort.Oldest,
         limit: 5,
       })[0].nextCursor
@@ -145,9 +150,12 @@ describe('groupReplyThreads', () => {
 
   it('carries the metadata the client primes the nested thread caches with', () => {
     const [result] = groupReplyThreads({
+      // 7 is the row's denormalised `Thread.commentCount`, which an INSERT/DELETE trigger
+      // maintains and a ToS flag never decrements. The count the client primes must come from
+      // `commentCounts` instead, or a removed reply keeps its "show N replies" affordance.
       threads: [{ id: 10, commentId: 1, locked: true, commentCount: 7, depth: 3 }],
       comments: [comment({ id: 1, threadId: 10 })],
-      hiddenCounts: { 10: 2 },
+      commentCounts: { 10: 4 },
       sort: ThreadSort.Oldest,
       limit: 5,
     });
@@ -155,10 +163,21 @@ describe('groupReplyThreads', () => {
     expect(result).toMatchObject({
       id: 10,
       locked: true,
-      commentCount: 7,
+      commentCount: 4,
       depth: 3,
-      hiddenCount: 2,
     });
+  });
+
+  it('reports no replies at all when every reply in the thread was filtered out', () => {
+    const [result] = groupReplyThreads({
+      threads: [{ id: 10, commentId: 1, locked: false, commentCount: 8, depth: 1 }],
+      comments: [],
+      commentCounts: {},
+      sort: ThreadSort.Oldest,
+      limit: 5,
+    });
+
+    expect(result.commentCount).toBe(0);
   });
 });
 
@@ -219,7 +238,6 @@ describe('selectReplyThreadsWithinBudget', () => {
 describe('getChildlessCommentIds', () => {
   const asThread = (row: ReplyThreadRow, commentIds: number[]): ReplyThread => ({
     ...row,
-    hiddenCount: 0,
     comments: commentIds.map((id) => comment({ id, threadId: row.id })),
   });
 
@@ -287,14 +305,16 @@ describe('constants.comments thread settings', () => {
 
   it('gives full-width surfaces room for deeper threads than the narrow ones', () => {
     for (const entityType of wide) expect(constants.comments.getMaxDepth({ entityType })).toBe(10);
-    for (const entityType of narrow) expect(constants.comments.getMaxDepth({ entityType })).toBe(3);
+    for (const entityType of narrow) expect(constants.comments.getMaxDepth({ entityType })).toBe(5);
     expect(constants.comments.getMaxDepth({ entityType: 'post' })).toBe(5);
   });
 
-  it('only opens reply trees up front on surfaces wide enough for it', () => {
+  it('opens reply trees up front on wide surfaces and the narrow detail columns', () => {
     for (const entityType of wide)
       expect(constants.comments.getAutoExpandDepth({ entityType })).toBeGreaterThan(0);
-    for (const entityType of [...narrow, 'comment', 'post'])
+    for (const entityType of narrow)
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(3);
+    for (const entityType of ['comment', 'post'])
       expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(0);
   });
 

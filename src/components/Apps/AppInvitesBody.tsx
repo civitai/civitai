@@ -15,6 +15,7 @@ import { IconAlertTriangle, IconCoin, IconMailOpened } from '@tabler/icons-react
 import { inviteDisclosureItems } from '~/components/Apps/AppCollaboratorsPanelView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { ReactNode } from 'react';
+import { listingKindAppLabel } from '~/components/Apps/listingKindLabels';
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
@@ -127,7 +128,7 @@ export function AppInvitesBodyView({
                 <Group gap="xs">
                   <Text fw={600}>{invite.slug}</Text>
                   <Badge variant="light" color={invite.kind === 'onsite' ? 'blue' : 'grape'}>
-                    {invite.kind === 'onsite' ? 'On-site app' : 'External app'}
+                    {listingKindAppLabel(invite.kind)}
                   </Badge>
                 </Group>
                 {/* A real chip, like every sibling surface — a raw numeric id told the

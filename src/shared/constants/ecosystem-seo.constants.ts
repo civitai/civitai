@@ -76,9 +76,15 @@ export type EcosystemSeoConfig = {
   /** Display name for the H1 / title. */
   name: string;
   /**
-   * ~150–160 char SERP meta description — unique per page, condensed from the grounded
-   * hero/overview copy (no new claims). Controls the search snippet; front-load the name +
-   * "Civitai" + the core value. Falls back to nothing if omitted, so keep it populated.
+   * `<title>` override, ≤60 chars once tokens resolve. Name the version people search for
+   * ("Illustrious XL", "Pony Diffusion V6 XL") — bare-name queries click through worst.
+   * Omitted → "{name} AI Models & Generator | Civitai". Accepts `{loras:Key}`.
+   */
+  seoTitle?: string;
+  /**
+   * ≤155 char SERP meta description once tokens resolve, grounded in the page's own copy (no new
+   * claims). Front-load what the searcher came for — downloads, LoRAs, generating online — since
+   * the brand already sits in the title. Accepts `{loras:Key}`.
    */
   metaDescription: string;
   /** Primary media type — drives featured-model covers, the funnel, and the default example type. */
@@ -322,10 +328,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   SDXL: {
     key: 'SDXL',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'SDXL',
+    seoTitle: 'SDXL Models & {loras:SDXL} LoRAs, Download or Generate | Civitai',
     metaDescription:
-      "Generate with SDXL on Civitai — Stability AI's high-res open model behind the largest LoRA ecosystem in open image generation. Browse checkpoints, LoRAs & prompts.",
+      "Download SDXL checkpoints and {loras:SDXL} LoRAs, or generate online. Stability AI's high-res open model, and the base of Pony, Illustrious and NoobAI.",
     modality: 'image',
     hero: {
       intro:
@@ -474,10 +481,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Illustrious: {
     key: 'Illustrious',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Illustrious',
+    seoTitle: 'Illustrious XL Models & {loras:Illustrious} LoRAs | Civitai',
     metaDescription:
-      'Generate with Illustrious on Civitai — the SDXL-based anime model built for booru-tag prompting, character consistency, and clean linework. Browse LoRAs & prompts.',
+      'Download Illustrious XL checkpoints and {loras:Illustrious} LoRAs, or generate online. The SDXL anime model for booru-tag prompts and consistent characters.',
     modality: 'image',
     hero: {
       intro:
@@ -630,10 +638,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   NoobAI: {
     key: 'NoobAI',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'NoobAI',
+    seoTitle: 'NoobAI-XL Models & {loras:NoobAI} LoRAs, Online Generator | Civitai',
     metaDescription:
-      'Generate with NoobAI-XL on Civitai — an Illustrious-based anime checkpoint with deep character knowledge and strong booru-tag prompting. Browse LoRAs & prompts.',
+      'Download NoobAI-XL, including v-pred, and {loras:NoobAI} LoRAs, or generate online. The Illustrious-based anime checkpoint with deep character knowledge.',
     modality: 'image',
     hero: {
       intro:
@@ -940,10 +949,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   Pony: {
     key: 'Pony',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Pony',
+    seoTitle: 'Pony Diffusion V6 XL Models & {loras:Pony} LoRAs | Civitai',
     metaDescription:
-      'Generate with Pony Diffusion V6 XL on Civitai — the SDXL fine-tune for characters, anime, and stylized art via score_ tag prompts. Browse top LoRAs & prompts.',
+      'Download Pony Diffusion V6 XL and {loras:Pony} LoRAs, or generate online. The SDXL fine-tune for characters, anime and stylized art, prompted with score_ tags.',
     modality: 'image',
     hero: {
       intro:
@@ -1097,21 +1107,22 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   SD1: {
     key: 'SD1',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     slug: 'stable-diffusion',
     name: 'Stable Diffusion',
+    seoTitle: 'Stable Diffusion 1.5 Checkpoints & {loras:SD1} LoRAs | Civitai',
     metaDescription:
-      'Generate with Stable Diffusion (SD 1.5) on Civitai — the fast, lightweight original with the largest LoRA library anywhere. Browse checkpoints, LoRAs & prompts.',
+      'Download Stable Diffusion 1.5 checkpoints and {loras:SD1} LoRAs, or generate online. The fast, lightweight original with the deepest ControlNet support.',
     modality: 'image',
     hero: {
       intro:
-        'Stable Diffusion is the open model that kicked off the AI-art community — and its 1.5 release is still the fastest, lightest, and most widely supported version to generate with. SD 1.5 renders in seconds on almost any hardware and is backed by the largest LoRA and fine-tune library anywhere. Generate from a text prompt with no GPU and no install — run SD 1.5 and thousands of its checkpoints and LoRAs right here on Civitai.',
+        'Stable Diffusion is the open model that kicked off the AI-art community — and its 1.5 release is still the fastest, lightest, and most widely supported version to generate with. SD 1.5 renders in seconds on almost any hardware and is backed by one of the largest LoRA and fine-tune libraries anywhere. Generate from a text prompt with no GPU and no install — run SD 1.5 and thousands of its checkpoints and LoRAs right here on Civitai.',
       badges: ['Text-to-Image', 'By Runway / Stability AI', 'Open weights'],
     },
     overview: [
       'SD 1.5 is the original open-weights Stable Diffusion release from Runway and Stability AI, and it is the model that started the community. It is a latent diffusion model built on the CLIP text encoder with a native resolution of 512×512, which is why it is tiny to run and lightning-fast — it fits comfortably on GPUs with well under 10GB of VRAM, or none at all when you run it here. Rather than reading long natural-language descriptions, it works from short, comma-separated tag prompts, the same style that shaped years of community workflows.',
       'Almost nobody runs the raw base checkpoint today — the ecosystem lives in its fine-tunes. The default hosted here is DreamShaper, a long-running community model whose author set out to build "a better Stable Diffusion," a versatile "swiss-knife" checkpoint aimed first at art and illustration. Around SD 1.5 sits the deepest support stack of any open model: textual inversions, LoRAs, ControlNet, negative embeddings like the DreamShaper author’s "Bad Dream," and img2img / highres-fix upscaling pipelines that push its 512-native output to higher resolutions.',
-      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has the largest LoRA and fine-tune library anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and FLUX.1 leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
+      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has one of the largest LoRA and fine-tune libraries anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and FLUX.1 leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
     ],
     promptTips: [
       'Prompt in tags, not sentences — short, comma-separated keywords following the pattern [quality tags], [subject], [scene], [lighting], [camera/lens], [style]. Front-load the most important concepts, since SD 1.5 weights early tokens more heavily.',
@@ -1225,7 +1236,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Why use SD 1.5 when newer models exist?',
-        a: 'It is the fastest and lightest option, and it has the largest catalog of community LoRAs and fine-tunes by far. For quick iteration and niche styles it is still unbeaten — try it on Civitai.',
+        a: 'It is the fastest and lightest option, and it has one of the largest catalogs of community LoRAs and fine-tunes. For quick iteration and niche styles it is still unbeaten — try it on Civitai.',
       },
       {
         q: 'Can I train my own SD 1.5 LoRA?',
@@ -1576,28 +1587,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   Krea2: {
     key: 'Krea2',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Krea 2',
+    seoTitle: 'Krea 2 (Krea2) Models, LoRAs & Online Generator | Civitai',
     metaDescription:
-      "Generate with Krea 2 on Civitai — Krea AI's model for sharp photorealism, strong aesthetics, and dependable prompt adherence. Browse checkpoints, LoRAs & prompts.",
+      "Browse {loras:Krea2} Krea 2 LoRAs and checkpoints, or generate and edit images with Krea2 online. Krea AI's model for sharp photorealism and strong prompt adherence.",
     modality: 'image',
     isNew: true,
     hero: {
       intro:
-        "Krea 2 is Krea AI's in-house text-to-image model, built for sharp photorealism, strong aesthetics, and dependable prompt adherence. Describe a scene and get a polished, high-resolution image in seconds — no GPU, no install. Run every Krea 2 variant right here on Civitai.",
-      badges: ['Text-to-Image', 'By Krea', 'Open weights + API'],
+        "Krea 2 is Krea AI's in-house image model, built for sharp photorealism, strong aesthetics, and dependable prompt adherence. Describe a scene and get a polished, high-resolution image in seconds, or edit an existing image — no GPU, no install. Run every Krea 2 variant right here on Civitai.",
+      badges: ['Text-to-Image', 'Image Editing', 'By Krea', 'Open weights + API'],
     },
     overview: [
-      "Krea 2 is Krea AI's first foundation image model, trained from scratch to prioritize how an image feels — its mood, lighting, and texture — rather than just what it contains. It's served on Civitai through the official fal.ai API partnership, so you can generate with the closed-weights hosted build directly on-site with no GPU or install. The model is designed around aesthetic control: style references with per-reference strength, moodboards, and a tunable creativity dial (raw, low, medium, high) that governs how far the model may drift from your inputs, making the prompt only one input among several.",
+      "Krea 2 is Krea AI's first foundation image model, trained from scratch to prioritize how an image feels — its mood, lighting, and texture — rather than just what it contains. It's served on Civitai through the official fal.ai API partnership, so you can generate with the closed-weights hosted build directly on-site with no GPU or install. The hosted build is designed around aesthetic control: style references with per-reference strength and a tunable creativity dial (raw, low, medium, high) that governs how far the model may drift from your inputs, making the prompt only one input among several.",
       "The hosted model ships in two sizes. Large is the bigger build, with softer post-training that leaves more of the raw base character intact; it's the pick for photorealism of humans and animals, motion blur, film grain, low dynamic range, and imperfect lighting that reads as a real photograph. Medium is smaller, faster, and cheaper, with heavier post-training that pushes it toward illustration, anime, painting, and other stylized aesthetics with clean line work. Alongside these, Krea released two open-weight checkpoints on Hugging Face: Raw, the undistilled full-guidance build (Krea recommends ~52 steps at CFG 3.5) that carries the highest quality ceiling and is the intended target for fine-tuning and LoRA training; and Turbo, an 8-step distilled build of Raw that runs without classifier-free guidance for fast inference at 1K–2K resolution (up to 2048×2048).",
       'Choose Krea 2 when you want photoreal grit or a defined illustration style with minimal fuss — it has a noticeable edge on the hard cases other models fight you on: lens flares, chrome and metallic surfaces, motion blur, glitter and iridescent textures, film grain, and starburst highlights. Reach for Large for chrome, lens flares, and photographic realism; Medium for clean stylized art; Raw when you want the maximum quality ceiling or a predictable base for training; and Turbo when you want Krea 2 aesthetics at a fraction of the compute. LoRAs trained on Raw carry over to Turbo, so you can train once on the full model and run inference fast on the distilled build.',
+      "Krea 2 also edits images. Pick the image edit workflow in the generator, add up to four source images, and describe the change; editing runs on Turbo (the default) or Raw together with Krea 2's identity-edit LoRA, so the hosted Large and Medium tiers aren't offered there.",
     ],
     promptTips: [
       'Write in natural, descriptive language — Krea 2 was trained to interpret how an image should feel, so adjectives about mood, lighting, material, and texture carry real weight. A useful order is subject and action, setting and composition, lighting and atmosphere, material and texture, then aesthetic or film-stock reference.',
       'Skip weight syntax — (word:1.5), [word], and ((word)) are read as literal text and ignored as weights. Emphasize by describing what you want more vividly instead.',
-      'Steer with what you DO want, not negatives — negative prompts have minimal effect here. Krea 2 is built around style references, moodboards, and the creativity dial (raw/low/medium/high) rather than a "what to avoid" channel.',
+      'Steer with what you DO want, not negatives — Raw and Turbo accept a negative prompt, but it has minimal effect. On Large and Medium, steer with style references and the creativity dial (raw/low/medium/high) instead.',
       'Lean into its strengths with specific language — for lens flares, chrome, motion blur, glitter, iridescence, film grain, or starburst highlights, name the exact look rather than describing it generically.',
-      'Keep prompts around 300 words as the practical sweet spot — there is no published token limit, but longer prompts stop adding signal past that. Aesthetic direction lives outside the text: attach a style reference or moodboard if your prompt is style-light, and pick Large (photoreal) vs. Medium (illustration) via the variant selector, not the prompt.',
+      'Keep prompts around 300 words as the practical sweet spot — there is no published token limit, but longer prompts stop adding signal past that. Aesthetic direction lives outside the text: on Large or Medium, attach a style reference if your prompt is style-light, and pick Large (photoreal) vs. Medium (illustration) via the variant selector, not the prompt.',
     ],
     generatorVersionId: 2983022,
     featuredModels: [
@@ -1606,7 +1619,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         versionId: 2983022,
         imageId: 137356834,
         displayName: 'Krea 2 (Large)',
-        note: 'Civitai-hosted · default',
+        note: 'Civitai-hosted · photoreal',
       },
       {
         modelId: 2732656,
@@ -1707,7 +1720,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'What is Krea 2?',
-        a: "Krea 2 is Krea AI's in-house text-to-image model, tuned for photorealism and clean aesthetics. You can generate with it on Civitai — no GPU or install required.",
+        a: "Krea 2 is Krea AI's in-house image model, tuned for photorealism and clean aesthetics. You can generate and edit images with it on Civitai — no GPU or install required.",
       },
       {
         q: 'How much does it cost to generate with Krea 2?',
@@ -1715,7 +1728,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: "What's the difference between Krea 2, Turbo, and Raw?",
-        a: 'The default Large/Medium tiers balance quality and cost, Turbo trades a little detail for faster generations, and Raw is the base checkpoint. Try each in the generator and keep the one that fits your shot.',
+        a: "Large and Medium are the Civitai-hosted tiers, with style references and a creativity dial; Large leans photoreal and Medium leans illustration. Raw is the open-weight base checkpoint and the generator's default, and Turbo is its faster 8-step distilled build. Raw and Turbo are the builds that run LoRAs and image editing. Try each in the generator and keep the one that fits your shot.",
+      },
+      {
+        q: 'Can I edit images with Krea 2?',
+        a: "Yes. Choose the image edit workflow in the generator, add up to four source images, and describe the change you want. Editing runs on the Turbo or Raw build with Krea 2's identity-edit LoRA.",
       },
       {
         q: 'Can I run Krea 2 locally or train a LoRA?',
@@ -1732,10 +1749,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Anima: {
     key: 'Anima',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Anima',
+    seoTitle: 'Anima Anime Model & {loras:Anima} LoRAs, Online Generator | Civitai',
     metaDescription:
-      "Generate with Anima on Civitai — CircleStone Labs' open anime model for clean linework, expressive characters, and vivid color. Browse top Anima LoRAs & prompts.",
+      "Download the Anima model and {loras:Anima} LoRAs, or generate online. CircleStone Labs' open anime model for clean linework, expressive characters and vivid color.",
     modality: 'image',
     hero: {
       intro:
@@ -2548,7 +2566,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedance 2.0 is a hosted multimodal video generator from ByteDance's Seed team. It's built on a Dual-branch DiT (Diffusion Transformer) architecture that jointly generates the visuals, dialogue, lip-sync, and ambient sound in one pipeline, natively fusing text, image, and audio inputs rather than treating audio as a separate post step. Weights aren't published — the ByteDance-Seed org is on Hugging Face, but Seedance runs as a hosted model, which on Civitai means you generate it through the on-site generator instead of downloading it.",
-      'Two variants are available on Civitai: Seedance 2.0, the full-quality model set as the generator default, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
+      'Two variants are available on Civitai: Seedance 2.0, the full-quality model, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
       'Choose Seedance when you want video and matching audio in a single generation — synchronized speech, sound effects, and ambience without a separate audio pass. Against a polished closed API like Kling or a fast one like Hailuo you get the joint audio-plus-video pipeline; against open-weight Wan you trade downloadable models and a LoRA ecosystem for that one-pass audio and ByteDance hosting. It runs right here on Civitai either way.',
     ],
     promptTips: [
@@ -2658,7 +2676,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: "What's the difference between Seedance 2.0 and 2.0 Fast?",
-        a: 'Seedance 2.0 is the full-quality model and the generator default; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
+        a: 'Seedance 2.0 is the full-quality model; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
       },
       {
         q: 'Can I use my own image or reference clips with Seedance?',
@@ -3058,25 +3076,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Imagen 4', 'Seedream', 'FLUX.1'],
+      peers: ['GPT Image', 'Seedream', 'FLUX.1'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Likeness-preserving photo editing',
-            'Photoreal text-to-image',
+            'Natural-language prompts, text in image',
             'High-res text-to-image',
             'Photorealism, text, versatility',
           ],
         },
         {
           label: 'Image editing',
-          values: ['Native, multi-turn', 'Limited', 'Via edit variant', 'In-context (Kontext)'],
+          values: [
+            'Native, multi-turn',
+            'Native, reference-driven',
+            'Via edit variant',
+            'In-context (Kontext)',
+          ],
           winner: 0,
         },
         {
           label: 'Character consistency',
-          values: ['Excellent', 'Fair', 'Good', 'Fair'],
+          values: ['Excellent', 'Good', 'Good', 'Fair'],
           winner: 0,
         },
         {
@@ -3124,134 +3147,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         note: 'No model-specific prompt guide exists (generic fallback) — tips are grounded in the model card’s documented editing capabilities, not a guide.',
       },
     ],
-  },
-
-  Imagen4: {
-    key: 'Imagen4',
-    updatedAt: '2026-07-23',
-    slug: 'imagen-4',
-    name: 'Imagen 4',
-    metaDescription:
-      "Generate with Imagen 4 on Civitai — Google DeepMind's text-to-image model for photorealism, fine detail, and legible in-image text. Browse examples & prompts.",
-    modality: 'image',
-    hero: {
-      intro:
-        "Imagen 4 is Google DeepMind's latest text-to-image model, built to turn natural-language prompts into ultra-high-quality, photorealistic images with a focus on visual fidelity, fine detail, and compositional accuracy. It also renders legible in-image text. Generate with it right here on Civitai — no GPU, no install.",
-      badges: ['Text-to-Image', 'Photorealism', 'By Google DeepMind'],
-    },
-    overview: [
-      "Imagen 4 is the latest iteration of Google DeepMind's Imagen text-to-image line, designed to generate ultra-high-quality, photorealistic images from natural-language prompts. Its emphasis is on visual fidelity, fine detail, and compositional accuracy — reading a plain description of a scene and rendering it with convincing lighting, materials, and structure rather than relying on tag-style keywords. It responds strongly to cinematic, descriptive prompting that specifies perspective, lighting, environment, and action.",
-      'Unlike open-weight families such as FLUX.1 or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
-      'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or FLUX.1 remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
-    ],
-    promptTips: [
-      'Write in natural, cinematic language and follow the template [Subject] + [Context/Background] + [Style] + [Lighting and technical details]. Descriptive full sentences beat comma-separated tags on Imagen 4.',
-      'Be explicit about lighting — Imagen 4 responds strongly to lighting cues. "Warm late-afternoon sun raking across the wall from the left" gives far more than "nice lighting."',
-      'Skip weight syntax like (word:1.5) — it is not supported. Emphasize an element by describing it in more vivid detail instead of using numeric weights.',
-      'State everything positively — Imagen 4 has no negative-prompt field. Instead of listing what to avoid, describe the clean scene you do want (an empty plaza rather than "no people").',
-      'For text in the image, spell out the exact words in quotes and describe the type: e.g. "a bold sans-serif title at the top reading \'HELLO\'," specifying font style, size, and placement. Then refine iteratively, changing one variable at a time.',
-    ],
-    generatorVersionId: 1889632,
-    featuredModels: [
-      {
-        modelId: 1669468,
-        versionId: 1889632,
-        imageId: 134163949,
-        displayName: 'Imagen 4',
-        note: 'Civitai-hosted · by Google DeepMind',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 135412138,
-        prompt: 'A frigate-sized futuristic spaceship with dark grey armor drifting in deep space',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134505718,
-        prompt:
-          'A traditional black-and-yellow taxi rolling through a Mumbai street in the afternoon',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134257673,
-        prompt: 'A Disney-themed supermarket with food aisles based on Disney films',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134215036,
-        prompt:
-          'A red-crowned crane in shallow water, Japanese ukiyo-e woodblock and watercolor style',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163951,
-        prompt:
-          'A tranquil sunset over a mirror-like lake reflecting a lone tree and flitting birds',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163946,
-        prompt: 'Itsukushima Shrine at high tide, golden hour, telephoto compression',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-    ],
-    comparison: {
-      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Photorealism & fine detail',
-            'Conversational image editing',
-            'High-res photoreal generation',
-            'Prompt adherence & text',
-          ],
-        },
-        { label: 'Prompt adherence', values: ['Excellent', 'Very good', 'Very good', 'Excellent'] },
-        { label: 'Text in images', values: ['Strong', 'Fair', 'Fair', 'Strong'], winner: 0 },
-        {
-          label: 'Prompt style',
-          values: ['Natural language', 'Conversational', 'Natural language', 'Natural language'],
-        },
-        {
-          label: 'Access',
-          values: ['API only', 'API only', 'API only', 'Open weights + API'],
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate with Imagen 4?',
-        a: 'Generation on Civitai runs on Buzz, and Imagen 4 is a premium, Google-hosted model, so it sits toward the higher end of the range — each image costs more Buzz than a lightweight open checkpoint like SDXL. Every account still earns free Blue Buzz daily by reacting to images and staying active on the site, so you can try Imagen 4 without spending real money; you will just work through your daily Blue Buzz faster than on cheaper models. For heavier use, let your Buzz accumulate or add a membership for higher limits.',
-      },
-      {
-        q: 'What is Imagen 4?',
-        a: "Imagen 4 is Google DeepMind's latest text-to-image model, built for ultra-high-quality, photorealistic images with strong visual fidelity, fine detail, and compositional accuracy. Try it directly in the Civitai generator.",
-      },
-      {
-        q: 'Can I run Imagen 4 locally?',
-        a: "No — Imagen 4 is a closed, hosted model with no public weights, so there is nothing to download or run on your own GPU. Civitai runs it through Google's API for you, so you can generate in the browser with no setup.",
-      },
-      {
-        q: 'Is Imagen 4 good at rendering text in images?',
-        a: 'Yes — it supports typography and can render legible in-image text. Spell out the exact words in quotes and describe the font style, size, and placement. Remix an example above to see how the prompt carries over.',
-      },
-      {
-        q: 'Can I use LoRAs or custom checkpoints with Imagen 4?',
-        a: 'No — because Imagen 4 is API-only with no open weights, it does not support community LoRAs or fine-tuned checkpoints. If you want to stack LoRAs and custom styles, an open ecosystem like FLUX.1, SDXL, Pony, or Illustrious is the better choice, and all of them run on Civitai too.',
-      },
-      {
-        q: 'How should I prompt Imagen 4?',
-        a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and phrase everything positively — Imagen 4 has no negative-prompt field. Remix any example above to start from a working prompt.',
-      },
-    ],
-    sunset: {
-      date: '2026-08-17',
-      note: 'Google is shutting down the Imagen 4 endpoints, after which it will no longer be generatable on Civitai. Nano Banana and Seedream are the closest hosted alternatives.',
-    },
-    attribution: 'a hosted text-to-image model by Google DeepMind (Imagen 4)',
   },
 
   Seedream: {
@@ -3347,14 +3242,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Nano Banana', 'Imagen 4', 'Qwen'],
+      peers: ['Nano Banana', 'GPT Image', 'Qwen'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Typography & high-res realism',
             'Image editing & consistency',
-            'Photoreal & in-image text',
+            'Natural-language prompts & text',
             'Prompt accuracy & text',
           ],
         },
@@ -3416,7 +3311,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         field: 'overview',
         claim: '4K availability per version',
-        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in seedream-graph.ts); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
+        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in `image/seedream.graph.ts`); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
       },
       {
         field: 'faq',
@@ -3426,9 +3321,190 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
   },
 
+  OpenAI: {
+    key: 'OpenAI',
+    updatedAt: '2026-09-09',
+    slug: 'gpt-image',
+    name: 'GPT Image',
+    metaDescription:
+      "Generate images with OpenAI's GPT Image on Civitai — ChatGPT Images 2.5 Flare and Sunburst, hosted, no API key. Browse GPT Image examples & prompts.",
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        "GPT Image is OpenAI's family of image generation and editing models — the ones behind image creation in ChatGPT. You prompt them in plain English rather than tag soup, they render text inside an image better than most, and they edit a picture you supply instead of only generating from scratch. Every version runs hosted on Civitai, so there is no API key, no GPU, and no install.",
+      badges: ['Text-to-Image', 'Image Editing', 'By OpenAI'],
+    },
+    overview: [
+      "GPT Image is OpenAI's line of image models, delivered through ChatGPT and the OpenAI API and hosted here for on-site generation. Unlike the open diffusion ecosystems, it takes ordinary descriptive language rather than weighted tag lists, and it treats image editing as a first-class operation: hand it one or more reference images with an instruction and it works from them. Civitai carries the family across two model pages — gpt-image-1 and 1.5 on one, ChatGPT Images 2.0 and the 2.5 builds on the other — so you can switch generations from the version picker.",
+      'The current generation is ChatGPT Images 2.5, released in September 2026, which OpenAI ships as two API builds. Flare is the default pick: OpenAI describes it as producing higher-quality images than 2.0 at roughly half the latency, which suits social and product work and anything you iterate on repeatedly. Sunburst is aimed at premium visual workflows that benefit from tighter control across edits, so it is the one to reach for on polished product imagery or campaign creative that you refine over several passes. Both take the same controls on Civitai, so switching is just a version change, and OpenAI describes the generation as producing more natural lighting and richer textures and as better at preserving the subjects in your reference photos.',
+      'The previous version, ChatGPT Images 2.0, is still available and remains strong on detailed instruction following, placing and relating objects accurately, and rendering dense text including non-Latin scripts. Choose GPT Image when your prompt reads like a sentence rather than a tag list, when the image needs legible text, or when you are editing a picture you already have. For deep LoRA libraries, custom checkpoints, or a fully local workflow, an open ecosystem such as FLUX.1 or SDXL is the better fit — GPT Image is API-only, with no weights to download and no LoRA support.',
+    ],
+    promptTips: [
+      'Write plain descriptive prose, not tags. The models expect natural language, and spatial arrangements are well understood — a good default shape is "[subject and action]. [setting with spatial detail]." Describe the scene the way you would to a person.',
+      'Skip weight syntax and special tokens entirely. There is no (word:1.2) emphasis here; if something matters, say so in words and give it more of the sentence.',
+      'There is no negative prompt field. You can write exclusions into the prompt ("no watermark, no extra text"), but they are not reliably followed — describing what you do want works better than listing what you do not.',
+      'Put any text that must appear in the image inside quotation marks. Short strings are the most reliable; 2.0 and 2.5 improved markedly on dense and non-Latin text, but a headline still lands more often than a paragraph.',
+      'For edits, attach the reference image and describe only the change. The 2.5 models are tuned to keep the subject of a reference photo recognizable, so re-describing the person or product usually works against you.',
+    ],
+    generatorVersionId: 2880272,
+    featuredModels: [
+      {
+        modelId: 2563220,
+        versionId: 3311436,
+        imageId: 141711098,
+        displayName: 'ChatGPT Images 2.5 Sunburst',
+        note: 'Civitai-hosted · tighter edit control',
+      },
+      {
+        modelId: 2563220,
+        versionId: 3311434,
+        imageId: 141711064,
+        displayName: 'ChatGPT Images 2.5 Flare',
+        note: 'Civitai-hosted · default, faster',
+      },
+      {
+        modelId: 2563220,
+        versionId: 2880272,
+        imageId: 138493687,
+        displayName: 'ChatGPT Images 2.0',
+        note: 'Civitai-hosted · previous generation',
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 141711098,
+        prompt:
+          'Near-future cinematic still: six tugs towing an enormous intact iceberg, photorealistic large-format digital cinema look',
+        settings: 'ChatGPT Images 2.0 · 2560×1440',
+      },
+      {
+        imageId: 141711064,
+        prompt:
+          'Night in a dense city, an entire block dropped forty metres into a sinkhole and still standing, rescue floodlights on the rim above',
+        settings: 'ChatGPT Images 2.0 · 2560×1440',
+      },
+      {
+        imageId: 138493687,
+        prompt:
+          'A beautiful Blackfeet Nation woman in traditional dress, feeding her paint horse an apple on a winters morning',
+        settings: 'ChatGPT Images 2.0 · 1536×2304',
+      },
+      {
+        imageId: 141846766,
+        prompt:
+          'The muppets join the battle of the Somme, 1916, British soldiers charging the German trench with bayonets fixed',
+        settings: 'ChatGPT Images 2.0 · 1536×1024',
+      },
+      {
+        imageId: 137852923,
+        prompt: 'Sól (Sunna), Ísland, Urðarbrunnr, örlögþræðir, Huldufólk',
+        settings: 'ChatGPT Images 2.0 · 1728×3072',
+      },
+      {
+        imageId: 138743700,
+        prompt: 'Tyr & Eysa, Glowing Embers - Milonga Sevilla Tango Festival 2009',
+        settings: 'ChatGPT Images 2.0 · 1920×2880',
+      },
+    ],
+    comparison: {
+      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Natural-language prompts, text in image',
+            'Likeness-preserving photo editing',
+            'High-res text-to-image',
+            'Photorealism, LoRAs, versatility',
+          ],
+        },
+        {
+          label: 'Text rendering',
+          values: ['Excellent', 'Good', 'Good', 'Very good'],
+          winner: 0,
+        },
+        {
+          label: 'Image editing',
+          values: [
+            'Native, reference-driven',
+            'Native, multi-turn',
+            'Via edit variant',
+            'In-context (Kontext)',
+          ],
+        },
+        {
+          label: 'Prompt style',
+          values: ['Natural language', 'Natural language', 'Natural language', 'Tags or prose'],
+        },
+        {
+          label: 'LoRA support',
+          values: ['None', 'None', 'None', '{loras:Flux1} LoRAs'],
+          winner: 3,
+        },
+        {
+          label: 'Access',
+          values: ['API (hosted)', 'API (hosted)', 'API (hosted)', 'Open weights + API'],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'How much does it cost to generate with GPT Image?',
+        a: 'Generation on Civitai runs on Buzz, and GPT Image is a hosted OpenAI model, so each image costs more Buzz than a lightweight open checkpoint — you are paying for compute OpenAI runs on its side. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, so you can try it without spending real money; you will just work through daily Blue Buzz faster than on cheaper models. The 2.5 Flare build is the lighter of the two current options, so it stretches Blue Buzz further than Sunburst.',
+      },
+      {
+        q: "What's the difference between 2.5 Flare and 2.5 Sunburst?",
+        a: 'They are the two builds OpenAI ships for ChatGPT Images 2.5. Flare is the default choice — OpenAI describes it as higher quality than 2.0 at roughly half the latency, which suits social content, product shots and rapid iteration. Sunburst targets premium workflows that need tighter control across edits, such as production-ready campaign creative. Both take identical controls in the generator, so pick either and compare on your own prompt.',
+      },
+      {
+        q: 'Can GPT Image edit an image I already have?',
+        a: 'Yes. Attach one or more reference images in the generator and it switches to edit mode, working from what you supply rather than generating from scratch. The 2.5 models are specifically tuned to keep the subject of a reference photo recognizable when you move it into a new setting, style or composition, so describe only the change you want.',
+      },
+      {
+        q: 'Is GPT Image good at rendering text inside an image?',
+        a: 'It is one of the stronger models for it. Put the exact wording in quotation marks and keep it short for the most reliable result — a headline or a sign lands more often than a paragraph. ChatGPT Images 2.0 brought significant gains on dense text and on non-Latin scripts including Japanese, Korean, Chinese, Hindi and Bengali, and 2.5 builds on that.',
+      },
+      {
+        q: 'Can I use LoRAs with GPT Image?',
+        a: 'No. GPT Image is a hosted OpenAI model with no LoRA support, so you steer it with prompts and reference images rather than stacked LoRAs. If you want a deep LoRA ecosystem, an open model like FLUX.1 or SDXL is the better choice — all are in the Civitai generator.',
+      },
+      {
+        q: 'Do I need a GPU or an OpenAI API key?',
+        a: 'Neither. There are no open weights to download and no local run — OpenAI hosts the model and Civitai handles generation for you, billed in Buzz. You do not need your own OpenAI account or API key to generate here.',
+      },
+    ],
+    attribution: 'a hosted image generation and editing model family by OpenAI (GPT Image)',
+    factCheck: [
+      {
+        field: 'overview',
+        claim: 'Flare produces higher-quality images than 2.0 at roughly half the latency',
+        note: "OpenAI's own claim, but taken from press coverage of the 2026-09-08 announcement — openai.com/index/introducing-chatgpt-images-2-5/ returns 403 to our fetcher, so the primary source was not read directly. Confirm against the announcement before treating it as authoritative.",
+        highlight: 'higher-quality images than 2.0 at roughly half the latency',
+      },
+      {
+        field: 'promptTips',
+        claim: 'Short quoted text strings render most reliably',
+        note: "The orchestrator prompt guide for key 'openai' says 1-4 word strings render reliably and longer ones degrade, but that guide is written for DALL-E 3 / gpt-image-1 and predates 2.0's documented gains on dense text. The tip is hedged rather than quoting the 1-4 word limit; re-check once a 2.5-era guide exists.",
+        highlight: 'Short strings are the most reliable',
+      },
+      {
+        field: 'featuredModels',
+        claim: 'Card images for the two 2.5 builds',
+        note: 'The 2.5 versions were still Draft with no posted images when this page was written, so both cards borrow images from ChatGPT Images 2.0 on the same model page (2563220). Swap in real 2.5 images once the versions are published and have galleries.',
+      },
+      {
+        field: 'featuredExamples',
+        claim: 'All six examples are ChatGPT Images 2.0 generations',
+        note: 'No 2.5 generations existed yet when the page was written. Refresh the gallery with 2.5 output after launch.',
+      },
+    ],
+  },
+
   Veo3: {
     key: 'Veo3',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-08-27',
     slug: 'veo-3',
     name: 'Veo 3',
     metaDescription:
@@ -3442,7 +3518,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       'Veo 3 is a state-of-the-art text-to-video and image-to-video model from Google DeepMind. Its defining advance over earlier AI video models is native audio generation: rather than producing a silent clip and bolting sound on afterward, Veo 3 generates dialogue, sound effects, and music together with the visuals in a single pass, for more realistic and immersive results. It reads detailed natural-language direction — characters, action, camera work, mood, and the sound you want — and turns it into a coherent clip.',
       'In practice, Veo 3 is tuned for cinematic, real-world scenes with strong temporal consistency and an unusually deep understanding of camera and film vocabulary — tracking shots, crane and steadicam moves, slow motion, time-lapse, whip pans, and lens/film references. It works from a text prompt, a reference image, or both, and handles temporal progression cues like "as the sun sets." Because it prompts in plain natural language, there is no weight syntax and no negative prompt — you describe everything you want, including the audio, positively.',
-      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG/SFW model by design — profanity or sexually explicit prompts are filtered, so it is best suited to SFW work. On Civitai several releases are hosted — Veo 3 and Veo 3 Fast for text-to-video, plus Veo 3 Image-to-Video and its Fast variant — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
+      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG/SFW model by design — profanity or sexually explicit prompts are filtered, so it is best suited to SFW work. On Civitai two releases are hosted — Veo 3.1 and Veo 3.1 Fast, each handling both text-to-video and image-to-video — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
     ],
     promptTips: [
       'Write like a mini screenplay in natural language, not tags: describe the characters, the action, the mood, and the visual style in full sentences. A reliable order is scene and characters → action sequence → camera work → visual style → audio.',
@@ -3451,35 +3527,21 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       'Skip weight syntax and negative prompts — neither is supported. There is no (word:1.5) and no "no blur" list; describe what you want positively instead.',
       'Keep it to one continuous take. For longer clips describe gradual progression ("transitioning from day to night") rather than discrete scene cuts, and remember Veo 3 is a PG/SFW model — explicit prompts are filtered, so keep it clean.',
     ],
-    generatorVersionId: 1885367,
+    generatorVersionId: 2827945,
     featuredModels: [
       {
         modelId: 1665714,
-        versionId: 1885367,
-        imageId: 130405124,
-        displayName: 'Veo 3',
-        note: 'Civitai-hosted · default · text-to-video',
+        versionId: 2827945,
+        imageId: 141016601,
+        displayName: 'Veo 3.1',
+        note: 'Civitai-hosted · default · text-to-video and image-to-video',
       },
       {
         modelId: 1665714,
-        versionId: 1995399,
-        imageId: 129368560,
-        displayName: 'Veo 3 Fast',
+        versionId: 2827948,
+        imageId: 141016658,
+        displayName: 'Veo 3.1 Fast',
         note: 'Civitai-hosted · speed-optimized',
-      },
-      {
-        modelId: 1665714,
-        versionId: 1996013,
-        imageId: 125883219,
-        displayName: 'Veo 3 Image-to-Video',
-        note: 'Civitai-hosted · animate a still',
-      },
-      {
-        modelId: 1665714,
-        versionId: 2082027,
-        imageId: 135396489,
-        displayName: 'Veo 3 Image-to-Video Fast',
-        note: 'Civitai-hosted · faster image-to-video',
       },
     ],
     featuredExamples: [
@@ -3521,24 +3583,29 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Sora 2', 'Kling', 'Seedance'],
+      peers: ['Kling', 'Seedance', 'Wan'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Cinematic clips with native audio',
-            'Cinematic video with synced audio',
             'Polished realistic motion',
             'One-pass video + audio',
+            'Open T2V/I2V with a huge LoRA ecosystem',
           ],
         },
         {
           label: 'Provider',
-          values: ['Google DeepMind', 'OpenAI', 'Kuaishou', 'ByteDance'],
+          values: ['Google DeepMind', 'Kuaishou', 'ByteDance', 'Alibaba'],
         },
         {
           label: 'Native audio',
-          values: ['Yes (dialogue, SFX, music)', 'Yes', 'No', 'Yes (dialogue + lip-sync)'],
+          values: [
+            'Yes (dialogue, SFX, music)',
+            'No',
+            'Yes (dialogue + lip-sync)',
+            'No (video only)',
+          ],
           winner: 0,
         },
         {
@@ -3547,12 +3614,12 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
             'API-only (hosted)',
             'API-only (hosted)',
             'API-only (hosted)',
-            'API-only (hosted)',
+            'Open weights + LoRAs',
           ],
         },
         {
           label: 'Image-to-video',
-          values: ['Yes', 'Yes', 'Yes, first-frame anchored', 'Yes'],
+          values: ['Yes', 'Yes, first-frame anchored', 'Yes', 'Native, strong'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -3587,160 +3654,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     factCheck: [
       {
         field: 'comparison',
-        claim: 'peer native-audio cells (Sora 2 = Yes, Kling = No, …)',
-        note: 'Cross-checked against the Sora 2 config (consistent), but peer cells are general knowledge, not re-verified against each provider.',
-      },
-    ],
-  },
-
-  Sora2: {
-    key: 'Sora2',
-    updatedAt: '2026-07-23',
-    slug: 'sora-2',
-    name: 'Sora 2',
-    metaDescription:
-      "Generate Sora 2 video on Civitai — OpenAI's hosted text-to-video model known for physical realism and synchronized audio. Browse example clips & prompts.",
-    modality: 'video',
-    hero: {
-      intro:
-        "Sora 2 is OpenAI's text-to-video generation model, built for physically plausible motion, coherent multi-shot scenes, and synchronized audio generated alongside the video. It reads long, natural-language descriptions and holds character and world state steady across a clip. On Civitai it's fully hosted, so you can turn a prompt into a video right in the browser — no GPU, no install.",
-      badges: ['Text-to-Video', 'Physical Realism', 'By OpenAI'],
-    },
-    overview: [
-      'Sora 2 is OpenAI\'s text-to-video generation model and the successor to the original Sora, unveiled in February 2024. OpenAI frames that first Sora as a "GPT-1 moment" for video — the point at which simple behaviors like object permanence first emerged from scaling up pre-training compute. Sora 2 is the team\'s next major step, focused less on raw novelty and more on world simulation: modeling how objects, people, and physics actually behave over time rather than deforming reality to satisfy a prompt.',
-      'The headline improvement is physical plausibility. OpenAI notes that where earlier video models will bend reality to complete a prompt — teleporting a missed basketball into the hoop — Sora 2 is more likely to let the shot rebound off the backboard, modeling failure as well as success. It also improves controllability, following intricate multi-shot instructions while keeping world state consistent, and it works across realistic, cinematic, and anime styles. As a general-purpose video-and-audio system it can generate synchronized speech, sound effects, and background soundscapes in the same pass rather than as a separate step.',
-      "Sora 2 is a closed, hosted model: there are no downloadable weights and no Sora LoRAs, so control comes from prompting, reference material, and the generator's settings rather than community fine-tunes. On Civitai it runs entirely in the browser — no GPU, no install. Choose it when you want realistic motion, coherent physics, and cinematic multi-shot direction out of the box. For open weights, stackable LoRAs, and deep community control the Wan ecosystem is the natural alternative, while Veo 3 and Kling are the closest hosted peers to compare against.",
-    ],
-    promptTips: [
-      "Write in natural language — vivid, descriptive paragraphs, not comma-separated tags. Sora 2's strong language understanding handles complex multi-element scenes, so describe the subject, action, setting, and mood as full prose.",
-      'Skip weight syntax and negative prompts — neither is supported. Rephrase anything negative as a positive description: say "sharp, crystal clear" instead of "no blur."',
-      'Direct the camera explicitly. Sora 2 responds to real cinematography language — "the camera follows behind a woman walking," "drone aerial shot rising over the city," "low-angle tracking shot," or "slow push-in on the character\'s face."',
-      "Describe characters thoroughly. Sora's world-model approach maintains appearance across a clip, but sparse descriptions lead to drift — spell out who or what is on screen in detail.",
-      'Add temporal and stylistic cues to shape the shot: "as the sun sets" or "transitioning from day to night" for motion over time, and references like "in the style of a Wes Anderson film," "noir aesthetic," or "documentary footage" for a consistent look. A reliable order is subject → action and scene → camera work → visual style and mood.',
-    ],
-    generatorVersionId: 2320065,
-    featuredModels: [
-      {
-        modelId: 2049999,
-        versionId: 2320065,
-        imageId: 136011852,
-        displayName: 'Sora 2',
-        note: 'Civitai-hosted · by OpenAI',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 136011852,
-        prompt: 'Anthropomorphic dog and cat having a party, saying "magnificent"',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 132779682,
-        prompt:
-          'A cozy cinematic animated scene filled with warmth and nostalgia. Early autumn evening in a small countryside town. A fluffy orange cat wearing a tiny hat',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 134305014,
-        prompt: "Cat walking on two legs. It's on the beach. It strikes a pose",
-        settings: 'Sora 2 · 1280×720',
-      },
-      {
-        imageId: 134601390,
-        prompt: 'Cartoon kangaroo, twirling around, rainbow park',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126602082,
-        prompt:
-          'In the style of a Studio Ghibli action movie with gritty 24fps cinematic flair, a pack of sleek anthropomorphic robots crafted from rusted brass gears and glowing blue eyes',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126981587,
-        prompt: 'Anthropomorphic badger, victory dance',
-        settings: 'Sora 2 · 720×1280',
-      },
-    ],
-    comparison: {
-      peers: ['Veo 3', 'Kling', 'Wan'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Physical realism & cinematic multi-shot video',
-            'Cinematic clips with native audio',
-            'Polished cinematic motion & camera control',
-            'Open T2V/I2V + huge LoRA ecosystem',
-          ],
-        },
-        {
-          label: 'Provider',
-          values: ['OpenAI', 'Google DeepMind', 'Kuaishou', 'Alibaba'],
-        },
-        {
-          label: 'Access',
-          values: ['API-only (hosted)', 'API-only (hosted)', 'API-only (hosted)', 'Open weights'],
-        },
-        {
-          label: 'Native audio',
-          values: [
-            'Synchronized speech + sound',
-            'Synchronized speech + sound',
-            'No native audio',
-            'No native audio',
-          ],
-        },
-        {
-          label: 'LoRA support',
-          values: ['None (closed)', 'None (closed)', 'None (closed)', '2,500+ (largest for video)'],
-          winner: 3,
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate Sora 2 video on Civitai?',
-        a: "Generation on Civitai runs on Buzz, and every account earns free Blue Buzz daily through on-site actions like reacting to images. Sora 2 is a premium hosted video model — producing a clip is far heavier than rendering a single image, so a Sora 2 generation costs more Buzz per clip than most models, and longer clips cost more than shorter ones. You can put your daily free Blue Buzz toward it, but for regular Sora 2 use you'll want to let Buzz accumulate or add a membership for higher limits.",
-      },
-      {
-        q: 'Does Sora 2 generate audio?',
-        a: 'Yes. Sora 2 is a general-purpose video-and-audio system: OpenAI describes it as able to create synchronized speech, sound effects, and background soundscapes along with the video in a single pass. Remix an example above to try it yourself.',
-      },
-      {
-        q: 'Can I use LoRAs with Sora 2?',
-        a: 'No — Sora 2 is a closed, hosted model with no downloadable weights or LoRAs. You steer results through prompting, reference material, and the generator settings instead. If you want stackable video LoRAs and motion effects, the open Wan ecosystem is the place to look.',
-      },
-      {
-        q: 'How is Sora 2 different from the original Sora?',
-        a: 'OpenAI positions the first Sora (February 2024) as an early breakthrough where basic behaviors like object permanence emerged, and Sora 2 as a larger step toward genuine world simulation — better physics, stronger controllability across multiple shots, and synchronized audio. Try a prompt in the Civitai generator to see the difference.',
-      },
-      {
-        q: 'What is Sora 2 best at?',
-        a: 'Sora 2 leans toward realistic, physically coherent motion and cinematic, multi-shot direction — OpenAI highlights its ability to model real-world dynamics rather than deforming a scene to hit a prompt, and it also handles cinematic and anime styles. Describe a single clear scene and remix an example to see how it performs.',
-      },
-      {
-        q: 'Do I need a GPU to run Sora 2?',
-        a: 'No. Sora 2 is API-only, and Civitai runs the generation for you in the cloud — there are no weights to download and nothing to install. Just enter a prompt and generate in the browser.',
-      },
-    ],
-    sunset: {
-      date: '2026-09-24',
-      note: 'OpenAI is permanently shutting down the Sora and Sora 2 endpoints, after which they will no longer be generatable on Civitai. Veo 3, Kling, and the open Wan ecosystem are the closest alternatives.',
-    },
-    attribution: 'a hosted text-to-video model by OpenAI (Sora 2)',
-    factCheck: [
-      {
-        field: 'overview',
-        claim: 'synchronized audio (speech, SFX, soundscapes)',
-        highlight: 'synchronized speech, sound effects, and background soundscapes',
-        note: 'Claimed from the model card only; the sora2 prompt guide does not mention audio. Verify the capability.',
-      },
-      {
-        field: 'comparison',
-        claim: 'peer native-audio / provider cells',
-        note: 'From general knowledge / sibling configs, not independently re-verified.',
+        claim: 'peer native-audio cells (Kling = No, Seedance = Yes, Wan = No)',
+        note: 'Peer cells are general knowledge, not re-verified against each provider.',
       },
     ],
   },
@@ -3905,15 +3820,17 @@ export const getEcosystemSeoConfig = (key: string): EcosystemSeoConfig | undefin
 export const getEcosystemSeoSlug = (config: EcosystemSeoConfig): string =>
   config.slug ?? config.key.toLowerCase();
 
-/** Matches a `{loras:Key}` token in a comparison value. Global — use with `.replace`/`matchAll`. */
+/** Matches a `{loras:Key}` token. Global — use with `.replace`/`matchAll`. */
 export const LORA_COUNT_TOKEN = /\{loras:([A-Za-z0-9_]+)\}/g;
 
-/** ECOSYSTEM_SEO keys whose live LoRA count this page's comparison table needs. */
-export const getComparisonLoraCountKeys = (config: EcosystemSeoConfig): string[] => [
+/** ECOSYSTEM_SEO keys whose live LoRA count this page needs, from every field that takes the token. */
+export const getLoraCountKeys = (config: EcosystemSeoConfig): string[] => [
   ...new Set(
-    config.comparison.rows
-      .flatMap((row) => row.values)
-      .flatMap((value) => [...value.matchAll(LORA_COUNT_TOKEN)].map((m) => m[1]))
+    [
+      ...config.comparison.rows.flatMap((row) => row.values),
+      config.seoTitle ?? '',
+      config.metaDescription,
+    ].flatMap((value) => [...value.matchAll(LORA_COUNT_TOKEN)].map((m) => m[1]))
   ),
 ];
 
@@ -3966,16 +3883,15 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'grok', label: 'Grok Imagine', ecosystemKeys: ['Grok'] },
   { slug: 'happyhorse', label: 'HappyHorse', ecosystemKeys: ['HappyHorse'] },
   { slug: 'nano-banana', label: 'Nano Banana', ecosystemKeys: ['NanoBanana'] },
-  { slug: 'imagen-4', label: 'Imagen 4', ecosystemKeys: ['Imagen4'] },
   { slug: 'seedream', label: 'Seedream', ecosystemKeys: ['Seedream'] },
   { slug: 'veo-3', label: 'Veo 3', ecosystemKeys: ['Veo3'] },
-  { slug: 'sora-2', label: 'Sora 2', ecosystemKeys: ['Sora2'] },
   { slug: 'chroma', label: 'Chroma', ecosystemKeys: ['Chroma'] },
   { slug: 'qwen', label: 'Qwen', ecosystemKeys: ['Qwen'] },
   { slug: 'stable-diffusion', label: 'Stable Diffusion', ecosystemKeys: ['SD1'] },
   { slug: 'hidream', label: 'HiDream', ecosystemKeys: ['HiDream'] },
   { slug: 'krea2', label: 'Krea 2', ecosystemKeys: ['Krea2'] },
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
+  { slug: 'gpt-image', label: 'GPT Image', ecosystemKeys: ['OpenAI'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
 ];
 

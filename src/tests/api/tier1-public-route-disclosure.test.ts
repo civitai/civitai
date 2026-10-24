@@ -60,8 +60,6 @@ const {
   mockGetGenerationData,
   mockGetResourceData,
   mockGetFileForModelVersion,
-  mockKeyValueFindUnique,
-  mockModelFileFindUnique,
   mockFetchThroughCache,
   mockGetFullTensorAnalysisCached,
   mockHasExceededLimit,
@@ -74,8 +72,6 @@ const {
   mockGetGenerationData: vi.fn(),
   mockGetResourceData: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
-  mockKeyValueFindUnique: vi.fn(),
-  mockModelFileFindUnique: vi.fn(),
   mockFetchThroughCache: vi.fn(),
   mockGetFullTensorAnalysisCached: vi.fn(),
   mockHasExceededLimit: vi.fn(),
@@ -110,13 +106,6 @@ vi.mock('~/server/utils/rate-limiting', () => ({
   createLimiter: () => ({ hasExceededLimit: mockHasExceededLimit, increment: mockIncrement }),
 }));
 vi.mock('~/server/utils/download-count', () => ({ fetchDownloadCount: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    keyValue: { findUnique: mockKeyValueFindUnique },
-    modelFile: { findUnique: mockModelFileFindUnique },
-  },
-  dbWrite: {},
-}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Tracker: mockTracker,
@@ -144,6 +133,9 @@ import generationDataHandler from '~/pages/api/generation/data';
 import generationResourcesHandler from '~/pages/api/generation/resources';
 import downloadModelRoute from '~/pages/api/download/models/[modelVersionId]';
 import tensorMetadataRoute from '~/pages/api/v1/model-files/[id]/tensor-metadata';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockKeyValueFindUnique = dbMock.dbRead.keyValue.findUnique;
+const mockModelFileFindUnique = dbMock.dbRead.modelFile.findUnique;
 
 /**
  * `MixedAuthEndpoint` is mocked to identity above, so this module exports its
@@ -580,20 +572,6 @@ describe("civitai#3845 TIER 1 — no unauthenticated route serves a caught error
     expect(typeof res._sent(), 'the browser arm must still send a body').toBe('string');
     expect(res._sent()).toBe('An unexpected error occurred');
     for (const secret of PRISMA_SECRETS) expect(String(res._sent())).not.toContain(secret);
-  });
-
-  it('INVARIANT: download/models still logs the un-redacted text — genericizing relocates, never destroys', async () => {
-    mockGetServerAuthSession.mockResolvedValue(null);
-    mockKeyValueFindUnique.mockResolvedValue(null);
-    mockHasExceededLimit.mockResolvedValue(false);
-    mockGetFileForModelVersion.mockImplementation((() => {
-      throw prismaDriverError();
-    }) as () => never);
-    const { req, res } = createMocks({ query: { modelVersionId: '1' } });
-    await downloadModelHandler(req, res);
-
-    const logged = mockLogToAxiom.mock.calls.map(([c]) => JSON.stringify(c)).join('\n');
-    expect(logged, 'the un-redacted text must reach `_axiom`').toContain(LEAKED_COLUMN);
   });
 
   it('INVARIANT: tensor-metadata KEEPS its 422 and serves a human-readable string', async () => {

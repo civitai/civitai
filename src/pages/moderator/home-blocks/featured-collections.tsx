@@ -133,7 +133,11 @@ export default function FeaturedCollectionsAdmin() {
           <Stack gap="sm">
             {collections.map((c) => {
               const coverUrl = c.image
-                ? getEdgeUrl(c.image.url, { width: 96, name: c.image.id.toString() })
+                ? getEdgeUrl(c.image.url, {
+                    width: 96,
+                    name: c.image.id.toString(),
+                    optimized: true,
+                  })
                 : null;
               return (
                 <Card key={c.id} withBorder padding="sm">

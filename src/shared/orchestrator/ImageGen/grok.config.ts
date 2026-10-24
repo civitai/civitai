@@ -1,4 +1,4 @@
-import type { GrokCreateImageGenInput, GrokEditImageGenInput } from '@civitai/client';
+import type { GrokCreateImageGenInput, GrokEditImageGenInput } from '@civitai/orchestration-client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const grokModelVersionToModelMap = new Map<number, { name: string }>([

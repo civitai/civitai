@@ -23,8 +23,8 @@ it"* view (generations, downloads, per-model funnels) lives on [analytics.md](an
   total, each with the window's sum and a `badge` for delta vs. prior window.
 - **`table`** — earnings by source × period (or a breakdown table under the chart); `tabs` to switch window
   (7d / 30d / all) or granularity (daily / monthly).
-- **Time-series chart** — daily/stacked-by-source earnings. ⚠️ **No chart primitive in `@civitai/ui`** — the charting
-  lib is a shared decision with [analytics.md](analytics.md) (flag, don't pick here).
+- **Time-series chart** — daily/stacked-by-source earnings via the `@civitai/ui` `Chart` wrapper
+  (Chart.js, **C1**).
 - **CP cash panel** — pending + settled cash and a **Withdraw** button that **links out** to the existing CP flow
   (don't rebuild payout); see Shared.
 - **`skeleton`** for load; **`sonner`** only for the (rare) refresh/error toast.
@@ -52,8 +52,9 @@ service is too slow) ([plan §5.1](../creator-studio-plan.md#51-the-core-archite
   39,402 `np-deposit-` rows / 686M buzz vs 29,993 `early-access-` / 54.8M), and those carry `toAccountId` = the
   buyer. A naive `toAccountId = X AND type='purchase'` counts a creator's own buzz purchases as earnings. Always
   filter on the `externalTransactionId` prefix. Exclude `accountId = 0` (system/platform account).
-  ⚠️ **License fees currently land as `type='27'`** — the ingest MV's int→string map stops at 26 and falls back to
-  `toString(Type)`. Justin owns the fix + backfill; filter both values until it lands, or the card reads zero.
+  ⚠️ **Any transaction type above 26 lands as its NUMBER** — the ingest MV's int→string map stops at 26 and falls
+  back to `toString(Type)`. Today that is license fees (`'27'`) and the App Blocks author fee (`'28'`). Justin owns
+  the MV fix + backfill; filter both spellings of whichever type you want until it lands, or the card reads zero.
 - **No owner-keyed rollup dependency, and no dictionary.** That `modelVersionId`-keying problem is real for
   *usage* tables, but not for buzz transactions: `default.buzzTransactions.toAccountId` **is** the creator's
   `userId` (verified 1:1), and the table ships a `PROJECTION byToAccount (SELECT * ORDER BY toAccountId, date, …)`
@@ -115,4 +116,3 @@ see their own earnings normally.
 - **CP cash + withdrawal — inline or link-out?** Surface pending/settled + Withdraw here, or send fully to the existing
   CP flow?
 - **Time granularity + default window** — daily vs monthly; default 30d? Shared with [analytics.md](analytics.md).
-- **Charting lib** — none in `@civitai/ui`; pick jointly with [analytics.md](analytics.md).

@@ -26,7 +26,7 @@ import {
   getCommentReactionsSchema,
   toggleReactionInput,
 } from '~/server/schema/comment.schema';
-import { getCommentCountByModel } from '~/server/services/comment.service';
+import { getVisibleCommentCount } from '~/server/services/comment.service';
 import {
   guardedProcedure,
   middleware,
@@ -76,10 +76,23 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
     });
 
   const { id, modelId } = input as CommentUpsertInput;
-  const model = await dbRead.model.findUnique({ where: { id: modelId } });
-  if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
+  const comment = id
+    ? await dbRead.comment.findFirst({ where: { id }, select: { locked: true, modelId: true } })
+    : null;
 
-  const comment = await dbRead.comment.findFirst({ where: { id } });
+  // Both the model the request names and the one the comment is stored under. An edit writes
+  // `modelId` through from the request while being scoped by comment id alone, so checking only
+  // the named model lets an edit under a locked model be judged against a different one — and
+  // then re-homes the comment there.
+  const modelIds = [...new Set([modelId, comment?.modelId].filter((x) => x != null))] as number[];
+  const lockedModel = modelIds.length
+    ? await dbRead.model.findFirst({
+        where: { id: { in: modelIds }, locked: true },
+        select: { id: true },
+      })
+    : null;
+  if (lockedModel) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
+
   return next({
     ctx: {
       ...ctx,
@@ -110,10 +123,10 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getCommentCommentsCountHandler),
-  getCommentCountByModel: publicProcedure
+  getVisibleCountByModel: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentCountByModelSchema)
-    .query(({ input }) => getCommentCountByModel(input)),
+    .query(({ input, ctx }) => getVisibleCommentCount({ input, user: ctx.user })),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentUpsertInput)

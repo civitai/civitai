@@ -1,5 +1,5 @@
 import sanitize from 'sanitize-html';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 
 type S3ToVimeoUpload = {
   url: string;

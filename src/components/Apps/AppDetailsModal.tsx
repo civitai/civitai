@@ -17,17 +17,11 @@ import {
 } from '@mantine/core';
 import { IconExternalLink, IconLock, IconShieldCheck } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type {
-  AvailableBlock,
-  PublicAppDetail,
-  SubscriptionRecord,
-} from '~/server/schema/blocks/subscription.schema';
+import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -60,8 +54,6 @@ function scopeLabel(scope: string): string {
  * info that was moved OFF the card face in the 2026-06 UX pass:
  *   - Header: title, author, and (when present) the publisher screenshot
  *     gallery + description.
- *   - Recent reviews — reuses the existing <AppBlockReviews> component/queries
- *     (summary + a few recent rows + the gated write form). Not rebuilt.
  *   - Scopes — the permission disclosure, moved off the card face.
  *
  * Data sources (all the anon-safe public allowlist — no private manifest data):
@@ -72,15 +64,9 @@ function scopeLabel(scope: string): string {
  *     `getAppDetailAuthor`. 🔴 NEVER `appName`/`appId` — see that module. There
  *     is no listing-row fallback because `AvailableBlock` carries no owner, so
  *     the line is simply absent until the detail query resolves.
- *   - reviews → the existing block-reviews queries inside <AppBlockReviews>.
- *
- * The modal fetches its own subscriptions (mirroring the detail page) so the
- * reviews write-form gate works without threading new props through the
- * marketplace grid — it is fully self-contained.
  */
 export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps) {
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
   const appBlockId = block.id;
 
   // Anon-capable public read path — only fires while the modal is open (and the
@@ -94,22 +80,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
     { enabled: opened && !!features.appBlocks && !!appBlockId, retry: false }
   );
 
-  // Per-user subscriptions feed the reviews write-form gate (an enabled install
-  // is required to review, mirroring the server gate). Guarded on a signed-in
-  // user — the protected proc 401s for anon. Only fires while open.
-  const { data: mySubs } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: opened && !!features.appBlocks && !!currentUser,
-  });
-  const mySubsForApp = useMemo<SubscriptionRecord[]>(
-    () => (mySubs ?? []).filter((sub) => sub.appBlockId === appBlockId),
-    [mySubs, appBlockId]
-  );
-
   const detail = data as PublicAppDetail | undefined;
   // Did the detail query actually RESOLVE (vs still loading / failed)? This is
   // the load-bearing distinction for the disclosure copy + the aggregates: we
-  // only make a definitive statement ("does not request any permissions",
-  // resolved avgRating/reviewCount) once the public detail genuinely resolved.
+  // only make a definitive statement ("does not request any permissions")
+  // once the public detail genuinely resolved.
   const detailLoaded = detail !== undefined;
   // Title/author render from the listing row immediately; the detail query
   // enriches them (and is the only source for screenshots/scopes/version).
@@ -136,13 +111,6 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   // the scopes disclosure (an external app has none).
   const externalUrl = block.externalUrl ?? detail?.externalUrl ?? null;
   const isExternal = Boolean(externalUrl);
-  // L2: once the detail resolved, the aggregate is authoritative — prefer it
-  // DIRECTLY (a legit `null` means "no rating", not "fall back to the stale
-  // listing value"). Only use the listing `block` aggregate WHILE loading
-  // (detail === undefined). `??` would wrongly fall through on a resolved null.
-  const avgRating = detailLoaded ? detail.avgRating : block.avgRating;
-  const reviewCount = detailLoaded ? detail.reviewCount : block.reviewCount;
-
   return (
     <Modal opened={opened} onClose={onClose} title={name} size="lg" radius="md">
       <Stack gap="lg">
@@ -160,7 +128,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             >
               <Group gap={6} wrap="nowrap">
                 <Avatar
-                  src={author.image ? getEdgeUrl(author.image, { width: 64 }) : undefined}
+                  src={
+                    author.image
+                      ? getEdgeUrl(author.image, { width: 64, optimized: true })
+                      : undefined
+                  }
                   alt=""
                   radius="xl"
                   size={20}
@@ -185,12 +157,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             </Anchor>
           ) : (
             detail?.liveUrl && (
-              <Anchor
-                href={detail.liveUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="xs"
-              >
+              <Anchor href={detail.liveUrl} target="_blank" rel="noopener noreferrer" size="xs">
                 <Group gap={4}>
                   <IconExternalLink size={12} />
                   Open live
@@ -200,11 +167,10 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           )}
         </Stack>
 
-        {description && (
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-            {description}
-          </Text>
-        )}
+        {/* Markdown, via the shared renderer (`appListingDescriptionText.ts` holds the
+            rule). Was `pre-wrap` plain text, which disagreed with the listing
+            detail body's markdown rendering of the same stored string. */}
+        {description && <AppListingDescription description={description} />}
 
         {/* Detail-load failure (audit M1): when the public-detail query errors
             we can't say anything definitive about screenshots OR scopes, so
@@ -275,64 +241,51 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             security-relevant claim about an app whose scopes we never actually
             read. */}
         {!isExternal && (
-        <Stack gap="xs">
-          <Group gap="xs">
-            <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-              <IconShieldCheck size={14} />
-            </ThemeIcon>
-            <Title order={5}>This app can…</Title>
-          </Group>
-          {isError ? (
-            <Text size="sm" c="red">
-              Couldn&apos;t load full details — try again.
-            </Text>
-          ) : !detailLoaded ? (
-            <Center py="xs">
-              <Loader size="xs" />
-            </Center>
-          ) : scopes.length === 0 ? (
-            <Text size="sm" c="dimmed">
-              This app does not request any permissions.
-            </Text>
-          ) : (
-            <List
-              spacing="xs"
-              size="sm"
-              icon={
-                <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
-                  <IconLock size={12} />
-                </ThemeIcon>
-              }
-            >
-              {scopes.map((scope) => (
-                <List.Item key={scope}>
-                  <Group gap="xs" wrap="nowrap" align="center">
-                    <Badge variant="outline" color="gray" size="xs">
-                      {scope}
-                    </Badge>
-                    <Text component="span" size="sm">
-                      {scopeLabel(scope)}
-                    </Text>
-                  </Group>
-                </List.Item>
-              ))}
-            </List>
-          )}
-        </Stack>
+          <Stack gap="xs">
+            <Group gap="xs">
+              <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                <IconShieldCheck size={14} />
+              </ThemeIcon>
+              <Title order={5}>This app can…</Title>
+            </Group>
+            {isError ? (
+              <Text size="sm" c="red">
+                Couldn&apos;t load full details — try again.
+              </Text>
+            ) : !detailLoaded ? (
+              <Center py="xs">
+                <Loader size="xs" />
+              </Center>
+            ) : scopes.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                This app does not request any permissions.
+              </Text>
+            ) : (
+              <List
+                spacing="xs"
+                size="sm"
+                icon={
+                  <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
+                    <IconLock size={12} />
+                  </ThemeIcon>
+                }
+              >
+                {scopes.map((scope) => (
+                  <List.Item key={scope}>
+                    <Group gap="xs" wrap="nowrap" align="center">
+                      <Badge variant="outline" color="gray" size="xs">
+                        {scope}
+                      </Badge>
+                      <Text component="span" size="sm">
+                        {scopeLabel(scope)}
+                      </Text>
+                    </Group>
+                  </List.Item>
+                ))}
+              </List>
+            )}
+          </Stack>
         )}
-
-        <Divider />
-
-        {/* Recent reviews — REUSES the existing reviews component + queries
-            (summary + a few recent rows + the gated write form). The aggregate
-            (avgRating / reviewCount) comes from the listing row (kept fresh by
-            getAppDetail invalidation inside the component). */}
-        <AppBlockReviews
-          appBlockId={appBlockId}
-          avgRating={avgRating}
-          reviewCount={reviewCount}
-          subscriptions={mySubsForApp}
-        />
       </Stack>
     </Modal>
   );

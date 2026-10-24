@@ -7,6 +7,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // production code.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
 import type * as RedisClientModule from '~/server/redis/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Coverage for GET /api/internal/image-delivery/[id] — the per-request lookup the image
@@ -24,16 +25,12 @@ import type * as RedisClientModule from '~/server/redis/client';
  * which never selects `type`/`mimeType`.
  */
 
-const { store, dbReadQueryRaw, dbWriteQueryRaw } = vi.hoisted(() => ({
+const { store,  } = vi.hoisted(() => ({
   store: new Map<string, unknown>(),
-  dbReadQueryRaw: vi.fn(),
-  dbWriteQueryRaw: vi.fn(),
+  
 }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: dbReadQueryRaw },
-  dbWrite: { $queryRaw: dbWriteQueryRaw },
-}));
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 
 // Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the client.
 vi.mock('~/server/redis/client', async (importOriginal) => {

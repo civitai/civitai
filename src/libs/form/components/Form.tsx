@@ -11,11 +11,18 @@ import clsx from 'clsx';
 
 const CustomFormCtx = createContext<{
   onSubmit?: SubmitHandler<any>;
+  resetCount?: number;
 } | null>(null);
 export function useCustomFormContext() {
   const ctx = useContext(CustomFormCtx);
   if (!ctx) throw new Error('missing CustomFormCtx in tree');
   return ctx;
+}
+
+// `FormProvider` only forwards react-hook-form's own methods, so the lib `useForm`'s `resetCount`
+// has to travel through this context to reach inputs. Safe outside `Form`: it reads 0.
+export function useFormResetCount() {
+  return useContext(CustomFormCtx)?.resetCount ?? 0;
 }
 
 export type FormProps<TInput extends FieldValues, TOutput extends FieldValues> = {
@@ -55,7 +62,9 @@ export function Form<
 
   return (
     <FormProvider {...form}>
-      <CustomFormCtx.Provider value={{ onSubmit }}>
+      <CustomFormCtx.Provider
+        value={{ onSubmit, resetCount: (form as { resetCount?: number }).resetCount }}
+      >
         <form id={id} onSubmit={handleSubmit} className={clsx('relative', className)} style={style}>
           <LoadingOverlay visible={loading} zIndex={1} />
           {children}

@@ -8,7 +8,20 @@ import { TRPCError } from '@trpc/server';
  * than matching on the mapped prose.
  */
 export function getBuzzApiStatus(error: unknown): number | undefined {
-  if (error instanceof BuzzApiError) return error.status;
-  if (error instanceof TRPCError && error.cause instanceof BuzzApiError) return error.cause.status;
+  return buzzApiError(error)?.status;
+}
+
+/**
+ * The body the buzz service sent with a 4xx (parsed JSON, else raw text), through the same
+ * TRPCError wrapping as the status. `unknown` on purpose: callers parse it with their own schema,
+ * and undefined means none was sent, it could not be read, or this is not a buzz 4xx.
+ */
+export function getBuzzApiErrorBody(error: unknown): unknown {
+  return buzzApiError(error)?.body;
+}
+
+function buzzApiError(error: unknown): BuzzApiError | undefined {
+  if (error instanceof BuzzApiError) return error;
+  if (error instanceof TRPCError && error.cause instanceof BuzzApiError) return error.cause;
   return undefined;
 }

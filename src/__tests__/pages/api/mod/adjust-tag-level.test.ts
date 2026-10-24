@@ -28,22 +28,6 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   return { ...actual, batchProcessor: vi.fn().mockResolvedValue(undefined) };
 });
 
-vi.mock('~/server/redis/client', () => {
-  // Recursive key proxy: any nested key path resolves to a string, so
-  // module-eval-time dereferences like `REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT`
-  // (used to build top-level counters in the transitively-imported new-order utils)
-  // don't throw. Mirrors the passing sibling orchestration sysredis-soft test.
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  return {
-    // The handler's bustGetTagsCache() → tag.service.bustCacheTag reads a tag's
-    // key-set via redis.sMembers then redis.del's each — provide benign no-op
-    // implementations so that (real, un-mocked) bust path completes.
-    redis: { sMembers: vi.fn().mockResolvedValue([]), del: vi.fn().mockResolvedValue(0) },
-    REDIS_KEYS: make(),
-    REDIS_SYS_KEYS: make(),
-  };
-});
-
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
@@ -71,6 +55,7 @@ vi.mock('~/env/server', () => ({
 }));
 
 import handler from '~/pages/api/mod/adjust-tag-level';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const runRequest = (query: Record<string, string>) => {
   const req = {

@@ -23,7 +23,6 @@ export interface SessionUser {
   showNsfw: boolean;
   blurNsfw: boolean;
   browsingLevel: number;
-  redBrowsingLevel?: number;
   onboarding: number;
   permissions?: string[];
   /** App-namespaced role grants (`app:role`), e.g. `["moderator:volunteer", "tester"]`. Read via `appRoles`. */
@@ -33,6 +32,12 @@ export interface SessionUser {
   subscriptionId?: string;
   memberInBadState?: boolean;
   allowAds?: boolean;
+  /**
+   * Early-adopter opt-in, read off `User.settings.isEarlyAdopter` by the hub's
+   * `shapeSessionUser`. Carried on the session so `buildFliptContext` can expose it
+   * as a Flipt targeting property without a per-request DB read.
+   */
+  isEarlyAdopter?: boolean;
   // Client-only fields (parity with the main app's ExtendedUser — see src/types/next-auth.d.ts).
   name?: string;
   autoplayGifs?: boolean;

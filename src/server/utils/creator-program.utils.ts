@@ -5,6 +5,8 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import type { ConfigType } from 'dayjs';
+import { formatDate } from '~/utils/date-helpers';
 
 // Compensation-pool value math now lives in @civitai/buzz (shared with the creator-studio spoke); re-exported
 // here so existing `~/server/utils/creator-program.utils` import sites are unchanged. Single source of truth.
@@ -36,6 +38,31 @@ export function getPhases({ month, flip }: { month?: Date; flip?: boolean } = {}
   const extraction = [bank[1], dayjsMonth.endOf('month').subtract(1, 'hours').toDate()];
 
   return { bank: flip ? extraction : bank, extraction: flip ? bank : extraction };
+}
+
+export type CreatorProgramStageNotification =
+  | 'banking-phase-ending'
+  | 'extraction-phase-started'
+  | 'extraction-phase-ending';
+
+const utcDay = (date: ConfigType) => formatDate(date, 'YYYY-MM-DD', true);
+
+// The UTC calendar day each stage notification belongs to, derived from the unflipped
+// getPhases calendar so the send day cannot drift from the phase boundaries.
+export function getStageNotificationDays(
+  month?: Date
+): Record<CreatorProgramStageNotification, string> {
+  const { bank, extraction } = getPhases({ month });
+  return {
+    'banking-phase-ending': utcDay(bank[1]),
+    // extraction[0] is banking's last instant (23:59:59.999), so extraction's first day is the next one.
+    'extraction-phase-started': utcDay(dayjs.utc(extraction[0]).add(1, 'ms')),
+    'extraction-phase-ending': utcDay(extraction[1]),
+  };
+}
+
+export function isStageNotificationDay(stage: CreatorProgramStageNotification, now = new Date()) {
+  return getStageNotificationDays(now)[stage] === utcDay(now);
 }
 
 export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {

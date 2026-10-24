@@ -1,21 +1,24 @@
 import type { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { isSortAvailable, resolveFeedSort } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { FilterSubTypes } from '~/providers/FiltersProvider';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
   ArticleSort,
+  ArticleSortHidden,
   BountySort,
   BuzzWithdrawalRequestSort,
   CollectionSort,
+  CrucibleSort,
   GenerationSort,
   ImageSort,
   ImageSortHidden,
   ModelSort,
+  ModelSortHidden,
   PostSort,
+  PostSortHidden,
   QuestionSort,
   ThreadSort,
   ToolSort,
@@ -31,12 +34,12 @@ type SortFilterComponentProps = {
 type SortFilterProps = StatefulProps | DumbProps;
 
 const sortOptions = {
-  models: Object.values(ModelSort),
-  posts: Object.values(PostSort),
+  models: Object.values(ModelSort).filter((x) => !Object.values(ModelSortHidden).includes(x)),
+  posts: Object.values(PostSort).filter((x) => !Object.values(PostSortHidden).includes(x)),
   images: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   modelImages: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   questions: Object.values(QuestionSort),
-  articles: Object.values(ArticleSort),
+  articles: Object.values(ArticleSort).filter((x) => !Object.values(ArticleSortHidden).includes(x)),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
@@ -44,6 +47,7 @@ const sortOptions = {
   generation: Object.values(GenerationSort),
   tools: Object.values(ToolSort),
   buzzWithdrawalRequests: Object.values(BuzzWithdrawalRequestSort),
+  crucibles: Object.values(CrucibleSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -62,7 +66,8 @@ type SortOption =
   | GenerationSort
   | ThreadSort
   | ToolSort
-  | BuzzWithdrawalRequestSort;
+  | BuzzWithdrawalRequestSort
+  | CrucibleSort;
 
 type DumbProps = {
   // Dumb props should work without needing to create a full filter attribute.
@@ -71,24 +76,19 @@ type DumbProps = {
 } & SortFilterComponentProps;
 
 function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...props }: DumbProps) {
-  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
-  const features = useFeatureFlags();
-  const isModerator = useCurrentUser()?.isModerator ?? false;
+  const availability = useSortAvailability();
+  // The menu below drops what this viewer may not sort by, so a value outside it
+  // would label the control with a sort its own menu will not offer.
+  const resolved = resolveFeedSort({ type, value }, { ...availability, ignoreNsfwLevel });
 
   return (
     <SelectMenuV2
-      label={value}
+      label={resolved}
       onClick={onChange}
-      value={value}
-      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) => {
-        if (ignoreNsfwLevel || isModerator) return true;
-        if (!features.canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
-        if (type === 'images') {
-          if (!showNsfw && x.value === 'Newest') return false;
-          return true;
-        }
-        return true;
-      })}
+      value={resolved}
+      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) =>
+        isSortAvailable({ type, value: x.value }, { ...availability, ignoreNsfwLevel })
+      )}
       {...props}
     />
   );

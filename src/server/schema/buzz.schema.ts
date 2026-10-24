@@ -83,9 +83,10 @@ export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 export const getBuzzTransactionResponse = z.object({
   date: z.coerce.date(),
   // The buzz service returns a NAME for the transaction types it knows and the raw enum NUMBER for the
-  // ones it doesn't — LicenseFee (27) is the live case, and the same numbers reach ClickHouse (see the
-  // `'27'` handling in creator-studio's earnings reads). Collapsing every numeric value to Tip labelled
-  // each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all a fee-earning creator saw.
+  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases. ClickHouse spells
+  // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
+  // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
+  // a fee-earning creator saw.
   type: z.any().transform((value): TransactionType => {
     const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
     if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
@@ -204,7 +205,7 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const compensationSources = ['compensation', 'licenseFee'] as const;
+export const compensationSources = ['compensation', 'licenseFee', 'tip'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
@@ -334,6 +335,15 @@ export const createMultiAccountBuzzTransactionResponse = z.object({
       transactionId: z.string(),
       accountType: buzzAccountTypeFromApiValueSchema,
       amount: z.number(),
+      // The wire type (`CreateMultiTransactionResponse`) declares this REQUIRED,
+      // and omitting it here made zod strip it — so a leg the ledger reported as
+      // a duplicate of an already-occupied external id arrived indistinguishable
+      // from one that moved money, with a plausible `transactionCount` and
+      // `totalAmount` behind it. Optional rather than required because whether
+      // the service sends it on every response is unverified from here, and a
+      // required field would fail the parse for every caller of this endpoint if
+      // it does not; `undefined` therefore means "not reported", never "false".
+      duplicate: z.boolean().optional(),
     })
   ),
   totalAmount: z.number(),

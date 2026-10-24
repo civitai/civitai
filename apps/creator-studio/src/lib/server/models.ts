@@ -10,6 +10,7 @@ import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
   type PaidAccessConfig,
 } from '$lib/monetization/paid-access';
+import { saleEligibleFilter } from '$lib/server/monetization/sale-eligibility';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
 function paidAccessFilter(alias: string) {
@@ -17,8 +18,8 @@ function paidAccessFilter(alias: string) {
   return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
 }
 
-// A stored 0 counts as OFF, matching every fee read (effectiveLicensingFee, the mini endpoint, feeChip) —
-// legacy rows still hold 0 from the old clear path, and an IS NOT NULL test lists them as "fee set".
+// A stored 0 counts as OFF: legacy rows still hold 0 from the old clear path, and an IS NOT NULL
+// test would list them as "fee set".
 // Parenthesized because this is AND'd into a larger WHERE: OR binds looser, so an unwrapped `x is null or
 // x <= 0` would reassociate and drop every other filter.
 function feeFilter(alias: string, mode: 'set' | 'off') {
@@ -75,6 +76,8 @@ export type CreatorModel = {
   // Drive the "view on Civitai" link to civitai.red vs civitai.com (see $lib/model-url).
   nsfw: boolean;
   nsfwLevel: number;
+  /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
+  poi: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -94,6 +97,8 @@ export type ModelsQuery = {
   access?: boolean; // has early / paid access on a version
   /** Usage-control filter (bulk paid-access scoping): 'download' or 'generation'. */
   usage?: 'download' | 'generation';
+  /** Only versions a sale could actually discount — the sale picker's list (868kwp6mp). */
+  saleEligible?: boolean;
   sort?: ModelsSort;
   page?: number;
   /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
@@ -238,7 +243,18 @@ export const PAGE_SIZE_COOKIE = 'cs-page-size';
 // sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
 // matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
 export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
-  const { userId, q, fee, baseModel, type, status, access, usage, sort = 'recent' } = query;
+  const {
+    userId,
+    q,
+    fee,
+    baseModel,
+    type,
+    status,
+    access,
+    usage,
+    saleEligible,
+    sort = 'recent',
+  } = query;
   const page = Math.max(1, query.page ?? 1);
   const perPage = query.perPage ?? MODELS_PER_PAGE;
   const usageValue =
@@ -254,7 +270,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
   else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
-  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue;
+  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue || !!saleEligible;
   if (hasVersionFilter)
     filtered = filtered.where((eb) =>
       eb.exists(
@@ -267,13 +283,14 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
           .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
           .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
           .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+          .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       )
     );
 
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel'])
+      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi'])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -360,10 +377,14 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
     .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
     .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+    .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
     .orderBy('mv.index', 'asc')
     .execute();
 
   // Select-all set: every version matching the filter across ALL pages (bulk mode only — it can be large).
+  // POI models stay IN even though a fee on one is refused: only SETTING a price is blocked, and a POI
+  // version can already carry a fee, so excluding them would make "select all → clear fees" silently
+  // skip exactly the versions most likely to need clearing (868m15nnc).
   let matchingVersionIds: number[] = [];
   if (query.withMatchingVersionIds) {
     const idRows = await dbRead
@@ -383,6 +404,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
       .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
       .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+      .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
       .select('mv.id')
       .execute();
     matchingVersionIds = idRows.map((r) => r.id);
@@ -424,6 +446,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       status: m.status,
       nsfw: !!m.nsfw,
       nsfwLevel: Number(m.nsfwLevel ?? 0),
+      poi: !!m.poi,
       versions: byModel.get(m.id) ?? [],
     })),
     total,

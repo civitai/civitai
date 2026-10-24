@@ -25,23 +25,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * so we can assert exactly which layer served each id.
  */
 
-const mGetMock = vi.fn();
-const setMock = vi.fn().mockResolvedValue(undefined);
-const setNxMock = vi.fn().mockResolvedValue(true);
-const delMock = vi.fn().mockResolvedValue(undefined);
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      mGet: (...args: unknown[]) => mGetMock(...args),
-      set: (...args: unknown[]) => setMock(...args),
-    },
-    setNxKeepTtlWithEx: (...args: unknown[]) => setNxMock(...args),
-    del: (...args: unknown[]) => delMock(...args),
-  },
-  sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock', TAG: 'caches:tag' },
-}));
+const mGetMock = redisMock.redis.packed.mGet;
+const setMock = redisMock.redis.packed.set;
+const setNxMock = redisMock.redis.setNxKeepTtlWithEx;
+const delMock = redisMock.redis.del;
 
 vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: vi.fn(),
@@ -62,6 +49,10 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockResolvedValue(undefined);
+redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
+redisMock.redis.del.mockResolvedValue(undefined);
 
 type Row = { id: number; name: string };
 
@@ -334,11 +325,11 @@ describe('createCachedArray L1 — shared-instance isolation', () => {
 
 describe('createCachedArray L1 — mirrors the Redis-write skip (dontCache/debounce)', () => {
   it('does NOT L1-cache a freshly-busted (debounce) id so the debounce/replica-lag guard survives', async () => {
-    // Redis returns a debounce marker with a RECENT cachedAt → the id is treated as
-    // `dontCache` (within debounceTime): served from origin (dbRead) but deliberately
-    // NOT written back to Redis. The L1 must skip it too, else it would pin the
-    // possibly replica-lagged read for localTtl.
-    mGetMock.mockResolvedValue([{ id: 1, debounce: true, cachedAt: new Date() }]);
+    // Redis returns a debounce marker exactly as bust() writes it (no cachedAt; its EX is the
+    // window) → the id is `dontCache`: served from origin (dbRead) but deliberately NOT written
+    // back to Redis. The L1 must skip it too, else it would pin the possibly replica-lagged read
+    // for localTtl.
+    mGetMock.mockResolvedValue([{ id: 1, debounce: true }]);
     const lookupFn = makeLookup();
     const cache = createCachedArray<Row>({
       key: 'test:l1debounce' as never,

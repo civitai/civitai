@@ -12,6 +12,7 @@ import { IconDownload } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
+import { isGlbFormat } from '~/shared/orchestrator/model3d-output';
 import type { Model3DAsset, Model3DBlob } from '~/shared/orchestrator/workflow-data';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -22,12 +23,11 @@ import { trpc } from '~/utils/trpc';
  * filtered out. Mirrors the taxonomy used server-side by `Model3DFile.variant`.
  */
 export function getModel3DViewableVariants(blob: Model3DBlob): Model3DViewableVariant[] {
-  const isViewable = (fmt: string) => fmt.toLowerCase() === 'glb';
   const list: Model3DViewableVariant[] = [];
-  if (blob.url && isViewable(blob.format))
+  if (blob.url && isGlbFormat(blob.format))
     list.push({ key: 'base', label: 'Base', url: blob.url, format: blob.format });
   const pushAsset = (key: string, label: string, asset: Model3DAsset | undefined) => {
-    if (asset?.url && isViewable(asset.format))
+    if (asset?.url && isGlbFormat(asset.format))
       list.push({ key, label, url: asset.url, format: asset.format });
   };
   pushAsset('rigged', 'Rigged', blob.rigged);

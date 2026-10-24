@@ -32,7 +32,7 @@ vi.mock('~/server/meilisearch/client', () => ({
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 
 import { runModelSearch } from '~/server/services/model-search.service';
 

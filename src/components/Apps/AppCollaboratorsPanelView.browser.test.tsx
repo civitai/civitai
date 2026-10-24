@@ -401,6 +401,62 @@ describe('inviteBlockedReason / pickerExcludedUserIds', () => {
 });
 
 /**
+ * 🔴 AN ACCOUNT THE SERVER HAS SAID IS INELIGIBLE MUST NOT BE OFFERED.
+ *
+ * The candidates come from user search, which serves cached documents — so an account that has
+ * changed state, INCLUDING ITS NAME, can still be presented under its old identity. The panel
+ * screens the ids on offer against the server and feeds the answer to both readers below; these
+ * pin that the answer is actually honoured, and that it outranks every roster reason.
+ */
+describe('inviteBlockedReason / pickerExcludedUserIds — server-screened candidates', () => {
+  const INELIGIBLE = 4242;
+  const FINE = 4343;
+  const rows = [seat({ userId: 1, status: 'accepted' }), seat({ userId: 3, status: 'rejected' })];
+
+  test('an ineligible candidate is blocked, and an eligible one is still offerable', () => {
+    const blocked = inviteBlockedReason(rows, INELIGIBLE, [INELIGIBLE]);
+    expect(blocked).not.toBeNull();
+    expect(blocked!.message).toMatch(/not eligible/i);
+    // The presence half: without it, a helper that blocks EVERYTHING passes the line above.
+    expect(inviteBlockedReason(rows, FINE, [INELIGIBLE])).toBeNull();
+  });
+
+  test('the picker hides the ineligible id and keeps the eligible one on offer', () => {
+    const excluded = pickerExcludedUserIds(rows, [INELIGIBLE]);
+    expect(excluded).toContain(INELIGIBLE);
+    expect(excluded).not.toContain(FINE);
+    // The re-invitable declined seat is unaffected — this is an ADDITIONAL exclusion, not a
+    // replacement of the roster rule.
+    expect(excluded).not.toContain(3);
+    expect(excluded).toContain(1);
+  });
+
+  /**
+   * 🔴 The precedence case, and the one that would silently fail: a `rejected` seat is
+   * re-invitable BY ROSTER RULE, so a guard that consults the roster first hands an ineligible
+   * account back as offerable.
+   */
+  test('ineligibility beats the re-invitable rejected seat', () => {
+    expect(inviteBlockedReason(rows, 3)).toBeNull();
+    expect(inviteBlockedReason(rows, 3, [3])).not.toBeNull();
+    expect(pickerExcludedUserIds(rows, [3])).toContain(3);
+  });
+
+  test('an empty screening answer changes nothing', () => {
+    expect(inviteBlockedReason(rows, INELIGIBLE, [])).toBeNull();
+    expect(pickerExcludedUserIds(rows, [])).toEqual(pickerExcludedUserIds(rows));
+  });
+
+  test('🔴 the guard and the picker AGREE about a screened-out account', () => {
+    for (const userId of [INELIGIBLE, FINE, 1, 3]) {
+      const blocked = inviteBlockedReason(rows, userId, [INELIGIBLE]) !== null;
+      const hidden = pickerExcludedUserIds(rows, [INELIGIBLE]).includes(userId);
+      expect(blocked, `disagreement on user ${userId}`).toBe(hidden);
+    }
+  });
+});
+
+/**
  * 🔴 OWNERSHIP TRANSFER — THE OWNER HALF of the Collaborators tab.
  *
  * The product rule this pins: a COLLABORATOR cannot transfer the app. The panel says so
@@ -534,10 +590,19 @@ describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => 
    * 🔴 THE CONNECT-CLIENT REFUSAL, RENDERED WITH ITS REASON.
    *
    * A connect-linked off-site listing is refused at initiate AND again in-transaction at
-   * accept, with a message that names a concrete remedy: unlink the OAuth client first.
-   * Collapsing that into a generic "something went wrong" leaves the owner with a control
-   * that fails forever and no way to learn why — so the message is asserted VERBATIM
-   * against the server's own exported constant rather than against a paraphrase.
+   * accept, with a message that names the REASON (the credentials/split-ownership
+   * consequence) rather than a remedy. 🔴 NOT because "there is no unlink path in the
+   * product" — that premise is FALSE and #4126 refuted it (deleting the OAuth client
+   * cascades `onDelete: SetNull`); the string instructs nothing on merits recorded at the
+   * constant. Collapsing it into a generic "something went
+   * wrong" would leave the owner with a control that fails forever and no way to learn
+   * why, so the message is asserted VERBATIM against the server's own exported constant
+   * rather than against a paraphrase.
+   *
+   * NOTE: this test drives the MUTATION-ERROR route (the prop), which still exists for
+   * every other refusal reason. The connect-client case is now caught BEFORE submission —
+   * see `src/tests/pages/apps/listing-collaborators-transfer.browser.test.tsx`, which
+   * drives it from listing data with no prop at all.
    */
   test('🔴 a refusal renders inline, with the server’s reason intact', async () => {
     renderWithProviders(
@@ -553,7 +618,9 @@ describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => 
     const error = page.getByTestId('apps-transfer-owner-error');
     await expect.element(error).toBeInTheDocument();
     await expect.element(error).toHaveTextContent(/linked to an OAuth application/i);
-    await expect.element(error).toHaveTextContent(/Unlink the OAuth client first/i);
+    // NOT `/cannot be transferred/i` — this Alert's `title` prop already spells that, so
+    // the regex would match the chrome rather than the message. Assert on the body.
+    await expect.element(error).toHaveTextContent(/split ownership/i);
     // 🔴 The message the SERVER will send, character for character — a paraphrase here
     // would let the copy drift out from under the assertion.
     await expect.element(error).toHaveTextContent(CONNECT_CLIENT_TRANSFER_REFUSAL);

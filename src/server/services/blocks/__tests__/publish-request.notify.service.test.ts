@@ -20,6 +20,8 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const mockNotify = vi.fn(async (..._a: unknown[]) => undefined);
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -53,6 +55,17 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   };
   return { mockNotify, db, s3, holder };
 });
+
+// 🔴 `approveRequest` LAZILY imports `app-listing.service` for its catalog-cache bust
+// (#529), and that module statically imports `~/server/utils/cache-helpers`, whose module
+// BODY builds a logger off the real env. Against this file's minimal `~/env/server` stub
+// that construction throws `TypeError: Cannot read properties of undefined (reading
+// 'includes')` at import time — inside the approve, so every approve case rejects rather
+// than reporting a missing mock. Stub the two exports the listing service uses.
+vi.mock('~/server/utils/cache-helpers', () => ({
+  queryCache: () => async (): Promise<unknown[]> => [],
+  bustCacheTag: vi.fn(async () => undefined),
+}));
 
 vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: mockNotify,
@@ -262,7 +275,10 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
     // The rejection row committed before the notify.
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledWith({
       where: { id: 'req_rej_1' },
-      data: expect.objectContaining({ status: 'rejected', rejectionReason: 'Uses a disallowed scope' }),
+      data: expect.objectContaining({
+        status: 'rejected',
+        rejectionReason: 'Uses a disallowed scope',
+      }),
     });
   });
 

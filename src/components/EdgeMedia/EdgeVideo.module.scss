@@ -59,11 +59,15 @@
 }
 
 .playButton {
-  width: 80px;
-  height: 80px;
+  // Percentages resolve against the positioned wrapper, so thumbnails under 160px get a
+  // proportionally smaller button instead of one that covers the frame. Height follows width so a
+  // wide, short wrapper can't stretch it into an oval.
+  width: min(80px, 50%);
+  height: auto;
+  aspect-ratio: 1;
   color: var(--mantine-color-white);
   background-color: rgba(0, 0, 0, 0.6);
-  padding: 20px;
+  padding: min(20px, 12.5%);
   border-radius: 50%;
   box-shadow: 0 2px 2px 1px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
   transition: background-color 200ms ease;
@@ -71,4 +75,21 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  // Autoplay leaves the element paused for a frame or two after load; the delay keeps that from
+  // flashing the button.
+  animation: playButtonIn 150ms ease 200ms backwards;
+}
+
+@keyframes playButtonIn {
+  from {
+    opacity: 0;
+  }
+}
+
+.noFullscreenButton {
+  // controlsList="nofullscreen" only disables the button; Chrome still paints it greyed out,
+  // which reads as broken. This removes it. WebKit-only, matching controlsList's own support.
+  video::-webkit-media-controls-fullscreen-button {
+    display: none;
+  }
 }

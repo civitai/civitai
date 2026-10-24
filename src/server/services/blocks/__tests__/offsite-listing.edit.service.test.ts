@@ -1,16 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
 import {
+  BETA_PATCH_FIELDS,
   OffsiteRequestError,
   approveExternalRequest,
   beginListingRevision,
   listMySubmissions,
   rejectExternalRequest,
+  buildListingPatchData,
+  splitBetaPatch,
   submitListingRevision,
   updateListing,
+  updateRevisionDraft,
   withdrawExternalRequest,
 } from '~/server/services/blocks/offsite-listing.service';
+import {
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+  STATE_NEUTRAL_MODERATION_ACTIONS,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
+import { BETA_MESSAGE_MAX } from '~/server/schema/blocks/offsite-listing.schema';
+import { BETA_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-beta.service';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
@@ -86,7 +97,23 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
@@ -255,9 +282,9 @@ describe('updateListing', () => {
       where: { id: 'apl_new_1' },
       data: { contentRating: 'g' },
     });
-    expect(updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')).toBe(
-      true
-    );
+    expect(
+      updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')
+    ).toBe(true);
   });
 
   it('DRAFT + contentRating change → edits IN PLACE (no shadow — pre-approval, no gate to bypass)', async () => {
@@ -300,16 +327,20 @@ describe('updateListing', () => {
     expect(res.shadowId).toBe('apl_new_1');
     // The shadow was created as a draft revision of the parent.
     const shadowData = mockWrite.appListing.create.mock.calls[0][0].data as Row;
-    expect(shadowData).toMatchObject({ status: 'draft', revisionOfId: 'apl_parent', appBlockId: null });
+    expect(shadowData).toMatchObject({
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      appBlockId: null,
+    });
     // The FULL patch was written to the SHADOW, never the live parent.
     const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
     expect(updateCalls).toContainEqual({
       where: { id: 'apl_new_1' },
       data: { name: 'Brand New Name', tagline: 'also this' },
     });
-    expect(updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')).toBe(
-      true
-    );
+    expect(
+      updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')
+    ).toBe(true);
   });
 
   it('approved + externalUrl change → treated as MATERIAL → shadow path', async () => {
@@ -433,8 +464,18 @@ describe('beginListingRevision', () => {
     // Screenshots were copied (imageId/order/caption preserved) onto the shadow.
     const shots = mockWrite.appListingScreenshot.createMany.mock.calls[0][0].data as Row[];
     expect(shots).toHaveLength(2);
-    expect(shots[0]).toMatchObject({ appListingId: 'apl_new_1', imageId: 10, order: 0, caption: 'a' });
-    expect(shots[1]).toMatchObject({ appListingId: 'apl_new_1', imageId: 11, order: 1, caption: null });
+    expect(shots[0]).toMatchObject({
+      appListingId: 'apl_new_1',
+      imageId: 10,
+      order: 0,
+      caption: 'a',
+    });
+    expect(shots[1]).toMatchObject({
+      appListingId: 'apl_new_1',
+      imageId: 11,
+      order: 1,
+      caption: null,
+    });
   });
 
   it('idempotent: an existing shadow is returned as-is (no second clone)', async () => {
@@ -471,9 +512,9 @@ describe('beginListingRevision', () => {
     mockWrite.appListing.create.mockRejectedValueOnce(
       Object.assign(new Error('deadlock detected'), { code: 'P2034' })
     );
-    await expect(
-      beginListingRevision({ listingId: 'apl_parent', userId: OWNER })
-    ).rejects.toThrow('deadlock detected');
+    await expect(beginListingRevision({ listingId: 'apl_parent', userId: OWNER })).rejects.toThrow(
+      'deadlock detected'
+    );
   });
 
   it('non-approved parent → INVALID_REVISION', async () => {
@@ -614,7 +655,10 @@ describe('submitListingRevision', () => {
     mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
     await expect(
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('externalUrl') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('externalUrl'),
+    });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 });
@@ -657,6 +701,7 @@ describe('approveExternalRequest (revision apply)', () => {
           slug: 'cool-app',
           status: 'approved',
           kind: 'offsite',
+          contentRating: 'pg13',
         } as Row,
       })
     );
@@ -701,7 +746,11 @@ describe('approveExternalRequest (revision apply)', () => {
       approvalNotes: 'nice edit',
     });
     // Returns the LIVE parent id + slug (not the shadow).
-    expect(res).toEqual({ publishRequestId: 'alpr_rev', listingId: 'apl_parent', slug: 'cool-app' });
+    expect(res).toEqual({
+      publishRequestId: 'alpr_rev',
+      listingId: 'apl_parent',
+      slug: 'cool-app',
+    });
 
     // The request flip re-points appListingId at the PARENT + marks approved.
     const reqCall = mockWrite.appListingPublishRequest.updateMany.mock.calls[0][0] as {
@@ -731,7 +780,17 @@ describe('approveExternalRequest (revision apply)', () => {
       // declared 'pg' — the never-under-rate safety applies on the revision path too.
       contentRating: 'r',
       externalUrl: 'https://cool.example.com/edited',
+      // 🔴 THE SOURCE-REPO LINK IS PART OF THE APPLY SET. It is copied onto the parent
+      // UNCONDITIONALLY (both directions), which is why `beginListingRevision` carries
+      // it onto the shadow and why `OFFSITE_UNCOMPARED_APPLY_FIELDS` names it. This
+      // fixture's shadow has none, so `null` — the CLEARING direction, i.e. the one
+      // that would silently drop a live link if the copy were ever made conditional.
+      sourceRepoUrl: null,
       connectClientId: null,
+      // Pre-existing in the fake's payload (the mock's shadow row has no scope
+      // columns); asserted here only because this is an exact-shape `toEqual`.
+      connectRequestedScopes: undefined,
+      connectScopeJustifications: undefined,
       iconId: 5,
       coverId: 6,
     });
@@ -750,6 +809,15 @@ describe('approveExternalRequest (revision apply)', () => {
     // The shadow is retired (guarded to a revision row).
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', revisionOfId: { not: null } },
+    });
+    // The live PARENT's rating is the "before", not the shadow's declared 'pg'.
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_parent',
+      slug: 'cool-app',
+      before: 'pg13',
+      after: 'r',
+      actorUserId: MOD,
     });
   });
 
@@ -959,14 +1027,24 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     appListingId: 'apl_removed',
     slug: 'gone-app',
     status: 'approved',
-    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed', _count: { screenshots: 3 } },
+    appListing: {
+      name: 'Gone App',
+      revisionOfId: null,
+      status: 'removed',
+      _count: { screenshots: 3 },
+    },
   };
   const liveRequestRow = {
     id: 'alpr_live',
     appListingId: 'apl_live',
     slug: 'live-app',
     status: 'approved',
-    appListing: { name: 'Live App', revisionOfId: null, status: 'approved', _count: { screenshots: 3 } },
+    appListing: {
+      name: 'Live App',
+      revisionOfId: null,
+      status: 'approved',
+      _count: { screenshots: 3 },
+    },
   };
 
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
@@ -1001,5 +1079,1184 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
     expect(mockRead.$queryRaw).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 THE RAW STATEMENT IS PINNED AS TEXT, IN FULL.
+  //
+  // This is the PRIMARY surface for owner republish, and it is the one last-action read
+  // written in SQL, so it is the one place a second hand-maintained spelling of the
+  // status-changing set would live and never be noticed. It was UNFILTERED: a
+  // `message-owner` / `claim` / `report-resolve` newer than the owner's own
+  // `owner-unpublish` became "the last action", the page badged the listing "removed by a
+  // moderator" and hid Republish on a listing `republishOwnListing` would have allowed.
+  //
+  // Every other test in this describe mocks `$queryRaw`'s RESULT, so no behavioural
+  // assertion can see the statement at all — deleting the new `AND action IN (…)` changes
+  // nothing any of them observe.
+  //
+  // 🔴 AND IT IS PINNED AS THE WHOLE NORMALISED STRING, not a regex feature of it. A
+  // partial pattern ("contains `action IN`") is satisfied by semantically INVERTED SQL
+  // (`action NOT IN`), by a predicate `OR`-ed instead of `AND`-ed, and by a token sitting
+  // inside a `--` comment — "the token is present" and "the clause is live" are different
+  // facts. A cosmetic reword of this SQL will fail this test; that is the price of a
+  // machine-readable claim, and it is worth paying here.
+  // -------------------------------------------------------------------------
+  describe('the DISTINCT ON statement (pinned as whole text)', () => {
+    /** Collapse all runs of whitespace so indentation changes don't churn the pin. */
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+    async function rawCall() {
+      mockRead.appListingPublishRequest.findMany
+        .mockResolvedValueOnce([removedRequestRow])
+        .mockResolvedValueOnce([]);
+      mockRead.$queryRaw.mockResolvedValueOnce([
+        { appListingId: 'apl_removed', action: 'owner-unpublish' },
+      ]);
+      await listMySubmissions({ userId: OWNER });
+      expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+      // `Prisma.sql` builds a `Sql` object: `.strings` is the static text, `.values` the
+      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as calls[0][0].
+      const arg = mockRead.$queryRaw.mock.calls[0][0] as {
+        strings: string[];
+        values: unknown[];
+      };
+      return { sql: norm(arg.strings.join('?')), values: arg.values };
+    }
+
+    it('POSITIVE CONTROL: the pin is reading real SQL, not an empty string', async () => {
+      const { sql } = await rawCall();
+      // Without this, a `toBe('')`-shaped accident would read as a pass.
+      expect(sql.length).toBeGreaterThan(80);
+      expect(sql).toMatch(/\bSELECT DISTINCT ON\b/);
+    });
+
+    it('🔴 is EXACTLY this statement — filter, table, ordering and all', async () => {
+      const { sql } = await rawCall();
+      expect(sql).toBe(
+        norm(`
+          SELECT DISTINCT ON (app_listing_id)
+            app_listing_id AS "appListingId",
+            action
+          FROM app_listing_moderation_events
+          WHERE app_listing_id IN (?)
+            AND action IN (?,?,?,?,?,?)
+          ORDER BY app_listing_id, created_at DESC, id DESC
+        `)
+      );
+    });
+
+    it('🔴 the action list is BOUND from the shared constant, in order — not typed out', async () => {
+      const { sql, values } = await rawCall();
+      // One removed listing id, then the six status-changing actions, as parameters.
+      expect(values).toEqual(['apl_removed', ...LISTING_STATUS_CHANGING_MODERATION_ACTIONS]);
+      // A verb appearing in the STATIC half would mean a string-built second spelling.
+      for (const a of LISTING_STATUS_CHANGING_MODERATION_ACTIONS) expect(sql).not.toContain(a);
+    });
+
+    it.each([...STATE_NEUTRAL_MODERATION_ACTIONS])(
+      '🔴 %s is not bound — it cannot displace the event that explains the removal',
+      async (neutral) => {
+        const { values } = await rawCall();
+        expect(values).not.toContain(neutral);
+      }
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listMySubmissions — the KIND seam of the completeness advisory
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ, despite living in
+ * `offsite-listing.service`. Its `where` carries an explicit `{ kind: 'onsite' }`
+ * OR-branch (pinned by the shadow-handling describe above) so ON-SITE MEDIA REVISIONS
+ * appear on /apps/my-submissions — an on-site listing is auto-created and has no own
+ * publish request, so its only representation IS the revision request. That makes this
+ * the one caller of `computeListingProblems` where BOTH kinds genuinely arrive on the
+ * same page, and where a hardcoded `'offsite'` would be wrong in production rather than
+ * merely fragile.
+ *
+ * The three empty-text problems now name a different remedy per kind: an on-site
+ * listing's name/tagline/description/category have NO author surface other than
+ * `block.manifest.json`, and `approveRequest`'s (3b-sync) re-sync overwrites them from
+ * the manifest on every subsequent-version approve.
+ *
+ * 🔴 EVERY CASE IS PAIRED and the OFF-SITE arm is the POSITIVE CONTROL — an on-site-only
+ * assertion would pass equally against an implementation that gave BOTH kinds the
+ * manifest label, which is the same defect pointing the other way.
+ *
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 4 of the
+ * 10 cases below go RED — the on-site media revision, "BOTH KINDS ON ONE PAGE diverge",
+ * the listing-kind projection, and "request.kind and listing.kind DISAGREE". The other 6
+ * PASS at base and are INVARIANT GUARDS (the fixture guard, the off-site positive
+ * control, code invariance, the degrade path, and the disagreement MIRROR). They pin
+ * what must NOT move; they are not evidence the defect was fixed.
+ */
+describe('listMySubmissions (the advisory is KIND-AWARE)', () => {
+  const MANIFEST_TAGLINE = 'Missing tagline — set "tagline" in block.manifest.json and resubmit';
+  const ORIGINAL_TAGLINE = 'Missing tagline';
+
+  /**
+   * A request row whose backing listing has every asset but NO tagline, so exactly ONE
+   * problem fires and a whole-list assertion can be exact. Asset ids are pairwise
+   * distinct (icon 41, cover 53) and distinct from the screenshot count (7), so an
+   * operand swap changes the ANSWER rather than the argument. `kind` has NO default —
+   * every call states it, so a fixture cannot quietly inherit one arm.
+   */
+  const requestRow = (
+    id: string,
+    listingId: string,
+    kind: string,
+    /**
+     * The REQUEST's kind, which defaults to matching the listing's.
+     *
+     * 🔴 IT IS A SEPARATE PARAMETER SO THE TWO CAN BE MADE TO DISAGREE. They are
+     * different columns on different tables and they agree at every request-create
+     * site today — which is exactly why a fixture that always sets them equal cannot
+     * tell `r.appListing.kind` from `r.kind`. An audit mutant that read the REQUEST's
+     * kind SURVIVED all 132 tests for that reason. The stated rationale for reading
+     * the listing's is that they MIGHT diverge, so one fixture has to make them.
+     */
+    requestKind: string = kind
+  ) => ({
+    id,
+    appListingId: listingId,
+    slug: `app-${id}`,
+    kind: requestKind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status: 'approved',
+      kind,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: null,
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  const taglineLabelOf = (item: { problems: { code: string; label: string }[] }) =>
+    item.problems.find((p) => p.code === 'empty-tagline')?.label;
+
+  it('🔴 fixture guard — the two fixtures declare DIFFERENT, known LISTING kinds', () => {
+    const on = requestRow('r_on', 'apl_on', 'onsite');
+    const off = requestRow('r_off', 'apl_off', 'offsite');
+    for (const r of [on, off]) {
+      expect(Object.prototype.hasOwnProperty.call(r.appListing, 'kind')).toBe(true);
+      expect(['onsite', 'offsite']).toContain(r.appListing.kind);
+    }
+    expect(on.appListing.kind).not.toBe(off.appListing.kind);
+  });
+
+  it('an ON-SITE media revision names block.manifest.json', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_on', 'apl_on', 'onsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Positive control: exactly the one text problem.
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('POSITIVE CONTROL — an OFF-SITE submission still produces the ORIGINAL label, verbatim', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_off', 'apl_off', 'offsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
+  });
+
+  it('🔴 BOTH KINDS ON ONE PAGE diverge — each row reads its OWN listing kind', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'apl_on', 'onsite'),
+        requestRow('r_off', 'apl_off', 'offsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+
+    expect(res.items.map((i) => i.id)).toEqual(['r_on', 'r_off']);
+    const labels = Object.fromEntries(res.items.map((i) => [i.id, taglineLabelOf(i)]));
+    expect(labels['r_on']).toBe(MANIFEST_TAGLINE);
+    expect(labels['r_off']).toBe(ORIGINAL_TAGLINE);
+    expect(labels['r_on']).not.toBe(labels['r_off']);
+  });
+
+  it('the CODE is identical either way (wire contract — a released CLI branches on `code`)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'apl_on', 'onsite'),
+        requestRow('r_off', 'apl_off', 'offsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    for (const item of res.items) {
+      expect(
+        item.problems.map((p) => p.code),
+        item.id
+      ).toEqual(['empty-tagline']);
+    }
+  });
+
+  it("the query PROJECTS the LISTING's kind, not only the REQUEST's", async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_on', 'apl_on', 'onsite')])
+      .mockResolvedValueOnce([]);
+    await listMySubmissions({ userId: OWNER });
+    // The mock's arg is typed `unknown`; cast the ARG, not a property of it — reaching
+    // through an `unknown` is a type error even in this (root-typecheck-excluded)
+    // directory, and this file should not add to that backlog.
+    const args = mockRead.appListingPublishRequest.findMany.mock.calls[0][0] as {
+      select: { kind?: boolean; appListing: { select: Record<string, unknown> } };
+    };
+    const select = args.select;
+    // 🔴 BOTH, and the nested one is the load-bearing half: they are different columns on
+    // different tables, and the advisory is a statement about the LISTING. Reading the
+    // request's kind would be a derived surface standing in for the defining one.
+    expect(select.appListing.select.kind).toBe(true);
+    expect(select.kind).toBe(true);
+  });
+
+  /**
+   * 🔴 THE DISCRIMINATING CASE FOR LISTING-KIND-vs-REQUEST-KIND, and the ONLY one.
+   *
+   * Every other fixture in this describe sets `request.kind === appListing.kind`,
+   * because that is what production does at all three request-create sites. The
+   * consequence, found by an adversarial audit of #4370: a mutant changing the call
+   * site from `r.appListing.kind` to `r.kind` SURVIVED the entire 132-test battery.
+   * Not a live hole — the two genuinely agree today — but the stated rationale for
+   * reading the LISTING's column is precisely that they are independent and might
+   * diverge, and a rationale nothing can falsify is not a tested claim.
+   *
+   * This fixture makes them disagree in the direction that matters: an OFF-SITE
+   * request row pointing at an ON-SITE listing. The advisory is a statement about the
+   * LISTING, so the manifest label must win. Reading `r.kind` yields the original
+   * label and fails here — which is what turns the comment into a guard.
+   */
+  it('🔴 request.kind and listing.kind DISAGREE — the LISTING wins', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split', 'apl_split', 'onsite', 'offsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+
+    // Positive control on the fixture itself: the two really do disagree, so this case
+    // cannot quietly degrade into another copy of the aligned ones.
+    const row = mockRead.appListingPublishRequest.findMany.mock.results[0].value as Promise<
+      Array<{ kind: string; appListing: { kind: string } }>
+    >;
+    const [first] = await row;
+    expect(first.kind).toBe('offsite');
+    expect(first.appListing.kind).toBe('onsite');
+
+    expect(res.items[0].problems.map((p) => p.code)).toEqual(['empty-tagline']);
+    expect(taglineLabelOf(res.items[0])).toBe(MANIFEST_TAGLINE);
+  });
+
+  it('the MIRROR — an on-site request pointing at an off-site listing takes the OFF-SITE label', async () => {
+    // Both directions, so the case cannot pass by the arms having been swapped.
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([requestRow('r_split2', 'apl_split2', 'offsite', 'onsite')])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
+  });
+
+  it('a fake that omits the listing kind degrades to the ORIGINAL labels, and never throws', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 'r_bare',
+          appListingId: 'apl_bare',
+          slug: 'bare',
+          status: 'approved',
+          appListing: {
+            name: 'Bare',
+            revisionOfId: null,
+            status: 'approved',
+            iconId: 41,
+            coverId: 53,
+            description: 'A description.',
+            tagline: null,
+            category: 'utility',
+            _count: { screenshots: 7 },
+          },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(taglineLabelOf(res.items[0])).toBe(ORIGINAL_TAGLINE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BETA — the TRIVIAL, NEVER-STAGED listing-native flag.
+//
+// 🔴 THE SINGLE MOST IMPORTANT BEHAVIOURAL CLAIM IN THIS FEATURE is the first test
+// below: a beta-only patch on an APPROVED listing applies IN PLACE and mints NO shadow
+// revision. That is the whole product decision — "trivial, not material" — expressed as
+// a state-machine assertion rather than as an absence from a constant. Asserting only
+// that `isBeta` is missing from `MATERIAL_LISTING_PATCH_FIELDS` would pass while the
+// routing did something else entirely.
+// ---------------------------------------------------------------------------
+
+describe('updateListing — BETA is TRIVIAL (in place, no review)', () => {
+  it('🔴 approved + a beta-ONLY patch → applied IN PLACE, NO shadow revision minted', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true, betaMessage: 'Expect rough edges.' },
+      userId: OWNER,
+    });
+
+    expect(res.requiresReview).toBe(false);
+    expect(res.shadowId).toBeNull();
+    expect(res.listingId).toBe('apl_parent');
+    // Written straight to the LIVE row.
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true, betaMessage: 'Expect rough edges.' },
+    });
+    // 🔴 THE NEGATIVE HALF, and it is the half that fails if beta ever becomes material:
+    // no shadow row was created at all.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('positive control — a NAME change on the same fixture DOES mint a shadow', async () => {
+    // Without this, the assertion above would also pass on a harness where `create` can
+    // never fire (a broken mock, a short-circuited branch). This proves the same fixture
+    // and the same mocks CAN reach the shadow path, so the `not.toHaveBeenCalled()` above
+    // is reporting a property of the PATCH, not of the harness.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Renamed' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(true);
+    expect(mockWrite.appListing.create).toHaveBeenCalled();
+  });
+
+  it('a beta-only patch on a DRAFT listing applies in place too', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true },
+    });
+  });
+
+  it('an empty / whitespace-only beta message is stored as NULL, not as ""', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { betaMessage: '   ' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { betaMessage: null },
+    });
+  });
+
+  it('an over-long beta message is REFUSED as BAD_REQUEST — the bound is re-checked server-side', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { isBeta: true, betaMessage: 'x'.repeat(BETA_MESSAGE_MAX + 1) },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('a message of EXACTLY the cap is accepted — the boundary is inclusive', async () => {
+    // The positive control for the refusal above: without it, a mutant that refuses every
+    // message (`>= MAX`, or an unconditional throw) still passes that test.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    const atCap = 'x'.repeat(BETA_MESSAGE_MAX);
+    // 🔴 THE FLAG TRAVELS WITH THE NOTE. A note cannot be set while beta is off (see the
+    // note/flag rule), so a cap-boundary case that omitted `isBeta` would now be refused for
+    // a reason that has nothing to do with the bound it is testing.
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true, betaMessage: atCap },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true, betaMessage: atCap },
+    });
+  });
+
+  it('a beta edit is ALLOWED on an owner-unpublished listing (it is not material)', async () => {
+    // The repair state refuses only MATERIAL fields. Beta is copy, like the tagline the
+    // refusal message already names — an author whose app is down can still say it is beta.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'removed' }));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({
+      action: 'owner-unpublish',
+    });
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true },
+    });
+  });
+});
+
+describe('updateListing — a MIXED patch splits: material to the shadow, beta to the PARENT', () => {
+  it('🔴 the beta half lands on the LIVE parent while the material half is staged', async () => {
+    // 🔴 THE SPLIT IS THE POINT. If beta rode the shadow, `applyApprovedRevision` — which
+    // copies no beta column — would never deliver it, so the author's toggle would appear
+    // to do nothing until (and unless) a moderator approved an unrelated revision.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Renamed', isBeta: true, betaMessage: 'wip' },
+      userId: OWNER,
+    });
+
+    expect(res.requiresReview).toBe(true);
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+      data: Record<string, unknown>;
+    }>;
+    const toShadow = calls.filter((c) => c.where.id === 'apl_new_1');
+    const toParent = calls.filter((c) => c.where.id === 'apl_parent');
+
+    // The material half went to the shadow, and carries NEITHER beta key.
+    expect(toShadow).toHaveLength(1);
+    expect(toShadow[0].data).toEqual({ name: 'Renamed' });
+    // The beta half went to the live parent, and carries ONLY the beta keys.
+    expect(toParent).toHaveLength(1);
+    expect(toParent[0].data).toEqual({ isBeta: true, betaMessage: 'wip' });
+  });
+
+  it('a material-only patch writes ONCE, to the shadow — no empty parent write', async () => {
+    // Guards the `patchHasAnyField` branch: a mutant that writes unconditionally would
+    // issue a pointless `update` with an empty `data` against the LIVE listing.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+    await updateListing({ listingId: 'apl_parent', patch: { name: 'Renamed' }, userId: OWNER });
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+    }>;
+    expect(calls.filter((c) => c.where.id === 'apl_parent')).toHaveLength(0);
+  });
+});
+
+describe('beta survives the revision round trip — for BOTH kinds', () => {
+  /**
+   * 🔴 THE HAZARD THIS PINS. The recipe that shipped `sourceRepoUrl` was "add the new
+   * scalar to `beginListingRevision`'s clone AND to `applyApprovedRevision`'s copy", because
+   * the apply copies the shadow's scalars UNCONDITIONALLY — so a column the clone forgets is
+   * silently CLEARED on every approve.
+   *
+   * Beta closes that hazard by the opposite route, and these tests pin the route rather than
+   * the recipe: the apply names NEITHER beta column, in EITHER kind branch, so there is
+   * nothing to revert to and the parent's value survives by construction. There is no clone
+   * either — `getListingPreviewForReview` reads beta from the PARENT for a shadow, so the
+   * moderator preview shows the LIVE declaration without one.
+   */
+
+  /** Drive an approved offsite revision all the way through `applyApprovedRevision`. */
+  async function approveRevision(kind: 'onsite' | 'offsite') {
+    const parent = approvedParent({ kind });
+    const shadow = {
+      ...approvedParent({ kind }),
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      // 🔴 A SHAPE PRODUCTION CAN NO LONGER PRODUCE, kept deliberately as a STRUCTURAL pin.
+      // Nothing writes a shadow's beta columns any more, so a real shadow carries the schema
+      // defaults. Seeding NON-default values is what makes the assertion below falsifiable:
+      // if the apply ever starts naming these columns it would carry THESE onto the parent
+      // and the test would see it. A fixture matching production exactly (both defaults)
+      // could not tell "not copied" from "copied a default".
+      isBeta: true,
+      betaMessage: 'a value a real shadow would never hold',
+    };
+    mockRead.appListing.findUnique.mockImplementation(
+      findUniqueById({ apl_parent: parent, apl_shadow: shadow })
+    );
+    mockWrite.appListing.findUnique.mockImplementation(
+      findUniqueById({ apl_parent: parent, apl_shadow: shadow })
+    );
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      slug: 'cool-app',
+      status: 'pending',
+      kind,
+      appListingId: 'apl_shadow',
+      appListing: { id: 'apl_shadow', revisionOfId: 'apl_parent', status: 'draft' },
+    });
+    await approveExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      approvalNotes: null,
+    });
+    return mockWrite.appListing.update.mock.calls
+      .map((c) => c[0] as { where: { id: string }; data: Record<string, unknown> })
+      .filter((c) => c.where.id === 'apl_parent');
+  }
+
+  it.each(['offsite', 'onsite'] as const)(
+    '🔴 %s: the apply writes NEITHER beta column onto the parent',
+    async (kind) => {
+      const parentWrites = await approveRevision(kind);
+      expect(parentWrites.length).toBeGreaterThan(0);
+      for (const write of parentWrites) {
+        expect(Object.keys(write.data)).not.toContain('isBeta');
+        expect(Object.keys(write.data)).not.toContain('betaMessage');
+      }
+    }
+  );
+
+  it('positive control — the OFFSITE apply DOES copy the scalars it is supposed to', async () => {
+    // Without this, the assertion above would pass on an apply that copies nothing at all
+    // (a broken fixture, a short-circuited branch): "no beta keys" is only meaningful once
+    // the same call is shown to write the keys it should.
+    const parentWrites = await approveRevision('offsite');
+    const keys = parentWrites.flatMap((w) => Object.keys(w.data));
+    expect(keys).toContain('name');
+    expect(keys).toContain('externalUrl');
+  });
+
+  it('positive control — the ONSITE apply writes the ASSET columns and nothing else', async () => {
+    const parentWrites = await approveRevision('onsite');
+    const keys = parentWrites.flatMap((w) => Object.keys(w.data));
+    expect(keys).toContain('iconId');
+    expect(keys).toContain('coverId');
+    // The onsite branch stays assets-only, which is what keeps `revisionApplyScope('onsite')`
+    // honest — adding beta here would have broken the review panel's no-op claim.
+    expect(keys).not.toContain('name');
+  });
+
+  it('🔴 beginListingRevision does NOT clone beta onto the shadow', async () => {
+    // 🔴 THIS TEST IS THE INVERSE OF THE ONE IT REPLACED, and the reversal is the fix. The
+    // clone existed for exactly one reader — the moderator review preview, which renders the
+    // SHADOW row — and it forced the parent's beta write to land BEFORE the shadow was
+    // minted, which hoisted a WRITE above the patch validation and made a REJECTED patch
+    // apply its beta half anyway. `getListingPreviewForReview` now reads beta from the
+    // PARENT for a shadow, so the clone buys nothing and the ordering constraint is gone.
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ isBeta: true, betaMessage: 'in progress' })
+    );
+    mockWrite.appListing.findUnique.mockResolvedValue(
+      approvedParent({ isBeta: true, betaMessage: 'in progress' })
+    );
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    await beginListingRevision({ listingId: 'apl_parent', userId: OWNER });
+
+    const created = mockWrite.appListing.create.mock.calls[0][0].data as Row;
+    expect('isBeta' in created).toBe(false);
+    expect('betaMessage' in created).toBe(false);
+    // Positive control: the clone still happened and still carried its ordinary scalars, so
+    // the absence above is about the beta keys and not about an aborted create.
+    expect(created).toMatchObject({ status: 'draft', revisionOfId: 'apl_parent' });
+  });
+});
+
+describe('the AUTHOR-facing refusal when the migration has not been applied', () => {
+  it('🔴 refuses with PRECONDITION_FAILED and the EXACT message — never a silent drop', async () => {
+    // 🔴 THE EXACT STRING, so a mutant that swaps this guard for the source-repo guard (or
+    // for a BAD_REQUEST) is killed by the message rather than merely by "something threw".
+    mockRead.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select) {
+          const err = new Error('column does not exist') as Error & { code?: string };
+          err.code = 'P2022';
+          throw err;
+        }
+        return approvedParent();
+      }
+    );
+
+    let caught: unknown;
+    try {
+      await updateListing({ listingId: 'apl_parent', patch: { isBeta: true }, userId: OWNER });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect((caught as TRPCError).code).toBe('PRECONDITION_FAILED');
+    expect((caught as TRPCError).message).toBe(BETA_UNAVAILABLE_MESSAGE);
+    // Nothing was written — the guard is hoisted above every branch, so no orphan shadow
+    // and no partial update is left behind.
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('a patch that does NOT touch beta is unaffected by unreadable beta columns', async () => {
+    // The reachability control for the guard above: the refusal must be caused by the BETA
+    // KEYS in the patch, not by the columns being unreadable. A mutant that drops the
+    // `!== undefined` condition and asserts unconditionally is killed here.
+    mockRead.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select) {
+          const err = new Error('column does not exist') as Error & { code?: string };
+          err.code = 'P2022';
+          throw err;
+        }
+        return approvedParent();
+      }
+    );
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { tagline: 'still fine' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { tagline: 'still fine' },
+    });
+  });
+});
+
+describe('splitBetaPatch — the never-staged ledger', () => {
+  /**
+   * 🔴 A CONSTANT THAT NOTHING ITERATES IS DECORATION. `BETA_PATCH_FIELDS` is the single
+   * definition of "which keys are beta", and the split loop reads it — so these cases walk
+   * the constant rather than naming the two keys again. Add a third beta column without
+   * teaching the splitter about it and the first case here goes red.
+   */
+  it('every member of BETA_PATCH_FIELDS is moved out of the rest half', () => {
+    const patch: Record<string, unknown> = { name: 'Renamed' };
+    for (const field of BETA_PATCH_FIELDS) {
+      patch[field] = field === 'isBeta' ? true : 'note';
+    }
+    const { betaPatch, restPatch } = splitBetaPatch(patch as never);
+    for (const field of BETA_PATCH_FIELDS) {
+      expect(betaPatch, `${field} must be in the beta half`).toHaveProperty(field);
+      expect(restPatch, `${field} must NOT be in the rest half`).not.toHaveProperty(field);
+    }
+    // Positive control: a non-beta key survives in the rest half, so "not in rest" above is
+    // not satisfied by a splitter that empties `restPatch` entirely.
+    expect(restPatch).toEqual({ name: 'Renamed' });
+  });
+
+  it('an OMITTED beta key stays omitted from both halves (never defaulted)', () => {
+    const { betaPatch, restPatch } = splitBetaPatch({ tagline: 'x' });
+    expect(betaPatch).toEqual({});
+    expect(restPatch).toEqual({ tagline: 'x' });
+  });
+
+  it('does not MUTATE the input patch', () => {
+    // The caller still reads `effectivePatch` after the split (for the material comparison),
+    // so a splitter that `delete`d from the original would silently change that answer.
+    const patch = { name: 'Renamed', isBeta: true } as const;
+    const copy = { ...patch };
+    splitBetaPatch(patch);
+    expect(patch).toEqual(copy);
+  });
+
+  it('carries `isBeta: false` and `betaMessage: null` — falsy values are still instructions', () => {
+    // A splitter written with truthiness would drop both of these, which are precisely the
+    // "turn beta off" and "clear the note" edits.
+    const { betaPatch } = splitBetaPatch({ isBeta: false, betaMessage: null });
+    expect(betaPatch).toEqual({ isBeta: false, betaMessage: null });
+  });
+});
+
+describe('🔴 F1 — the note never outlives the flag', () => {
+  /**
+   * 🔴 THE REGRESSION THIS PINS, in full, because it is the one defect in this feature that
+   * republished copy an author had deleted. Nothing used to write `beta_message = NULL` when
+   * the flag went off, so: set beta + a note → untick beta (patch is `{isBeta:false}`, the
+   * note box is not in the diff) → the column keeps the string while every projection hides
+   * it → re-tick beta weeks later (the prefill nulls the note, so the textarea is EMPTY and
+   * the diff emits `{isBeta:true}` alone) → the ORIGINAL note is public again, on the store
+   * page and the app run page, invisible in the author's own form.
+   *
+   * Three comments asserted the opposite at the time, which is why the fix is at the WRITE
+   * and not only at the projections: a projection rule protects rows written from now on,
+   * the write rule is what stops the column ever holding a note the flag does not cover.
+   */
+  it('turning beta OFF clears the note in the SAME write', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { isBeta: false }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: false, betaMessage: null },
+    });
+  });
+
+  it('the clear WINS over an explicit betaMessage in the same patch', async () => {
+    // A note with the flag off is unreachable by construction (every projection nulls it),
+    // so storing one is storing exactly the dead text that comes back to life later.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: false, betaMessage: 'keep me' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: false, betaMessage: null },
+    });
+  });
+
+  it('🔴 turning beta ON does NOT clear the note — only the OFF transition destroys', async () => {
+    // The asymmetry is deliberate and this is its guard. A caller re-asserting `{isBeta:true}`
+    // on a listing that already carries a note means "keep it"; making the rule symmetric
+    // would silently wipe notes on an idempotent write. A mutant that clears on any `isBeta`
+    // instruction dies here rather than passing on the two cases above.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { isBeta: true }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true },
+    });
+  });
+
+  it('a patch that does not mention isBeta leaves the note alone', async () => {
+    // Reachability control: the clear must be caused by the OFF instruction, not by merely
+    // calling the builder. A mutant that nulls unconditionally dies here.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { tagline: 'x' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { tagline: 'x' },
+    });
+  });
+
+  it('the whole round trip: off then on again yields NO note', async () => {
+    // The end-to-end statement of the defect, driven through the real builder both times.
+    const off = buildListingPatchData(
+      { isBeta: false },
+      { connectAllowedScopes: null, sourceRepoAvailable: true, betaAvailable: true }
+    );
+    expect(off.betaMessage).toBeNull();
+    // With the column now NULL, the re-tick has nothing to resurrect: the prefill is empty,
+    // so the patch carries only the flag, and the stored note stays null.
+    const on = buildListingPatchData(
+      { isBeta: true },
+      { connectAllowedScopes: null, sourceRepoAvailable: true, betaAvailable: true }
+    );
+    expect('betaMessage' in on).toBe(false);
+  });
+});
+
+describe('🔴 F4 — updateRevisionDraft cannot write beta onto a moderator-removed parent', () => {
+  /** A shadow whose parent was taken down after the revision was opened. */
+  function shadowOfRemovedParent() {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'removed' });
+  }
+
+  it('refuses a beta write when the parent was delisted by a MODERATOR', async () => {
+    // 🔴 `updateListing` refuses EVERY edit on a mod-removed listing. This function did not
+    // write to the parent at all before beta existed, so routing the beta half there reached
+    // that row through a door with no such gate: a delist leaves an open shadow behind, and
+    // its owner could then set public copy on the delisted listing.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS it when the parent is OWNER-unpublished (the repair state)', async () => {
+    // The positive control, and a real requirement: `updateListing` lets an owner edit
+    // trivial fields while their own app is down, so the shadow path must not be stricter.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'owner-unpublish' });
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER });
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+    }>;
+    expect(calls.some((c) => c.where.id === 'apl_parent')).toBe(true);
+  });
+
+  it('a NON-beta patch is unaffected — the gate is about the PARENT write', async () => {
+    // Reachability control: without a beta half there is no parent write, so a mod-removed
+    // parent must not block an ordinary shadow edit that this function always allowed.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { tagline: 'x' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'x' },
+    });
+  });
+});
+
+describe('🔴 a REJECTED patch writes NOTHING — validation runs before every write', () => {
+  it('an invalid externalUrl + a beta change leaves the live listing untouched', async () => {
+    // 🔴 THE REGRESSION THIS PINS, and it was introduced by the fix for a previous finding.
+    // To keep the shadow's beta clone fresh, the parent's beta write was hoisted above
+    // `buildListingPatchData(restPatch)` — and THAT is where `externalUrl` / `sourceRepoUrl`
+    // / scope validation actually runs, because the PATCH schema deliberately does not
+    // superRefine them. So an author saving a bad URL together with a beta change got a
+    // failed save AND a live Beta badge on the public store page, plus an orphan shadow.
+    // `materialPatchChanges` classifies an invalid URL as material precisely so it routes
+    // through this branch, so the path was reachable from the ordinary edit form.
+    //
+    // The clone is gone (the preview reads the parent), so nothing forces that ordering any
+    // more and the function's own stated invariant — "nothing has been written when it
+    // throws" — holds again.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { isBeta: true, betaMessage: 'wip', externalUrl: 'http://cool.example.com/app' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    // Nothing was written ANYWHERE — not the beta half onto the parent, not a shadow.
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('positive control — the same patch with a VALID url does write both halves', async () => {
+    // Without this, the assertion above would also pass on a branch that can never write.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true, betaMessage: 'wip', externalUrl: 'https://cool.example.com/new' },
+      userId: OWNER,
+    });
+
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+      data: Record<string, unknown>;
+    }>;
+    expect(calls.find((c) => c.where.id === 'apl_new_1')?.data).toMatchObject({
+      externalUrl: 'https://cool.example.com/new',
+    });
+    expect(calls.find((c) => c.where.id === 'apl_parent')?.data).toEqual({
+      isBeta: true,
+      betaMessage: 'wip',
+    });
+  });
+});
+
+describe('the F4 gate is SCOPED to the parent write', () => {
+  it('🔴 a shadow edit with NO beta half reads the parent NOT AT ALL', async () => {
+    // 🔴 THE REGRESSION THIS PINS. The first version of the F4 gate read the parent (and
+    // threw NOT_FOUND when it was unreadable) on EVERY call, which put a round trip on every
+    // shadow scalar edit and invented a 404 for edits that never touch the parent row. Two
+    // pre-existing source-repo tests went red on exactly that. The gate belongs to the parent
+    // WRITE, so without one there must be neither a read nor a refusal.
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    // The parent is deliberately UNREADABLE on the primary. A gate that still ran would 404.
+    mockWrite.appListing.findUnique.mockResolvedValue(null);
+
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { tagline: 'x' }, userId: OWNER });
+
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'x' },
+    });
+    // Positive control that the same fixture DOES trip the gate once a beta half exists —
+    // otherwise this test would pass against a gate that was deleted outright.
+    mockWrite.appListing.update.mockClear();
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('🔴 N5 — a note can never sit behind an OFF flag, by any route', () => {
+  /**
+   * 🔴 THE OFF *TRANSITION* WAS NOT THE ONLY WAY IN, which is what an earlier version of
+   * this rule checked. A patch that names `betaMessage` and NOT `isBeta`, on a listing whose
+   * flag is already off, stored a live note behind an off flag — re-creating the exact
+   * precondition the whole note/flag rule exists to make unreachable, because the next time
+   * the author ticks the box the prefill is empty and the diff emits `{isBeta:true}` alone.
+   *
+   * Reachable from a stale form or a second tab (the baseline says beta is on, the author
+   * retypes the note, `buildScalarPatch` emits `{betaMessage}` alone because the checkbox
+   * matches its stale baseline) and directly through the tRPC mutation, since the patch
+   * schema does not couple the two keys.
+   */
+  it('REFUSES a note set on a listing that is not in beta and is not being turned on', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: false }));
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { betaMessage: 'y' }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('ACCEPTS the same note when the same patch also turns beta ON (positive control)', async () => {
+    // Without this the refusal above would also pass on a rule that rejected every note.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: false }));
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: true, betaMessage: 'y' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true, betaMessage: 'y' },
+    });
+  });
+
+  it('ACCEPTS a note on a listing ALREADY in beta (the ordinary edit)', async () => {
+    // The second positive control, and the one that pins `currentIsBeta` is actually read
+    // rather than assumed false: a mutant hardcoding `false` reddens here.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: true }));
+    await updateListing({ listingId: 'apl_parent', patch: { betaMessage: 'y' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { betaMessage: 'y' },
+    });
+  });
+
+  it('a patch turning beta OFF *with* a note CLEARS rather than erroring', async () => {
+    // 🔴 THE SHAPE THAT MUST NOT BE REFUSED. `{isBeta:false, betaMessage:'x'}` is coherent —
+    // the author is switching beta off and the note is moot — so rejecting it would fail a
+    // save whose intent is unambiguous. An earlier draft of this rule DID reject it.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: true }));
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: false, betaMessage: 'x' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: false, betaMessage: null },
+    });
+  });
+
+  it('clearing the note on an off listing is a no-op clear, not an error', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: false }));
+    await updateListing({ listingId: 'apl_parent', patch: { betaMessage: null }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { betaMessage: null },
+    });
+  });
+
+  it('a whitespace-only note on an off listing clears rather than refusing', async () => {
+    // `typedANote` trims, so '   ' is not "typed a note" — it is a clear.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ isBeta: false }));
+    await updateListing({ listingId: 'apl_parent', patch: { betaMessage: '  ' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { betaMessage: null },
+    });
+  });
+});
+
+describe('🔴 NEW-2 — updateRevisionDraft evaluates the note/flag rule against the PARENT', () => {
+  /**
+   * 🔴 THIS PATH HAD ZERO COVERAGE AND A SURVIVED MUTANT. Every earlier `updateRevisionDraft`
+   * beta test sent `patch: { isBeta: true }`, where the effective flag is `true` regardless of
+   * what `currentIsBeta` holds — so replacing `currentIsBeta: parentIsBeta` with `false`
+   * shipped GREEN across 155 files / 3677 tests, while the equivalent mutant on
+   * `updateListing` was killed. Measured, not reasoned.
+   *
+   * What that mutant would break in production is the most ordinary beta edit there is:
+   * editing the NOTE on an approved listing that is already in beta. The form calls
+   * `updateRevisionDraft` for an approved listing, `buildScalarPatch` emits `{betaMessage}`
+   * alone when only the text changed, and with `currentIsBeta` stuck at `false` the effective
+   * flag reads off → every such save 400s.
+   */
+  function shadowOfBetaParent(parentIsBeta: boolean) {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    // The PRIMARY answers both the editability probe (`{status}`) and the guarded beta read.
+    mockWrite.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select)
+          return { isBeta: parentIsBeta, betaMessage: parentIsBeta ? 'old note' : null };
+        return { status: 'approved' };
+      }
+    );
+  }
+
+  it('a NOTE-ONLY patch SUCCEEDS when the parent is already in beta', async () => {
+    shadowOfBetaParent(true);
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { betaMessage: 'new note' },
+      userId: OWNER,
+    });
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+      data: Record<string, unknown>;
+    }>;
+    // The note landed on the LIVE PARENT, not the shadow.
+    expect(calls.find((c) => c.where.id === 'apl_parent')?.data).toEqual({
+      betaMessage: 'new note',
+    });
+  });
+
+  it('the SAME patch is REFUSED when the parent is NOT in beta (the discriminating half)', async () => {
+    // 🔴 THE PAIR IS THE TEST. One case alone cannot tell `currentIsBeta: parentIsBeta` from
+    // a hardcoded constant — the first test dies on `false`, this one dies on `true`, so only
+    // a read of the parent's real flag passes both.
+    shadowOfBetaParent(false);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { betaMessage: 'new note' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('the flag comes from the PARENT, not from the shadow row', async () => {
+    // The shadow's own columns are never written, so they hold schema defaults. An
+    // implementation that read the shadow would see `isBeta: false` and refuse the first
+    // case above; this pins WHICH id the guarded read is given.
+    shadowOfBetaParent(true);
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { betaMessage: 'new note' },
+      userId: OWNER,
+    });
+    const betaRead = mockWrite.appListing.findUnique.mock.calls
+      .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+      .find((a) => a?.select && 'isBeta' in a.select);
+    expect(betaRead?.where).toEqual({ id: 'apl_parent' });
+  });
+});
+
+describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const requestRow = (
+    id: string,
+    status: string,
+    contentRating: string | null,
+    kind = 'offsite'
+  ) => ({
+    id,
+    appListingId: `apl_${id}`,
+    slug: `app-${id}`,
+    kind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status,
+      kind,
+      // Every row carries an app row declaring G; only an on-site listing may read it.
+      appBlock: { contentRating: 'g' },
+      contentRating,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: 'A tagline',
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  it('an approved on-site listing raised to R is reported; a PG-13 one and a draft R one on the same page are not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_hidden', 'approved', 'r', 'onsite'),
+        requestRow('r_sfw', 'approved', 'pg13', 'onsite'),
+        requestRow('r_draft', 'draft', 'r', 'onsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems)).toEqual([
+      [
+        {
+          code: 'hidden-mature-rating',
+          severity: 'advisory',
+          label:
+            'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+        },
+      ],
+      [],
+      [],
+    ]);
+  });
+
+  it('🔴 each asset carries its own level into the civitai.com media problems', async () => {
+    const levels: Record<number, number> = { 41: 4, 53: 1, 61: 8, 62: 2 };
+    mockRead.image.findMany.mockImplementation((async (args: {
+      where?: { id?: { in?: number[] } };
+    }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        ingestion: 'Scanned',
+        nsfwLevel: levels[id],
+      }))) as never);
+    const row = requestRow('r_media', 'approved', 'pg13');
+    row.appListing.screenshots = [{ imageId: 61 }, { imageId: 62 }] as never;
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Icon R → the icon problem (not the PG cover's); the X and PG-13 screenshots raise none.
+    expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
+      ['sfw-slot-mature', 'Your icon is rated R'],
+    ]);
+  });
+
+  it('an ON-SITE row is compared against its app’s declared rating; the off-site row beside it is not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'approved', 'r', 'onsite'),
+        requestRow('r_off', 'approved', 'r'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems.map((p) => p.label))).toEqual([
+      [
+        'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      ],
+      [],
+    ]);
   });
 });

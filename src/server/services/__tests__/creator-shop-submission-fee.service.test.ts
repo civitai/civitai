@@ -1,5 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.keyValue.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.keyValueFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+  cb({
+    cosmetic: { create: mocks.cosmeticCreate },
+    cosmeticShopItem: { create: mocks.shopItemCreate },
+    cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
+  })
+);
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -14,21 +28,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: mocks.shopItemFindMany },
-  },
-  dbWrite: {
-    keyValue: { findUnique: mocks.keyValueFindUnique },
-    cosmeticShopItem: { update: vi.fn() },
-    $transaction: (cb: (tx: unknown) => unknown) =>
-      cb({
-        cosmetic: { create: mocks.cosmeticCreate },
-        cosmeticShopItem: { create: mocks.shopItemCreate },
-        cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
-      }),
-  },
-}));
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
@@ -79,7 +78,11 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     'fetch',
-    vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })
+    vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: async () => new ArrayBuffer(8),
+    })
   );
   mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
   mocks.cosmeticCreate.mockResolvedValue({ id: 99 });

@@ -159,6 +159,13 @@ const SCOPE_ITEMS = [
   },
 ];
 
+// 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
+// `useIsClient()` from `IsClientProvider` and THROWS outside that provider
+// ('missing IsClientContext'). `renderWithProviders` supplies Mantine + a QueryClient
+// only, so the hook is stubbed here rather than the whole app shell being mounted.
+// `true` is the post-mount value, which is the state every assertion below is about.
+vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {

@@ -1,0 +1,850 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { feedbackNextPageHref } from '$lib/feedback-sort';
+import { FEEDBACK_BULK_SCOPE } from '$lib/feedback-bulk';
+
+/**
+ * What only the action layer decides: that a service outcome is TRANSLATED rather than discarded,
+ * and that both writes sit behind their own grant.
+ *
+ * Zero affected rows is the case that matters. The `triage` UPDATE is scoped on the status the
+ * operator was looking at, so "nothing moved" means a colleague's verdict is already on the row —
+ * reporting that as success is a silent overwrite with a green screen over it.
+ */
+
+const triageFeedback = vi.fn();
+const promoteFeedbackToBug = vi.fn();
+const linkFeedbackToBug = vi.fn();
+// The shape the real service returns, both halves of the keyset included. A fake that omits a field
+// the loader forwards is a fake the loader can be broken against and still pass.
+const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null, nextCursorValue: null }));
+const getFeedbackAreas = vi.fn(async () => [] as string[]);
+const bulkTriageFeedback = vi.fn();
+// 🔴 ONE FAKE FOR THE PANEL'S PREREQUISITES, matching the one function the loader now calls. The
+// CONDITIONS behind it (an unlinked row plus the promote grant for the picker, a linked row for
+// siblings) moved into `feedbackPanelExtras` and are tested against real rows in
+// `lib/server/__tests__/feedback.service.test.ts` — a mock here could only restate them.
+const feedbackPanelExtras = vi.fn(async () => ({ siblings: [], knownIssues: [] }));
+
+// `$lib/server/query` reaches `users.service` → `db`, which demands DATABASE_URL at MODULE scope.
+// Stubbed rather than fed a URL: the point of that demand is that a suite can never open a
+// connection to whatever a developer's `.env` happens to point at.
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+
+vi.mock('$lib/server/feedback.service', () => ({
+  FEEDBACK_PAGE_SIZE: 50,
+  // 🔴 A STAND-IN, NOT A MIRROR — deliberately cruder than the real predicate, which also requires
+  // the message to name one of the four migrated columns. It exists to pin the BRANCH only: that
+  // `load` degrades when this answers yes and rethrows when it answers no. WHICH errors earn a yes
+  // is pinned against the real function in `lib/server/__tests__/feedback.service.test.ts`,
+  // including against an error a genuinely unmigrated table raised.
+  isMissingTriageColumns: (e: unknown) =>
+    typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703',
+  getFeedbackList,
+  getFeedbackAreas,
+  feedbackPanelExtras,
+  triageFeedback,
+  promoteFeedbackToBug,
+  linkFeedbackToBug,
+  bulkTriageFeedback,
+}));
+
+const { actions, load } = await import('../+page.server');
+
+const MOD = { id: 7 };
+
+/**
+ * A REAL `FormData`, not a Map: `Map.get` returns `undefined` where `FormData.get` returns `null`,
+ * and the two land on opposite sides of several guards.
+ */
+const event = (form: Record<string, string> = {}, grants: Record<string, true> = ALL_GRANTS) => {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(form)) data.append(key, value);
+  return {
+    request: { formData: async () => data },
+    locals: { user: MOD, grants },
+  } as never;
+};
+
+const ALL_GRANTS = { 'feedback.status.set': true, 'feedback.bug.promote': true } as const;
+
+/**
+ * A `fail()` result, unwrapped.
+ *
+ * The shape is asserted rather than assumed: a success carries neither `status` nor `data`, so
+ * without this a refusal that turned into a success failed with `Cannot read properties of
+ * undefined` from inside this helper — a message that names the helper instead of the claim, and
+ * would read the same for any unrelated shape change.
+ */
+const failure = (result: unknown) => {
+  const r = result as { status?: number; data?: { error?: string } } | null;
+  if (typeof r?.status !== 'number' || !r.data)
+    throw new Error(`expected a fail() result, got ${JSON.stringify(result)}`);
+  return { status: r.status, error: r.data.error };
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  triageFeedback.mockResolvedValue({ ok: true, changed: true });
+  bulkTriageFeedback.mockResolvedValue({ changed: [5, 6], actionable: 2 });
+  promoteFeedbackToBug.mockResolvedValue({ ok: true, bugId: 99, created: true });
+  linkFeedbackToBug.mockResolvedValue({ ok: true, bugId: 42, created: false });
+});
+
+/**
+ * `load` is exercised here too, because two of its decisions are invisible to a typecheck and
+ * neither has any other coverage: whether the canonicalising redirect can fire on a POST, and
+ * whether a hand-edited cursor degrades instead of reaching Postgres.
+ */
+describe('load', () => {
+  const loadEvent = (search: string, method = 'GET') =>
+    ({
+      url: new URL(`https://moderator.test/feedback${search}`),
+      request: { method },
+    } as never);
+
+  /** `load`'s declared return includes `void`, because `redirect()` throws out of it. */
+  const loaded = async (search: string, method = 'GET') => {
+    const result = await load(loadEvent(search, method));
+    if (!result) throw new Error('load returned nothing where a page payload was expected');
+    return result;
+  };
+
+  it('canonicalises a bare landing onto the default view', async () => {
+    // `redirect()` throws; SvelteKit's own object carries `status` and `location`.
+    const thrown = await Promise.resolve(load(loadEvent(''))).catch((e: unknown) => e);
+
+    expect(thrown).toMatchObject({ status: 307 });
+    expect((thrown as { location: string }).location).toBe('/feedback?status=new');
+    expect(getFeedbackList).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 A form action posts to `?/triage`, which REPLACES the query string — so without the method
+   * guard this redirect fires on the POST, and a 307 preserves the method. A no-JS client would
+   * re-POST, run the action a second time, trip its own concurrency guard and be told a save that
+   * worked had conflicted.
+   */
+  it('does NOT redirect a POST, and still applies the default view to it', async () => {
+    const result = await loaded('?%2Ftriage=', 'POST');
+
+    expect(result.statuses).toEqual(['new']);
+    expect(getFeedbackList).toHaveBeenCalledWith(expect.objectContaining({ statuses: ['new'] }));
+  });
+
+  it('treats a present-but-empty `?status=` as an explicit all, not as the default', async () => {
+    const result = await loaded('?status=');
+
+    expect(result.statuses).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE SEAM, WALKED END TO END: the link the pager RENDERS, fed to the loader that READS it.
+   *
+   * Every other test in this arc is scoped to one surface. `feedback-sort.test.ts` proves the href
+   * builder in isolation; the pglite tier proves the keyset in isolation, threading `cursorValue` as
+   * a VARIABLE and never as a URL; this file proves loader→service arguments. All three were green
+   * over a builder that shipped the PREVIOUS page's `?cursorValue=` whenever the new boundary's
+   * value was null — because no test ever handed one surface's output to the next. What linked them
+   * was a shared constant, which is a type-level link, not a behavioural one.
+   *
+   * So this asserts the RELATIONSHIP: whatever `feedbackNextPageHref` writes, `load` parses back to
+   * the same pair. The null case is first because it is the one that was broken.
+   */
+  it('parses back exactly what the pager wrote, both halves, in both value states', async () => {
+    const current = new URL('https://moderator.test/feedback?status=new&sort=handled&dir=asc');
+
+    for (const [value, expected] of [
+      // Entering the trailing null block: the previous page's value must not survive.
+      [null, null],
+      ['quinn', 'quinn'],
+      // An empty string is a VALUE, and must not collapse to the null spelling.
+      ['', ''],
+    ] as const) {
+      vi.clearAllMocks();
+      const href = feedbackNextPageHref(current, 77, value);
+      await loaded(new URL(href, current).search);
+
+      expect(getFeedbackList, `the pager wrote ${href}`).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cursor: 77,
+          cursorValue: expected,
+          sort: { column: 'handled', direction: 'asc' },
+        })
+      );
+    }
+  });
+
+  /**
+   * The same walk from a URL that ALREADY carries a value half — the state the bug needed. A builder
+   * that only ever SET the param leaves the old one in place, and the loader faithfully parses that
+   * stale value back, so the server reads a non-null boundary and re-serves the same page forever.
+   */
+  it('does not let a previous page value survive into a null boundary', async () => {
+    const carrying = new URL(
+      'https://moderator.test/feedback?status=new&sort=handled&dir=asc&cursor=91&cursorValue=mira'
+    );
+
+    const href = feedbackNextPageHref(carrying, 77, null);
+    await loaded(new URL(href, carrying).search);
+
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 77, cursorValue: null })
+    );
+  });
+
+  /**
+   * 🔴 Every migration here is applied BY HAND, and `moderator:admin` reaches this page through
+   * `SUPER_ROLE` before anyone ticks a box on `/admin` — so the window where the page is live
+   * against an unmigrated database is real, not theoretical.
+   */
+  it('degrades to an explanatory empty state when the triage columns do not exist yet', async () => {
+    getFeedbackList.mockRejectedValueOnce(
+      Object.assign(new Error('column f.handledById does not exist'), { code: '42703' })
+    );
+
+    const result = await loaded('?status=new');
+
+    expect(result.migrationPending).toBe(true);
+    expect(result.items).toEqual([]);
+  });
+
+  it('still THROWS any other database error, rather than rendering an outage as an empty queue', async () => {
+    getFeedbackList.mockRejectedValueOnce(
+      Object.assign(new Error('connection terminated'), { code: '57P01' })
+    );
+
+    await expect(Promise.resolve(load(loadEvent('?status=new')))).rejects.toThrow(
+      'connection terminated'
+    );
+  });
+
+  /**
+   * 🔴 THE SORT REACHES THE QUERY, AND A HOSTILE ONE DOES NOT. `?sort=`/`?dir=` are typed by whoever
+   * is holding the keyboard and the column ends up naming a SQL identifier, so what `load` hands the
+   * service is the claim worth pinning here — the allowlist itself is tested in
+   * `lib/__tests__/feedback-sort.test.ts`, and the service refuses a second time on its own map.
+   */
+  it('passes a known sort through and degrades an unknown one to the default ordering', async () => {
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+
+    for (const hostile of ['attachments', 'createdAt', 'f.id', 'id%3B+drop+table', '']) {
+      vi.clearAllMocks();
+      await loaded(`?status=new&sort=${hostile}&dir=asc`);
+      expect(getFeedbackList, `"${hostile}" reached the service`).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: null })
+      );
+    }
+  });
+
+  /**
+   * 🔴 THE LOADER IS WHAT KEEPS A HAND-TYPED URL OFF THE ERROR BOUNDARY, now that the service THROWS
+   * on a sort state it does not have rather than degrading. `age` is a two-state column — `desc` is
+   * the ordering the page already had, so the header never links to it — but `?sort=age&dir=desc` is
+   * a spelling a stale bookmark carries and a `FeedbackSortDirection` the type system accepts. The
+   * parser has to normalise it to `age`'s one state before it reaches `getFeedbackList`.
+   *
+   * ⚠️ The assertion is that the state REACHING THE SERVICE is the normalised one. Asserting only
+   * "the load did not throw" would pass over a loader that dropped the sort entirely, which is a
+   * different and silent answer.
+   */
+  it('normalises a direction the sorted column does not offer, rather than passing it to a service that throws', async () => {
+    await loaded('?status=new&sort=age&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'age', direction: 'asc' } })
+    );
+
+    // The control: a direction a TRI-STATE column does offer is passed through untouched, so the
+    // rewrite above is about `age` and not about `desc`.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+  });
+
+  /**
+   * The value half of the compound cursor. Forwarded as TEXT — which column it belongs to, and
+   * therefore how it has to be coerced, is the service's to know (`FEEDBACK_SORT_KEYS`). `load`
+   * bounds its LENGTH only, because an unbounded parameter is free work for whoever edits the URL.
+   */
+  it('forwards the cursor value half', async () => {
+    await loaded('?status=new&sort=user&dir=asc&cursor=12&cursorValue=grace');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: 'grace' })
+    );
+  });
+
+  /**
+   * 🔴 A REJECTED VALUE HALF DROPS THE WHOLE CURSOR — because `.catch(undefined)` gives a rejected
+   * param the SAME value as an absent one, and those are opposite instructions here. The service
+   * reads an absent value half as "the boundary row's value IS null", a real position; so left
+   * as-is, an over-long `?cursorValue=` would not degrade to page one, it would silently relocate
+   * the operator into the trailing null block of whichever nullable column is sorted.
+   *
+   * ⚠️ The assertion is on `cursor`, not on `cursorValue`. An earlier version of this test was named
+   * "drops one past its length bound" and asserted only `cursorValue: null` — which is what a
+   * MISSING param produces too, so it pinned nothing about dropping and read as coverage of the
+   * behaviour it did not reach.
+   */
+  it('drops the WHOLE cursor when the value half is rejected, not just that half', async () => {
+    await loaded(`?status=new&sort=user&dir=asc&cursor=12&cursorValue=${'x'.repeat(301)}`);
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: null, cursorValue: null })
+    );
+
+    // The control: a genuinely ABSENT value half keeps the id half, because on a nullable column it
+    // names a position rather than a mistake. Without this the test above passes over a loader that
+    // drops every cursor.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=user&dir=asc&cursor=12');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: null })
+    );
+  });
+
+  it('degrades a cursor Postgres would ERROR on, rather than passing it to the query', async () => {
+    // `Feedback.id` is an int4: a larger value errors the comparison instead of missing.
+    for (const bad of ['2147483648', 'abc', '0', '-4', '1.5']) {
+      vi.clearAllMocks();
+      await loaded(`?status=new&cursor=${bad}`);
+      expect(getFeedbackList).toHaveBeenCalledWith(expect.objectContaining({ cursor: null }));
+    }
+
+    vi.clearAllMocks();
+    await loaded('?status=new&cursor=42');
+    expect(getFeedbackList).toHaveBeenCalledWith(expect.objectContaining({ cursor: 42 }));
+  });
+});
+
+/**
+ * 🔴 WHAT THE QUEUE DECIDES ABOUT THE PANEL'S PREREQUISITES IS "IS A ROW OPEN AT ALL", AND NOTHING
+ * ELSE. The three-way condition behind the issue picker — an unlinked row, plus the promote grant —
+ * is shared with `/feedback/<id>`, which renders the same panel, and lives in `feedbackPanelExtras`
+ * where it is tested against real rows. Restating it against a mock here would assert nothing about
+ * the function that actually runs.
+ *
+ * What is still this loader's alone, and therefore still tested here: the reads must not happen when
+ * no row is open. Widening that to "always" is a `Bug` query on every page turn for a control nobody
+ * can see, and it would ship green — nothing else asserts on it.
+ */
+describe('load: the panel prerequisites', () => {
+  const ROW = {
+    id: 5,
+    area: 'apps-marketplace',
+    userId: 1,
+    username: 'reporter',
+    message: 'x',
+    context: {},
+    status: 'new',
+    createdAt: new Date(),
+    triageNote: null,
+    handledById: null,
+    handledByUsername: null,
+    handledAt: null,
+    bugId: null as number | null,
+    bugTitle: null,
+    bugStatus: null,
+  };
+  // `as never` on the payload: the shared `getFeedbackList` fake is declared returning an empty
+  // list, so its inferred item type is `never[]` and any real row is unassignable to it.
+  const withRow = (over: Partial<typeof ROW> = {}) => {
+    getFeedbackList.mockResolvedValue({
+      items: [{ ...ROW, ...over }],
+      nextCursor: null,
+      nextCursorValue: null,
+    } as never);
+  };
+  const loadWith = async (grants: Record<string, true>) =>
+    (await load({
+      url: new URL('https://moderator.test/feedback?status=new&open=5'),
+      request: { method: 'GET' },
+      locals: { user: MOD, grants },
+    } as never)) as { siblings: unknown[]; knownIssues: unknown[] };
+
+  /**
+   * The row AND the grants both reach the shared decision. Handing it the row without the grants —
+   * or the id without the row — is how the two routes' pickers drift apart while both typecheck.
+   */
+  it('hands the open row and the caller’s grants to the shared decision', async () => {
+    withRow();
+    const result = await loadWith(ALL_GRANTS);
+
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 5, bugId: null }),
+      ALL_GRANTS
+    );
+    expect(result.knownIssues).toEqual([]);
+    expect(result.siblings).toEqual([]);
+  });
+
+  it('forwards a grant set that does not hold promote, rather than deciding here', async () => {
+    withRow();
+    await loadWith({ 'feedback.status.set': true });
+
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(expect.anything(), {
+      'feedback.status.set': true,
+    });
+  });
+
+  /**
+   * 🔴 THE ONE DECISION LEFT TO THIS LOADER. With nothing open there is no panel, so neither read
+   * has a consumer — and this is the case the shared function cannot express, because it takes a row.
+   */
+  it('makes no panel reads at all when no row is open', async () => {
+    withRow();
+    const result = (await load({
+      url: new URL('https://moderator.test/feedback?status=new'),
+      request: { method: 'GET' },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never)) as { siblings: unknown[]; knownIssues: unknown[] };
+
+    expect(feedbackPanelExtras).not.toHaveBeenCalled();
+    expect(result.siblings).toEqual([]);
+    expect(result.knownIssues).toEqual([]);
+  });
+
+  /** Same, for an `?open=` naming a row the current filters exclude — there is still no panel. */
+  it('makes no panel reads when the open id is not in this view', async () => {
+    getFeedbackList.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      nextCursorValue: null,
+    } as never);
+    const result = await loadWith(ALL_GRANTS);
+
+    expect(feedbackPanelExtras).not.toHaveBeenCalled();
+    expect(result.knownIssues).toEqual([]);
+  });
+});
+
+describe('triage action', () => {
+  const form = (over: Record<string, string> = {}) => ({
+    id: '5',
+    status: 'reviewed',
+    expectedStatus: 'new',
+    note: 'dupe of #1187',
+    ...over,
+  });
+
+  it('passes the status the operator was looking at through as the concurrency guard', async () => {
+    const result = await actions.triage(event(form()));
+
+    expect(triageFeedback).toHaveBeenCalledWith({
+      id: 5,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: 'dupe of #1187',
+      moderatorId: 7,
+    });
+    expect(result).toMatchObject({ success: true, triaged: 5 });
+  });
+
+  it('is a 409, not a success, when the UPDATE touched no rows', async () => {
+    triageFeedback.mockResolvedValue({ ok: true, changed: false });
+
+    const result = await actions.triage(event(form()));
+
+    expect(failure(result)).toEqual({
+      status: 409,
+      error: 'Someone else already triaged this. Reload to see the current verdict.',
+    });
+  });
+
+  it('separates a row that is GONE from one another moderator moved', async () => {
+    triageFeedback.mockResolvedValue({ ok: false, reason: 'gone' });
+
+    const result = await actions.triage(event(form()));
+
+    expect(failure(result).status).toBe(410);
+  });
+
+  it('stores an empty note as null rather than an empty string', async () => {
+    await actions.triage(event(form({ note: '   ' })));
+
+    expect(triageFeedback).toHaveBeenCalledWith(expect.objectContaining({ note: null }));
+  });
+
+  /**
+   * 🔴 AN ABSENT `note` IS NOT AN EMPTY ONE. The panel has no note box any more — the status
+   * buttons post `id`, `expectedStatus` and `status` alone — so an action that read the missing
+   * field as `''` and stored `null` would blank `Feedback.triageNote` on the first status click,
+   * with a green screen over it and nothing in this app able to put it back.
+   *
+   * ⚠️ NO ROW IS AT RISK TODAY, and the honest version of this claim is worth the line: production
+   * holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them. This pins the CONTRACT —
+   * the column has no writer left, and the next one to appear (a backfill, an import, a note box
+   * that returns) must not find status clicks quietly erasing it.
+   *
+   * `undefined` is what `triageFeedback` reads as "leave the column out of the SET"; the test above
+   * is its control, proving a PRESENT blank box still means "clear it". The two cases have to differ
+   * or this one passes over an action that simply renamed `null` to `undefined`.
+   */
+  it('leaves the stored note alone when the form posts no note field at all', async () => {
+    const data = new FormData();
+    data.append('id', '5');
+    data.append('status', 'reviewed');
+    data.append('expectedStatus', 'new');
+
+    const result = await actions.triage({
+      request: { formData: async () => data },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never);
+
+    expect(result).toMatchObject({ success: true, triaged: 5 });
+    expect(triageFeedback).toHaveBeenCalledWith({
+      id: 5,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: undefined,
+      moderatorId: 7,
+    });
+  });
+
+  /**
+   * Moving a row back to `new` must clear the handler — "handled by" naming a moderator on a row
+   * sitting in the unhandled queue is a claim the screen cannot support. The action's job is to
+   * pass `status: 'new'` through faithfully; the service is what clears the two columns, and
+   * `feedback.service.test.ts` asserts the rows.
+   */
+  it('passes a move back to `new` through to the service unchanged', async () => {
+    await actions.triage(event(form({ status: 'new', expectedStatus: 'actioned' })));
+
+    expect(triageFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'new', expectedStatus: 'actioned' })
+    );
+  });
+
+  it('rejects a status the CHECK constraint would refuse, without reaching the service', async () => {
+    const result = await actions.triage(event(form({ status: 'wontfix' })));
+
+    expect(failure(result).status).toBe(400);
+    expect(triageFeedback).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing expectedStatus — without it there is no concurrency guard at all', async () => {
+    const data = new FormData();
+    data.append('id', '5');
+    data.append('status', 'reviewed');
+    const result = await actions.triage({
+      request: { formData: async () => data },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never);
+
+    expect(failure(result).status).toBe(400);
+    expect(triageFeedback).not.toHaveBeenCalled();
+  });
+
+  it('refuses without the grant, and refuses before touching the service', async () => {
+    const result = await actions.triage(event(form(), {}));
+
+    expect(failure(result).status).toBe(403);
+    expect(triageFeedback).not.toHaveBeenCalled();
+  });
+});
+
+describe('promote action', () => {
+  it('mints an issue from the moderator’s own title and summary', async () => {
+    const result = await actions.promote(
+      event({
+        id: '5',
+        mode: 'create',
+        title: 'Sort resets on back',
+        summary: 'The store loses ?sort on Back.',
+      })
+    );
+
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith({
+      id: 5,
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      // The box was not posted at all, which is the same outcome as posting it blank: no task
+      // linked. NULL rather than '' so the column carries one spelling of absent.
+      clickupUrl: null,
+      moderatorId: 7,
+    });
+    expect(result).toMatchObject({ success: true, bugId: 99 });
+  });
+
+  /**
+   * 🔴 THE WHOLE POINT OF THE BOX. The main app's completion webhook closes a board entry by finding
+   * the entry whose `clickupUrl` holds the id of the task that completed. Every issue promoted from
+   * a report used to be stored with no link at all, so none of them could ever auto-close. Passing
+   * the URL through is what puts a promoted issue on the same footing as one raised on the board.
+   */
+  it.each([
+    ['an HQ task URL', 'https://hq.civitai.com/t/868kfwm3j'],
+    ['an older ClickUp task URL', 'https://app.clickup.com/t/8459928/868kfwm3j'],
+  ])('stores %s so the completion webhook can find the issue', async (_label, clickupUrl) => {
+    await actions.promote(
+      event({
+        id: '5',
+        mode: 'create',
+        title: 'Sort resets on back',
+        summary: 'The store loses ?sort on Back.',
+        clickupUrl,
+      })
+    );
+
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith(expect.objectContaining({ clickupUrl }));
+  });
+
+  /**
+   * 🔴 REFUSED AT THE FORM, BECAUSE NOTHING DOWNSTREAM EVER REPORTS IT. A URL the matcher cannot
+   * parse a task id out of is stored as a link that renders fine and matches nothing — the issue
+   * just never closes itself, with no error anywhere. The moment it is typed is the only point at
+   * which a human is present to fix it.
+   */
+  it.each([
+    ['a ClickUp origin with no task segment', 'https://app.clickup.com/'],
+    // 🔴 The two the MATCHER accepts. Gating on `clickupTaskIdFromUrl` would let both through and
+    // make this path looser than the board's own create form, which requires `z.url()`.
+    ['a bare task id', '868kfwm3j'],
+    ['a look-alike host', 'https://example.com/t/868kfwm3j'],
+  ])('refuses %s, without inserting anything', async (_label, clickupUrl) => {
+    const result = await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's', clickupUrl })
+    );
+
+    expect(failure(result).status).toBe(400);
+    expect(failure(result).error).toMatch(/does not look like a task link/);
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+
+  it('treats a blank ClickUp box as no task linked rather than an empty string', async () => {
+    await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's', clickupUrl: '   ' })
+    );
+
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith(
+      expect.objectContaining({ clickupUrl: null })
+    );
+  });
+
+  /**
+   * ⚠️ ATTACH MUST NOT CARRY IT. Attaching links this report to an issue that already exists and
+   * already has whatever ClickUp link it has; re-posting one here would let the promote form
+   * silently overwrite another issue's task link. `linkFeedbackToBug` has no such parameter, and
+   * this pins that it is not quietly added later.
+   */
+  it('ignores a ClickUp URL posted alongside an attach, which links an existing issue', async () => {
+    await actions.promote(
+      event({
+        id: '5',
+        mode: 'attach',
+        bugId: '42',
+        clickupUrl: 'https://app.clickup.com/t/868kfwm3j',
+      })
+    );
+
+    expect(linkFeedbackToBug).toHaveBeenCalledWith({ id: 5, bugId: 42, moderatorId: 7 });
+  });
+
+  it('attaches to an existing issue instead of filing a second one', async () => {
+    const result = await actions.promote(event({ id: '5', mode: 'attach', bugId: '42' }));
+
+    expect(linkFeedbackToBug).toHaveBeenCalledWith({ id: 5, bugId: 42, moderatorId: 7 });
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true, bugId: 42 });
+  });
+
+  it('is a 409 when someone already linked the row — and attempts NO issue insert', async () => {
+    promoteFeedbackToBug.mockResolvedValue({ ok: false, reason: 'already-linked' });
+
+    const result = await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's' })
+    );
+
+    expect(failure(result)).toEqual({
+      status: 409,
+      error: 'That feedback is already linked to an issue. Reload to see which.',
+    });
+  });
+
+  it('is a 404 for an issue number that does not exist', async () => {
+    linkFeedbackToBug.mockResolvedValue({ ok: false, reason: 'no-such-bug' });
+
+    const result = await actions.promote(event({ id: '5', mode: 'attach', bugId: '42' }));
+
+    expect(failure(result).status).toBe(404);
+  });
+
+  /**
+   * The summary is what the Known Issues board renders, and `createBugInput` requires it. Refusing
+   * here rather than writing an empty one keeps a blank row off a public board.
+   */
+  it('refuses a blank title or summary without inserting anything', async () => {
+    expect(
+      failure(await actions.promote(event({ id: '5', mode: 'create', summary: 's' }))).status
+    ).toBe(400);
+    expect(
+      failure(await actions.promote(event({ id: '5', mode: 'create', title: 't' }))).status
+    ).toBe(400);
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-numeric issue number without reaching either service', async () => {
+    const result = await actions.promote(event({ id: '5', mode: 'attach', bugId: 'abc' }));
+
+    // Not "enter an issue number" — they did enter one.
+    expect(failure(result)).toEqual({ status: 400, error: 'That is not a valid issue number.' });
+    expect(linkFeedbackToBug).not.toHaveBeenCalled();
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 The mode is POSTED, not inferred from whether the number box is blank. Inferring it sent an
+   * empty box down the create-an-issue branch, which refused with "Give the issue a title" over a
+   * form showing neither a title nor a summary field.
+   */
+  it('tells an empty attach form to enter an issue number, not to write a title', async () => {
+    const result = await actions.promote(event({ id: '5', mode: 'attach', bugId: '' }));
+
+    expect(failure(result)).toEqual({ status: 400, error: 'Enter an issue number.' });
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+
+  it('is a 410 when the report itself was deleted, not a conflict over an issue', async () => {
+    promoteFeedbackToBug.mockResolvedValue({ ok: false, reason: 'gone' });
+
+    const result = await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's' })
+    );
+
+    expect(failure(result).status).toBe(410);
+  });
+
+  it('refuses without the promote grant — it is a SEPARATE axis from triaging', async () => {
+    const result = await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's' }, { 'feedback.status.set': true })
+    );
+
+    expect(failure(result).status).toBe(403);
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The selection bar.
+ *
+ * What only this layer decides: that the posted pairs reach the service INTACT (the per-row
+ * concurrency guard is carried in them, so a payload the action reshapes is a guard it weakens),
+ * that an unreadable payload refuses the whole submission, and that the two zero-change outcomes are
+ * told apart. Zero changed is never a success here for the same reason it is not on the single-row
+ * path — with the added trap that a bulk run reports a COUNT, so a wrong one is a claim about rows
+ * the operator cannot individually see.
+ */
+describe('bulkTriage action', () => {
+  const form = (over: Record<string, string> = {}) => ({
+    status: 'reviewed',
+    rows: '5:new,6:dismissed',
+    ...over,
+  });
+
+  it('carries every row with the status that row was showing', async () => {
+    const result = await actions.bulkTriage(event(form()));
+
+    expect(bulkTriageFeedback).toHaveBeenCalledWith({
+      rows: [
+        { id: 5, expectedStatus: 'new' },
+        { id: 6, expectedStatus: 'dismissed' },
+      ],
+      status: 'reviewed',
+      moderatorId: 7,
+    });
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it('refuses the whole submission when one pair is unreadable', async () => {
+    const result = await actions.bulkTriage(event(form({ rows: '5:new,6:banana' })));
+
+    expect(failure(result).status).toBe(400);
+    // 🔴 The service must not be reached at all: a partial write would be exactly the silent drop
+    // the parser exists to prevent.
+    expect(bulkTriageFeedback).not.toHaveBeenCalled();
+  });
+
+  it('reports the refused rows rather than only the changed ones', async () => {
+    bulkTriageFeedback.mockResolvedValue({ changed: [5], actionable: 2 });
+
+    const message = ((await actions.bulkTriage(event(form()))) as { bulkMessage: string })
+      .bulkMessage;
+
+    expect(message).toContain('Set 1 report to reviewed.');
+    expect(message).toContain('1 report did not change');
+    // 🔴 No cause is asserted — the service cannot tell a conflict from a deleted row.
+    expect(message).not.toMatch(/someone else/i);
+  });
+
+  /**
+   * 🔴 THE SKIPPED COUNT IS THE ACTION'S TO COMPUTE, and getting it wrong is silent. The service
+   * reports what it was asked to MOVE (`actionable`); the rows it declined because they were
+   * already at the target are the difference against what was POSTED. Without this the operator
+   * selects three, sees "Set 1 report", and nothing accounts for the other two.
+   */
+  it('accounts for rows the service skipped as already at the target', async () => {
+    bulkTriageFeedback.mockResolvedValue({ changed: [5], actionable: 1 });
+
+    const message = (
+      (await actions.bulkTriage(event(form({ rows: '5:new,6:reviewed' })))) as {
+        bulkMessage: string;
+      }
+    ).bulkMessage;
+
+    expect(message).toContain('1 report was already showing reviewed');
+  });
+
+  it('is a 409, not a success, when nothing moved', async () => {
+    bulkTriageFeedback.mockResolvedValue({ changed: [], actionable: 2 });
+
+    const { status, error } = failure(await actions.bulkTriage(event(form())));
+    expect(status).toBe(409);
+    // 🔴 Same rule as the success sentence: the service does not read per refusal, so naming a
+    // colleague would send the operator looking for a verdict on a row that may be deleted.
+    expect(error).not.toMatch(/someone else/i);
+  });
+
+  /**
+   * 🔴 A DIFFERENT 409 FROM THE ONE ABOVE, AND THE WORDS ARE THE POINT. "Nothing moved because a
+   * colleague got there first" and "nothing moved because they are already in that state" are
+   * different facts; telling an operator the first when the second is true sends them to reload a
+   * page that will say exactly the same thing.
+   */
+  it('distinguishes rows already at the target status from a conflict', async () => {
+    bulkTriageFeedback.mockResolvedValue({ changed: [], actionable: 0 });
+
+    const { status, error } = failure(await actions.bulkTriage(event(form())));
+    expect(status).toBe(409);
+    expect(error).toMatch(/already showing reviewed/i);
+    expect(error).not.toMatch(/triaged elsewhere/i);
+    // 🔴 THE SECOND SENTENCE IS THE POINT OF THE FIRST. `actionable` is derived from the POSTED
+    // expectations, so this refusal can be raised over rows whose database status is something
+    // else entirely — a stale page. Without the pointer the operator is told "already X" and has
+    // no reason to doubt it. Deleting the sentence used to survive the whole suite.
+    expect(error).toMatch(/reload/i);
+  });
+
+  it('refuses a status outside the enum', async () => {
+    expect(failure(await actions.bulkTriage(event(form({ status: 'banana' })))).status).toBe(400);
+    expect(bulkTriageFeedback).not.toHaveBeenCalled();
+  });
+
+  it('sits behind the same grant as the single-row triage', async () => {
+    const result = await actions.bulkTriage(event(form(), { 'feedback.bug.promote': true }));
+
+    expect(failure(result).status).toBe(403);
+    expect(bulkTriageFeedback).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Tags its refusals so the page can render them in the selection bar alone. Three actions share
+   * one `form` object; an untagged failure renders in every panel that looks for `error`.
+   */
+  it('scopes its failures to the bar', async () => {
+    const result = await actions.bulkTriage(event(form({ rows: '' })));
+
+    expect((result as { data?: { scope?: string } }).data?.scope).toBe(FEEDBACK_BULK_SCOPE);
+  });
+});

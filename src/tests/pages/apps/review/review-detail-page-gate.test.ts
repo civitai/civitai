@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Module scope, not a test body: from a body this transform is charged to one test's 60s
+// budget. See vitest.config.mts.
+import '~/pages/apps/review/[publishRequestId]';
 
 /**
  * PER-SUBMISSION REVIEW PAGE SSR gate (`/apps/review/<publishRequestId>`).
@@ -45,7 +48,18 @@ vi.mock('@mantine/core', () => ({
   Center: () => null,
   Loader: () => null,
 }));
-vi.mock('@tabler/icons-react', () => ({ IconArrowLeft: () => null }));
+/*
+  ⚠️ NO `@tabler/icons-react` MOCK AT ALL ANY MORE, and that is a deliberate deletion rather
+  than an omission. It used to be a one-icon factory (`{ IconArrowLeft }`) that kept the icon
+  graph out of this node-env test; once the page's component graph reached
+  `ReviewDetailTabsView` and its five tab icons, that factory failed the WHOLE FILE at import
+  (`No "IconKey" export is defined on the … mock`) — reported as `Tests no tests`, a file that
+  looks skipped rather than broken. The obvious repair, spreading `importOriginal`, is a
+  `vi.mock` that mocks NOTHING: dead machinery that re-admits the entire icon graph the
+  original factory existed to exclude, while reading as if it still excluded it. Deleting it
+  says the same thing honestly. This file's assertions are all about `getServerSideProps`, so
+  what the icons cost is import time and nothing else.
+*/
 vi.mock('next/link', () => ({ default: () => null }));
 vi.mock('~/components/AppLayout/NotFound', () => ({ NotFound: () => null }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({ AppsPageLayout: () => null }));
@@ -57,7 +71,9 @@ vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appReviewPage: true }),
 }));
-vi.mock('~/utils/trpc', () => ({ trpc: { blocks: { getPublishRequest: { useQuery: () => ({}) } } } }));
+vi.mock('~/utils/trpc', () => ({
+  trpc: { blocks: { getPublishRequest: { useQuery: () => ({}) } } },
+}));
 
 function makeCtx(
   opts: {
@@ -85,7 +101,6 @@ function makeCtx(
 }
 
 async function loadResolver() {
-  await import('~/pages/apps/review/[publishRequestId]');
   if (!capturedResolver.fn) throw new Error('resolver not captured');
   return capturedResolver.fn;
 }

@@ -9,9 +9,11 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBrush, IconDownload, IconLock } from '@tabler/icons-react';
+import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -20,13 +22,13 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -38,16 +40,32 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
-import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { getModelRecency } from '~/components/Cards/model-card.utils';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
+import { versionCanGenerate } from '~/shared/generation/coverage-fields';
+import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
+import {
+  pickInitialVersionIndex,
+  resolveSelectedIndex,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  pricingFilterKey,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { TopRightIcons } from './TopRightIcons';
+import {
+  LoadedMark,
+  useResidency,
+  ResourceResidencyStatus,
+} from '~/components/ResourceLoad/ResourceResidency';
+import { VersionPricingBadge } from './VersionPricingBadge';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -55,26 +73,64 @@ export function ResourceSelectCard({
   data,
   height,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   height?: number;
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
-  const { onSelect } = useResourceSelectContext();
+  const {
+    onSelect,
+    role,
+    multiSelect,
+    isStaged,
+    addStaged,
+    removeStaged,
+    resources,
+    staged,
+    limit,
+    filters,
+  } = useResourceSelectContext();
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);
 
   const image = data.images[0];
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const showSfwFace = useShowsSfwFace();
+  const modelName = searchHitName(data, showSfwFace);
 
   const versions = data.versions;
-  const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const _selectedIndex = selectedIndex < versions.length ? selectedIndex : 0;
+  const initialIndex = useMemo(
+    () =>
+      pickInitialVersionIndex(versions, {
+        filter: filters,
+        satisfiesFilter: (v) => versionSatisfiesPricingFilter(v.pricing, filters),
+        isCompatible: (v) =>
+          role !== 'resource' ||
+          getResourceCompatibility(v.baseModel, data.type, { resources }) !== null,
+      }),
+    [versions, filters, role, data.type, resources]
+  );
+  const filterKey = pricingFilterKey(filters);
+  const [override, setOverride] = useState<{ key: string; index: number } | null>(null);
+  const _selectedIndex = resolveSelectedIndex({
+    override,
+    filterKey,
+    versionCount: versions.length,
+    initialIndex,
+  });
+  const setSelectedIndex = (index: number) => setOverride({ key: filterKey, index });
   const selectedVersion = versions[_selectedIndex];
   const [flipped, setFlipped] = useState(false);
 
-  const handleSelect = async () => {
+  /**
+   * `take` commits the resource and closes the picker; `stage` adds it to the
+   * batch and leaves the picker open. Same fetch either way — only the
+   * destination differs.
+   */
+  const handleSelect = async (mode: 'take' | 'stage' = 'take') => {
     const version = selectedVersion;
     if (!version) return;
     const { id } = version;
@@ -94,11 +150,21 @@ export function ResourceSelectCard({
         return;
       }
       const previewImage = resource.image ?? image;
+      // `atLimit` was computed at render; two fast clicks near the cap both pass
+      // it and the second would be dropped by `addStaged` in silence. Every
+      // other rejection on this card says something, so this one does too.
+      if (mode === 'stage' && limit !== undefined && staged.length >= limit) {
+        showErrorNotification({
+          error: new Error(`You can add ${limit} more ${limit === 1 ? 'resource' : 'resources'}`),
+        });
+        return;
+      }
+      const commit = mode === 'stage' ? addStaged : onSelect;
       if (selectSource !== 'generation') {
-        onSelect({ ...resource, image: previewImage });
+        commit({ ...resource, image: previewImage });
       } else {
         if (resource?.canGenerate || resource?.substitute?.canGenerate)
-          onSelect({ ...resource, image: previewImage });
+          commit({ ...resource, image: previewImage });
         else
           showErrorNotification({
             error: new Error('This model is no longer available for generation'),
@@ -107,6 +173,20 @@ export function ResourceSelectCard({
     });
     setLoading(false);
   };
+
+  // Compatibility of the shown version against the form's current ecosystem —
+  // the same predicate the form's own resource list badges with.
+  const compatibility =
+    role === 'resource'
+      ? getResourceCompatibility(selectedVersion?.baseModel, data.type, { resources })
+      : 'full';
+  const incompatible = compatibility === null;
+  const isAdded = multiSelect && selectedVersion ? isStaged(selectedVersion.id) : false;
+  const atLimit = multiSelect && limit !== undefined && staged.length >= limit && !isAdded;
+  // Batch mode starts the moment something is staged. Until then the main
+  // button is the one-click path it has always been; once a batch exists,
+  // committing a single resource behind the user's back would discard it.
+  const batching = multiSelect && staged.length > 0;
 
   // Read favorite state straight from the bookmarked-models query so the
   // toggle's optimistic cache update drives the button — single source of truth,
@@ -126,12 +206,7 @@ export function ResourceSelectCard({
     });
   };
 
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const { isNew, isUpdated } = getModelRecency(data);
 
   const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
   const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
@@ -153,7 +228,7 @@ export function ResourceSelectCard({
                         <Link
                           href={getModelUrl({
                             modelId: data.id,
-                            modelName: data.name,
+                            modelName,
                             modelVersionId: selectedVersion.id,
                           })}
                           target="_blank"
@@ -197,6 +272,7 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                        <VersionPricingBadge pricing={selectedVersion?.pricing} />
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
@@ -264,18 +340,43 @@ export function ResourceSelectCard({
                   data={data}
                   selectedVersion={selectedVersion}
                   selectSource={selectSource}
+                  coverageNext={coverageNext}
                 />
                 <TopRightIcons data={data} setFlipped={setFlipped} />
               </div>
             ))}
 
           <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-            <Text size="sm" fw={700} lineClamp={1} lh={1} data-testid="resource-select-name">
-              {data.name}
+            <Text
+              component={Link}
+              href={getModelUrl({
+                modelId: data.id,
+                modelName,
+                modelVersionId: selectedVersion.id,
+              })}
+              target="_blank"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              size="sm"
+              fw={700}
+              lh={1}
+              data-testid="resource-select-name"
+              // `self-start` so the link's hit area is the name, not the full
+              // width of the card — the parent is a flex column, where the
+              // default `align-items: stretch` would fill the cross axis.
+              className="max-w-full self-start truncate hover:underline"
+            >
+              {modelName}
             </Text>
-            <div className="flex justify-between gap-2">
+            <div className="flex items-center justify-between gap-2">
               <Select
                 className="flex-1"
+                leftSection={
+                  selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
+                    <LoadedMark readiness="ready" />
+                  ) : undefined
+                }
+                leftSectionWidth={26}
+                leftSectionPointerEvents="none"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -286,20 +387,71 @@ export function ResourceSelectCard({
                   label: version.name,
                   value: index.toString(),
                 }))}
+                renderOption={({ option }) => {
+                  const version = versions[Number(option.value)];
+                  return (
+                    <Group gap={6} wrap="nowrap" className="min-w-0">
+                      {selectSource === 'generation' && version?.generatorLoaded && (
+                        <LoadedMark readiness="ready" />
+                      )}
+                      <span className="truncate">{option.label}</span>
+                    </Group>
+                  );
+                }}
                 onChange={(index) => setSelectedIndex(Number(index ?? 0))}
                 styles={{
                   input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
                 }}
               />
+              {compatibility === 'partial' && (
+                <Badge color="yellow" variant="light" size="sm">
+                  Partial support
+                </Badge>
+              )}
+              {incompatible && (
+                <Badge color="red" variant="light" size="sm">
+                  Incompatible
+                </Badge>
+              )}
+              {/* The batch control, separate from the primary action: adding one
+                  resource stays a single click, and building a set is opt-in
+                  rather than the toll everyone pays. */}
+              {multiSelect && !incompatible && (
+                <Tooltip
+                  label={isAdded ? 'Remove from selection' : 'Add to selection'}
+                  position="top"
+                  withArrow
+                >
+                  <LegacyActionIcon
+                    aria-label={isAdded ? 'Remove from selection' : 'Add to selection'}
+                    aria-pressed={isAdded}
+                    variant={isAdded ? 'filled' : 'default'}
+                    disabled={atLimit}
+                    onClick={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // Un-staging needs no round trip — the resource is in hand.
+                      if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+                      else handleSelect('stage');
+                    }}
+                  >
+                    {isAdded ? <IconCheck size={16} /> : <IconPlus size={16} />}
+                  </LegacyActionIcon>
+                </Tooltip>
+              )}
               <Button
                 loading={loading}
+                disabled={incompatible || (batching && atLimit)}
+                variant={isAdded ? 'light' : 'filled'}
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  handleSelect();
+                  if (!batching) return void handleSelect('take');
+                  if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+                  else handleSelect('stage');
                 }}
               >
-                Select
+                {batching ? (isAdded ? 'Added' : 'Add') : 'Select'}
               </Button>
             </div>
           </div>
@@ -313,12 +465,15 @@ function ModelDetailsPanel({
   data,
   selectedVersion,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   selectedVersion: TransformedModel['versions'][number];
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
   const features = useFeatureFlags();
+  const residency = useResidency(selectedVersion.id);
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -336,7 +491,7 @@ function ModelDetailsPanel({
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
-          {selectedVersion.canGenerate && (
+          {versionCanGenerate(selectedVersion, coverageNext) && (
             <IconBadge radius="xs" icon={<IconBrush size={14} />}>
               <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
             </IconBadge>
@@ -358,16 +513,14 @@ function ModelDetailsPanel({
     {
       label: 'Generation',
       value: (
-        <ModelVersionPopularity
-          versionId={selectedVersion.id}
-          isCheckpoint={data.type === ModelType.Checkpoint}
-          listenForUpdates={false}
+        <ResourceResidencyStatus
+          modelVersionId={selectedVersion.id}
+          // The indexed field is readiness, so it can't tell resident from external; the component's
+          // own live read replaces this as soon as it answers.
+          readiness={selectedVersion.generatorLoaded ? 'ready' : 'cold'}
         />
       ),
-      visible:
-        selectSource === 'generation' &&
-        data.type === ModelType.Checkpoint &&
-        features.modelVersionPopularity,
+      visible: selectSource === 'generation' && !!residency,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {

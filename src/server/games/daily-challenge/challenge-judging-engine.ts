@@ -34,6 +34,11 @@ export type JudgingEngineContext = {
   collectionId: number;
   theme: string;
   themeElements?: string[];
+  /**
+   * The featured resource's concrete subject, when the challenge has one recorded. Distinct from
+   * `theme`, which is a creative angle that can drift off the resource entirely.
+   */
+  resourceConcept?: string;
   /** The challenge's own rubric — creator-defined when it has one, the fixed split otherwise. */
   categories: JudgingCategory[];
   /** Per-category criteria text, keyed by category key, for prompts that want it. */

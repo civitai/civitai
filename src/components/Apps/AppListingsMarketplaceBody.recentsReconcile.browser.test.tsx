@@ -5,7 +5,10 @@ import { useRouter } from 'next/router';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
-import { RECENTLY_OPENED_APPS_KEY } from '~/components/Apps/recentlyOpenedAppsStore';
+import {
+  RECENTLY_OPENED_APPS_KEY,
+  RECENTS_ENVELOPE_VERSION,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 
 /**
  * LEGACY-RECENTS RECONCILIATION — the `/apps` rail's stale-icon defect.
@@ -57,11 +60,14 @@ function makeOnsiteCard(args: {
     tagline: null,
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: args.appBlockId === undefined ? `blk_${args.slug}` : args.appBlockId,
@@ -102,14 +108,35 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // returns `/apps/run/<blockId>` when it is on, so with the flag dark EVERY tile
 // resolves to the detail page and this file's central assertion would pass on the
 // broken build for the wrong reason.
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
 }));
 
 // Both throw rather than defaulting when their provider is absent, taking the
 // whole body down with an empty <body> — see the sibling file's note.
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
@@ -125,7 +152,24 @@ const router = useRouter();
  * the store's de-dup key). No `kind`, no `hasPage`, no `slug`.
  */
 function seedLegacyRecents(entries: { id: string; blockId: string; name: string }[]) {
-  window.localStorage.setItem(RECENTLY_OPENED_APPS_KEY, JSON.stringify(entries));
+  seedOwnedRecents(entries);
+}
+
+/**
+ * Write a raw entry list into the store as the CURRENT (anonymous) viewer's.
+ *
+ * 🔴 The envelope is the point, not boilerplate. Recents are ACCOUNT-scoped
+ * (#4048): a bare `RecentApp[]` carries no owner, and an unowned blob is
+ * DROPPED on read rather than attributed to whoever reads it next — so seeding
+ * one here would empty the rail and make every reconciliation assertion below
+ * pass vacuously. This suite mounts anonymously (`useCurrentUser` → null), so
+ * the owner it seeds as is `null`.
+ */
+function seedOwnedRecents(entries: unknown[], ownerId: number | null = null) {
+  window.localStorage.setItem(
+    RECENTLY_OPENED_APPS_KEY,
+    JSON.stringify({ v: RECENTS_ENVELOPE_VERSION, ownerId, apps: entries })
+  );
 }
 
 beforeEach(() => {
@@ -229,19 +273,16 @@ describe('the /apps rail reconciles LEGACY recents against the loaded listings',
       makeOnsiteCard({ id: 'lst_pv', slug: 'prompt-vault', name: 'Prompt Vault', hasPage: false }),
     ];
     // A fully-populated, NON-legacy entry that went stale the other way.
-    window.localStorage.setItem(
-      RECENTLY_OPENED_APPS_KEY,
-      JSON.stringify([
-        {
-          id: 'blk_prompt-vault',
-          blockId: 'prompt-vault',
-          slug: 'prompt-vault',
-          kind: 'onsite',
-          hasPage: true,
-          name: 'Prompt Vault',
-        },
-      ])
-    );
+    seedOwnedRecents([
+      {
+        id: 'blk_prompt-vault',
+        blockId: 'prompt-vault',
+        slug: 'prompt-vault',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Prompt Vault',
+      },
+    ]);
 
     renderWithProviders(<AppListingsMarketplaceBody />);
 
@@ -266,10 +307,7 @@ describe('the /apps rail reconciles LEGACY recents against the loaded listings',
         appBlockId: 'blk_gen-matrix',
       }),
     ];
-    window.localStorage.setItem(
-      RECENTLY_OPENED_APPS_KEY,
-      JSON.stringify([{ id: 'blk_gen-matrix', slug: 'gen-matrix', name: 'Gen Matrix' }])
-    );
+    seedOwnedRecents([{ id: 'blk_gen-matrix', slug: 'gen-matrix', name: 'Gen Matrix' }]);
 
     renderWithProviders(<AppListingsMarketplaceBody />);
 

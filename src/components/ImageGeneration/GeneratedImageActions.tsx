@@ -17,17 +17,17 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
-import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { bulkWorkflowLimits } from '~/shared/data-graph/generation/config/workflows';
+import { bulkWorkflowLimits } from '~/shared/generation/config/workflows';
 import {
   useGeneratedItemWorkflows,
   applyBulkWorkflow,
@@ -41,6 +41,7 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
+  const showCreatePostError = useShowCreatePostError();
   const { data, markerTags } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(
@@ -52,6 +53,7 @@ export function GeneratedImageActions({
   const { setSelected } = useActions();
   const deselect = () => setSelected([]);
   const [zipping, setZipping] = useState(false);
+  const mobile = useIsMobile({ type: 'media' });
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata({
     onSuccess: () => deselect(),
@@ -89,14 +91,16 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    // Audio outputs aren't supported by the post system — filter them out.
-    const postable = selected.filter((image) => image.mediaType !== 'audio');
+    // Audio outputs aren't supported by the post system, and some workflows' outputs can't be posted.
+    const postable = selected.filter(
+      (image) => image.mediaType !== 'audio' && image.canUse('post')
+    );
     const skipped = selected.length - postable.length;
 
     if (postable.length === 0) {
       showErrorNotification({
         title: 'Cannot create post',
-        error: new Error('Audio outputs cannot be added to a post'),
+        error: new Error('None of the selected outputs can be added to a post'),
       });
       return;
     }
@@ -104,7 +108,7 @@ export function GeneratedImageActions({
     if (skipped > 0) {
       showWarningNotification({
         title: 'Some outputs were skipped',
-        message: `${skipped} audio output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
+        message: `${skipped} selected output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
       });
     }
 
@@ -115,35 +119,20 @@ export function GeneratedImageActions({
     }));
 
     try {
-      const key = 'generator';
-      orchestratorMediaTransmitter.setUrls(key, imageData);
-
-      if (router.pathname === '/posts/[postId]/edit') {
-        await router.replace(
-          { pathname: '/posts/[postId]/edit', query: { postId: router.query.postId, src: key } },
-          undefined,
-          { shallow: true }
-        );
-      } else {
-        const post = await createPostMutation.mutateAsync({});
-        if (running) helpers?.next();
-        await router.push({
-          pathname: '/posts/[postId]/edit',
-          query: removeEmpty({
-            postId: post.id,
-            src: key,
-            returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
-          }),
-        });
-        generationGraphPanel.close();
-      }
+      await postGeneratedMedia({
+        media: imageData,
+        router,
+        createPost: () => createPostMutation.mutateAsync({}),
+        onPostCreated: () => {
+          if (running) helpers?.next();
+        },
+        extraQuery: {
+          returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
+        },
+      });
       deselect();
     } catch (e) {
-      const error = e as Error;
-      showErrorNotification({
-        title: 'Failed to create post',
-        error: new Error(error.message),
-      });
+      showCreatePostError((e as Error).message);
     }
   };
 
@@ -218,7 +207,9 @@ export function GeneratedImageActions({
           </Tooltip>
         </div>
       )}
-      {selectableImages.length > 0 && (
+      {/* Touch keeps this row to sort + filters. Once a selection exists the control
+          comes back, because it is also the count and the only way to clear one. */}
+      {selectableImages.length > 0 && (!mobile || hasSelected) && (
         <Checkbox
           checked={allChecked}
           indeterminate={indeterminate}
@@ -249,8 +240,14 @@ function BulkWorkflowMenu({
   const { setSelected } = useActions();
 
   // Split selected by media type
-  const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
-  const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
+  const selectedImages = useMemo(
+    () => selected.filter((s) => s.type === 'image' && s.canUse('derive')),
+    [selected]
+  );
+  const selectedVideos = useMemo(
+    () => selected.filter((s) => s.type === 'video' && s.canUse('derive')),
+    [selected]
+  );
 
   // Get workflows for each type
   const imageWorkflows = useGeneratedItemWorkflows({ outputType: 'image', filterBy: 'input' });
@@ -291,13 +288,15 @@ function BulkWorkflowMenu({
 
   return (
     <Menu zIndex={imageGenerationDrawerZIndex + 2} withinPortal position="bottom-start">
-      <Menu.Target>
-        <Tooltip label="Apply workflow to selected">
+      {/* Tooltip WRAPS Menu.Target, not the other way round — the inner nesting
+          silently stops the menu opening. See AppListingActionsMenu.tsx. */}
+      <Tooltip label="Apply workflow to selected">
+        <Menu.Target>
           <LegacyActionIcon size={actionIconSize} variant="light" color="violet">
             <IconWand size={iconSize} />
           </LegacyActionIcon>
-        </Tooltip>
-      </Menu.Target>
+        </Menu.Target>
+      </Tooltip>
       <Menu.Dropdown>
         {hasImageWorkflows && (
           <>

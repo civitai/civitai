@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { extractStepErrors, sanitizeProviderError } from '../provider-errors';
+import {
+  extractStepErrors,
+  providerName,
+  sanitizeProviderError,
+  sanitizeStepErrors,
+} from '../provider-errors';
 
 describe('sanitizeProviderError', () => {
   it('passes a plain message through, prefixed with the provider name', () => {
@@ -81,18 +86,115 @@ describe('sanitizeProviderError', () => {
   });
 });
 
-describe('extractStepErrors', () => {
-  it('reads external-provider failures from failed job.reason (the previously-dropped path)', () => {
-    const step = {
-      output: {},
-      jobs: [
-        { status: 'succeeded' },
-        { status: 'failed', reason: 'Provider returned 429: rate limited' },
-      ],
-    };
-    expect(extractStepErrors(step)).toEqual(['Provider returned 429: rate limited']);
+describe('sanitizeStepErrors', () => {
+  const refusal =
+    "The request failed because the input image 'content[1]' may contain real person. Request id: 0123456789abcdef";
+
+  it('shows a provider content refusal instead of a generic system error', () => {
+    const step = { output: { externalTOSViolation: true, message: refusal } };
+    expect(sanitizeStepErrors(step, 'seedance')).toEqual([
+      'Seedance: The request failed because the input image may contain real person. Request id: 0123456789abcdef',
+    ]);
   });
 
+  it('still sanitises a refusal that carries unsafe content beyond the index token', () => {
+    const step = {
+      output: { externalTOSViolation: true, message: "Blocked 'content[1]' at https://internal/x" },
+    };
+    expect(sanitizeStepErrors(step, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+  });
+
+  // Control: the index-token normalisation is only for externalTOSViolation messages.
+  it('still sanitises a non-refusal message that contains brackets', () => {
+    const msg = "The request failed because the input image 'content[1]' may contain real person.";
+    expect(sanitizeStepErrors({ output: { errors: [msg] } }, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+    expect(sanitizeStepErrors({ metadata: { error: msg } }, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+  });
+});
+
+describe('sanitizeStepErrors on a Flux 3 Video provider refusal', () => {
+  const HINT = 'If your source image is rated above PG-13, try MiniMax H3 instead.';
+  // A failed videoGen step as the workflow read returns it.
+  const videoStep = (
+    engine: string,
+    output: Record<string, unknown>,
+    operation = 'imageToVideo'
+  ) => ({
+    $type: 'videoGen',
+    name: '0',
+    status: 'failed',
+    input: { engine, version: 'v3.0', operation, prompt: 'x' },
+    output,
+  });
+
+  it("keeps the provider's refusal and adds the H3 hint", () => {
+    const step = videoStep('flux', {
+      externalTOSViolation: true,
+      message: 'Request rejected by content moderation.',
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `Request rejected by content moderation. ${HINT}`,
+    ]);
+  });
+
+  it('says the content filter refused when the provider gave no text', () => {
+    const step = videoStep('flux', { externalTOSViolation: true, message: null });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `The provider's content filter rejected this request. ${HINT}`,
+    ]);
+  });
+
+  it('does not pair the hint with a system error when the refusal is unsafe to show', () => {
+    const step = videoStep('flux', {
+      externalTOSViolation: true,
+      message: 'Rejected, see https://internal.example/moderation',
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `The provider's content filter rejected this request. ${HINT}`,
+    ]);
+  });
+
+  it('adds nothing to a generic Flux 3 failure', () => {
+    const step = videoStep('flux', {
+      errors: ['Timed out waiting for the provider'],
+      message: null,
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual(['Timed out waiting for the provider']);
+  });
+
+  it('adds nothing to a text to video refusal, which had no source image', () => {
+    const step = videoStep(
+      'flux',
+      { externalTOSViolation: true, message: 'Request rejected by content moderation.' },
+      'textToVideo'
+    );
+    expect(sanitizeStepErrors(step, 'flux')).toEqual(['Request rejected by content moderation.']);
+  });
+
+  it('does not point an H3 refusal at H3', () => {
+    const step = videoStep('minimax', {
+      externalTOSViolation: true,
+      message: 'Request rejected by content moderation.',
+    });
+    expect(sanitizeStepErrors(step, 'minimax')).toEqual([
+      'Minimax: Request rejected by content moderation.',
+    ]);
+  });
+});
+
+describe('providerName', () => {
+  it('names seedance', () => {
+    expect(providerName('seedance')).toBe('Seedance');
+  });
+});
+
+describe('extractStepErrors', () => {
   it('reads step.output.errors and the externalTOSViolation message', () => {
     const step = {
       output: { errors: ['boom'], externalTOSViolation: true, message: 'blocked by policy' },
@@ -100,17 +202,16 @@ describe('extractStepErrors', () => {
     expect(extractStepErrors(step).sort()).toEqual(['blocked by policy', 'boom']);
   });
 
-  it('reads step.metadata.error and dedupes across sources', () => {
+  it('reads step.metadata.error and .errors, and dedupes across sources', () => {
     const step = {
       output: { errors: ['same'] },
-      jobs: [{ status: 'failed', reason: 'same' }],
-      metadata: { error: 'meta boom' },
+      metadata: { error: 'meta boom', errors: ['same', 'meta list'] },
     };
-    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'same']);
+    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'meta list', 'same']);
   });
 
-  it('ignores non-failed jobs and returns [] for empty/nullish steps', () => {
-    expect(extractStepErrors({ jobs: [{ status: 'succeeded', reason: 'ignore me' }] })).toEqual([]);
+  it('returns [] for empty/nullish steps', () => {
+    expect(extractStepErrors({})).toEqual([]);
     expect(extractStepErrors(null)).toEqual([]);
     expect(extractStepErrors(undefined)).toEqual([]);
   });

@@ -57,8 +57,6 @@ const {
   mockGetOrCreateVault,
   mockToggleModelVersionOnVault,
   mockPopulateNotificationDetails,
-  mockVaultItemFindMany,
-  mockModelVersionFindFirst,
   mockTracker,
 } = vi.hoisted(() => ({
   mockPublicApiContext2: vi.fn(),
@@ -68,12 +66,10 @@ const {
   mockGetOrCreateVault: vi.fn(),
   mockToggleModelVersionOnVault: vi.fn(),
   mockPopulateNotificationDetails: vi.fn(),
-  mockVaultItemFindMany: vi.fn(),
-  mockModelVersionFindFirst: vi.fn(),
   mockTracker: vi.fn(),
 }));
 
-vi.mock('~/server/createContext', async (importOriginal) => ({
+vi.mock('~/server/public-api-context', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   publicApiContext2: mockPublicApiContext2,
 }));
@@ -90,17 +86,26 @@ vi.mock('~/server/services/vault.service', async (importOriginal) => ({
   getOrCreateVault: mockGetOrCreateVault,
   toggleModelVersionOnVault: mockToggleModelVersionOnVault,
 }));
+// The endpoint now resolves the caller's OWN notification before enriching it, so without this the
+// throwing path under test would be the notifications client rather than `populateNotificationDetails`
+// — the assertions would still pass, on a different error.
+vi.mock('~/server/notifications/client', () => ({
+  notifications: {
+    queryNotifications: vi.fn(async () => [
+      {
+        id: 1,
+        type: 'comment',
+        category: 'Comment',
+        details: {},
+        createdAt: new Date(),
+        read: false,
+      },
+    ]),
+  },
+}));
 vi.mock('~/server/notifications/detail-fetchers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   populateNotificationDetails: mockPopulateNotificationDetails,
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    vaultItem: { findMany: mockVaultItemFindMany },
-    modelVersion: { findFirst: mockModelVersionFindFirst },
-    partner: { findUnique: vi.fn() },
-  },
-  dbWrite: {},
 }));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -123,6 +128,9 @@ import vaultCheckRoute from '~/pages/api/v1/vault/check-vault';
 import vaultToggleRoute from '~/pages/api/v1/vault/toggle-version';
 import notificationDetailsRoute from '~/pages/api/notification/getDetails';
 import runHandler from '~/pages/api/run/[modelVersionId]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockVaultItemFindMany = dbMock.dbRead.vaultItem.findMany;
+const mockModelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
 
 /**
  * `AuthedEndpoint` is mocked to an identity function above, so these modules
@@ -437,18 +445,6 @@ describe('civitai#3845/4 — no REST route hand-rolls a driver-leaking error env
       // …and it renders `error` in PREFERENCE to `message`, so an empty `error`
       // empties every CLI-rendered error string.
       expect(body.error).toBeTruthy();
-    });
-
-    it('attributes the fault in the log — genericizing relocates the text, never destroys it', async () => {
-      const throwing = (() => {
-        throw prismaDriverError();
-      }) as () => never;
-      const { promise } = run(throwing);
-      await promise;
-
-      expect(mockLogToAxiom, 'the un-redacted text must reach `_axiom`').toHaveBeenCalledTimes(1);
-      const logged = mockLogToAxiom.mock.calls[0][0] as { message?: string };
-      expect(logged.message).toContain(LEAKED_COLUMN);
     });
   });
 

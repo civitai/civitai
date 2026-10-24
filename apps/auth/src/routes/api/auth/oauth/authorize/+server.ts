@@ -6,8 +6,10 @@ import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
+import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
+import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
-import { hasScope } from '$lib/server/oauth/scope';
+import { carriesNonUserScope, hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { checkClientAccess } from '$lib/server/oauth/access';
@@ -40,7 +42,17 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   const selfUrl = `${self.pathname}${self.search}`;
 
   // Session gate. 303 so a POST from the consent form is downgraded to GET on /login.
-  const user = locals.user;
+  //
+  // A login destined for a spoke outside this hub's cookie scope (civitai.red) deliberately does NOT write the
+  // hub session — that cookie is civitai.com's session too, and re-pointing it is the cross-domain switch bug
+  // (ClickUp 868kxch09). Such a login hands its identity over here instead, as a single-use record bound to
+  // the spoke's registrable domain. resolveAuthorizingUser owns the precedence and the fail-closed rule.
+  const user = await resolveAuthorizingUser({
+    cookies,
+    redirectUri: typeof params.redirect_uri === 'string' ? params.redirect_uri : undefined,
+    sessionUser: locals.user,
+    resolveUser: getOrProduceSessionUser,
+  });
   if (!user) {
     redirect(303, `/login?returnUrl=${encodeURIComponent(selfUrl)}`);
   }
@@ -115,6 +127,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // intersection (validateScope) is the real auth gate.
   if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
     return oauthError(400, 'invalid_scope', 'Invalid scope value');
+  }
+  // Refused before the consent screen, so a user is never asked for it and no consent row stores it.
+  if (carriesNonUserScope(rawScope)) {
+    return oauthError(400, 'invalid_scope', 'This scope cannot be granted by a user');
   }
   // UserRead is the mandatory baseline (createOAuthTokenPair forces it on the issued token); force it
   // here too so the stored consent + consent screen reflect what the token actually carries.

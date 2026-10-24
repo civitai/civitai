@@ -16,8 +16,18 @@ import { repairSplitQueryString } from '~/server/utils/request-helpers';
  * OVER it (`next-server.ts` — params win on a collision).
  */
 
+/**
+ * Every fixture url is normalised the way `normalizeCdnUrl` does before an API
+ * route runs, so the stray `?` and the `=` behind it reach the repair
+ * percent-encoded. Passing the raw url here instead is what let civitai#3931
+ * ship green against a shape prod never produces.
+ */
 function makeReq(url: string, query: NextApiRequest['query']) {
-  return { url, query } as NextApiRequest;
+  const [pathname, search] = url.split(/\?(.*)/s);
+  return {
+    url: search ? `${pathname}?${new URLSearchParams(search)}` : pathname,
+    query,
+  } as NextApiRequest;
 }
 
 describe('repairSplitQueryString', () => {
@@ -79,7 +89,7 @@ describe('repairSplitQueryString', () => {
     expect(req.query.format).toBe('SafeTensor');
   });
 
-  it('treats an encoded %3F as data, not as a separator', () => {
+  it('splits the `?` that is a separator while keeping the one that is data', () => {
     const req = makeReq('/api/download/models/1?fp=fp%3F16?type=Model', {
       modelVersionId: '1',
       fp: 'fp?16?type=Model',
@@ -87,8 +97,25 @@ describe('repairSplitQueryString', () => {
 
     repairSplitQueryString(req);
 
-    expect(req.query.fp, 'a percent-encoded ? is a value the client meant to send').toBe('fp?16');
+    expect(req.query.fp, 'a ? that opens no param is a value the client meant to send').toBe(
+      'fp?16'
+    );
     expect(req.query.type).toBe('Model');
+  });
+
+  it('repairs the url shape Next actually hands the route', () => {
+    // The literal encoding here is what `normalizeCdnUrl` produces from
+    // `?fileId=1541606?type=Model&format=SafeTensor`. A repair that keys on a raw
+    // `?` in req.url finds none and bails, which is how the 400s survived #3931.
+    const req = makeReq(
+      '/api/download/models/1641161?fileId=1541606%3Ftype%3DModel&format=SafeTensor',
+      { modelVersionId: '1641161', fileId: '1541606?type=Model', format: 'SafeTensor' }
+    );
+
+    expect(repairSplitQueryString(req), 'the encoded separator was read as data').toBe(true);
+    expect(req.query.fileId, 'fileId still parses as NaN, so the route answers 400').toBe('1541606');
+    expect(req.query.type).toBe('Model');
+    expect(req.query.format).toBe('SafeTensor');
   });
 });
 

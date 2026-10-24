@@ -10,6 +10,7 @@ import {
   Stack,
   Switch,
   Text,
+  TextInput,
   Title,
 } from '@mantine/core';
 import { IconAlertTriangle, IconCoin, IconInfoCircle } from '@tabler/icons-react';
@@ -18,6 +19,10 @@ import { useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
 import type { AppRole, ListingCapability } from '~/shared/constants/app-capabilities.constants';
+import {
+  CONNECT_CLIENT_TRANSFER_REFUSAL,
+  refusesTransferForConnectClient,
+} from '~/shared/constants/app-transfer.constants';
 
 /**
  * App Listing COLLABORATORS — the PRESENTATIONAL roster panel.
@@ -30,7 +35,7 @@ import type { AppRole, ListingCapability } from '~/shared/constants/app-capabili
  * inherit the same import. Keeping every rule that decides WHICH control renders on this
  * side of the line means those rules stay directly testable, and stay reusable.
  *
- * Same View/container idiom as `AppsSubNavView`.
+ * Same View/container idiom as `AppsRailNavView`.
  */
 
 /** One roster row, exactly as `appCollaborators.list` returns it. */
@@ -79,17 +84,52 @@ export type AppCollaboratorsPanelViewProps = {
   /**
    * 🔴 The REASON the last transfer attempt was refused, rendered inline.
    *
-   * A connect-linked off-site listing is refused with a specific, actionable message
-   * ("unlink the OAuth client first"). Collapsing that into a generic "something went
-   * wrong" toast would leave the owner with an action that fails forever and no way to
-   * learn why, so the message is surfaced where the control is.
+   * A refusal carries a specific reason. Collapsing that into a generic "something went
+   * wrong" toast would leave the owner with an action that fails and no way to learn why,
+   * so the message is surfaced where the control is.
+   *
+   * The connect-client case no longer needs to travel this way — it is caught up front
+   * from `listing` below — but every OTHER refusal reason (a banned recipient, a stale
+   * offer, "you already own this app") still arrives as a mutation error, so this stays.
    */
   transferErrorMessage?: string | null;
   /** The recipient picker. Injected, like `userPicker`, to keep the search stack out. */
   transferPicker?: ReactNode;
   onCancelTransfer?: (transferId: string) => void;
   transferBusy?: boolean;
+  /**
+   * 🔴 THE LISTING ITSELF, so the transfer verdict can be reached BEFORE the owner acts.
+   *
+   * `transferErrorMessage` above is a mutation RESULT — it can only ever arrive after the
+   * owner has picked a recipient and submitted. A connect-linked off-site listing is
+   * refused every single time, so that path made the refusal something the owner could
+   * only discover by doing the work. This prop is the same fact BEFORE the click, and the
+   * verdict is {@link refusesTransferForConnectClient} — the SAME function the service
+   * gates on, imported from `shared/` so the two cannot drift.
+   *
+   * Optional so the roster half of this View stays renderable without it; when it is
+   * absent nothing is refused, which is the pre-existing behaviour exactly.
+   */
+  listing?: TransferListingFacts | null;
 };
+
+/**
+ * The listing facts the transfer verdict is computed from. Structurally the argument of
+ * {@link refusesTransferForConnectClient} — deliberately, so widening the rule cannot
+ * leave this surface behind.
+ */
+export type TransferListingFacts = {
+  kind: string;
+  /** The linked OAuth `client_id`, or `null`. Public, not a secret. */
+  connectClientId: string | null;
+};
+
+/**
+ * The recipient picker's placeholder. ONE definition, read by the real picker in the
+ * container and by the disabled stand-in here — they sit in different files and are the
+ * same control to the owner, so a second copy would drift the moment either is reworded.
+ */
+export const TRANSFER_PICKER_PLACEHOLDER = 'Search for the person who should own this app';
 
 /** The live outgoing offer, as `appCollaborators.getPendingTransfer` returns it. */
 export type PendingTransferRow = {
@@ -140,8 +180,19 @@ export function inviteDisclosureItems(
  */
 export function inviteBlockedReason(
   rows: CollaboratorRosterRow[],
-  userId: number
+  userId: number,
+  ineligibleUserIds: readonly number[] = []
 ): { title: string; message: string } | null {
+  // 🔴 INELIGIBILITY OUTRANKS EVERY ROSTER REASON, including the re-invitable `rejected` seat.
+  // A declined seat is re-offerable because the person may say yes next time; an account the
+  // server has told us cannot hold a seat is not, and checking the roster first would hand a
+  // `rejected` row back as offerable.
+  if (ineligibleUserIds.includes(userId)) {
+    return {
+      title: 'Not eligible',
+      message: 'That account is not eligible for a collaborator seat.',
+    };
+  }
   const row = rows.find((r) => r.userId === userId);
   if (!row || row.status === 'rejected') return null;
   return row.status === 'accepted'
@@ -149,9 +200,19 @@ export function inviteBlockedReason(
     : { title: 'Already invited', message: 'That user already has a pending invitation.' };
 }
 
-/** The roster ids the picker hides. A REJECTED seat stays offerable — see above. */
-export function pickerExcludedUserIds(rows: CollaboratorRosterRow[]): number[] {
-  return rows.filter((r) => r.status !== 'rejected').map((r) => r.userId);
+/**
+ * The ids the picker hides. A REJECTED seat stays offerable — see above.
+ *
+ * `ineligibleUserIds` is what the server said about the accounts currently on offer, and it is
+ * a SEPARATE list from the roster on purpose: an ineligible account usually has no roster row
+ * at all, so there is nothing in `rows` that could ever express it.
+ */
+export function pickerExcludedUserIds(
+  rows: CollaboratorRosterRow[],
+  ineligibleUserIds: readonly number[] = []
+): number[] {
+  const excluded = rows.filter((r) => r.status !== 'rejected').map((r) => r.userId);
+  return [...new Set([...excluded, ...ineligibleUserIds])];
 }
 
 /** `pending`/`rejected` are inert; say so rather than letting a badge imply access. */
@@ -181,6 +242,7 @@ function OwnerTransferSection({
   onCancelTransfer,
   transferBusy,
   renderUser,
+  listing,
 }: {
   pendingTransfer: PendingTransferRow | null;
   transferErrorMessage: string | null;
@@ -188,7 +250,16 @@ function OwnerTransferSection({
   onCancelTransfer?: (transferId: string) => void;
   transferBusy: boolean;
   renderUser: (userId: number) => ReactNode;
+  listing: TransferListingFacts | null;
 }) {
+  /**
+   * 🔴 THE UP-FRONT VERDICT, and it is the ONLY call of the rule on this surface. The
+   * service asks the same function at initiate and again in-transaction at accept; asking
+   * it here too is what stops the tab from offering an action the server will refuse. It
+   * is NOT a replacement for either server gate — those are unchanged and authoritative,
+   * and this one runs on data the client can lie to itself about.
+   */
+  const refusedForConnectClient = listing ? refusesTransferForConnectClient(listing) : false;
   return (
     <Stack gap="sm" data-testid="apps-transfer-owner-section">
       <Title order={4}>Transfer ownership</Title>
@@ -208,6 +279,32 @@ function OwnerTransferSection({
         </Stack>
       </Alert>
 
+      {/* 🔴 THE REFUSAL, UP FRONT — before a recipient is chosen, not after.
+          Rendered from the LISTING, so it is on screen the moment the tab opens. The
+          message is the server's own constant, not a paraphrase: the owner reads the same
+          sentence here that the mutation would have returned. It states a CONSTRAINT and
+          instructs nothing.
+
+          🔴 NOT BECAUSE "there is no unlink flow to send them to", which is what this
+          comment used to say and what #4126 refuted: deleting the OAuth client cascades
+          `onDelete: SetNull` onto `AppListing.connectClientId`, so an owner-initiated
+          route out DOES exist. The copy still names no remedy for reasons re-taken on
+          their merits with that route known — it is a destructive delete rather than a
+          detach, it silently demotes the listing's sub-kind, and it is unavailable to a
+          moderator-linked owner and to the recipient who reads the same string. The full
+          argument, and what would reopen it, is at the constant. */}
+      {refusedForConnectClient ? (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Ownership cannot be transferred for this app"
+          data-testid="apps-transfer-blocked"
+        >
+          {CONNECT_CLIENT_TRANSFER_REFUSAL}
+        </Alert>
+      ) : null}
+
       {/* 🔴 THE REFUSAL, WITH ITS REASON. See `transferErrorMessage`. */}
       {transferErrorMessage ? (
         <Alert
@@ -223,25 +320,66 @@ function OwnerTransferSection({
 
       {pendingTransfer ? (
         <Paper withBorder p="sm" radius="md" data-testid="apps-transfer-pending">
-          <Group justify="space-between" wrap="wrap" gap="sm">
-            <Group gap="xs">
-              <Badge color="orange">Transfer pending</Badge>
-              <Text size="sm">Offered to</Text>
-              {renderUser(pendingTransfer.toUserId)}
+          <Stack gap="xs">
+            <Group justify="space-between" wrap="wrap" gap="sm">
+              <Group gap="xs">
+                <Badge color="orange">Transfer pending</Badge>
+                <Text size="sm">Offered to</Text>
+                {renderUser(pendingTransfer.toUserId)}
+              </Group>
+              {/* 🔴 CANCEL STAYS AVAILABLE EVEN WHEN THE LISTING IS REFUSED. It is the
+                  owner's only way out of a stale offer, and `cancelTransfer` carries no
+                  connect-client gate — withdrawing an offer that can never complete is
+                  exactly the action that should still work. */}
+              {onCancelTransfer ? (
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  disabled={transferBusy}
+                  data-testid="apps-transfer-cancel"
+                  onClick={() => onCancelTransfer(pendingTransfer.id)}
+                >
+                  Cancel transfer
+                </Button>
+              ) : null}
             </Group>
-            {onCancelTransfer ? (
-              <Button
-                size="xs"
-                variant="light"
-                color="red"
-                disabled={transferBusy}
-                data-testid="apps-transfer-cancel"
-                onClick={() => onCancelTransfer(pendingTransfer.id)}
-              >
-                Cancel transfer
-              </Button>
+            {/* 🔴 A LIVE OFFER ON A REFUSED LISTING IS DEAD ON ACCEPT, AND SAYING SO IS THE
+                WHOLE POINT OF THIS SECTION. `acceptTransfer` re-asserts the refusal
+                IN-TRANSACTION rather than trusting the initiate-time check, so the two
+                states can co-exist and the tab must say which one wins. Without this line
+                it renders "ownership cannot be transferred" directly above a "Transfer
+                pending" card and leaves the owner to guess.
+
+                🔴 HOW THE PAIR ARISES — NOT THE WAY THIS COMMENT USED TO SAY. It claimed
+                "a revision approve can link an OAuth client while an offer sits open".
+                That is false and #4126 corrected it here and in six other places: no
+                writer can move `AppListing.connectClientId` from null to non-null on an
+                existing row, so a clean listing cannot become refused mid-offer. The
+                honest account, including the schema-level `onDelete: SetNull` writer that
+                only ever UNLINKS, is at `acceptBlockedReason` in
+                `app-ownership-transfer.service.ts`. This arm still renders — a listing
+                BORN linked is refused at initiate, so a pending offer beside a refusal
+                needs a direct DB write, a migration or a future link flow to arise, and
+                the branch is gap-closure ahead of that rather than a live-bug fix. Its
+                test is still what stops the verdict being silently gated on
+                `pendingTransfer == null`.
+
+                🔴 SCOPE: THE OWNER ONLY. This is the owner's Collaborators tab. The
+                recipient's half of the same disclosure is NOT here — it is
+                `acceptBlockedReason`, computed server-side and rendered by
+                `AppTransferOffersView`. (This comment used to say the recipient surfaces
+                "carry no connect-client awareness at all" and that the gap was OPEN; that
+                was true when it was written and is not now.) */}
+            {refusedForConnectClient ? (
+              <Text size="xs" c="red.6" data-testid="apps-transfer-pending-dead">
+                {/* No "because the listing is linked to an OAuth application" here — the
+                    banner above says exactly that, and both render under the SAME
+                    condition, so a second wording of one fact could only drift from it. */}
+                This offer can no longer be accepted. Cancel it to tidy it up.
+              </Text>
             ) : null}
-          </Group>
+          </Stack>
         </Paper>
       ) : (
         /* 🔴 The picker and the pending card are MUTUALLY EXCLUSIVE. One live offer per
@@ -249,11 +387,35 @@ function OwnerTransferSection({
            lose on P2002 — offering the control while an offer is open would render an
            action that cannot succeed. */
         <Stack gap="xs">
-          {transferPicker}
-          <Text size="xs" c="dimmed">
-            One transfer offer at a time. It expires after{' '}
-            {constants.appCollaborators.transferExpiryDays} days if it is not accepted.
-          </Text>
+          {/* 🔴 DISABLED, NOT HIDDEN. Removing the section entirely would leave the owner
+              asking why their app has no transfer control at all — a different confusion,
+              not a smaller one, and one they cannot even ask a useful question about. The
+              control stays where they expect it, visibly off, with the reason directly
+              above it. The real picker is not merely disabled but UNMOUNTED, so no path
+              through it can fire the mutation; this stand-in occupies its place and states
+              the same purpose. */}
+          {refusedForConnectClient ? (
+            <TextInput
+              disabled
+              readOnly
+              value=""
+              aria-label={TRANSFER_PICKER_PLACEHOLDER}
+              placeholder={TRANSFER_PICKER_PLACEHOLDER}
+              data-testid="apps-transfer-picker-disabled"
+            />
+          ) : (
+            transferPicker
+          )}
+          {/* 🔴 SUPPRESSED WHEN REFUSED. "One transfer offer at a time. It expires after N
+              days" describes the mechanics of a transfer this listing can never start —
+              reassuring, specific, and irrelevant, which is the combination most likely to
+              be read as "so a transfer IS possible here". */}
+          {refusedForConnectClient ? null : (
+            <Text size="xs" c="dimmed">
+              One transfer offer at a time. It expires after{' '}
+              {constants.appCollaborators.transferExpiryDays} days if it is not accepted.
+            </Text>
+          )}
         </Stack>
       )}
     </Stack>
@@ -278,6 +440,7 @@ export function AppCollaboratorsPanelView({
   transferPicker,
   onCancelTransfer,
   transferBusy = false,
+  listing = null,
 }: AppCollaboratorsPanelViewProps) {
   const isOwner = role === 'owner';
   const identity = renderUser ?? ((userId: number) => <Text fw={500}>User #{userId}</Text>);
@@ -446,6 +609,7 @@ export function AppCollaboratorsPanelView({
           onCancelTransfer={onCancelTransfer}
           transferBusy={transferBusy}
           renderUser={identity}
+          listing={listing}
         />
       ) : null}
 

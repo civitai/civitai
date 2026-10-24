@@ -20,3 +20,13 @@ declare module '*.module.css' {
   const classes: { readonly [key: string]: string };
   export default classes;
 }
+
+// Vite's `?raw` suffix — the file's TEXT, not a stylesheet import. Used by
+// `test/component-setup.tsx` to read the `:root` custom properties out of
+// `globals.css` without pulling the whole cascade into the component-test
+// harness. Declared here rather than pulling in `vite/client` wholesale, which
+// would add a pile of unrelated ambient globals to the Next app's program.
+declare module '*.css?raw' {
+  const content: string;
+  export default content;
+}

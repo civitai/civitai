@@ -1,4 +1,4 @@
-import { BuzzClientAccount } from '@civitai/client';
+import { BuzzClientAccount } from '@civitai/orchestration-client';
 import {
   buzzApiAccountTypes,
   clientToApiAccountType,
@@ -14,6 +14,7 @@ import type {
   BuzzCashType,
   LegacyBuzzType,
 } from '@civitai/buzz';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 
 // The account-type model + friendly↔API name map now live in @civitai/buzz (browser-safe,
 // shared with the SvelteKit spokes). Re-exported here so existing imports keep working.
@@ -56,7 +57,46 @@ export enum TransactionType {
   Fee = 25,
   Bid = 26,
   LicenseFee = 27,
+  /**
+   * App Blocks per-generation author fee, both legs (viewer → platform conduit at
+   * submit, conduit → author at settlement).
+   *
+   * Three things a query against this rail has to know, none recoverable from the
+   * member:
+   *
+   * 🔴 PRE-CUTOVER ROWS CARRY `Fee` (25) AND ARE NOT BACK-FILLED — operator
+   * decision, no retroactive write to the Buzz ledger. For the whole history also
+   * match `Fee` + `description LIKE 'App author fee%'`, which is how the rail was
+   * disambiguated while it shared 25 with the placement-escrow legs.
+   *
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS `'unknown_28'`, NOT `'appAuthorFee'`.
+   * The ingest MV has no name for this member. `fromClickhouseTransactionType` and
+   * `clickhouseTransactionTypePredicate` in `buzz.service.ts` resolve every
+   * spelling; a hand-written `type = …` against this rail matches nothing.
+   *
+   * 🔴 REVERSALS ARE `Refund` + `'App author fee refund'`, not this member, so a
+   * query that sums this type alone overstates net by every reversal.
+   */
+  AppAuthorFee = 28,
+  /**
+   * Creator Services escrow, every leg: buyer → account 0 on hold, account 0 → seller on
+   * release, account 0 → buyer on refund.
+   *
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS `'unknown_29'`, as `AppAuthorFee` does. Use
+   * `clickhouseTransactionTypePredicate`, never a hand-written `type = …`.
+   */
+  ServiceEscrow = 29,
 }
+
+/** Ledger queries prefix-match stored rows on this, so changing it orphans every existing author-fee row. */
+export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
+
+/**
+ * Generation tips are paid as `Compensation`; this externalTransactionId prefix is the only thing that
+ * tells them apart from generation compensation. Creator Studio's earnings read matches it literally,
+ * and the bankable predicate counts tips by it, so renaming it makes tips already paid unbankable.
+ */
+export const GENERATION_TIP_TRANSACTION_PREFIX = 'generation-tip-';
 
 type BuzzTypeConfig =
   | {
@@ -123,10 +163,33 @@ export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
+/** Quoted list for `IN (...)` in the ClickHouse buzzTransactions queries. */
+export const buzzBankTypesSql = buzzBankTypes.map((type) => `'${type}'`).join(', ');
 export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.purchasable;
 });
+
+/** The currencies a real-money purchase can be credited in. Notably excludes `blue`, which is free. */
+export type PurchasableBuzzType = Extract<BuzzSpendType, 'green' | 'yellow'>;
+
+/**
+ * Which currency a real-money Buzz purchase made on `domain` is credited in. The browser applies the
+ * same rule when it builds the payment-intent metadata; the server re-derives it so a modified client
+ * can't pick a colour it didn't pay for.
+ */
+export function deriveDomainBuzzType(domain: ColorDomain): PurchasableBuzzType {
+  return domain === 'green' ? 'green' : 'yellow';
+}
+
+/**
+ * Narrow a buzz type read back off a payment provider's metadata bag. Provider metadata is
+ * stringly-typed on the wire, and intents created before the server started stamping `buzzType` may
+ * still carry whatever the client asked for — including `blue`, the free currency.
+ */
+export function coercePurchasedBuzzType(value: unknown): PurchasableBuzzType {
+  return value === 'green' ? 'green' : 'yellow';
+}
 
 export class BuzzTypes {
   static getConfig(type: BuzzSpendType) {

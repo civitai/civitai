@@ -1,9 +1,13 @@
+import { Stack } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OnsiteReviewModalBody, type OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 import {
-  ReviewActionBar,
-  type ReviewActionStatus,
-} from '~/components/Apps/ReviewActionBar';
+  ReviewDecisionAlert,
+  ReviewSubmitterMeta,
+  type OnsiteReviewSelection,
+} from '~/components/Apps/OnsiteReviewModal';
+import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
+import { ReviewDetailTabsView } from '~/components/Apps/ReviewDetailTabsView';
+import { useNowTick } from '~/components/Apps/reviewRelativeTime';
 import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationGuard';
 
 /**
@@ -11,10 +15,24 @@ import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationG
  * page module so it carries no `getServerSideProps`/server graph and is browser-
  * testable (same reason `OnsiteReviewModalBody` was extracted from the modal).
  *
- * It re-hosts the shared review body WITHOUT the modal footer (`hideInlineActions`)
- * and instead pins the approve/reject controls in a sticky bottom `ReviewActionBar`
- * so a mod never has to scroll the long tabbed report to act. Adds the a11y layer a
- * page needs but a focus-trapping modal did not:
+ * ## Layout
+ *
+ * 🔴 TWO BANDS THAT ARE ALWAYS VISIBLE, THEN THE TABS, THEN A STICKY ACTION BAR. The
+ * submitter line and the approve/reject DECISION banner sit OUTSIDE the tabs because they
+ * are facts about the whole submission, not about one section — a mod must not have to find
+ * the right tab to learn that this version was already rejected. Everything section-shaped
+ * lives in `ReviewDetailTabsView` (Permissions · Code · Agent report · Manifest · Preview,
+ * permissions first and URL-backed).
+ *
+ * 🔴 THE ACTION BAR IS OUTSIDE THE TABS TOO, and that is the point of its sticky bar: the
+ * mod can approve or reject from ANY tab. It self-suppresses (renders `null`) for read-only
+ * approved/rejected history, so no empty bar appears there.
+ *
+ * 🔴 IT COMPOSES THE SHARED SECTIONS; IT DOES NOT RE-HOST `OnsiteReviewModalBody`. It used
+ * to. The panels are still the queue modal's panels, imported from the same module — the
+ * page differs in ARRANGEMENT only. See `OnsiteReviewModalBody`'s docstring.
+ *
+ * ## The a11y layer a page needs but a focus-trapping modal did not
  *  - focus moves to the main review region on mount (not left on `<body>`);
  *  - an `aria-live="polite"` region announces mutation-status transitions;
  *  - a route-leave guard blocks navigation while an approve/reject is in flight
@@ -46,7 +64,16 @@ export function ReviewDetailView({
   // reject mutation is running — the page's replacement for the modal's busyRef
   // close-guard. Returns a `bypass()` we trip synchronously before the intended
   // success-redirect so the guard never blocks its own `router.push`.
+  //
+  // ⚠️ It does NOT fire on a tab switch: `useCatchNavigation` returns early when the
+  // destination path equals the current one, and a `?tab=` change is query-only. So the
+  // tabs can be driven mid-mutation without a spurious "leave the page?" prompt.
   const bypassGuard = useReviewNavigationGuard(status === 'submitting');
+
+  // 🔴 ONE TIMER FOR THE WHOLE VIEW, and the SHARED hook rather than a fourth copy of its
+  // four lines. Its blast radius is bounded by `ReviewDetailTabsView` being memoised — see
+  // that component's note.
+  const now = useNowTick();
 
   // The action bar calls this after a successful approve/reject. Trip the guard's
   // bypass SYNCHRONOUSLY (before the redirect fires in `onClose`) so the guard —
@@ -93,14 +120,11 @@ export function ReviewDetailView({
         aria-label={`Review of ${selection.request.slug} v${selection.request.version}`}
         style={{ outline: 'none' }}
       >
-        <OnsiteReviewModalBody
-          // Route param → keyed remount for a fresh per-submission body (parity
-          // with the modal). Actions are hidden here — the sticky bar owns them.
-          key={selection.request.id}
-          selection={selection}
-          onClose={onClose}
-          hideInlineActions
-        />
+        <Stack gap="md">
+          <ReviewSubmitterMeta request={selection.request} now={now} />
+          <ReviewDecisionAlert selection={selection} now={now} />
+          <ReviewDetailTabsView selection={selection} />
+        </Stack>
       </div>
 
       {/* Sticky approve/reject bar. Self-suppresses (renders null) for read-only

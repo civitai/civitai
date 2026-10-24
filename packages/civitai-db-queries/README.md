@@ -12,7 +12,7 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
 - `src/<domain>.db.ts` — one query module per domain, exported at the subpath `@civitai/db-queries/<domain>`.
   Domain modules are (re)ported on demand, per cutover, from current `main` (see the migration plan) rather
   than kept ahead of their consumers where they'd drift. Today: `tag.db.ts` (the original **exemplar**, plus
-  the votable-tag vote lookups) and `model.db.ts`.
+  the votable-tag vote lookups), `model.db.ts` and `image.db.ts`.
 
   The first ported **hot read paths** are the per-user vote lookups behind the votable-tag endpoint
   (`listImageTagVotes` / `listImageTagVotesMany` / `listModelTagVotes`) and the per-visible-set engagement
@@ -20,6 +20,18 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   read statements off the Prisma query engine, whose in-process CPU cost scales with call volume. Their
   behaviour parity with the Prisma originals is pinned against a real database by
   `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts` — see Testing below.
+
+  `listImageReactionsMany` (`image.db.ts`) is the viewer's-own-reactions read behind
+  `getUserReactionsForImages` (image feeds, `reaction.getMyImageReactions`, App Block reactions). It is
+  served behind the default-off server Flipt flag `kysely-image-reactions` so the Prisma query-engine
+  CPU per query can be compared with it on and off; off, the original Prisma read runs. Parity is
+  pinned in the same suite.
+
+  `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
+  endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
+  endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
+  the original Prisma `findUnique`, key order included, by
+  `<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts`.
 
 ## Client access — executor injection
 
@@ -134,8 +146,13 @@ inferred type says `Date`/`number`. Parse those fields where a real `Date`/`bigi
   INSERTs and `ON CONFLICT DO UPDATE` still set `updatedAt` explicitly.
 - **Postgres enum-ARRAY columns need a parser.** pg has no parser for an array of a user-defined enum (dynamic
   oid), so a `SomeEnum[]` column reads back as the raw `{a,b}` literal string. Consumers call
-  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup (main app:
-  `src/instrumentation.node.ts`) so those columns parse to `string[]`. Scalar enums are fine without it.
+  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup — main app:
+  `src/instrumentation.node.ts`; SvelteKit spokes: a `ServerInit` `init` export in `hooks.server.ts`
+  (SvelteKit awaits `init` before the first request), using the `pool` returned by
+  `createKyselyClients`. Both register **fail-open**, so a read site that can receive an enum-array
+  column must still tolerate the raw literal — `{green,blue}` is a string that every array operation
+  accepts and iterates by character (see `toDomainArray` in `apps/creator-studio/src/lib/announcements.ts`).
+  Scalar enums are fine without it.
 - **Nested writes** (Prisma `connect`/`connectOrCreate`/nested `create`): decompose into explicit statement
   functions, and have a compose function open `db.transaction().execute((trx) => …)` and pass `trx` as each
   statement's `db`. See **Tag links** below for the canonical example.
@@ -217,12 +234,17 @@ Tiers 1 and 2 prove what SQL runs and that it plans. Neither proves the **caller
 before**, which is the whole risk of porting a live read path. For that, run BOTH implementations against the
 SAME rows in the SAME database and deep-compare the results, rather than asserting the Kysely result against
 a hand-written expectation (which only re-states what the new code does). This lives in the consuming app,
-since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`,
-with its schema fixture alongside. Cover the empty result, an empty input array (the `IN ()` guard), and
-cross-user/cross-entity isolation — a dropped predicate shows up as extra rows, not as an empty diff.
+since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`
+for single-query ports, with its schema fixture alongside. A port whose rows feed a larger service
+function can get its own suite, as
+`<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts` does. Compare at the
+row when everything downstream is a pure function of it. Cover the empty
+result, an empty input array (the `IN ()` guard), and cross-user/cross-entity isolation — a dropped
+predicate shows up as extra rows, not as an empty diff.
 
-It is opt-in via `KYSELY_PARITY_DATABASE_URL` and deliberately does NOT fall back to `DATABASE_URL`: it
-writes fixtures, so it needs a throwaway database. The test header has the one-line docker command.
+Both are opt-in via `KYSELY_PARITY_DATABASE_URL` and deliberately do NOT fall back to `DATABASE_URL`: they
+write fixtures, so they need a throwaway database. **CI does not set it, so they run locally only** — in CI
+a port is guarded by its tier-1 compiled-SQL test alone. The test headers have the one-line docker command.
 
 ## Example
 

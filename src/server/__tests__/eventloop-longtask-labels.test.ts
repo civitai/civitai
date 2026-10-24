@@ -45,10 +45,6 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 import {
   createLabelAttributor,
   recordLabeledBlock,
@@ -56,6 +52,7 @@ import {
   __setLongTaskLabelsArmedForTests,
   __installLabelHookForTests,
 } from '~/server/eventloop-longtask';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const PREFIX = 'civitai_app_';
 // The DRIFT (loop-level, 'unlabeled') histogram — recordLabeledBlock must NOT touch it.

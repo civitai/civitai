@@ -17,6 +17,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDb, mockWriteDb } = vi.hoisted(() => {
   const make = () => ({
+    // 🔴 `getAppListingAuthoringContext` NOW READS THE VISIBILITY LEVEL THROUGH RAW SQL, so a
+    // file-local db mock has to carry `$queryRaw` or every case in this file dies with
+    // `db.$queryRaw is not a function` — a collection-shaped failure that says nothing about
+    // the behaviour under test. The column is `// @no-type` and absent from the generated
+    // client, so it CANNOT be a Prisma `select`; raw is the only read there is.
+    //
+    // An empty result is the "no level expressed" answer (`available: true, visibility: null`),
+    // which is the pre-feature behaviour and keeps each case below about what it was about.
+    // The canonical shared mock already provides this; these files predate it.
+    $queryRaw: vi.fn(async (): Promise<unknown[]> => []),
     appBlock: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -29,6 +39,31 @@ const { mockDb, mockWriteDb } = vi.hoisted(() => {
     },
     appCollaborator: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
+    // `hydrateMyAppListings` reads the latest moderation event for any `removed` row, to
+    // separate an owner self-unpublish from a moderator takedown. No fixture here is
+    // `removed`, so the guarded call does not fire — the model is declared anyway because
+    // the failure mode if it ever did would be `Cannot read properties of undefined`, which
+    // reads as a broken mock rather than as the one-line fixture change that caused it.
+    appListingModerationEvent: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      // `getAppListingAuthoringContext` reads the SAME fact for its one listing, with
+      // `findFirst` rather than a batched `findMany` — the Publishing tab has to separate an
+      // owner self-unpublish (Republish is allowed) from a moderator takedown (it is not).
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
+    // `hydrateMyAppListings` also resolves the SCAN dimension of the completeness
+    // advisory (`blocked-media` / `scanning-media`) through
+    // `loadListingAssetScansBatch`, which is two batched reads: the page's screenshots,
+    // then every collected asset Image. Declared empty here — this file is about the
+    // ownership∪seat SET, and the scan wiring has its own suite
+    // (`app-access.my-app-listings-scan-problems.test.ts`). Without them the batch reads
+    // `undefined.findMany` and every case in this file fails as a broken mock.
+    appListingScreenshot: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
+    image: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
   });
@@ -368,9 +403,20 @@ describe('getAppListingAuthoringContext', () => {
     };
   }
 
+  /**
+   * 🔴 THE FAKE DISCRIMINATES THE TWO `findUnique` READS BY `select.connectClientId`, NOT
+   * by `select.slug`. It used to key on `slug`, which worked only because
+   * `resolveListingAccess` happened not to ask for that column — an INCIDENTAL property,
+   * not a contract. The moment that resolver legitimately needed the slug (to find a
+   * publish request whose `app_block_id` is still NULL), the access read started matching
+   * the AUTHORING branch and came back without `userId`/`kind`, so every case here failed
+   * with FORBIDDEN and read like an authorization regression. `connectClientId` is asked
+   * for by the authoring read ALONE and is documented as deliberately absent from the
+   * other, which makes it a discriminator with a reason rather than a coincidence.
+   */
   it('the OWNER gets role owner + the kind-derived capabilities', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -384,7 +430,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('an ACCEPTED seat gets role editor', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -395,7 +441,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('🔴 a stranger is REFUSED (FORBIDDEN), not handed a role-less row', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -407,7 +453,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('a PENDING invitee is a stranger here — an unaccepted invite confers nothing', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -423,31 +469,40 @@ describe('getAppListingAuthoringContext', () => {
   });
 
   /**
-   * 🔴 STATUS GATE. Before it, a moderator-REMOVED listing opened the canonical authoring
-   * page with every tab live — including Collaborators, so an owner could invite someone
-   * onto a delisted app and the acceptance would mint Forgejo `write` on its repo. The
-   * content procs would have refused the edits; nothing refused the PAGE.
+   * 🔴 THE STATUS GATE, AFTER civitai/civitai#4218's SUCCESSOR. It used to refuse every
+   * non-authorable status outright, because leaving the page open on a delisted app left a
+   * LIVE Collaborators tab and accepting an invite there still mints Forgejo `write`. That
+   * refusal ALSO put an owner's own Republish out of reach — an owner Unpublish writes the
+   * same `status='removed'` a moderator takedown does — i.e. a one-way door only a moderator
+   * could reopen.
+   *
+   * So the gate is now a KNOWN-STATUS gate and the narrowing moved to the tab set:
+   * `editorTabsFor` withholds `details`/`media`/`manifest`/`earnings`/`collaborators` on any
+   * non-authorable status (`appListingEditorTabs.test.ts`, one negative case per tab), and
+   * the Collaborators hazard is closed at its own enforcement point
+   * (`app-collaborator.seat-grant-status.test.ts`). An UNKNOWN status still refuses here.
    */
   describe('the listing STATUS gate', () => {
     function withStatus(status: string) {
       mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-        (a[0] as { select?: { slug?: boolean } }).select?.slug
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
           ? { id: 'apl_1', slug: 'my-app', name: 'My App', status }
           : listingFixture()
       );
     }
 
-    for (const status of ['removed', 'rejected', 'withdrawn']) {
-      it(`refuses a \`${status}\` listing with FORBIDDEN`, async () => {
-        withStatus(status);
-        await expect(
-          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
-        ).rejects.toMatchObject({
-          code: 'FORBIDDEN',
-          message: 'This listing can no longer be edited',
-        });
+    it('🔴 still refuses an UNKNOWN status with FORBIDDEN — the gate FAILS CLOSED', async () => {
+      // `withdrawn` is a publish-REQUEST status and is not in the listing lifecycle at all,
+      // so it stands in for any value this code has never heard of. It must not fall into
+      // the narrowed branch by default.
+      withStatus('withdrawn');
+      await expect(
+        getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'This listing can no longer be edited',
       });
-    }
+    });
 
     for (const status of ['draft', 'pending', 'approved']) {
       it(`ADMITS a \`${status}\` listing (the control)`, async () => {
@@ -458,15 +513,99 @@ describe('getAppListingAuthoringContext', () => {
       });
     }
 
-    it('🔴 the refusal is DISTINCT from the no-role refusal', async () => {
-      // Both are FORBIDDEN, so only the message separates "you may not edit this" from
-      // "this can no longer be edited" — and a mutant that routes one into the other
-      // would otherwise be unattributable.
+    for (const status of ['removed', 'rejected']) {
+      it(`🔴 now ADMITS a \`${status}\` listing — the narrowing moved to the TAB SET`, async () => {
+        // 🔴 THE REVERSAL, and the reason it is safe is NOT in this file. What this asserts
+        // is only that the context resolves; that the resolved context yields at most
+        // Publishing, History, Feedback — and NEVER Collaborators — is
+        // `appListingEditorTabs.test.ts`, and that the seat-grant procs refuse independently
+        // of any tab is `app-collaborator.seat-grant-status.test.ts`. Reading this case as
+        // "removed listings are editable again" is exactly the misreading to avoid.
+        withStatus(status);
+        await expect(
+          getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+        ).resolves.toMatchObject({ appListingId: 'apl_1', status });
+      });
+    }
+
+    it('🔴 the no-role refusal is DISTINCT and still fires on a removed listing', async () => {
+      // Both refusals are FORBIDDEN, so only the message separates "you may not open this"
+      // from "this can no longer be edited" — and a mutant that routed one into the other
+      // would be unattributable. Opening the route on `removed` must not weaken the ACCESS
+      // check that runs before it.
       withStatus('removed');
       mockDb.appCollaborator.findFirst.mockImplementation(async () => null);
       await expect(
         getAppListingAuthoringContext({ appListingId: 'apl_1', userId: STRANGER })
-      ).rejects.toMatchObject({ message: 'You do not have access to this app' });
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'You do not have access to this app',
+      });
+    });
+  });
+
+  /**
+   * 🔴 `lastModerationAction` — the ONE bit that separates "I unpublished this and may put
+   * it back" from "a moderator removed this". `status` reads `removed` for both, so the
+   * Publishing tab cannot decide whether to offer Republish without it.
+   */
+  describe('the moderation-event read behind the Publishing tab', () => {
+    function withStatus(status: string) {
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_1', slug: 'my-app', name: 'My App', status }
+          : listingFixture()
+      );
+    }
+
+    it('carries the OWNER-UNPUBLISH action through, keyed to the SEAT listing id', async () => {
+      withStatus('removed');
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+        action: 'owner-unpublish',
+      }));
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.lastModerationAction).toBe('owner-unpublish');
+      const call = mockDb.appListingModerationEvent.findFirst.mock.calls.at(-1)?.[0] as {
+        where: { appListingId: string };
+      };
+      expect(call.where.appListingId).toBe('apl_1');
+    });
+
+    it('🔴 NORMALISES every other verb to `other` — a seated editor never gets the real one', async () => {
+      // Four pairwise-distinct real moderator verbs, none of which may reach the client.
+      // Widening this back to the raw string re-opens the editor-disclosure hole the
+      // projection exists to close.
+      for (const verb of ['delist', 'purge', 'claim', 'report-dismiss']) {
+        withStatus('removed');
+        mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+          action: verb,
+        }));
+        const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+        expect(ctx.lastModerationAction, verb).toBe('other');
+      }
+    });
+
+    it('a removed listing with NO event carries null — read as a moderator removal', async () => {
+      withStatus('removed');
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => null);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.lastModerationAction).toBeNull();
+    });
+
+    it('🔴 does NOT query at all on a non-removed listing — the value is meaningless there', async () => {
+      // A stale `owner-unpublish` on a listing that is approved again must not re-open
+      // Republish next to a live app, and the read is a round trip this page should not pay
+      // on the overwhelmingly common status. The call COUNT is the assertion; the resolved
+      // context above it is the positive control that the read really ran.
+      withStatus('approved');
+      mockDb.appListingModerationEvent.findFirst.mockClear();
+      mockDb.appListingModerationEvent.findFirst.mockImplementation(async () => ({
+        action: 'owner-unpublish',
+      }));
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.status).toBe('approved');
+      expect(ctx.lastModerationAction).toBeNull();
+      expect(mockDb.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
     });
   });
 
@@ -482,7 +621,7 @@ describe('getAppListingAuthoringContext', () => {
     // shadow would make an in-flight revision look off-site and silently strip the
     // block-only tabs from the editor.
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_parent', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture({
             id: 'apl_shadow',
@@ -502,6 +641,120 @@ describe('getAppListingAuthoringContext', () => {
     expect(ctx.kind).toBe('onsite');
     expect(ctx.appBlockId).toBe('ab_1');
     expect(ctx.capabilities.submitVersion).toBe(true);
+  });
+
+  /**
+   * 🔴 THE VISIBILITY LEVEL the Publishing tab's control is driven by.
+   *
+   * Three fields, and each one is a decision the client must NOT re-make: the stored level,
+   * whether the manual-apply column is even there, and the review CEILING for this status.
+   * A client re-deriving the ceiling is how a `draft` + `public` selector would come to
+   * offer publishing content no moderator has reviewed (D6).
+   */
+  describe('the visibility level behind the Publishing tab', () => {
+    const rawRows = () =>
+      mockDb.$queryRaw as unknown as {
+        mockImplementation: (f: (...a: unknown[]) => unknown) => void;
+      };
+
+    /** The same approved-listing fixture the sibling cases install. */
+    function installListing() {
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
+          : listingFixture()
+      );
+    }
+
+    it('carries the stored level, availability, and the status ceiling', async () => {
+      installListing();
+      rawRows().mockImplementation(async () => [{ visibility: 'testers' }]);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibility).toBe('testers');
+      expect(ctx.visibilityAvailable).toBe(true);
+      // ⚠️ NO `maxVisibility` ASSERTION, AND ITS ABSENCE IS THE POINT. The field was shipped
+      // and removed: nothing but this line ever read it, while the client derived the
+      // ceiling from the shared `maxVisibilityForStatus`. The ceiling's own behaviour is
+      // pinned where it is implemented, in that function's invariant test.
+    });
+
+    it('🔴 reports an UNSET level as null, never as `private`', async () => {
+      // `null` resolves to the pre-feature rule for the status, which on an approved
+      // listing means visible to everyone — the OPPOSITE of `private`. Collapsing the two
+      // here would make one click of the owner's Save hide a live app.
+      installListing();
+      rawRows().mockImplementation(async () => []);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibility).toBeNull();
+      expect(ctx.visibilityAvailable).toBe(true);
+    });
+
+    it('🔴 DEGRADES rather than throwing when the manual-apply column is absent', async () => {
+      // An unapplied migration must still render the whole authoring page; the control
+      // disables itself from this flag. A throw here would 500 the editor for every tab.
+      installListing();
+      rawRows().mockImplementation(async () => {
+        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
+      });
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibilityAvailable).toBe(false);
+      expect(ctx.visibility).toBeNull();
+      // The REST of the context still has to be intact — the degraded read must not take
+      // the page down with it.
+      expect(ctx.appListingId).toBe('apl_1');
+      expect(ctx.role).toBe('owner');
+    });
+
+    it('🔴 a connection failure still PROPAGATES — only a missing column degrades', async () => {
+      // The positive control on the degrade above. Degrading on a real outage would turn it
+      // into a silently wrong audience, which is worse than an error on a surface that
+      // licenses a write.
+      installListing();
+      rawRows().mockImplementation(async () => {
+        throw Object.assign(new Error('cannot reach database'), { code: 'P1001' });
+      });
+      await expect(
+        getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+      ).rejects.toThrow('cannot reach database');
+    });
+
+    it('🔴 keys the level on the PARENT, not on the shadow the caller arrived with', async () => {
+      // 🔴 THE SUBTLEST THING ON THIS PATH. The level governs the LIVE listing's
+      // discoverability; a shadow is a draft copy nothing writes a level to. Keying it on
+      // the id the caller passed would read the shadow's (always unset), so an owner editing
+      // an approved app would see their deliberate `private` as "no choice expressed" — and
+      // the obvious next click re-publishes it.
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_parent', slug: 'my-app', name: 'My App', status: 'approved' }
+          : listingFixture({
+              id: 'apl_shadow',
+              appBlockId: null,
+              revisionOfId: 'apl_parent',
+              appBlock: null,
+              revisionOf: {
+                id: 'apl_parent',
+                kind: 'onsite',
+                appBlockId: 'ab_1',
+                appBlock: { app: { userId: OWNER } },
+              },
+            })
+      );
+      const seen: unknown[] = [];
+      rawRows().mockImplementation(async (...a: unknown[]) => {
+        seen.push(a[0]);
+        return [{ visibility: 'private' }];
+      });
+      const ctx = await getAppListingAuthoringContext({
+        appListingId: 'apl_shadow',
+        userId: OWNER,
+      });
+      expect(ctx.visibility).toBe('private');
+      // The statement carries the PARENT id as a bound parameter, never the shadow's.
+      const sql = JSON.stringify(seen[0]);
+      expect(sql).toContain('apl_parent');
+      expect(sql).not.toContain('apl_shadow');
+    });
   });
 });
 

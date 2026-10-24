@@ -11,7 +11,10 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readdirSync, lstatSync, rmdirSync, rmSync, existsSync } from 'fs';
+import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
+import { isInside, samePath } from './paths.mjs';
+import { syncSkillEnv } from './skill-env.mjs';
+import { syncAppEnv } from './app-env.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -19,6 +22,7 @@ function git(args, cwd) {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   }).trim();
 }
 
@@ -80,23 +84,92 @@ function findReparsePoints(root) {
 }
 
 /**
- * `--is-ancestor` is useless here: the repo squash-merges, so a merged branch's tip is never an
+ * Removes the link itself, never its target. Which call does that is platform-specific and each
+ * one errors on the other's link type: a POSIX symlink needs `unlink` and gives ENOTDIR to
+ * `rmdir`, a Windows directory junction is the reverse and gives EPERM to `unlink`. Trying only
+ * `rmdir` is what made `wt rm` unusable on macOS against any tree that had been `pnpm install`ed.
+ */
+function unlinkReparsePoint(link) {
+  try {
+    if (process.platform === 'win32') rmdirSync(link);
+    else unlinkSync(link);
+  } catch (err) {
+    if (err.code !== 'ENOTDIR' && err.code !== 'EPERM' && err.code !== 'EISDIR') throw err;
+    if (process.platform === 'win32') unlinkSync(link);
+    else rmdirSync(link);
+  }
+}
+
+/**
+ * `--is-ancestor` against origin/main is useless here: the repo squash-merges, so a merged branch's tip is never an
  * ancestor of origin/main. It reported "not merged" for 24 of 26 branches on one run.
  */
-function mergedPr(branch, cwd) {
-  const raw = spawnGh(
-    ['pr', 'list', '--state', 'all', '--head', branch, '--json', 'number,state', '--limit', '5'],
+export function prStatus(branch, cwd, gh = spawnGh) {
+  const raw = gh(
+    [
+      'pr',
+      'list',
+      '--state',
+      'all',
+      '--head',
+      branch,
+      '--json',
+      'number,state,isDraft,isCrossRepository,headRefOid',
+      '--limit',
+      '20',
+    ],
     cwd
   );
-  if (!raw) return null;
-  let rows;
+  if (!raw) return { merged: null, label: 'PR state unknown (gh failed)' };
   try {
-    rows = JSON.parse(raw);
+    return describePrRows(JSON.parse(raw), tipIsIn(branch, cwd));
   } catch {
-    return null;
+    return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
   }
-  const merged = rows.find((r) => r.state === 'MERGED');
-  return merged ? merged.number : null;
+}
+
+/** A sha that is not in the local object store answers false, so an unknown PR head keeps the tree. */
+export function tipIsIn(branch, cwd) {
+  const tip = gitQuiet(['rev-parse', '--verify', `refs/heads/${branch}`], cwd);
+  return (sha) =>
+    Boolean(tip) &&
+    typeof sha === 'string' &&
+    (sha === tip || gitQuiet(['merge-base', '--is-ancestor', tip, sha], cwd) !== null);
+}
+
+/**
+ * `gh pr list --head` matches the branch NAME only, so a fork's PR or an old merged PR whose name was
+ * reused comes back too. Only a same-repo merge whose head holds the local tip clears the branch.
+ */
+export function describePrRows(rows, holdsTip = () => false) {
+  if (!Array.isArray(rows))
+    return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
+  const num = (r) => (typeof r.number === 'number' ? `#${r.number}` : 'of unknown number');
+  const forks = rows.filter((r) => r.isCrossRepository !== false);
+  rows = rows.filter((r) => r.isCrossRepository === false);
+  const merged = rows.filter((r) => r.state === 'MERGED');
+  const covering = merged.find((r) => holdsTip(r.headRefOid));
+  if (covering) return { merged: covering.number ?? null, label: `PR ${num(covering)} merged` };
+  const open = rows.find((r) => r.state === 'OPEN');
+  if (open) {
+    return { merged: null, label: `PR ${num(open)} still OPEN${open.isDraft ? ' (draft)' : ''}` };
+  }
+  if (merged.length) {
+    return {
+      merged: null,
+      label: `PR ${num(merged[0])} merged, but this branch's tip is not in what merged`,
+    };
+  }
+  if (!rows.length && forks.length) {
+    return {
+      merged: null,
+      label: `gh found no PR for this branch (only a fork's PR ${num(forks[0])} shares its name)`,
+    };
+  }
+  // Not "no PR exists": `gh` has been seen switching to an account that can't see this repo, which
+  // returns [] and exit 0. A tree must not be deleted on the strength of that.
+  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
+  return { merged: null, label: `PR ${num(rows[0])} closed WITHOUT merging` };
 }
 
 function spawnGh(args, cwd) {
@@ -105,6 +178,7 @@ function spawnGh(args, cwd) {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     }).trim();
   } catch {
     return null;
@@ -127,43 +201,177 @@ function lastCommit(worktreePath) {
   return gitQuiet(['log', '-1', '--format=%ci'], worktreePath);
 }
 
-async function sessionsFor(worktreePath, daemonRequest) {
-  const res = await daemonRequest('/sessions');
-  if (!res.ok) return [];
-  const target = resolve(worktreePath).toLowerCase();
-  return (res.data.sessions || []).filter((s) => resolve(s.worktree).toLowerCase() === target);
+// Both lists in one round-trip, so a caller looping over worktrees does not re-fetch per iteration.
+async function fetchRunning(daemonRequest) {
+  const [sessionRes, appRes] = await Promise.all([
+    daemonRequest('/sessions'),
+    daemonRequest('/apps'),
+  ]);
+  return {
+    sessions: sessionRes.ok ? sessionRes.data.sessions || [] : [],
+    apps: appRes.ok ? appRes.data.apps || [] : [],
+  };
+}
+
+/**
+ * What one `/` answer establishes, before any tree is named.
+ *
+ * 🔴 `reachable` turns on the TRANSPORT, not on `ok`. `daemonRequest` reports `status: 0` only when
+ * the request never got an answer; a live daemon that 500s on `/` — one session's status throwing is
+ * enough — also arrives as `ok: false`. Reading that as "no daemon is running" would hand back the
+ * confidently-wrong verdict this whole change exists to remove, just from a rarer cause.
+ *
+ * (One case still lands on the wrong side: `daemonRequest` parses the body inside its `try`, so a
+ * daemon answering non-JSON is reported as `status: 0`. A daemon that cannot serve JSON on `/` is
+ * broken in ways this command cannot help with, and fixing it belongs in `daemonRequest`.)
+ */
+export function daemonAnswer(res) {
+  const reachable = res.status !== 0;
+  return { checked: Boolean(res.ok && res.data?.skillDir), reachable };
+}
+
+// The daemon reports where its own code lives; a daemon running out of this tree holds the
+// directory open and no delete can succeed while it lives.
+export async function daemonRunningFrom(target, daemonRequest) {
+  return daemonHeldFrom(await daemonRequest('/'), target);
+}
+
+// The same verdict from an already-fetched `/`, so `wt stale` asks once for a dozen trees instead of
+// once per tree.
+//
+// `checked` is separate from `holder` on purpose. A daemon that is down, unreachable, or older than
+// the `skillDir` field yields no holder AND no knowledge, and the caller must not then report the
+// daemon as ruled out.
+export function daemonHeldFrom(res, target) {
+  const answer = daemonAnswer(res);
+  if (!answer.checked) return { holder: null, ...answer };
+  // Its script AND its working directory: either one alone keeps the directory open. A daemon
+  // started by hand from a worktree runs the primary's script and still pins the tree by cwd.
+  const held = [
+    ['its running script', res.data.skillDir],
+    ['its working directory', res.data.cwd],
+  ].find(([, p]) => p && isInside(p, target));
+  return {
+    holder: held ? { pid: res.data.pid, reason: `${held[0]}: ${held[1]}` } : null,
+    checked: true,
+    reachable: true,
+  };
+}
+
+// 🔴 UNKNOWN IS NOT NO. A daemon too old to report `skillDir` answers `/` with a bare pid, and
+// 868kzk7pf is those two being indistinguishable: `wt stale` called a tree safe while the daemon ran
+// out of it, then `wt rm` unlinked every reparse point and failed EBUSY. So an unanswered check
+// keeps the tree in KEEP and says which of the two it is.
+export function daemonBlockReason(daemon) {
+  if (!daemon) return null;
+  if (daemon.holder)
+    return `hosts the dev-server daemon (pid ${daemon.holder.pid}) - ${daemon.holder.reason}`;
+  if (!daemon.checked && daemon.reachable)
+    return 'a running dev-server daemon did not say where it runs from (it predates PR #4641) - NOT ruled out';
+  return null;
+}
+
+// Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
+// While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
+// out from under a running moderator and report a clean removal.
+function sessionsIn(worktreePath, running) {
+  const inTree = (s) => s.worktree && samePath(s.worktree, worktreePath);
+
+  const found = [];
+  for (const s of running.sessions.filter(inTree)) {
+    found.push({ id: s.id, port: s.port, status: s.status, stopPath: `/sessions/${s.id}` });
+  }
+  for (const a of running.apps.filter(inTree)) {
+    found.push({
+      id: `app:${a.name}`,
+      port: a.port,
+      status: a.status,
+      stopPath: `/app/${a.name}/stop?worktree=${encodeURIComponent(a.worktree)}`,
+    });
+  }
+  return found;
+}
+
+// `git worktree list` puts the main worktree first, always. The caller's `primary` is only the
+// directory git is run from — invoked through a worktree's own copy of the CLI it IS that worktree,
+// which inverts every isPrimary test: the real main checkout reads as a removable candidate and the
+// worktree you are standing in reads as the thing to protect.
+export function primaryOf(trees, fallback) {
+  return trees.length ? trees[0].path : resolve(fallback);
 }
 
 export async function inspect(primary, daemonRequest) {
   const trees = listWorktrees(primary);
-  const primaryPath = resolve(primary);
+  const primaryPath = primaryOf(trees, primary);
+  const [running, daemonRoot] = await Promise.all([fetchRunning(daemonRequest), daemonRequest('/')]);
   const rows = [];
   for (const t of trees) {
-    const isPrimary = t.path === primaryPath;
-    const sessions = await sessionsFor(t.path, daemonRequest);
+    const isPrimary = samePath(t.path, primaryPath);
+    const sessions = sessionsIn(t.path, running);
+    const pr = t.branch ? prStatus(t.branch, primary) : { merged: null, label: 'detached' };
     rows.push({
       path: t.path,
       branch: t.branch,
       detached: t.detached,
       isPrimary,
-      mergedPr: t.branch ? mergedPr(t.branch, primary) : null,
+      mergedPr: pr.merged,
+      prLabel: pr.label,
       dirty: dirtyCount(t.path),
       unpushed: t.branch ? unpushedCount(t.branch, primary) : null,
       lastCommit: lastCommit(t.path),
       sessions: sessions.map((s) => ({ id: s.id, port: s.port, status: s.status })),
+      daemon: daemonHeldFrom(daemonRoot, t.path),
     });
   }
-  return rows;
+  return { rows, daemon: daemonAnswer(daemonRoot) };
+}
+
+/**
+ * Which trees `wt stale` offers and which it keeps — separated from the printing so a selftest can
+ * reach the decision without a git tree, a `gh` call and a daemon.
+ */
+export function partitionStale(rows, daemon) {
+  const candidates = rows.filter((r) => !r.isPrimary);
+  const removable = candidates.filter(
+    (r) => r.mergedPr && !r.dirty && r.sessions.length === 0 && !daemonBlockReason(r.daemon)
+  );
+  return {
+    candidates,
+    removable,
+    blocked: candidates.filter((r) => !removable.includes(r)),
+    // Read from the one `/` answer rather than tallied back out of the rows: a tally says nothing
+    // when there are no candidates, and would then print no banner on a box holding only the
+    // primary checkout while `wt rm` refuses on the same daemon.
+    daemonUnasked: Boolean(daemon?.reachable && !daemon.checked),
+  };
+}
+
+/** Every reason this tree is in KEEP, in the order they are printed. */
+export function keepReasons(r, daemonUnasked) {
+  const why = [];
+  if (r.sessions.length) why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
+  if (r.dirty) why.push(`${r.dirty} uncommitted`);
+  if (!r.mergedPr) why.push(r.prLabel);
+  const daemonWhy = daemonBlockReason(r.daemon);
+  if (daemonWhy) why.push(daemonUnasked ? 'daemon NOT ruled out (see above)' : daemonWhy);
+  return why;
 }
 
 export async function cmdStale(primary, daemonRequest) {
-  const rows = await inspect(primary, daemonRequest);
-  const candidates = rows.filter((r) => !r.isPrimary);
+  const { rows, daemon } = await inspect(primary, daemonRequest);
+  const { removable, blocked, daemonUnasked } = partitionStale(rows, daemon);
 
-  const removable = candidates.filter((r) => r.mergedPr && !r.dirty && r.sessions.length === 0);
-  const blocked = candidates.filter((r) => !removable.includes(r));
+  if (daemonUnasked) {
+    console.log(
+      '\n[!] a dev-server daemon is running but did not say where it runs from, so NO tree can be\n' +
+        '    cleared of hosting it. It predates PR #4641 and stays that way until it is restarted -\n' +
+        '    which is shared, so check "cli.mjs test list" is empty and ask before restarting it.'
+    );
+  }
 
-  console.log(`\nSAFE TO REMOVE (${removable.length}) - merged PR, clean tree, no dev server\n`);
+  console.log(
+    `\nSAFE TO REMOVE (${removable.length}) - merged PR, clean tree, no dev server, not hosting the daemon\n`
+  );
   if (!removable.length) console.log('  (none)');
   for (const r of removable) {
     const age = r.lastCommit ? r.lastCommit.slice(0, 10) : '?';
@@ -176,28 +384,50 @@ export async function cmdStale(primary, daemonRequest) {
 
   console.log(`\nKEEP (${blocked.length})\n`);
   for (const r of blocked) {
-    const why = [];
-    if (r.sessions.length)
-      why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
-    if (r.dirty) why.push(`${r.dirty} uncommitted`);
-    if (!r.mergedPr) why.push(r.branch ? 'no merged PR' : 'detached');
     console.log(`  ${r.path}`);
-    console.log(`      ${r.branch || '(detached)'}  ${why.join('; ')}`);
+    console.log(`      ${r.branch || '(detached)'}  ${keepReasons(r, daemonUnasked).join('; ')}`);
   }
   console.log('\nRemove one with:  node .claude/skills/dev-server/cli.mjs wt rm <path>\n');
 }
 
 export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
-  const primaryPath = resolve(primary);
   const target = resolve(targetArg);
-
-  if (target === primaryPath) fail('refusing to remove the primary worktree');
-
   const trees = listWorktrees(primary);
-  const entry = trees.find((t) => t.path === target);
+  const primaryPath = primaryOf(trees, primary);
+
+  if (samePath(target, primaryPath)) fail('refusing to remove the primary worktree');
+
+  const entry = trees.find((t) => samePath(t.path, target));
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
-  const sessions = await sessionsFor(target, daemonRequest);
+  // Ahead of the session stops, not merely ahead of the delete. `--stop-server` stops OTHER agents'
+  // dev servers in this tree, which is irreversible and cannot be undone by the refusal that would
+  // otherwise follow it.
+  const daemonCheck = await daemonRunningFrom(target, daemonRequest);
+  // The same verdict `wt stale` prints. It used to refuse only a KNOWN holder, so the case that
+  // actually cost the 40 minutes — a daemon too old to answer, which is neither a holder nor ruled
+  // out — walked straight past this and failed at the `rmSync` below with the tree already gutted.
+  // A KNOWN holder is absolute; an unknown one is overridable. The two carry different confidence,
+  // and refusing both outright would mean no tree on this box could be removed at all until a
+  // SHARED daemon is restarted — the accumulation `wt stale` and `wt rm` exist to prevent, brought
+  // about by the command meant to prevent it.
+  const daemonWhy = daemonBlockReason(daemonCheck);
+  if (daemonCheck.holder || (daemonWhy && !opts.force)) {
+    fail(
+      `${daemonWhy}\n` +
+        (daemonCheck.holder
+          ? `no delete can succeed while it lives — that path is inside the directory.\n` +
+            `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
+            `blocks this; this one does not. --force does NOT override this one.`
+          : `so this delete may be the one that unlinks the tree and then cannot remove it. re-run\n` +
+            `with --force to delete anyway, once you accept that risk.`) +
+        `\nit is SHARED — other agents' dev servers and queued test runs are on it — so check\n` +
+        `"cli.mjs test list" reports zero running and zero queued, and ask before restarting it.`
+    );
+  }
+  if (daemonWhy) console.log(`[!] ${daemonWhy}\n    proceeding because --force was given.`);
+
+  const sessions = sessionsIn(target, await fetchRunning(daemonRequest));
   const live = sessions.filter((s) => s.status === 'running');
   if (live.length && !opts.stopServer) {
     fail(
@@ -207,8 +437,10 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     );
   }
   for (const s of sessions) {
-    await daemonRequest(`/sessions/${s.id}`, { method: 'DELETE' });
-    console.log(`stopped session ${s.id}`);
+    // An app stops through POST /app/<name>/stop; a main-app session through DELETE /sessions/<id>.
+    // Both release the port — the difference is only which endpoint owns the reservation.
+    await daemonRequest(s.stopPath, { method: s.id.startsWith('app:') ? 'POST' : 'DELETE' });
+    console.log(`stopped ${s.id}`);
   }
 
   const dirty = dirtyCount(target);
@@ -218,13 +450,17 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
 
   const unpushed = entry.branch ? unpushedCount(entry.branch, primary) : null;
 
+  // Read before the delete: afterwards there is no way to learn which `.git/worktrees/<name>` was
+  // this tree's, and that name is what prune reports.
+  const adminDir = gitQuiet(['rev-parse', '--absolute-git-dir'], target);
+
   if (!existsSync(target)) {
     console.log('directory already gone; pruning');
   } else {
     const links = findReparsePoints(target);
     console.log(`reparse points: ${links.length}`);
     for (const link of links) {
-      rmdirSync(link); // link-only; a recursive delete would walk THROUGH it
+      unlinkReparsePoint(link);
     }
     const left = findReparsePoints(target);
     if (left.length) {
@@ -240,32 +476,203 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
       rmSync(target, { recursive: true, force: true });
     } catch (err) {
       fail(
-        `could not delete ${target}: ${err.message}\nsomething is holding it open (a shell cwd'd inside it?)`
+        `could not delete ${target}: ${err.message}\n` +
+          (daemonCheck.checked
+            ? `the dev-server daemon was asked and is running from elsewhere, so it is not the holder.\n` +
+              `look for a shell cwd'd inside, an editor, an unmanaged dev server, or a virus scan.`
+            : `the dev-server daemon could not be asked where it runs from (down, unreachable, or too\n` +
+              `old to report it), so it has NOT been ruled out — check it before hunting a stray shell.`)
       );
     }
     if (existsSync(target)) fail(`directory still present after delete: ${target}`);
     console.log('directory deleted');
   }
 
-  console.log(git(['worktree', 'prune', '-v'], primary) || 'pruned');
+  const pruned = describePrune(git(['worktree', 'prune', '-v'], primary), adminDir);
+  for (const line of pruned) console.log(line);
 
   if (!entry.branch) return;
 
-  const pr = mergedPr(entry.branch, primary);
-  if (!pr) {
-    console.log(`branch KEPT: ${entry.branch} (no merged PR found)`);
+  const pr = prStatus(entry.branch, primary);
+  if (!pr.merged) {
+    console.log(`branch KEPT: ${entry.branch} (${pr.label})`);
   } else if (unpushed) {
     console.log(
-      `branch KEPT: ${entry.branch} (PR #${pr} merged, but ${unpushed} commit(s) exist on no remote)`
+      `branch KEPT: ${entry.branch} (PR #${pr.merged} merged, but ${unpushed} commit(s) exist on no remote)`
     );
   } else {
     const sha = gitQuiet(['rev-parse', entry.branch], primary);
     git(['branch', '-D', entry.branch], primary);
-    console.log(`branch deleted: ${entry.branch} (PR #${pr}, was ${sha})`);
+    console.log(`branch deleted: ${entry.branch} (PR #${pr.merged}, was ${sha})`);
   }
+}
+
+/**
+ * `git worktree prune` is repo-wide: it drops every stale registration it finds, not only the one
+ * this command removed. Printing its `-v` output raw made another agent's already-deleted tree read
+ * as something `wt rm <path>` had just done, and produced two false alarms in one night.
+ *
+ * `adminName` is the directory under `.git/worktrees/`, NOT the worktree's own basename, because
+ * those differ: `git worktree add` de-duplicates a colliding basename by appending a digit, so two
+ * live trees both called `mine` register as `mine` and `mine1`. Matching on the basename cannot tell
+ * them apart and labels one agent's tree as the other's — the direction this function exists to
+ * prevent (measured in a scratch repo, 2026-08-25). It has to be read before the delete, and when it
+ * could not be read this says so rather than guessing.
+ */
+export function describePrune(raw, adminName) {
+  const lines = String(raw ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return ['pruned: no stale worktree registrations'];
+
+  const leaf = (p) =>
+    String(p ?? '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .pop() || null;
+  // Case-SENSITIVE: both sides are git's own spelling of the same directory (one from `rev-parse`,
+  // one from prune), and on a case-sensitive filesystem `Mine` and `mine` are two different trees.
+  const mineName = leaf(adminName);
+
+  const out = [];
+  let collateral = 0;
+  let unknown = 0;
+  for (const line of lines) {
+    // git's only wording here is `Removing worktrees/<admin>: <reason>` (git/worktree.c).
+    const named = line.match(/^Removing\s+worktrees\/(.+?):/);
+    if (!mineName || !named) {
+      unknown++;
+      out.push(`pruned (could not tell whose): ${line}`);
+    } else if (named[1] === mineName) {
+      out.push(`pruned: ${line}`);
+    } else {
+      collateral++;
+      out.push(`pruned (ALSO, not your target): ${line}`);
+    }
+  }
+  if (collateral) {
+    out.push(
+      `note: ${collateral} of those registration(s) were stale before this command ran - prune is repo-wide`
+    );
+  }
+  if (unknown) {
+    out.push(
+      `note: ${unknown} line(s) could not be attributed - prune is repo-wide, so do not read them as this removal`
+    );
+  }
+  return out;
 }
 
 function fail(msg) {
   console.error(`\n${msg}\n`);
   process.exit(1);
+}
+
+const SUBMODULE = 'event-engine-common';
+
+export function worktreesRootOf(primary) {
+  return resolve(primary, '..', 'worktrees');
+}
+
+// The recipe CLAUDE.md used to spell out by hand. Each git flag is load-bearing:
+//   -b          refuses an existing branch name instead of checking out someone else's work
+//   <base>      forks from the fetched remote ref, not this checkout's possibly stale local HEAD
+//   --no-track  stops the base becoming the upstream; without it `git pull` merges main in
+export function parseNewArgs(tail) {
+  const baseAt = tail.indexOf('--base');
+  const base = baseAt === -1 ? undefined : tail[baseAt + 1];
+  const [name, branch] = tail.filter((a, i) => !a.startsWith('--') && (baseAt === -1 || i !== baseAt + 1));
+  return { name, branch, base, noInstall: tail.includes('--no-install') };
+}
+
+export async function cmdCreate(primaryArg, name, branch, opts = {}) {
+  const base = opts.base ?? 'origin/main';
+  if (!name || !branch) fail('Usage: wt new <name> <branch> [--base origin/<branch>] [--no-install]');
+  if (!/^[\w.-]+$/.test(name)) fail(`worktree name must be a plain directory name: ${name}`);
+  if (!base.startsWith('origin/')) fail(`--base must be a remote ref (origin/<branch>), got: ${base}`);
+
+  const primary = primaryOf(listWorktrees(primaryArg), primaryArg);
+  const target = opts.path ? resolve(opts.path) : resolve(worktreesRootOf(primary), name);
+  if (existsSync(target)) fail(`already exists: ${target}`);
+  if (gitQuiet(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], primary) !== null) {
+    fail(`branch already exists: ${branch}\nPick a new name; to work on an existing branch, check it out deliberately.`);
+  }
+
+  git(['fetch', 'origin', base.slice('origin/'.length)], primary);
+  git(['worktree', 'add', target, '-b', branch, '--no-track', base], primary);
+  console.log(`created ${target} on ${branch} from ${base}`);
+
+  if (existsSync(resolve(primary, '.gitmodules')) && gitQuiet(['config', '-f', '.gitmodules', `submodule.${SUBMODULE}.path`], primary)) {
+    gitQuiet(['submodule', 'sync', '--recursive'], primary);
+    if (gitQuiet(['submodule', 'update', '--init', SUBMODULE], target) === null) {
+      console.warn(`warning: ${SUBMODULE} did not initialise — typecheck and some suites fail without it:\n  git -C "${target}" submodule update --init ${SUBMODULE}`);
+    }
+  }
+
+  if (existsSync(resolve(primary, '.envrc'))) {
+    writeFileSync(resolve(target, '.envrc'), 'use flake\n');
+    try {
+      execFileSync('direnv', ['allow'], { cwd: target, stdio: 'ignore', windowsHide: true });
+    } catch {
+      console.warn(`warning: wrote .envrc but could not run \`direnv allow\` in ${target}`);
+    }
+  }
+
+  // Skill credentials are gitignored or untracked, so a fresh tree has none and every skill
+  // then fails as though IT were broken. Non-fatal: a missing credential must never cost you a
+  // worktree.
+  try {
+    const env = syncSkillEnv(primary, target);
+    if (env.copied) console.log(`skill credentials: copied ${env.copied} (${env.names.join(', ')})`);
+    if (env.absent.length)
+    // A COUNT, not the names: 10 of 16 credential-taking skills have none configured in a
+    // typical environment, and a ten-name warning on every creation is one people learn to
+    // skip. `wt env` is where the list belongs, on demand.
+    if (env.absent.length)
+      console.log(
+        `skill credentials: ${env.absent.length} skill(s) have none anywhere; ` +
+          `list them with: node .claude/skills/dev-server/cli.mjs wt env`
+      );
+  } catch (error) {
+    console.warn(`warning: could not copy skill credentials -- ${error.message}`);
+  }
+
+  // Every app .env, root and per-app, as full copies — the tree must also run outside the
+  // daemon's env chain. Non-fatal for the same reason as the credentials above, except a missing
+  // dev database: carrying on would leave the tree with no DB at all or the wrong one.
+  try {
+    const appEnv = syncAppEnv(primary, target);
+    if (appEnv.copied.length) console.log(`env files: copied ${appEnv.copied.length} (${appEnv.copied.join(', ')})`);
+    if (appEnv.dbRouted.length) console.log(`env files: DATABASE_URL / DATABASE_REPLICA_URL set to the primary root .env's in ${appEnv.dbRouted.length} (${appEnv.dbRouted.join(', ')})`);
+    if (appEnv.blanked.length) console.log(`env files: CSAM_* emptied in ${appEnv.blanked.length} (${appEnv.blanked.join(', ')})`);
+    if (appEnv.noDir.length) console.log(`env files: skipped ${appEnv.noDir.length} whose app is not on this branch (${appEnv.noDir.join(', ')})`);
+  } catch (error) {
+    if (error.code === 'DEV_DB_MISSING')
+      fail(
+        `${error.message}\nThe worktree exists without its env files; then run: ` +
+          `node .claude/skills/dev-server/cli.mjs wt env "${target}", and pnpm install there.`
+      );
+    console.warn(`warning: could not copy env files -- ${error.message}`);
+  }
+
+  if (!opts.noInstall) {
+    try {
+      // pnpm is a .cmd/.ps1 shim on Windows, which only a shell can launch (ENOENT otherwise).
+      // No popped console: this runs from a terminal and inherits its console, unlike the
+      // daemon's detached children.
+      execFileSync('pnpm', ['install'], {
+        cwd: target,
+        stdio: 'inherit',
+        windowsHide: true,
+        shell: process.platform === 'win32',
+      });
+    } catch (error) {
+      fail(`pnpm install failed in ${target} -- the worktree and its env files are in place; rerun it there.\n${error.message}`);
+    }
+  }
+
+  const head = git(['status', '-sb'], target).split(/\r?\n/)[0];
+  if (head !== `## ${branch}`) fail(`expected "## ${branch}" with no upstream, got "${head}" — fix with: git -C "${target}" branch --unset-upstream`);
+  console.log(`ok: ${head}`);
 }

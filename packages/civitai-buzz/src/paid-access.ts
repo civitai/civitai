@@ -1,10 +1,3 @@
-import {
-  finiteOrNull,
-  maxLicensingFee,
-  VIDEO_CAP_MULTIPLIER,
-  type CapMediaType,
-} from './licensing-fee';
-
 // Paid access — pure helpers shared by the main app and the creator-studio spoke.
 // The gate reads ONE column, `endsAt`: active <=> endsAt IS NULL (permanent) OR endsAt > now().
 // `terms` is bundle semantics (a `download` purchase grants generation too). No termsVersion —
@@ -144,14 +137,16 @@ export type PaidAccessRow = {
   /** Timed-window length in days; null = permanent. Materialized into endsAt at publish. */
   timeframeDays?: number | null;
   terms: PaidAccessTerms;
+  /** Scheduled sales covering this entity — windows only, never a resolved price. See discountedTerms. */
+  sales?: ModelVersionSaleWindow[];
 };
 
 /**
  * A gate that never expires. Reads timeframeDays, NOT endsAt: a timed gate on an unpublished version also
  * carries endsAt null until publish materializes it, so endsAt cannot tell the two kinds apart.
  *
- * The price ceiling turns on this — a timed early-access window prices itself out when the window closes,
- * so only a permanent gate is capped.
+ * A permanent gate spends a pricing slot and a sale can cover it; a timed window does neither, because
+ * it prices itself out when it closes.
  */
 export const isPermanentGate = (row: Pick<PaidAccessRow, 'timeframeDays'>): boolean =>
   row.timeframeDays == null;
@@ -195,50 +190,17 @@ export const grantsGeneration = (
   { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
 ): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
 
-// Permanent pay-for-access caps (CU 868ke4949, revised by CU 868kj4q4j). Shared because two surfaces set
-// permanent access — the onsite model-version form and Creator Studio — and they must agree on the limit.
-// The server-side assertion in the main app is the enforcement point; these constants also drive the
-// "X of Y set" capacity hints in both UIs.
-//
-// The gate moved from QUANTITY to PRICE: permanent access is open to everyone, and the tier caps how much
-// you may charge. Only free keeps a count limit, so a non-member can try it without running a storefront.
-export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
-  free: 3,
-  // Legacy paid tier — allowances match bronze.
-  founder: Infinity,
-  bronze: Infinity,
-  silver: Infinity,
-  gold: Infinity,
-};
-
-export const PAID_ACCESS_PRICE_CAP_BY_TIER: Record<string, number> = {
-  free: 500,
-  // Legacy paid tier — charges as bronze.
-  founder: 1000,
-  bronze: 1000,
-  silver: 5000,
-  gold: Infinity,
-};
-
 /**
- * Concurrent permanent-access versions allowed for a tier. An unknown or lapsed tier gets the FREE
- * allowance rather than 0: a lapse must never take a gated model back to free/public (CU 868kj4q4j).
+ * Whether this viewer will have to BUY generation access. A trial user is granted generation —
+ * `grantsGeneration` is true — and still answers true here, because the grant is finite. Conflating the
+ * two is what left a spent trial with nowhere to go: every surface knew the user could generate, none
+ * knew they were on a clock. Says nothing about whether the trial is already spent, which only the
+ * orchestrator counts.
  */
-export function maxPermanentAccessModels(tier: string | null | undefined): number {
-  return (
-    (tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] : undefined) ?? PERMANENT_ACCESS_LIMIT_BY_TIER.free
-  );
-}
-
-/** Highest price a tier may charge for paid access. Unknown/lapsed tiers get the FREE cap (see above). */
-export function maxPaidAccessPrice(
-  tier: string | null | undefined,
-  mediaType?: CapMediaType
-): number {
-  const base =
-    (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
-  return mediaType === 'video' ? base * VIDEO_CAP_MULTIPLIER : base;
-}
+export const requiresGenerationPurchase = (
+  terms: ModelVersionTerms,
+  { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
+): boolean => !isOwnerOrMod && !hasBought && !isFreeGeneration(terms);
 
 // Tiers a creator can actually be shown, cheapest first. `founder` is omitted deliberately: it's a legacy
 // tier nobody can buy, and every cap it has matches bronze — listing it would imply a choice that isn't one.
@@ -258,80 +220,10 @@ export function nextCapTier(tier: CapTier): CapTier | null {
 }
 
 /**
- * Per-tier ceilings for ONE input, computed by the caller with the same expression that bounds that
- * input. Passing the function rather than a precomputed table is what stops the upsell from quoting a
- * number the field beside it contradicts — model type and media type are already baked into .
- */
-export function capUpsellRows(
-  capFor: (tier: CapTier) => number
-): { tier: CapTier; label: string; cap: number }[] {
-  return CAP_TIERS.map((tier) => ({ tier, label: CAP_TIER_LABELS[tier], cap: capFor(tier) }));
-}
-
-/** How close to the ceiling a value has to be before the upgrade nudge is worth showing. */
-export const CAP_UPSELL_THRESHOLD = 0.8;
-
-/**
- * Whether to offer "want to charge more?" beside a capped input. True only once the creator is actually
- * pressing against the ceiling — an empty or comfortably-low value gets no nudge, and neither does a tier
- * with nothing above it. Shared so the onsite form and Creator Studio surface it at the same moment.
- */
-export function shouldUpsellCap({
-  value,
-  cap,
-  tier,
-}: {
-  value: number | null | undefined;
-  cap: number;
-  tier: CapTier;
-}): boolean {
-  if (!nextCapTier(tier)) return false;
-  if (!Number.isFinite(cap) || cap <= 0) return false;
-  return (value ?? 0) >= cap * CAP_UPSELL_THRESHOLD;
-}
-
-/** One tier's ceilings on one media axis. `null` = unlimited (Infinity doesn't survive serialization). */
-export type TierCapAmounts = {
-  /** Per-generation licensing fee ceilings, in Buzz. */
-  feeCheckpoint: number;
-  feeOther: number;
-  paidAccessPrice: number | null;
-};
-
-export type TierCapRow = {
-  tier: CapTier;
-  label: string;
-  image: TierCapAmounts;
-  video: TierCapAmounts;
-  /** Concurrent permanent gates — a count, so the video multiplier doesn't apply. `null` = unlimited. */
-  permanentGates: number | null;
-};
-
-const amountsFor = (tier: CapTier, mediaType: CapMediaType): TierCapAmounts => ({
-  feeCheckpoint: maxLicensingFee(tier, 'Checkpoint', mediaType),
-  feeOther: maxLicensingFee(tier, undefined, mediaType),
-  paidAccessPrice: finiteOrNull(maxPaidAccessPrice(tier, mediaType)),
-});
-
-/**
- * Every tier's monetization ceilings, for display. Derived from the cap tables rather than transcribed, so
- * a table rendered from this can't drift from what the server actually enforces.
- */
-export function tierCapRows(): TierCapRow[] {
-  return CAP_TIERS.map((tier) => ({
-    tier,
-    label: CAP_TIER_LABELS[tier],
-    image: amountsFor(tier, 'image'),
-    video: amountsFor(tier, 'video'),
-    permanentGates: finiteOrNull(maxPermanentAccessModels(tier)),
-  }));
-}
-
-/**
- * Whether a monetization change needs cap headroom. Only a RAISE does: the whole version is resubmitted on
- * any edit, so rejecting every over-cap submission would make a version priced above the creator's current
- * cap unsavable — the "blocked version saves entirely" bug hot-fixed in 82f64846ba. Keeping or lowering an
- * over-cap value always passes, which is also how a lapse tightens without stranding anyone.
+ * Whether a change needs ceiling headroom. Only a RAISE does: the whole version is resubmitted on any
+ * edit, so rejecting every over-ceiling submission would make a version priced above the current ceiling
+ * unsavable — the "blocked version saves entirely" bug hot-fixed in 82f64846ba. Keeping or lowering an
+ * over-ceiling value always passes, which is what grandfathers a price set when the ceiling was higher.
  */
 export const raisesOverCap = (
   next: number | null | undefined,
@@ -339,57 +231,7 @@ export const raisesOverCap = (
   cap: number
 ): boolean => next != null && next > cap && next > current;
 
-/**
- * What a buyer is actually charged: the stored price, lowered to whatever the OWNER's current tier may
- * charge. A lapse drops prices to the free cap without touching the stored value, so re-subscribing
- * restores the original automatically (CU 868kj4q4j).
- */
-export function effectivePaidAccessPrice(
-  storedPrice: number | null | undefined,
-  ownerTier: string | null | undefined,
-  gate: { permanent: boolean; mediaType?: CapMediaType }
-): number {
-  if (storedPrice == null || storedPrice <= 0) return 0;
-  // Required rather than optional so the compiler makes every call site decide. The cap shipping without
-  // this distinction is what charged 10k early-access windows at 500 (CU 868kk3avk).
-  if (!gate.permanent) return storedPrice;
-  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, gate.mediaType));
-}
-
-/**
- * Terms priced at the owner's current cap — what a buyer is billed. Show these to buyers; show the STORED
- * terms to the owner, whose editors write them back. A generation tier with no price of its own must keep
- * falling back to the download price, which is already capped here.
- */
-export function cappedTerms(
-  terms: ModelVersionTerms,
-  ownerTier: string | null,
-  gate: { permanent: boolean; mediaType?: CapMediaType }
-): ModelVersionTerms {
-  if (!gate.permanent) return terms;
-  const paidGen = paidGenerationGrant(terms);
-  return {
-    ...terms,
-    ...(terms.download
-      ? {
-          download: {
-            ...terms.download,
-            price: effectivePaidAccessPrice(terms.download.price, ownerTier, gate),
-          },
-        }
-      : {}),
-    ...(paidGen?.price != null
-      ? {
-          generation: {
-            ...paidGen,
-            price: effectivePaidAccessPrice(paidGen.price, ownerTier, gate),
-          },
-        }
-      : {}),
-  };
-}
-
-/** A gate's two chargeable prices (0 when absent). Kept separate so a cheap tier can't ride an over-cap one. */
+/** A gate's two chargeable prices (0 when absent). */
 export function gatePrices(terms: ModelVersionTerms | undefined | null): {
   download: number;
   generation: number;
@@ -423,4 +265,217 @@ export function migrateTermsForUsageControl(
       trialLimit: generation?.trialLimit ?? 0,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled sales (CU 868ktk1ku)
+// ---------------------------------------------------------------------------
+
+export type SaleDiscountKind = 'Fixed' | 'Percent';
+
+/** One scheduled discount over a version. Windows only — an effective price is never stored. */
+export type ModelVersionSaleWindow = {
+  id: number;
+  discountType: SaleDiscountKind;
+  /** Buzz for Fixed, whole percent for Percent. */
+  discountAmount: number;
+  startsAt: Date;
+  endsAt: Date;
+  canceledAt?: Date | null;
+};
+
+/**
+ * Sale-days a tier may have discounted per month. Shared for the same reason the caps above are: Creator
+ * Studio authors sales and the main app prices them, and a limit only one of them knows is not a limit.
+ */
+export const SALE_DAYS_BY_TIER: Record<string, number> = {
+  free: 3,
+  // Legacy paid tier — allowances match bronze.
+  founder: 7,
+  bronze: 7,
+  silver: 14,
+  gold: 30,
+};
+
+/**
+ * The floor required to charge for anything — a new price, or a sale.
+ *
+ * Both gates compare `User.meta.scores.total`, the figure `/user/account` shows — not the aggregate
+ * `GREATEST(sum of the six categories, total)` the Creator Program reads.
+ *
+ * Deliberately NOT waived for moderators: it states who may sell here, not a permission level.
+ * The two paths do not resolve their input identically — see the private operations note before
+ * treating this constant as a description of the sale gate's behaviour.
+ *
+ * The sale gate reads it via `minCreatorScoreForSale`, which a KeyValue override can move without a
+ * deploy; the pricing gate has no override.
+ */
+export const MONETIZATION_MIN_CREATOR_SCORE = 10_000;
+
+/** How far ahead a sale may be scheduled, so next month's promo can be prepared from the back half of this one. */
+export const MAX_SALE_LEAD_DAYS = 14;
+
+/**
+ * KeyValue row both apps read the sale limits from, so a limit can move without a deploy and a pricing page
+ * can state it without hard-coding it. The tables above are the defaults when the row is absent or partial.
+ */
+export const SALE_LIMITS_KEY = 'sale-limits';
+
+export type SaleLimitOverrides = {
+  saleDaysByTier?: Record<string, number>;
+  minCreatorScore?: number;
+  maxLeadDays?: number;
+};
+
+/**
+ * Sale-days a tier gets. An unknown or lapsed tier gets the FREE allowance rather than 0, as with access
+ * caps — a lapse must not retroactively invalidate a scheduled sale.
+ */
+export function maxSaleDays(
+  tier: string | null | undefined,
+  overrides?: SaleLimitOverrides
+): number {
+  const table = { ...SALE_DAYS_BY_TIER, ...(overrides?.saleDaysByTier ?? {}) };
+  return (tier ? table[tier] : undefined) ?? table.free;
+}
+
+export const minCreatorScoreForSale = (overrides?: SaleLimitOverrides): number =>
+  overrides?.minCreatorScore ?? MONETIZATION_MIN_CREATOR_SCORE;
+
+export const maxSaleLeadDays = (overrides?: SaleLimitOverrides): number =>
+  overrides?.maxLeadDays ?? MAX_SALE_LEAD_DAYS;
+
+/** Live at `now`: started, not yet ended, not cancelled before this moment. */
+export const isSaleActive = (sale: ModelVersionSaleWindow, now: Date = new Date()): boolean =>
+  sale.startsAt <= now && sale.endsAt > now && (sale.canceledAt == null || sale.canceledAt > now);
+
+/**
+ * What one sale takes off a price. `Math.min(price, off)` is what keeps a fixed discount from making a
+ * price negative; the outer `Math.max(0, …)` floors it at free.
+ *
+ * Percent is FLOORED, which rounds the leftover in the seller's favour — 33% of 33 takes 10 off, not 11,
+ * so the buyer pays 23. That is deliberate (an integer currency has to break the tie somewhere and the
+ * creator is the one being paid), but it is the opposite of what "in the buyer's favour" would mean, so
+ * do not switch this to Math.round on the assumption it is a wash.
+ */
+export function saleDiscountFor(price: number, sale: ModelVersionSaleWindow): number {
+  if (price <= 0) return 0;
+  const off =
+    sale.discountType === 'Percent'
+      ? Math.floor((price * sale.discountAmount) / 100)
+      : sale.discountAmount;
+  return Math.max(0, Math.min(price, off));
+}
+
+/**
+ * The sale a buyer should get at `now`: the one that takes the most off. Sales may overlap — a sale
+ * crossing a month boundary meets the next month's, and both spent their own budget — so the deepest
+ * discount wins rather than whichever row came back first. Percent and fixed are compared at a price,
+ * not against each other, because 20% and 200 Buzz have no order until you know what they apply to.
+ */
+export function bestSaleFor(
+  price: number,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): ModelVersionSaleWindow | undefined {
+  let best: ModelVersionSaleWindow | undefined;
+  let bestOff = 0;
+  for (const sale of sales ?? []) {
+    if (!isSaleActive(sale, now)) continue;
+    const off = saleDiscountFor(price, sale);
+    if (off > bestOff) {
+      best = sale;
+      bestOff = off;
+    }
+  }
+  return best;
+}
+
+/** Buzz a sale can never take a purchase below. */
+export const MIN_SALE_PRICE = 1;
+
+/**
+ * One price with the best active sale applied. The charge and every display path call THIS — the repo has
+ * already paid for the alternative once (see computePackAmountDue: "the button subtracted a discount the
+ * server never applied"), and two implementations of the same arithmetic had already diverged here on the
+ * floor before a review caught it.
+ *
+ * Floors at 1, not 0: a zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts
+ * back from the ledger, so a free purchase would be unrefundable and invisible to reporting.
+ */
+export function discountedPrice(
+  price: number,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): number {
+  const sale = bestSaleFor(price, sales, now);
+  if (!sale) return price;
+  return Math.max(MIN_SALE_PRICE, price - saleDiscountFor(price, sale));
+}
+
+/**
+ * Terms with any active sale applied — what a buyer pays, discounted off the stored price.
+ *
+ * Applies to BOTH chargeable prices. A generation tier with no price of its own falls back to the download
+ * price, which is discounted here already, so it follows automatically.
+ */
+export function discountedTerms(
+  terms: ModelVersionTerms,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): ModelVersionTerms {
+  if (!sales?.length) return terms;
+  const paidGen = paidGenerationGrant(terms);
+  const discount = (price: number) => discountedPrice(price, sales, now);
+  return {
+    ...terms,
+    ...(terms.download
+      ? { download: { ...terms.download, price: discount(terms.download.price) } }
+      : {}),
+    ...(paidGen?.price != null
+      ? { generation: { ...paidGen, price: discount(paidGen.price) } }
+      : {}),
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole days a sale takes out of the budget: its scheduled length, shortened to where it was actually
+ * cancelled. A sale reserves its full window when scheduled and RETURNS the untaken tail if it is cancelled
+ * or cut short — cancel before it starts and it costs nothing. Without that return, "you may always cut a
+ * sale short" would cost the creator exactly as much as running it in full, and the permission would be
+ * worth nothing. Rounded up, so a run of half-day sales can't slice past the budget.
+ */
+export function saleDaysCharged(sale: ModelVersionSaleWindow): number {
+  const end =
+    sale.canceledAt != null && sale.canceledAt < sale.endsAt ? sale.canceledAt : sale.endsAt;
+  const ms = end.getTime() - sale.startsAt.getTime();
+  return ms <= 0 ? 0 : Math.ceil(ms / DAY_MS);
+}
+
+/**
+ * Sale-days a creator has spent in the month a sale STARTS in. Counting by start month is what lets a sale
+ * cross a month boundary without costing twice — the alternative refuses a sale for reaching into a month
+ * whose budget is untouched, which reads as a bug to the creator.
+ */
+export function saleDaysUsed(
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  month: Date
+): number {
+  const year = month.getUTCFullYear();
+  const mon = month.getUTCMonth();
+  return (sales ?? [])
+    .filter((s) => s.startsAt.getUTCFullYear() === year && s.startsAt.getUTCMonth() === mon)
+    .reduce((total, s) => total + saleDaysCharged(s), 0);
+}
+
+/** Sale-days left in `month` for a tier. Never negative — a tier downgrade must not read as debt. */
+export function remainingSaleDays(
+  tier: string | null | undefined,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  month: Date,
+  overrides?: SaleLimitOverrides
+): number {
+  return Math.max(0, maxSaleDays(tier, overrides) - saleDaysUsed(sales, month));
 }

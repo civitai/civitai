@@ -6,6 +6,11 @@ import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { NotificationThumbnail } from '~/components/Notifications/NotificationThumbnail';
+import {
+  notificationImageId,
+  useNotificationThumbnails,
+} from '~/components/Notifications/notification-thumbnails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import type { NotificationGetAll } from '~/types/router';
@@ -54,6 +59,7 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
+  const thumbnails = useNotificationThumbnails(items);
 
   const fullItems = useMemo(() => {
     return items
@@ -90,12 +96,23 @@ export function NotificationList({
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
 
+        // Through the same normaliser the ids were collected with. Reading the
+        // id a second way here is how the map ends up keyed on one thing and
+        // looked up with another, silently, with no test red.
+        const imageId = notificationImageId(notificationDetails);
+        const thumbnail = imageId ? thumbnails.get(imageId) : undefined;
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
-          onItemClick(notification, false);
+          // The url is derived here by `getNotificationMessage`; the raw `notification.details`
+          // carries one for announcements only, so a consumer reading it off there sees
+          // `undefined` for every other type.
+          onItemClick(notification, {
+            keepOpened: details.target === '_blank',
+            url: details.url,
+          });
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const toModal = details.url.includes('?dialog=');
@@ -119,7 +136,7 @@ export function NotificationList({
         };
 
         const handleMiddleClick = () => {
-          onItemClick(notification, true);
+          onItemClick(notification, { keepOpened: true, url: details.url });
         };
 
         return (
@@ -169,6 +186,7 @@ export function NotificationList({
                   </Group>
                 </Stack>
               </Group>
+              {thumbnail && <NotificationThumbnail image={thumbnail} />}
             </Group>
           </Paper>
         );
@@ -179,7 +197,10 @@ export function NotificationList({
 
 type Props = {
   items: NotificationGetAll['items'];
-  onItemClick: (notification: NotificationGetAll['items'][number], keepOpened: boolean) => void;
+  onItemClick: (
+    notification: NotificationGetAll['items'][number],
+    options: { keepOpened: boolean; url?: string }
+  ) => void;
   textSize?: MantineSize;
   truncate?: boolean;
   searchText: string;

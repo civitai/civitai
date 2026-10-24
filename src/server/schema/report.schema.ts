@@ -1,8 +1,10 @@
-import type { MantineColor } from '@mantine/core';
 import * as z from 'zod';
+import {
+  MERGE_PERMISSION_REPORT_REASON,
+  parseSourceModelId,
+} from '@civitai/shared/merge-permission';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
@@ -21,17 +23,62 @@ export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
   establishInterest: z.boolean().optional(),
 });
 
-export const reportTosViolationDetailsSchema = baseDetailSchema.extend({
-  violation: z.string(),
-});
+/**
+ * The violations the TOS report form offers, in display order.
+ *
+ * Here rather than in the form because the rule below keys on one of these strings: with the list in
+ * the component, "require a comment on real-person reports" would be a literal duplicated across a
+ * component and a schema, and renaming the option in one place would silently switch the rule off.
+ */
+export const TOS_VIOLATIONS = [
+  'Depiction of real-person likeness',
+  'Graphic violence',
+  'False impersonation',
+  'Deceptive content',
+  'Sale of illegal substances',
+  'Child abuse and exploitation',
+  'Photorealistic depiction of a minor',
+  'Prohibited concepts',
+] as const;
+
+export const REAL_PERSON_VIOLATION = TOS_VIOLATIONS[0];
+
+export const reportTosViolationDetailsSchema = baseDetailSchema
+  .extend({
+    violation: z.string(),
+  })
+  // A real-person report with no comment names nobody, and a moderator cannot act on "this is someone
+  // real" — they need who. Enforced here, not only in the form, because the form is not the only way
+  // this shape arrives.
+  .superRefine((details, ctx) => {
+    if (details.violation === REAL_PERSON_VIOLATION && !details.comment?.trim())
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['comment'],
+        message: 'Tell us who this depicts — a name, a profile, or how you recognise them.',
+      });
+  });
 
 export const reportClaimDetailsSchema = baseDetailSchema.extend({
   email: z.string().email(),
 });
 
-export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
-  reason: z.string(),
-});
+export const reportAdminAttentionDetailsSchema = baseDetailSchema
+  .extend({
+    reason: z.string(),
+    // Which of the reporter's models the reported merge uses. A link or a bare id; stored as the id.
+    sourceModelId: z.preprocess(parseSourceModelId, z.number().int().positive().optional()),
+  })
+  // Moderators judge the merge by this model's permission when the merge was made; without it there
+  // is nothing to look up. Enforced here because the form is not the only way a report arrives.
+  .superRefine((details, ctx) => {
+    if (details.reason === MERGE_PERMISSION_REPORT_REASON && !details.sourceModelId)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceModelId'],
+        message: 'Link the model of yours that this merge uses.',
+      });
+  });
 
 export const reportSpamDetailsSchema = baseDetailSchema;
 
@@ -72,7 +119,8 @@ export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
 });
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
-  externalId: z.string(),
+  /** The scanner's own job id. Absent when the flag came from a list we hold ourselves. */
+  externalId: z.string().optional(),
   externalType: z.enum(ExternalModerationType),
   entityId: z.number(),
   tags: z.array(z.string()),
@@ -142,67 +190,32 @@ export const reportStickerPlacementSchema = baseSchema.extend({
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
-export const createReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
-  reportOwnershipSchema,
-  reportClaimSchema,
-  reportAdminAttentionSchema,
-  reportCsamSchema,
-  reportAutomatedSchema,
-  reportSpamSchema,
-  reportStickerPlacementSchema,
-]);
+export const createReportInputSchema = z
+  .discriminatedUnion('reason', [
+    reportNsfwSchema,
+    reportTOSViolationSchema,
+    reportOwnershipSchema,
+    reportClaimSchema,
+    reportAdminAttentionSchema,
+    reportCsamSchema,
+    reportAutomatedSchema,
+    reportSpamSchema,
+    reportStickerPlacementSchema,
+  ])
+  // Game reports come only from Game Frame's server, which verifies the reporter and maps the
+  // reason. Taken from the public route, a site user could file against any mirror id.
+  .refine((input) => input.type !== ReportEntity.GameFrameGame, {
+    path: ['type'],
+    message: 'Games are reported from Civitai Games.',
+  });
 
-export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
-export const setReportStatusSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-});
-
-export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
-export const bulkUpdateReportStatusSchema = z.object({
-  ids: z.number().array(),
-  status: z.enum(ReportStatus),
-});
-
-export type GetReportsInput = z.infer<typeof getReportsSchema>;
-export const getReportsSchema = getAllQuerySchema.extend({
-  type: z.enum(ReportEntity),
-  filters: z
-    .object({
-      id: z.string(),
-      value: z.unknown(),
-    })
-    .array()
-    .optional(),
-  sort: z
-    .object({
-      id: z.string(),
-      desc: z.boolean(),
-    })
-    .array()
-    .optional(),
-});
+// `report.create` returns no data: the client only needs to know the call succeeded.
+export const createReportOutputSchema = z.null();
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
   statuses: z.enum(ReportStatus).array(),
-});
-
-export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Unactioned]: 'green',
-  [ReportStatus.Actioned]: 'red',
-  [ReportStatus.Processing]: 'orange',
-  [ReportStatus.Pending]: 'yellow',
-};
-
-export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
-export const updateReportSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-  internalNotes: z.string().nullish(),
 });
 
 export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;
@@ -212,9 +225,15 @@ export const createEntityAppealSchema = z.object({
   message: z.string().trim().min(1).max(MAX_APPEAL_MESSAGE_LENGTH),
 });
 
+export type GetLatestAppealInput = z.output<typeof getLatestAppealSchema>;
+export const getLatestAppealSchema = z.object({
+  entityId: z.number(),
+  entityType: z.enum(EntityType),
+});
+
 export type GetRecentAppealsInput = z.output<typeof getRecentAppealsSchema>;
+// Always the caller's own appeals.
 export const getRecentAppealsSchema = z.object({
-  userId: z.number().optional(),
   startDate: z.date().optional(),
 });
 
@@ -231,6 +250,7 @@ export const resolveAppealSchema = z.object({
   entityType: z.enum(EntityType),
   status: z.enum(AppealStatus),
   resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
+  resolvedReason: z.string().trim().optional(),
   internalNotes: z.string().trim().optional(),
   refundBuzz: z.boolean().optional(),
 });

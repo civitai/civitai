@@ -12,23 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * pinned in Redis for `ttl + swr tail`, and hasEntityAccess then denied every non-owner.
  */
 
-const mGetMock = vi.fn();
-const setMock = vi.fn().mockResolvedValue(undefined);
-const setNxMock = vi.fn().mockResolvedValue(true);
-const delMock = vi.fn().mockResolvedValue(undefined);
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      mGet: (...args: unknown[]) => mGetMock(...args),
-      set: (...args: unknown[]) => setMock(...args),
-    },
-    setNxKeepTtlWithEx: (...args: unknown[]) => setNxMock(...args),
-    del: (...args: unknown[]) => delMock(...args),
-  },
-  sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock', TAG: 'caches:tag' },
-}));
+const mGetMock = redisMock.redis.packed.mGet;
+const setMock = redisMock.redis.packed.set;
+const setNxMock = redisMock.redis.setNxKeepTtlWithEx;
+const delMock = redisMock.redis.del;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
@@ -41,6 +28,10 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockResolvedValue(undefined);
+redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
+redisMock.redis.del.mockResolvedValue(undefined);
 
 type Row = { id: number; availability: string };
 

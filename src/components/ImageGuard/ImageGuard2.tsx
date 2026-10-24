@@ -20,6 +20,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.css';
+import { isViewer } from '~/utils/is-viewer';
 
 type ImageProps = {
   id: number;
@@ -44,7 +45,8 @@ export type ConnectType =
   | 'bountyEntry'
   | 'article'
   | 'comicChapter'
-  | 'model3d';
+  | 'model3d'
+  | 'crucible';
 
 export type ImageGuardConnect = { connectType: ConnectType; connectId: ConnectId };
 
@@ -102,7 +104,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   );
 
   const userId = image.userId ?? image.user?.id;
-  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
+  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || isViewer(currentUser, userId));
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
   const shouldBlur = blurNsfw && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
@@ -268,7 +270,11 @@ function BlurToggle({
   const handleBrowsingLevelClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+    openSetBrowsingLevelModal({
+      imageId,
+      nsfwLevel: browsingLevel,
+      isOwner: !!currentUser && currentUser.id === userId,
+    });
   };
 
   if (children) {
@@ -282,7 +288,7 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  const isOwner = !!userId && currentUser?.id === userId;
+  const isOwner = isViewer(currentUser, userId);
   const ownerCanSeeFlag = isOwner && !needsReview;
   const showImageFlag = (currentUser?.isModerator || ownerCanSeeFlag) && imageFlag;
   const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { mintPurchaseKey } from '~/utils/purchase-key';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -10,6 +11,42 @@ import {
 } from '~/shared/utils/sticker-placement';
 
 export type StickerInteraction = 'move' | 'resize' | 'rotate';
+
+/**
+ * What a draft dragged out of the shop still has to be paid for before it can be
+ * placed. Absent on a sticker the placer already owns, which is every draft that
+ * came out of the tray.
+ */
+export type DraftPurchase = {
+  /**
+   * Buying the sticker itself. Set on a draft dragged out of the shop; absent
+   * once it is owned, because a sticker cannot be sold to the same person twice.
+   */
+  pack?: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    /** How many uses it comes with; null is unlimited, undefined not known here. */
+    uses?: number | null;
+    /** Attributes the sale to the storefront it came from, as the shop grids do. */
+    viaShopUserId?: number;
+  };
+  /**
+   * Price of one more use, for a sticker that is owned and spent. Absent when
+   * the sticker sells no top-ups at all, which is a real state — a sticker sold
+   * before per-use pricing existed has no price to charge.
+   */
+  perUse?: number;
+  /**
+   * Whether this is a refill of a sticker already owned rather than a first
+   * purchase. Decides what the button calls itself, which `pack` alone cannot:
+   * a sticker that sells no uses at all is refillable only by the pack, and
+   * would otherwise offer to sell itself to someone who owns it.
+   */
+  refill?: boolean;
+  /** Who made the sticker, for the "this goes to" line on the purchase button. */
+  creatorUsername?: string | null;
+};
 
 export type StickerDraft = {
   /**
@@ -27,6 +64,8 @@ export type StickerDraft = {
   rotation: number;
   flip: boolean;
   opacity: number;
+  /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
+  purchase?: DraftPurchase;
 };
 
 /**
@@ -67,6 +106,11 @@ interface StickerPlacementDraftStore {
   targetImageId: number | null;
   /** Whether the panel is showing. A session outlives it. */
   trayOpen: boolean;
+  /**
+   * Every piece of placement chrome hidden — handles, the control bar, the buy
+   * button and the panel — so the drafts can be judged as they will look placed.
+   */
+  previewing: boolean;
   surface: HTMLElement | null;
   /**
    * The tray element, for the one thing outside it that has to know where it is:
@@ -88,6 +132,19 @@ interface StickerPlacementDraftStore {
    * sticker.
    */
   interactionPointerId: number | null;
+  /** Idempotency keys for pack purchases, one per sticker per session. */
+  packKeys: Record<number, string>;
+  /**
+   * Drafts whose own buy button paid for a use, oldest purchase first.
+   *
+   * 🔴 WITHOUT THIS THE USE GOES TO THE WRONG STICKER. Coverage is otherwise
+   * assigned in creation order, so buying a use from the second of two copies
+   * raised the balance and covered the FIRST — the button that was pressed did
+   * not change, which reads as a purchase that failed.
+   */
+  paidDraftIds: string[];
+  /** Records that this draft's own purchase bought a use. */
+  markPaidForUse: (draftId: string) => void;
 
   open: (imageId: number) => void;
   /** End the session outright — every draft, the panel and the target. */
@@ -96,11 +153,68 @@ interface StickerPlacementDraftStore {
   closeTray: () => void;
   /** Discard one draft, defaulting to the selected one. */
   cancelDraft: (id?: string) => void;
+  setPreviewing: (previewing: boolean) => void;
   select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
-  begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
+  begin: (
+    cosmeticId: number,
+    at?: { x: number; y: number },
+    maxScale?: number,
+    purchase?: DraftPurchase
+  ) => void;
+  /**
+   * The sticker has been paid for.
+   *
+   * Without a draft id this clears the gate from EVERY draft of that sticker,
+   * which is right for a pack: it grants the sticker itself, and a second copy
+   * still asking to be bought would be selling it twice.
+   *
+   * With one, only that draft is freed. That is the single-use purchase: it buys
+   * exactly one placement, and freeing its siblings would put a Place button on
+   * stickers the server refuses at `assertHasUse` — a button that says paid on
+   * something that was not.
+   */
+  markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
+  /**
+   * The idempotency key for buying one particular sticker in this session.
+   *
+   * 🔴 PER COSMETIC, NOT PER DRAFT, AND THAT IS THE WHOLE POINT. A pack grants
+   * the STICKER — `markPurchased` then frees every draft of it — so two copies
+   * of one sticker showing two buy buttons are one buying intent wearing two
+   * faces. Minted per draft, pressing both inside the same second is two keys
+   * and two charges for the thing you only get once. Duplicating made that a
+   * click apart rather than two shop drags apart, which is why it is fixed here.
+   *
+   * Cleared with the session, so a later session can legitimately buy again.
+   */
+  packPurchaseKey: (cosmeticId: number) => string;
+  /**
+   * Forget the key for one sticker, so the next attempt is a NEW intent.
+   *
+   * Called when a purchase fails outright. An idempotency key exists to make a
+   * retry of the SAME attempt safe; reusing it after a definitive failure is a
+   * different thing — if the server has recorded that key, the placer is locked
+   * out of buying this sticker for the rest of the session with no way back
+   * except reloading the page.
+   */
+  clearPackPurchaseKey: (cosmeticId: number) => void;
+  /**
+   * A second copy of a draft, ready to be placed on its own.
+   *
+   * Deliberately NOT a second route into the charge path: it makes another
+   * unplaced draft and nothing else, so the copy is bought and committed by the
+   * same button, the same mutation and the same guards as the first one. There
+   * is no way for a copy to be placed without being charged, because copying
+   * places nothing.
+   *
+   * `purchase` is passed in rather than cloned. The gate on the original says
+   * "this sticker has not been bought yet", which is a fact about the viewer's
+   * inventory at the moment the copy is made — not a property of the draft — and
+   * the caller is what can see the balance.
+   */
+  duplicateDraft: (id: string, purchase?: DraftPurchase) => string | null;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
    * selection — a press selects and then drags — so resolving the target at
@@ -110,6 +224,23 @@ interface StickerPlacementDraftStore {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/**
+ * How far a duplicate lands from the sticker it was copied from, as a fraction
+ * of the image.
+ *
+ * Big enough to see at the smallest sticker size, small enough that the copy
+ * reads as belonging to the original rather than as a new pickup dropped
+ * somewhere else.
+ */
+const DUPLICATE_OFFSET = 0.04;
+
+/**
+ * One axis of a duplicate's position: away from the original, and never off the
+ * image. Moves back toward the middle when a forward nudge would not fit.
+ */
+const nudge = (value: number) =>
+  clamp(value + DUPLICATE_OFFSET <= 1 ? value + DUPLICATE_OFFSET : value - DUPLICATE_OFFSET, 0, 1);
 
 let draftSequence = 0;
 
@@ -134,17 +265,27 @@ const nextDraftId = () =>
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
+  previewing: false,
   drafts: [] as StickerDraft[],
   selectedDraftId: null,
   interaction: null,
   interactionPointerId: null,
+  // Minted per session: a key reused across sessions would have the server
+  // refuse a purchase someone genuinely wants to make again.
+  packKeys: {} as Record<number, string>,
+  // Cleared with the session for the same reason the keys are: it describes
+  // purchases made against THESE drafts.
+  paidDraftIds: [] as string[],
 };
 
-export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set) => ({
+export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
   drafts: [],
+  packKeys: {},
+  paidDraftIds: [],
   selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
+  previewing: false,
   surface: null,
   tray: null,
   interaction: null,
@@ -174,7 +315,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   open: (imageId) =>
     set((state) =>
       state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true }
+        ? { targetImageId: imageId, trayOpen: true, previewing: false }
         : { ...ENDED, targetImageId: imageId, trayOpen: true }
     ),
 
@@ -192,6 +333,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       const drafts = state.drafts.filter((draft) => draft.id !== target);
       if (drafts.length === state.drafts.length) return state;
       if (!drafts.length && !state.trayOpen) return ENDED;
+      if (!drafts.length) return { drafts, selectedDraftId: null, previewing: false };
 
       return {
         drafts,
@@ -215,16 +357,29 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
 
   select: (id) => set({ selectedDraftId: id }),
 
+  setPreviewing: (previewing) =>
+    set((state) => ({ previewing: previewing && state.drafts.length > 0 })),
+
   setInteraction: (interaction, pointerId) =>
     set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
-  begin: (cosmeticId, at, maxScale) =>
+  markPurchased: (cosmeticId, draftId) =>
+    set((state) => ({
+      drafts: state.drafts.map((draft) =>
+        draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
+          ? { ...draft, purchase: undefined }
+          : draft
+      ),
+    })),
+
+  begin: (cosmeticId, at, maxScale, purchase) =>
     set((state) => {
       if (state.targetImageId == null) return state;
 
       const draft: StickerDraft = {
+        ...(purchase ? { purchase } : {}),
         id: nextDraftId(),
         imageId: state.targetImageId,
         cosmeticId,
@@ -243,6 +398,66 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       // and the drag that created it is already in flight against it.
       return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
     }),
+
+  packPurchaseKey: (cosmeticId) => {
+    const existing = get().packKeys[cosmeticId];
+    if (existing) return existing;
+
+    const key = mintPurchaseKey();
+    set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
+    return key;
+  },
+
+  markPaidForUse: (draftId) =>
+    set((state) =>
+      state.paidDraftIds.includes(draftId)
+        ? state
+        : { paidDraftIds: [...state.paidDraftIds, draftId] }
+    ),
+
+  clearPackPurchaseKey: (cosmeticId) =>
+    set((state) => {
+      const { [cosmeticId]: _gone, ...rest } = state.packKeys;
+      return { packKeys: rest };
+    }),
+
+  duplicateDraft: (id, purchase) => {
+    const source = get().drafts.find((draft) => draft.id === id);
+    if (!source) return null;
+
+    // The id is minted here rather than inside the updater so it can be handed
+    // back: an alt-drag has to continue against the COPY, and the caller cannot
+    // ask "which one is new" from outside without racing its own update.
+    const copyId = nextDraftId();
+
+    set((state) => {
+      const copy: StickerDraft = {
+        ...source,
+        // One mechanism, not two: the caller's answer wins outright, including
+        // when the answer is "nothing to buy". `markPurchased` already writes an
+        // undefined `purchase` elsewhere in this store, so an own key holding
+        // undefined is the shape the rest of the code already reads.
+        purchase,
+        id: copyId,
+        // Offset so the copy is visibly its own sticker rather than an exact
+        // overlap the placer has to discover by dragging the top one off.
+        //
+        // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
+        // at exactly the case the nudge exists for: duplicate a sticker in the
+        // corner and the copy landed at the same point, so the button looked
+        // like it had done nothing. Nudging inward keeps the copy visible and
+        // on the image, which is also what the server requires of the position.
+        x: nudge(source.x),
+        y: nudge(source.y),
+      };
+
+      // Appended and selected, the same as a fresh pickup: the copy is the one
+      // being positioned now, and the handles belong to it.
+      return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
+    });
+
+    return copyId;
+  },
 
   move: (id, next) =>
     set((state) => {

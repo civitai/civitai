@@ -1,0 +1,353 @@
+<script lang="ts">
+  import { tick, untrack } from "svelte";
+  import { page } from "$app/state";
+  import { enhance } from '$app/forms';
+  import { goto } from '$app/navigation';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { badgeVariants } from '@civitai/ui/components/ui/badge/index.js';
+  import ListFilterBar from '$lib/components/ListFilterBar.svelte';
+  import { num } from '$lib/format';
+  import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
+  import { visibleBlocklistItems } from './filter';
+  import { chipFocusTarget, confirmDismissTarget, type RemovalFocusGuards } from './focus';
+  import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  let mode = $state<'add' | 'remove'>('add');
+  let text = $state('');
+  let filters = $state<Record<string, string>>({});
+  let removing = $state<string | null>(null);
+  let confirming = $state<string | null>(null);
+  let panel = $state<HTMLElement | null>(null);
+
+  // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
+  // enough DOM to stall the tab, so the list is filtered first and then capped.
+  const CHIP_LIMIT = 200;
+
+  // Keyed on the URL — the tab is `?type=`. Depending on `data` instead meant every successful add or
+  // remove (which invalidates) also forced `mode` back to 'add', so a moderator part-way through a
+  // bulk removal was silently returned to Add.
+  const subject = $derived(page.url.search);
+  $effect(() => {
+    subject;
+    untrack(resetForTab);
+  });
+
+  function resetForTab() {
+    text = '';
+    mode = 'add';
+    filters = {};
+    confirming = null;
+  }
+
+  function setMode(next: 'add' | 'remove') {
+    mode = next;
+    text = '';
+  }
+
+  // Duplicates are reachable in rows written before `upsertBlocklist` deduped its insert branch as
+  // well as its update branch. They would collide as `{#each}` keys, and each chip carries a remove
+  // control identified by that same string.
+  const sortedItems = $derived(
+    [...new Set(data.blocklist.data)].sort((a, b) => a.localeCompare(b))
+  );
+  const shown = $derived(visibleBlocklistItems(sortedItems, filters.q ?? '', CHIP_LIMIT));
+
+  // A confirm may only stand for a chip that is still on screen. Without this it survives a filter
+  // change: open the confirm, type in the filter so that chip unmounts, clear the filter later, and
+  // the stale confirm returns unprompted — absolutely positioned at z-50 over whatever chip now
+  // occupies that space, so a click meant for a neighbour's X lands on removing the old entry.
+  $effect(() => {
+    if (confirming && !shown.visible.includes(confirming)) untrack(() => (confirming = null));
+  });
+
+  const submit: SubmitFunction = () => async ({ result, update }) => {
+    if (result.type === 'success') text = '';
+    await update(); // re-runs load → fresh blocklist (and the shared Redis cache is already updated)
+  };
+
+  // Deliberately does NOT clear `text`: a chip is its own form, so wiping the textarea would throw
+  // away a bulk edit the moderator is part-way through typing. `removing` disables every chip for
+  // the duration, because two overlapping removals read-modify-write the same array and the later
+  // write restores what the earlier one dropped.
+  const submitChip =
+    (item: string): SubmitFunction =>
+    ({ formElement }) => {
+      removing = item;
+      // All three captured BEFORE the submit, because the invalidation unmounts this chip:
+      // afterwards `document.activeElement` is <body>, and the list being indexed may not even be
+      // this blocklist any more.
+      const position = shown.visible.indexOf(item);
+      // Focus is only moved if it was already inside THIS chip's form. That is true for keyboard
+      // activation, and also for a pointer in browsers that focus a button on click — which is
+      // fine, since those get no visible ring under `:focus-visible`. What it excludes is the
+      // case that would be an unasked-for scroll: focus sitting somewhere else on the page.
+      const restoreFocus = formElement.contains(document.activeElement);
+      // A removal can outlive the tab. Clicking another tab mid-flight swaps `data.blocklist` for
+      // a different type's entries, and focusing "the entry at that index" would then land on an
+      // unrelated blocklist — precisely the unpredictable movement this is supposed to avoid.
+      const submittedType = data.type;
+
+      return async ({ update }) => {
+        // `finally`, not a bare sequence. Every chip's control is disabled while `removing` is set,
+        // so a submit that throws — a rejected fetch, a cross-origin refusal — would otherwise leave
+        // it set forever and kill EVERY remove control on the page until a reload, with the click
+        // doing nothing and no error to read.
+        try {
+          await update();
+        } finally {
+          removing = null;
+          // Cleared here rather than in the confirm button's own click handler. Svelte flushes
+          // effects synchronously after a DOM event handler, so clearing it there unmounts the
+          // submitter through its `{#if}` before the browser runs the form's activation behaviour —
+          // the submit never fires and "Remove" behaves exactly like "Cancel", silently. Same trap
+          // as `ConfirmSubmit.svelte`.
+          confirming = null;
+
+          // Inside the `finally`, so a rejected submit does not leave focus on <body> — the worst
+          // case to lose it in, since nothing changed and the chip is still there to return to.
+          // After `removing` is cleared, never before: every chip control is `disabled` while a
+          // removal is in flight, and a disabled button silently refuses focus. One `tick` covers
+          // both the re-rendered chips and that re-enable (it drains cascading batches), and would
+          // stop being enough only under `compilerOptions.experimental.async`, which this app does
+          // not set.
+          await tick();
+          focusAfterRemoval(position, item, {
+            focusWasInForm: restoreFocus,
+            sameType: data.type === submittedType,
+          });
+        }
+      };
+    };
+
+  /** The remove control of a chip, if it is on screen. */
+  const chipControl = (entry: string) =>
+    panel?.querySelector<HTMLElement>(`[data-chip-remove="${CSS.escape(entry)}"]`) ?? null;
+
+  /**
+   * Returns focus to the chip a confirm was opened on. Dismissing unmounts the popover, so a
+   * keyboard user who opens a confirm and changes their mind otherwise lands on <body> — the same
+   * failure this file exists to fix, one keystroke off the path that was fixed.
+   *
+   * Resolved BEFORE `confirming` is cleared, since afterwards there is nothing to look up. The X
+   * itself lives outside the `{#if}`, so it survives the dismissal either way and the flush timing
+   * does not matter.
+   */
+  function dismissConfirm() {
+    const control = confirming ? chipControl(confirming) : null;
+    // Escape comes from a window handler, so it fires with focus anywhere on the page — including
+    // the filter box with the popover still open, which is a reflex rather than an edge case.
+    const target = confirmDismissTarget(
+      confirming,
+      !!control?.closest('form')?.contains(document.activeElement)
+    );
+    confirming = null;
+    if (target.kind === 'chip') control?.focus();
+  }
+
+  /**
+   * Where focus lands once the removed chip is gone. `chipFocusTarget` decides WHICH entry; this
+   * resolves it to a node and degrades when it cannot.
+   *
+   * The fallback chain runs whenever the chip node is missing, not only when there is no entry to
+   * look for — a resolved entry whose node is absent used to leave `target` null and focus on
+   * <body>, which is the outcome the whole function exists to prevent. The filter bar unmounts with
+   * the chips when the LIST is empty rather than merely filtered to nothing, so the textarea is the
+   * last resort.
+   */
+  function focusAfterRemoval(position: number, item: string, guards: RemovalFocusGuards) {
+    if (!panel) return;
+    const next = chipFocusTarget(shown.visible, position, item, guards);
+    if (next.kind === 'none') return;
+    const target =
+      (next.kind === 'chip' ? chipControl(next.entry) : null) ??
+      panel.querySelector<HTMLElement>('[data-blocklist-filter] input') ??
+      panel.querySelector<HTMLElement>('textarea');
+    target?.focus();
+  }
+</script>
+
+<!-- One window listener rather than one per chip: at CHIP_LIMIT that would be 200 of them. -->
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape') dismissConfirm();
+  }}
+/>
+
+<header class="page-header">
+  <h1>Blocklists</h1>
+</header>
+
+<Tabs
+  value={data.type}
+  onValueChange={(v) => {
+    if (!v) return;
+    // Reset here as well as in the effect: the effect runs after the DOM is written, so on a tab
+    // change the new type's entries would render against the old tab's filter for a frame.
+    resetForTab();
+    goto(`?type=${v}`);
+  }}
+  class="mb-4"
+>
+  <TabsList>
+    {#each BLOCKLIST_TYPES as t (t)}
+      <TabsTrigger value={t}>{humanizeBlocklistType(t)}</TabsTrigger>
+    {/each}
+  </TabsList>
+</Tabs>
+
+{#if BLOCKLIST_DESCRIPTIONS[data.type]}
+  <p class="mb-4 max-w-xl text-sm text-dark-2">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
+{/if}
+
+{#if form?.error}
+  <ErrorAlert class="mb-4 max-w-xl" message={form.error} />
+{:else if form?.success}
+  <div class="mb-4 max-w-xl rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
+    {form.action === 'add' ? 'Added' : 'Removed'} {form.count} item{form.count === 1 ? '' : 's'}.
+    {#if form.cacheStale}
+      <!-- The row is written; only the cache clear failed. Saying so beats both alternatives: a
+           bare success above a list that still shows the old entries reads as the write being lost,
+           and an error reads as a write that never happened and invites a retry. -->
+      <span class="text-amber-300">
+        The cached copy could not be refreshed, so this list may keep showing its previous contents.
+      </span>
+    {/if}
+  </div>
+{/if}
+
+<div class="flex max-w-xl flex-col gap-4" bind:this={panel}>
+  <div class="flex flex-col gap-2 rounded-xl border p-3">
+    {#if data.blocklist.id}
+      <div class="flex gap-1">
+        <Button size="sm" variant={mode === 'add' ? 'default' : 'outline'} onclick={() => setMode('add')}>
+          Add
+        </Button>
+        <Button
+          size="sm"
+          variant={mode === 'remove' ? 'default' : 'outline'}
+          onclick={() => setMode('remove')}
+        >
+          Remove
+        </Button>
+      </div>
+    {/if}
+
+    <form
+      method="POST"
+      action={mode === 'add' ? '?/add' : '?/remove'}
+      use:enhance={submit}
+      class="flex flex-col gap-2"
+    >
+      <input type="hidden" name="type" value={data.type} />
+      {#if data.blocklist.id}<input type="hidden" name="id" value={data.blocklist.id} />{/if}
+      <Textarea
+        name="blocklist"
+        bind:value={text}
+        placeholder={mode === 'add'
+          ? 'Add comma-delimited items to blocklist'
+          : 'Remove comma-delimited items from blocklist'}
+      />
+      <div class="flex justify-end">
+        <Button type="submit" disabled={text.trim().length === 0}>Submit</Button>
+      </div>
+    </form>
+  </div>
+
+  {#if sortedItems.length === 0}
+    <p class="text-sm text-dark-2">No items in this blocklist.</p>
+  {:else}
+    <div class="flex flex-col gap-2">
+      <span class="text-sm font-medium">{humanizeBlocklistType(data.type)}</span>
+      <div data-blocklist-filter>
+        <ListFilterBar
+          fields={[{ kind: 'search', key: 'q', label: 'Filter entries' }]}
+          bind:values={filters}
+          matched={shown.matches.length}
+          total={sortedItems.length}
+        />
+      </div>
+      {#if shown.matches.length === 0}
+        <p class="text-sm text-dark-2">Nothing on this list matches "{(filters.q ?? '').trim()}".</p>
+      {:else}
+        <div class="flex flex-wrap gap-2">
+          {#each shown.visible as item (item)}
+            <form
+              method="POST"
+              action="?/remove"
+              use:enhance={submitChip(item)}
+              class="relative"
+            >
+              <input type="hidden" name="type" value={data.type} />
+              <input type="hidden" name="id" value={data.blocklist.id} />
+              <input type="hidden" name="blocklist" value={item} />
+              <!-- The badge styling stays on this span, NOT on the form. `badgeVariants` carries
+                   `overflow-hidden` and a fixed `h-5`, so a confirm rendered inside a badge-styled
+                   element is clipped away to nothing: present in the DOM, invisible on screen, and
+                   the X reads as a dead control. That cost several review rounds. -->
+              <span class="{badgeVariants({ variant: 'secondary' })} gap-1 py-1 pl-3 pr-1">
+                {item}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  class="size-4"
+                  disabled={removing !== null}
+                  data-chip-remove={item}
+                  aria-label="Remove {item}"
+                  title="Remove {item}"
+                  aria-haspopup="true"
+                  aria-expanded={confirming === item}
+                  onclick={() => (confirming = item)}
+                >
+                  &times;
+                </Button>
+              </span>
+
+              <!-- Anchored inside the form rather than portalled: a portalled confirm is outside the
+                   <form> in the DOM, so its submit button loses the implicit association and posts
+                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list, and z-50
+                   so it clears the chips it overlaps. Opens downward so it never covers the chip
+                   being acted on.
+                   🔴 Nothing here may sit inside an element with `overflow-hidden` — see the span
+                   above. -->
+              {#if confirming === item}
+                <div
+                  class="absolute left-0 top-full z-50 mt-1 flex w-max items-center gap-2 rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
+                >
+                  <span class="text-xs">Remove <strong>{item}</strong>?</span>
+                  <Button type="submit" size="sm" variant="destructive" disabled={removing !== null}>
+                    Remove
+                  </Button>
+                  <!-- Disabled once the removal is in flight. `enhance` has already issued the
+                       fetch and nothing aborts it, so a live Cancel closes the popover with the
+                       affordance of having stopped something that then happens anyway. -->
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={removing !== null}
+                    onclick={dismissConfirm}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              {/if}
+            </form>
+          {/each}
+        </div>
+        {#if shown.matches.length > shown.visible.length}
+          <p class="text-xs text-dark-2">
+            Showing {num(shown.visible.length)} of {num(shown.matches.length)} matches. Narrow the
+            filter to reach the rest.
+          </p>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+</div>

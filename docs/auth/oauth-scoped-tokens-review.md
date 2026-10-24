@@ -39,9 +39,10 @@ Items that need human review, testing, or validation before this feature is prod
 - [ ] Rotate client secret
 - [ ] Show client ID + secret (once)
 
-### Connected Apps (Phase 3) — NOT YET BUILT
+### Connected Apps (Phase 3)
 
-- [ ] Page at `/user/account#connected-apps`
+- [x] Built as `ConnectedAppsCard` — Account Settings → **Security & Apps** (`/user/account/security`);
+      no standalone page or `#connected-apps` anchor was created
 - [ ] List authorized apps with revoke button
 
 ---

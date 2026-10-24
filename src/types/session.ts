@@ -1,8 +1,4 @@
-import type {
-  UserTier,
-  UserSubscriptionsByBuzzType,
-  UserMeta,
-} from '~/server/schema/user.schema';
+import type { UserTier, UserSubscriptionsByBuzzType, UserMeta } from '~/server/schema/user.schema';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
 // First-party session types — the app imports `Session`/`SessionUser` from here (not from 'next-auth'), so the
@@ -31,14 +27,22 @@ export interface SessionUser {
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
   permissions?: string[];
+  /** App-namespaced role grants from the auth hub (`app:role`, e.g. `moderator:admin`). */
+  roles?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only
   referral?: { id: number }; // client only
   memberInBadState?: boolean;
   meta?: UserMeta;
   allowAds?: boolean;
+  /**
+   * Early-adopter opt-in, projected off `User.settings.isEarlyAdopter` by the auth hub
+   * (`shapeSessionUser`). Read by `buildFliptContext` so Flipt segments can target the
+   * cohort. Session-carried on purpose — the Flipt context is built once per request and
+   * must not take a DB read (feature-flags.service.ts).
+   */
+  isEarlyAdopter?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
-  redBrowsingLevel?: number;
   deletedAt?: Date;
   subscriptions?: UserSubscriptionsByBuzzType; // multi-subscription support per buzzType
   name?: string | null; // from next-auth's DefaultSession['user']

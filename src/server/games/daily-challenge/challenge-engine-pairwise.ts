@@ -225,6 +225,7 @@ function createSession(
   const systemPrompt = buildComparisonPrompt({
     theme: ctx.theme,
     themeElements: ctx.themeElements,
+    resourceConcept: ctx.resourceConcept,
     categories: ctx.categories,
     criteriaByKey: ctx.criteriaByKey,
   });

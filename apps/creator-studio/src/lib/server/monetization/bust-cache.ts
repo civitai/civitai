@@ -1,4 +1,4 @@
-import { env } from '$env/dynamic/private';
+import { callMainApp } from '$lib/server/main-app';
 
 // `licensingFee` and `usageControl` are written straight to the shared database with kysely (see
 // licensing-fee.ts / paid-access.ts), which the main app's caches can't observe. Without this the change
@@ -7,18 +7,45 @@ import { env } from '$env/dynamic/private';
 // Fire-and-forget on purpose: the write already succeeded and is the thing the creator asked for, so a
 // bust that fails must not turn a saved change into an error toast. The cost of missing one is a stale
 // read that expires on its own.
-const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
 const ENDPOINT = '/api/v1/model-versions/bust-cache';
+
+// 🔴 Bounded, because "fire-and-forget" was only true of the ERROR, not of the wait. Every caller awaits
+// this after its write has already committed, so an unresponsive main app held the creator's form action
+// open indefinitely — measured at 150s+ against a cold dev server while a refusal on the same endpoint
+// returned in under a second. The failure the creator sees is not "it didn't save"; it is a saved change
+// spinning with nothing to read. A timeout turns that back into the stale-read-until-TTL cost the comment
+// above already accepts.
+const BUST_TIMEOUT_MS = 3000;
+
+// The endpoint's own cap: `src/pages/api/v1/model-versions/bust-cache.ts` (main app) refuses a request with
+// more than 500 ids (`.max(500)`). Since the result is ignored, one oversized request meant nothing was
+// busted at all, silently — so a sale or fee change across more versions than this stayed stale until TTL.
+const MAX_IDS_PER_REQUEST = 500;
 
 export async function bustVersionCache(cookie: string, versionIds: number[]): Promise<void> {
   if (!versionIds.length) return;
-  try {
-    await fetch(`${MAIN_APP_URL}${ENDPOINT}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ versionIds }),
-    });
-  } catch {
-    // Swallowed: see above.
-  }
+  // The result is deliberately ignored — see above. `callMainApp` never throws.
+  //
+  // 🔴 Bounded, because "fire-and-forget" was only ever true of the ERROR, not of the wait. Every caller
+  // awaits this after its write has already committed, so an unresponsive main app held the creator's
+  // form action open indefinitely — measured at 150s+ against a cold dev server while a refusal on the
+  // same endpoint returned in under a second. What the creator saw was not "it didn't save"; it was a
+  // saved change spinning with nothing to read. The timeout returns that to the stale-read-until-TTL
+  // cost the comment above already accepts.
+  //
+  // Chunked to the endpoint's cap, and the chunks sent at once rather than in turn, so the wait stays
+  // about one timeout however many there are.
+  const chunks: number[][] = [];
+  for (let i = 0; i < versionIds.length; i += MAX_IDS_PER_REQUEST)
+    chunks.push(versionIds.slice(i, i + MAX_IDS_PER_REQUEST));
+  await Promise.all(
+    chunks.map((chunk) =>
+      callMainApp(ENDPOINT, cookie, {
+        method: 'POST',
+        body: { versionIds: chunk },
+        parse: false,
+        timeoutMs: BUST_TIMEOUT_MS,
+      })
+    )
+  );
 }

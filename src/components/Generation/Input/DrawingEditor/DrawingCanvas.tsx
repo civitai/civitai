@@ -322,7 +322,8 @@ export function DrawingCanvas({
               width: Math.max(5, bubbleEl.width * scaleX),
               height: Math.max(5, bubbleEl.height * scaleY),
               tailX: node.x() + bubbleEl.width * scaleX * 0.25,
-              tailY: node.y() + bubbleEl.height * scaleY + Math.max(20, bubbleEl.height * scaleY * 0.4),
+              tailY:
+                node.y() + bubbleEl.height * scaleY + Math.max(20, bubbleEl.height * scaleY * 0.4),
               rotation: node.rotation(),
             };
           }
@@ -884,11 +885,7 @@ export function DrawingCanvas({
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   >
                     {/* Invisible hit rect for reliable Transformer bounds detection */}
-                    <Rect
-                      width={arrowWidth || 1}
-                      height={arrowHeight || 1}
-                      fill="transparent"
-                    />
+                    <Rect width={arrowWidth || 1} height={arrowHeight || 1} fill="transparent" />
                     <Arrow
                       points={localPoints}
                       stroke={element.color}
@@ -921,11 +918,7 @@ export function DrawingCanvas({
                     onTransformEnd={(e) => handleTransformEnd(e, element)}
                   >
                     {/* Invisible hit rect for reliable Transformer bounds detection */}
-                    <Rect
-                      width={element.width}
-                      height={totalHeight}
-                      fill="transparent"
-                    />
+                    <Rect width={element.width} height={totalHeight} fill="transparent" />
                     <Shape
                       sceneFunc={(context, shape) => {
                         const w = element.width;
@@ -1053,59 +1046,69 @@ export function DrawingCanvas({
       {renderCursor()}
 
       {/* Floating action buttons for selected element */}
-      {selectedId && isSelectMode && (() => {
-        const selectedElement = elements.find((el) => el.id === selectedId);
-        const isFlippable = selectedElement?.type === 'image' || selectedElement?.type === 'rectangle' || selectedElement?.type === 'speechBubble' || selectedElement?.type === 'circle' || selectedElement?.type === 'arrow';
-        return (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 20,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 10,
-              display: 'flex',
-              gap: 6,
-            }}
-          >
-            {isFlippable && (
-              <>
-                <Tooltip label="Flip horizontal" withArrow position="top">
-                  <ActionIcon
-                    size="lg"
-                    variant="filled"
-                    color="dark"
-                    onClick={() => handleFlipElement('x')}
-                    style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
-                  >
-                    <IconFlipHorizontal size={18} />
-                  </ActionIcon>
-                </Tooltip>
-                <Tooltip label="Flip vertical" withArrow position="top">
-                  <ActionIcon
-                    size="lg"
-                    variant="filled"
-                    color="dark"
-                    onClick={() => handleFlipElement('y')}
-                    style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
-                  >
-                    <IconFlipVertical size={18} />
-                  </ActionIcon>
-                </Tooltip>
-              </>
-            )}
-            <ActionIcon
-              size="lg"
-              color="red"
-              variant="filled"
-              onClick={handleRemoveElement}
-              style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+      {selectedId &&
+        isSelectMode &&
+        (() => {
+          const selectedElement = elements.find((el) => el.id === selectedId);
+          const isFlippable =
+            selectedElement?.type === 'image' ||
+            selectedElement?.type === 'rectangle' ||
+            selectedElement?.type === 'speechBubble' ||
+            selectedElement?.type === 'circle' ||
+            selectedElement?.type === 'arrow';
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 20,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10,
+                display: 'flex',
+                gap: 6,
+              }}
             >
-              <IconTrash size={18} />
-            </ActionIcon>
-          </div>
-        );
-      })()}
+              {isFlippable && (
+                <>
+                  <Tooltip label="Flip horizontal" withArrow position="top">
+                    <ActionIcon
+                      size="lg"
+                      variant="filled"
+                      color="dark"
+                      onClick={() => handleFlipElement('x')}
+                      style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+                    >
+                      {/* Tabler names these for the MIRROR AXIS, not the motion:
+                        IconFlipHorizontal draws a horizontal mirror line, which reads
+                        as a vertical flip. The pairing below is deliberately crossed. */}
+                      <IconFlipVertical size={18} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Flip vertical" withArrow position="top">
+                    <ActionIcon
+                      size="lg"
+                      variant="filled"
+                      color="dark"
+                      onClick={() => handleFlipElement('y')}
+                      style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+                    >
+                      <IconFlipHorizontal size={18} />
+                    </ActionIcon>
+                  </Tooltip>
+                </>
+              )}
+              <ActionIcon
+                size="lg"
+                color="red"
+                variant="filled"
+                onClick={handleRemoveElement}
+                style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}
+              >
+                <IconTrash size={18} />
+              </ActionIcon>
+            </div>
+          );
+        })()}
     </div>
   );
 }

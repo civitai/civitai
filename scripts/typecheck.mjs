@@ -52,10 +52,37 @@
  * — out loud — instead of a silently empty log.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { typecheckQueueDecision } from './typecheck-queue.mjs';
 
 const require = createRequire(import.meta.url);
+
+// A full typecheck costs one core and up to an 8 GB heap, and several agents starting one at once
+// is what pegs the box. With CIVITAI_TEST_QUEUE set this hands the run to the dev-server queue's
+// typecheck lane, which spawns `pnpm run typecheck` back in this worktree with the flag off — so
+// the child comes through here again and falls to the direct path below.
+//
+// Top-level await on purpose: a queued run never returns (the client exits the process with the
+// run's verdict), so everything below is reached only when the queue could not take the run.
+if (typecheckQueueDecision(process.argv.slice(2), process.env).queue) {
+  const client = resolve(dirname(fileURLToPath(import.meta.url)), 'test-unit-run.mjs');
+  if (existsSync(client)) {
+    const { runQueued, queueAccepted } = await import(pathToFileURL(client).href);
+    try {
+      await runQueued([], { kind: 'typecheck', fallback: () => undefined });
+    } catch (err) {
+      if (queueAccepted()) {
+        console.error(`Lost contact with the test queue (${err?.message ?? err}). The run may still be queued.`);
+        process.exit(2);
+      }
+      console.error(`Typecheck queue failed (${err?.message ?? err}); running directly.`);
+    }
+  }
+}
 
 const DEFAULT_HEAP_MB = 8192;
 const heapMb = Number(process.env.TYPECHECK_HEAP_MB || DEFAULT_HEAP_MB);
@@ -78,6 +105,55 @@ if (!tscPath) {
     process.exit(2);
   }
 }
+
+/**
+ * Route types, generated BEFORE `tsc` so it checks Next's route validator.
+ *
+ * `next build` writes `.next/types/validator.ts`, which asserts that every module under `src/pages`
+ * has the default export a route needs. `tsconfig.json` already includes `.next/types/**\/*.ts`, but
+ * on a fresh checkout that file does not exist yet, so a plain `tsc` never saw it, and a non-route
+ * module under `src/pages` (a helper, a test file) passed typecheck and failed only `next build`.
+ * `next typegen` writes the same files without building (measured ~2-3 s).
+ *
+ * Deterministic: `.next/types` is deleted first, so a file left by an earlier build or typegen
+ * (a validator entry for a page since deleted, a types file an older Next wrote) can never be read.
+ * `NEXT_DIST_DIR` is dropped for the child because `next.config.mjs` derives `distDir` from it,
+ * and `tsconfig.json` names the literal `.next/types`. A dist dir elsewhere would put the validator
+ * where `tsc` does not look, which is a silent pass.
+ *
+ * A typegen failure fails the typecheck (exit 2). A skipped validator is an absent check, not a
+ * clean one. Skipped only under the TYPECHECK_TSC_PATH stub seam, whose cases never run real tsc.
+ */
+function generateRouteTypes() {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  rmSync(resolve(repoRoot, '.next', 'types'), { recursive: true, force: true });
+  let nextBin;
+  try {
+    nextBin = require.resolve('next/dist/bin/next');
+  } catch {
+    console.error('typecheck: cannot resolve next/dist/bin/next — run `pnpm install` first.');
+    process.exit(2);
+  }
+  const { NEXT_DIST_DIR: _ignored, ...env } = process.env;
+  const t0 = Date.now();
+  const res = spawnSync(process.execPath, [nextBin, 'typegen'], {
+    cwd: repoRoot,
+    env: { ...env, NODE_OPTIONS: '' },
+    encoding: 'utf8',
+  });
+  const validator = resolve(repoRoot, '.next', 'types', 'validator.ts');
+  if (res.status !== 0 || !existsSync(validator)) {
+    console.error('typecheck: `next typegen` failed, so the route validator cannot be checked.');
+    console.error(`  exit ${res.status}${res.signal ? `, signal ${res.signal}` : ''}`);
+    if (res.stdout) console.error(res.stdout.trimEnd());
+    if (res.stderr) console.error(res.stderr.trimEnd());
+    annotate('Typecheck did not run: `next typegen` failed (route validator unavailable)');
+    process.exit(2);
+  }
+  console.log(`typecheck: route types generated in ${((Date.now() - t0) / 1000).toFixed(1)}s.`);
+}
+
+if (!process.env.TYPECHECK_TSC_PATH) generateRouteTypes();
 
 const tscArgs = process.argv.slice(2);
 const startedAt = Date.now();

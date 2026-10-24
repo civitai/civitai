@@ -52,6 +52,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
 import { Fragment, useMemo, useState } from 'react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -59,12 +60,13 @@ import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import {
   computeRecruiterScore,
   getRankForScore,
   MILESTONE_NAMES,
+  RECRUITER_RANK_ACCENT,
   type ReferralDashboardProps,
 } from './dashboard.types';
 
@@ -80,17 +82,11 @@ const tierColors: Record<string, string> = {
   gold: '#fab005',
 };
 
-const rankAccent: Record<string, string> = {
-  rookie: 'gray',
-  recruit: 'teal',
-  advocate: 'blue',
-  champion: 'grape',
-  legend: 'yellow',
-};
-
 const INITIAL_ACTIVITY_COUNT = 5;
-const ALERT_LITE_ONBOARDING = 'referral-lite-onboarding';
-const ALERT_KICKBACK = 'referral-kickback-info';
+// Declared in the notice registry so the persisted-id set stays enumerable, and
+// so the kickback id is literally the SAME value the full dashboard dismisses.
+const ALERT_LITE_ONBOARDING = FEATURE_NOTICES.referralLiteOnboarding.id;
+const ALERT_KICKBACK = FEATURE_NOTICES.referralKickback.id;
 
 const premiumCardStyle: React.CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
@@ -134,7 +130,7 @@ export function ReferralDashboard({
   const rankProgressPct = nextRank
     ? Math.min(100, Math.round(((score - rank.min) / (nextRank.min - rank.min)) * 100))
     : 100;
-  const rankColor = rankAccent[rank.key];
+  const rankColor = RECRUITER_RANK_ACCENT[rank.key];
 
   const hitMilestones = useMemo(
     () => new Set(data.milestones.map((m) => m.threshold)),
@@ -469,7 +465,7 @@ export function ReferralDashboard({
               rank={rank}
               rankColor={rankColor}
               nextRank={nextRank}
-              nextRankColor={nextRank ? rankAccent[nextRank.key] : rankColor}
+              nextRankColor={nextRank ? RECRUITER_RANK_ACCENT[nextRank.key] : rankColor}
               score={score}
               scoreToNextRank={scoreToNextRank}
               rankProgressPct={rankProgressPct}
@@ -814,6 +810,7 @@ function EarningsHero({
 function MembershipPerksAbbr() {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const pricingUrl = features.isGreen
     ? '/pricing'
     : syncAccount(`//${serverDomains.green}/pricing`);
@@ -1215,6 +1212,7 @@ function ShopTierCard({
 function TierPerksPopover({ tier }: { tier: string }) {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const pricingUrl = features.isGreen
     ? '/pricing'
     : syncAccount(`//${serverDomains.green}/pricing`);

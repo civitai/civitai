@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 import { DraftStickerLayer } from '~/components/Sticker/DraftStickerLayer';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { useStickerHistoryStep } from '~/store/sticker-history.store';
 
 /**
@@ -20,48 +21,35 @@ const ARM_AT = 0.6;
 /**
  * The overlay for one image: placed stickers, and the one being positioned.
  *
- * Sized to the rendered media box rather than to its container — a letterboxed
- * image and its container are different rectangles, and positioning against the
- * wrong one misplaces every sticker on exactly the images where it is hardest to
- * notice. This element *is* the coordinate system, so it is what the draft store
- * measures drags against.
+ * Sized to the rendered media box rather than to its container (useDrawnMediaBox):
+ * the box *is* the coordinate system, so it is what the draft store measures drags
+ * against and what every stored fraction means.
  */
-export function ImageStickerOverlay({
-  imageId,
-  width,
-  height,
-}: {
-  imageId: number;
-  width: number;
-  height: number;
-}) {
+export function ImageStickerOverlay({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const treatment = useStickerTreatment();
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const setSurface = useStickerPlacementDraftStore((state) => state.setSurface);
 
   const historyStep = useStickerHistoryStep(imageId);
 
   const isPlacing = targetImageId === imageId;
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
-  // The element as state as well as a ref: the overlay renders nothing until it
-  // has placements, so the node arrives on a later render than the first, and an
-  // effect reading only the ref would observe `null` and never look again.
+  // State rather than a ref: the surface mounts only once the media has been
+  // measured, so the node arrives on a later render than the first, and an effect
+  // reading a ref would observe `null` and never look again.
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
-  const attachSurface = useCallback((node: HTMLDivElement | null) => {
-    surfaceRef.current = node;
-    setSurfaceEl(node);
-  }, []);
 
   // Registered while this image is the placement target, and cleared on the way
   // out: a stale surface would have the next drag measured against a box that is
-  // no longer on screen.
+  // no longer on screen. Off the element state, not the ref: the surface mounts
+  // only once the media has been measured, which is after the render that set
+  // `isPlacing`.
   useEffect(() => {
-    if (!isPlacing) return;
-    setSurface(surfaceRef.current);
+    if (!isPlacing || !surfaceEl) return;
+    setSurface(surfaceEl);
     return () => setSurface(null);
-  }, [isPlacing, setSurface]);
+  }, [isPlacing, surfaceEl, setSurface]);
 
   // Mounting is not the same event as being looked at: the carousel keeps the
   // slide either side mounted, so an overlay that armed on mount would play its
@@ -105,10 +93,10 @@ export function ImageStickerOverlay({
 
   const imageIds = useMemo(() => [imageId], [imageId]);
   // Signed-in viewers always fetch, because a pending placement is something
-  // they either paid for or have been asked to answer — and the notification
-  // sends the owner straight here. Gating this on `revealed` meant the owner
-  // followed the link to an image that looked untouched, with no control on the
-  // page that would have shown them the thing they came to decide on.
+  // they either paid for or have been asked to answer. Gating this on `revealed`
+  // meant arriving at an image that looked untouched, with no control on the
+  // page that would have shown them the thing they came for — the count chip
+  // needs the total before it can offer to reveal anything.
   const { byImage } = useStickerPlacements(imageIds, revealed || isPlacing || !!currentUser);
 
   const all = byImage.get(imageId) ?? [];
@@ -121,44 +109,51 @@ export function ImageStickerOverlay({
   // person stepping has already asked for exactly this.
   const placements = revealed || isPlacing || historyStep != null ? all : [];
 
-  if (!placements.length && !isPlacing) return null;
-  if (width <= 0 || height <= 0) return null;
+  const active = placements.length > 0 || isPlacing;
+
+  const { hostRef, box } = useDrawnMediaBox(active);
+
+  if (!active) return null;
 
   return (
     <div
-      ref={attachSurface}
-      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-      style={{ width, height }}
+      ref={hostRef}
+      {...{ [MEDIA_OVERLAY_ATTR]: '' }}
+      className="pointer-events-none absolute inset-0"
     >
-      {placements.length > 0 && (
-        <StickerPlacementOverlay
-          placements={placements}
-          viewerId={currentUser?.id}
-          treatment={treatment}
-          // Every time they arrive on screen (Justin, 2026-08-12) — hence
-          // `armed`, which tracks intersection rather than mount, because the
-          // carousel mounts a slide long before anyone looks at it and keeps it
-          // mounted long after.
-          //
-          // `stagger` is what this surface does and never changes while it is
-          // mounted; `armed` is whether it has been seen. Held apart because
-          // collapsing them paints an un-staggered frame before the reveal can
-          // start, which reads as a blink. For the same reason this is not
-          // `!isPlacing`: flipping it off and back on as a placement session
-          // starts and ends re-adds the animation to stickers already on screen
-          // and replays the whole reveal under the sticker being dragged.
-          stagger
-          armed={armed}
-          // The sequence is what has to stop while a placement is in progress,
-          // not the reveal itself — three seconds of stickers arriving one by
-          // one under the sticker being positioned is movement where the
-          // surface has to hold still, and reveal is off by default, so
-          // pressing the plus is often what mounts this in the first place.
-          paced={!isPlacing}
-          step={historyStep}
-        />
+      {box && (
+        <div ref={setSurfaceEl} className="pointer-events-none absolute isolate" style={box}>
+          {placements.length > 0 && (
+            <StickerPlacementOverlay
+              placements={placements}
+              viewerId={currentUser?.id}
+              treatment={treatment}
+              // Every time they arrive on screen (Justin, 2026-08-12) — hence
+              // `armed`, which tracks intersection rather than mount, because the
+              // carousel mounts a slide long before anyone looks at it and keeps it
+              // mounted long after.
+              //
+              // `stagger` is what this surface does and never changes while it is
+              // mounted; `armed` is whether it has been seen. Held apart because
+              // collapsing them paints an un-staggered frame before the reveal can
+              // start, which reads as a blink. For the same reason this is not
+              // `!isPlacing`: flipping it off and back on as a placement session
+              // starts and ends re-adds the animation to stickers already on screen
+              // and replays the whole reveal under the sticker being dragged.
+              stagger
+              armed={armed}
+              // The sequence is what has to stop while a placement is in progress,
+              // not the reveal itself — three seconds of stickers arriving one by
+              // one under the sticker being positioned is movement where the
+              // surface has to hold still, and reveal is off by default, so
+              // pressing the plus is often what mounts this in the first place.
+              paced={!isPlacing}
+              step={historyStep}
+            />
+          )}
+          {isPlacing && <DraftStickerLayer />}
+        </div>
       )}
-      {isPlacing && <DraftStickerLayer />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { isDev } from '~/env/other';
 
 export const createDebouncer = (timeout: number) => {
@@ -10,8 +10,20 @@ export const createDebouncer = (timeout: number) => {
   return debouncer;
 };
 
-export const useDebouncer = (timeout: number) => {
+export type Debouncer = ((func: () => void) => void) & {
+  /** Run the pending call now. No-op when nothing is pending. */
+  flush: () => void;
+  /** Drop the pending call without running it. */
+  cancel: () => void;
+};
+
+/**
+ * The timer is cleared on unmount, so a call still inside the debounce window is dropped by any
+ * navigation. Anything that navigates deliberately must `flush()` first or it discards that edit.
+ */
+export const useDebouncer = (timeout: number): Debouncer => {
   const timeoutRef = useRef<NodeJS.Timeout | undefined>();
+  const pendingRef = useRef<(() => void) | undefined>();
 
   useEffect(() => {
     return () => {
@@ -21,15 +33,33 @@ export const useDebouncer = (timeout: number) => {
     };
   }, [timeout]);
 
-  const debouncer = useCallback(
-    (func: () => void) => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(func, timeout);
-    },
-    [timeout]
-  );
+  const cancel = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = undefined;
+    pendingRef.current = undefined;
+  }, []);
 
-  return debouncer;
+  const flush = useCallback(() => {
+    const pending = pendingRef.current;
+    cancel();
+    pending?.();
+  }, [cancel]);
+
+  return useMemo(() => {
+    const debouncer = ((func: () => void) => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      pendingRef.current = func;
+      timeoutRef.current = setTimeout(() => {
+        // cleared before running so a flush racing the timer cannot run it twice
+        timeoutRef.current = undefined;
+        pendingRef.current = undefined;
+        func();
+      }, timeout);
+    }) as Debouncer;
+    debouncer.flush = flush;
+    debouncer.cancel = cancel;
+    return debouncer;
+  }, [timeout, flush, cancel]);
 };
 
 export const createKeyDebouncer = (timeout: number) => {

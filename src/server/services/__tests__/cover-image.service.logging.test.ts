@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Pins the `.catch()` on the best-effort `logToAxiom(...)` calls in `cover-image.service`.
@@ -16,20 +17,16 @@ import { describe, expect, it, vi } from 'vitest';
  * `~/server/logging/client` with `vi.fn()`s so it can assert on the payloads. The two mock shapes
  * cannot coexist in one file, hence this second file.
  */
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: () => Promise.reject(new Error('axiom is unreachable')),
-  safeError: (e: unknown) => ({ message: (e as Error)?.message }),
-}));
+// The rejection IS the fixture here — these tests exist to prove the `.catch()` on the
+// best-effort log calls. It is declared on the canonical node rather than in a per-file factory,
+// so the seam survives the shared-mock migration.
+loggingMock.logToAxiom.mockRejectedValue(new Error('axiom is unreachable'));
 
 // The module under test imports these only to build its production deps; stub the graphs out.
 const { getImageUploadBackendMock } = vi.hoisted(() => ({
   getImageUploadBackendMock: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => {
-  const dbMock = { image: { findMany: vi.fn() } };
-  return { dbWrite: dbMock, dbRead: dbMock };
-});
 vi.mock('~/server/services/image.service', () => ({ createImage: vi.fn() }));
 vi.mock('~/utils/s3-utils', () => ({
   checkFileExists: vi.fn(),

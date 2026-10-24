@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as S3Utils from '~/utils/s3-utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `headStoredImage` and `probeStoredImage` — the two requests this module makes
@@ -18,16 +19,6 @@ import type * as S3Utils from '~/utils/s3-utils';
  */
 
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
-
-// Nothing here talks to the database, but the module graph reaches a Prisma client
-// that cannot initialise in a unit environment — and it fails as an UNHANDLED
-// REJECTION, i.e. a red run with every test green. Stubbed so the run's verdict is
-// about this module.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {},
-  dbKV: {},
-}));
 
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),

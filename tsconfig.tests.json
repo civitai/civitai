@@ -8,13 +8,24 @@
   // like `FileMetadata` resolve to TS2304 and collapses downstream generics
   // into a FALSE all-clear on the files that matter. Extending the real config
   // and subtracting one exclude entry is what keeps the program honest.
+  //
+  // 🔴 THIS LIST IS WRITTEN OUT VERBATIM, so it must be kept in step with
+  // `tsconfig.json`'s `exclude` by hand. `scripts/ci/typecheck-tests-gate.mjs`
+  // refuses to run (CANNOT MEASURE, exit 3) when the two stop differing by
+  // exactly `src/**/__tests__/**` — that is a control, not an inconvenience, and
+  // it is what caught the drift when the `scripts/` entries were added to the
+  // base config. There are THREE configs to keep in step: this one,
+  // `tsconfig.scripts.json`, and `tsconfig.json` itself, plus the QUARANTINE
+  // list in `scripts/ci/typecheck-scripts-gate.mjs`. Both gates fail loudly
+  // rather than silently mismeasuring when one is forgotten.
   "extends": "./tsconfig.json",
   "exclude": [
     "node_modules",
     "./node_modules",
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
-    "scripts/local-dev/*.ts",
-    "packages/civitai-ui"
+    "packages/civitai-ui",
+    "scripts/__tests__/**",
+    "scripts/local-dev/gen_seed.ts"
   ]
 }

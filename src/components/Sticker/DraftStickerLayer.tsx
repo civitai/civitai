@@ -1,9 +1,22 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Gesture } from '~/components/Sticker/draft-gesture';
-import { rotate } from '~/components/Sticker/draft-gesture';
+import { knobRotation, rotate } from '~/components/Sticker/draft-gesture';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
-import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { freeOfferFor } from '~/components/Sticker/free-offer';
+import {
+  useFreePlacementStanding,
+  useImagePlacementSpace,
+} from '~/components/Sticker/placement.util';
+import {
+  allocateDraftEntitlements,
+  unownedGateFor,
+  useOwnedSticker,
+  useStickerCosmetics,
+  draftedCosmeticIds,
+  useStickerRefill,
+} from '~/components/Sticker/sticker.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -33,6 +46,14 @@ export function DraftStickerLayer() {
   const move = useStickerPlacementDraftStore((state) => state.move);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const { sticker } = useOwnedSticker();
+  // A draft dragged out of the shop is a sticker the placer does not own yet, so
+  // its artwork is not in `useOwnedSticker` — without this it renders nothing and
+  // the drag looks like it failed.
+  const unownedIds = useMemo(
+    () => drafts.filter((draft) => draft.purchase).map((draft) => draft.cosmeticId),
+    [drafts]
+  );
+  const { sticker: shopArt } = useStickerCosmetics(unownedIds);
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   // Resolved once for the layer rather than per draft: `useStickerTreatment`
   // reads the user's settings and the router, so a subscription per sticker is
@@ -45,6 +66,43 @@ export function DraftStickerLayer() {
   // refuse. The refusal is still on the server — this only means nobody has to
   // discover it by being told no after a drag.
   const maxScale = stickerMaxScale(space?.settings);
+
+  // Resolved once for the layer, for the same reason the treatment is: one query
+  // answering a question about the image and the viewer, where a subscription
+  // per sticker would be N observers refetching through an arrangement.
+  const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
+  const freeOffer = freeOfferFor(space, standing);
+
+  const currentUser = useCurrentUser();
+  const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null,
+  });
+  // Only what has been dragged out — an offer for a sticker nobody has drafted is
+  // an answer to a question not yet asked.
+  const draftedIds = useMemo(() => draftedCosmeticIds(drafts), [drafts]);
+  const refillFor = useStickerRefill(draftedIds);
+
+  const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
+  const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
+
+  const entitlements = useMemo(
+    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
+    [drafts, balances, freeOffer, paidDraftIds]
+  );
+
+  const onDuplicate = useCallback(
+    (id: string) => {
+      const current = useStickerPlacementDraftStore.getState().drafts;
+      const source = current.find((draft) => draft.id === id);
+      if (!source) return null;
+
+      // Only the sticker-not-owned-yet gate travels with a copy. Whether an
+      // owned sticker still has a use is decided across the whole set on every
+      // render — storing that answer here is exactly what froze it before.
+      return duplicateDraft(id, unownedGateFor(source));
+    },
+    [duplicateDraft]
+  );
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -103,9 +161,7 @@ export function DraftStickerLayer() {
       if (active.mode === 'rotate') {
         const dx = pointerX - current.x * bounds.width;
         const dy = pointerY - current.y * bounds.height;
-        // The knob sits above the sticker, so straight up is zero rather than
-        // atan2's zero, which points right.
-        move(active.draftId, { rotation: (Math.atan2(dy, dx) * 180) / Math.PI + 90 });
+        move(active.draftId, { rotation: knobRotation(dx, dy) });
         return;
       }
 
@@ -209,7 +265,8 @@ export function DraftStickerLayer() {
   return (
     <>
       {drafts.map((draft) => {
-        const art = sticker.find((option) => option.id === draft.cosmeticId);
+        const art =
+          sticker.find((option) => option.id === draft.cosmeticId) ?? shopArt.get(draft.cosmeticId);
         if (!art) return null;
 
         return (
@@ -223,6 +280,21 @@ export function DraftStickerLayer() {
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
+            onDuplicate={onDuplicate}
+            // The sticker-not-owned-yet gate belongs to the draft; the
+            // is-there-a-use-left gate belongs to the set and is decided above.
+            purchase={
+              draft.purchase ??
+              (entitlements.get(draft.id)?.covered
+                ? undefined
+                : refillFor(
+                    draft.cosmeticId,
+                    sticker.find((option) => option.id === draft.cosmeticId)?.pricePerUse
+                  ))
+            }
+            // Exactly one draft can take the free placement — it is once per
+            // image — so the offer goes to that one rather than to all of them.
+            freeOffer={entitlements.get(draft.id)?.free ? freeOffer : null}
           />
         );
       })}

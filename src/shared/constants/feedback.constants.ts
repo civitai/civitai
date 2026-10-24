@@ -1,11 +1,4 @@
-// Plain strings, not a Prisma enum: adding an area costs a constant here and no
-// migration, and its Flipt flag is derived from the slug.
-export const FEEDBACK_AREAS = ['bitdex-image-feed'] as const;
-
-export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
-
-export const FEEDBACK_MESSAGE_MAX_LENGTH = 2000;
-
-export const FEEDBACK_RATE_LIMIT = { max: 5, periodSeconds: 60 * 60 };
-
-export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;
+// Re-export shim: this module moved to the @civitai/shared package so the moderator spoke can read
+// the SAME area registry the producer writes, instead of hand-mirroring it.
+// Existing call sites import from '~/shared/constants/feedback.constants' unchanged.
+export * from '@civitai/shared/feedback.constants';

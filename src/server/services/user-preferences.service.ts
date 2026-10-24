@@ -1,9 +1,11 @@
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import { isImageReviewed } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userFollowsCache } from '~/server/redis/caches';
+import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import type { BlockHideCommentsResult } from '~/server/services/block-hide-comments.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
 import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact';
@@ -11,7 +13,9 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
+import { Availability, TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
 const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
@@ -211,10 +215,17 @@ export const HiddenUsers = createUserCache({
       `,
 });
 
+// The two block caches refill from the PRIMARY, not the replica. `toggleBlockUser` commits
+// the Block and then drops these fields; a refill inside the replica-lag window would read
+// a replica without the Block and write "not blocked" back. The hash TTL is set with `NX`,
+// so that stale field would then stand until the hash expires (up to ~4.5h) instead of
+// healing when the replica catches up. A block is a safety control, so pay the primary
+// read on a cache miss. Both caches, because both are dropped by the same toggle and the
+// block is enforced in both directions (`getBlockedPairIds`, the feed filter).
 export const BlockedUsers = createUserCache({
   key: 'blocked-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."targetUserId" "id",
           u."username"
@@ -227,7 +238,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."userId" "id",
           u."username"
@@ -290,7 +301,7 @@ export interface HiddenImage extends HiddenPreferenceBase {
   hidden?: boolean;
 }
 
-type HiddenPreferencesKind =
+export type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
   | ({ kind: 'model3d' } & HiddenModel3D)
@@ -301,6 +312,16 @@ type HiddenPreferencesKind =
 interface HiddenPreferencesDiff {
   added: Array<HiddenPreferencesKind>;
   removed: Array<HiddenPreferencesKind>;
+  /**
+   * Whether the entity ends up in the corresponding hidden list. Set only by
+   * toggles the server can REFUSE, where the client's optimistic write would
+   * otherwise stand as a state that does not exist. `added`/`removed` cannot
+   * carry this: five of the six kinds return them empty on every call, so an
+   * empty diff means "this kind does not report", not "nothing happened".
+   */
+  hidden?: boolean;
+  /** Set only when a block asked to hide the blocked user's comments on the blocker's content. */
+  commentsHidden?: BlockHideCommentsResult;
 }
 
 export type HiddenPreferenceTypes = {
@@ -508,25 +529,28 @@ export async function getAllHiddenForUser({
   return compact ? toCompactHiddenPreferences(result) : result;
 }
 
-export async function toggleHidden({
-  kind,
-  data,
-  hidden,
-  userId,
-}: ToggleHiddenSchemaOutput & { userId: number }): Promise<HiddenPreferencesDiff> {
+export async function toggleHidden(
+  input: ToggleHiddenSchemaOutput & { userId: number }
+): Promise<HiddenPreferencesDiff> {
+  const { kind, data, hidden, userId } = input;
   switch (kind) {
     case 'image':
-      return await toggleHideImage({ userId, imageId: data[0].id });
+      return await toggleHideImage({ userId, imageId: data[0].id, setTo: hidden });
     case 'model':
-      return await toggleHideModel({ userId, modelId: data[0].id });
+      return await toggleHideModel({ userId, modelId: data[0].id, setTo: hidden });
     case 'model3d':
-      return await toggleHideModel3D({ userId, model3dId: data[0].id });
+      return await toggleHideModel3D({ userId, model3dId: data[0].id, setTo: hidden });
     case 'user':
       return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
       return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
     case 'blockedUser':
-      return await toggleBlockUser({ targetUserId: data[0].id, userId });
+      return await toggleBlockUser({
+        targetUserId: data[0].id,
+        userId,
+        setTo: hidden,
+        hideComments: input.kind === 'blockedUser' && input.hideComments === true,
+      });
     default:
       throw new Error('unsupported hidden toggle kind');
   }
@@ -562,16 +586,26 @@ async function toggleHiddenTags({
     // if hidden === true, then I only need to create non-existing tagEngagements, no need to remove an engagements
     const toDelete = hidden ? [] : tagIds.filter((id) => existingHidden.includes(id));
 
+    // Both statements are scoped by the `type` each row was READ as, never by the
+    // (userId, tagId) key alone. `TagEngagement` holds one row per pair carrying one
+    // type, so an unqualified write lands on whatever occupies the row — including a
+    // Follow or Allow a sibling writer established between the read and here.
     if (toDelete.length) {
       await dbWrite.tagEngagement.deleteMany({
-        where: { userId, tagId: { in: toDelete } },
+        where: { userId, tagId: { in: toDelete }, type: 'Hide' },
       });
     }
     if (toUpdate.length) {
-      await dbWrite.tagEngagement.updateMany({
-        where: { userId, tagId: { in: toUpdate } },
-        data: { type: 'Hide' },
-      });
+      const observed = new Map(matchedTags.map((x) => [x.tagId, x.type]));
+      // At most two passes — `toUpdate` excludes the Hide rows, and the enum has
+      // three members.
+      for (const type of new Set(toUpdate.map((id) => observed.get(id)))) {
+        const ids = toUpdate.filter((id) => observed.get(id) === type);
+        await dbWrite.tagEngagement.updateMany({
+          where: { userId, tagId: { in: ids }, type },
+          data: { type: 'Hide' },
+        });
+      }
     }
     if (toCreate.length) {
       // skipDuplicates so a concurrent toggle that already inserted some of these
@@ -625,16 +659,31 @@ async function toggleHiddenTags({
 async function toggleHideModel({
   userId,
   modelId,
+  setTo,
 }: {
   userId: number;
   modelId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.modelEngagement.findUnique({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
+  // `setTo` carries the caller's INTENT; fall back to flipping only when none was
+  // supplied. `toggleHidden` used to drop it on the floor for this kind, so asking to
+  // UN-hide a model with no row created a Hide — the same dropped-intent shape as
+  // 868kun67j, which was fixed for users only.
+  const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  if (!engagement)
+  // Scoped by the `type` the row was READ as, never by the PK alone. `ModelEngagement`
+  // holds one row per (user, model) carrying one of Favorite | Hide | Mute | Notify,
+  // so a PK-addressed write lands on whatever occupies the row — including a type a
+  // sibling writer established a millisecond ago, which is then gone. Unlike
+  // `UserEngagement` these four have no precedence order, so the guard is the type
+  // this call actually observed: a writer can only replace what it saw.
+  if (!hiding)
+    await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type: 'Hide' } });
+  else if (!engagement)
     await dbWrite.modelEngagement
       .create({ data: { userId, modelId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
@@ -642,11 +691,9 @@ async function toggleHideModel({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
-  else
-    await dbWrite.modelEngagement.update({
-      where: { userId_modelId: { userId, modelId } },
+  else if (engagement.type !== 'Hide')
+    await dbWrite.modelEngagement.updateMany({
+      where: { userId, modelId, type: engagement.type },
       data: { type: 'Hide' },
     });
 
@@ -658,6 +705,7 @@ async function toggleHideModel({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
   };
 }
 
@@ -668,16 +716,23 @@ async function toggleHideModel({
 async function toggleHideModel3D({
   userId,
   model3dId,
+  setTo,
 }: {
   userId: number;
   model3dId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.model3DEngagement.findUnique({
     where: { userId_model3dId: { userId, model3dId } },
     select: { type: true },
   });
+  const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  if (!engagement)
+  if (!hiding)
+    await dbWrite.model3DEngagement.deleteMany({
+      where: { userId, model3dId, type: 'Hide' },
+    });
+  else if (!engagement)
     await dbWrite.model3DEngagement
       .create({ data: { userId, model3dId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
@@ -685,13 +740,9 @@ async function toggleHideModel3D({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.model3DEngagement.delete({
-      where: { userId_model3dId: { userId, model3dId } },
-    });
-  else
-    await dbWrite.model3DEngagement.update({
-      where: { userId_model3dId: { userId, model3dId } },
+  else if (engagement.type !== 'Hide')
+    await dbWrite.model3DEngagement.updateMany({
+      where: { userId, model3dId, type: engagement.type },
       data: { type: 'Hide' },
     });
 
@@ -700,6 +751,7 @@ async function toggleHideModel3D({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
   };
 }
 
@@ -716,41 +768,41 @@ async function toggleHideUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
-  if (!engagement)
-    await dbWrite.userEngagement
-      .create({
-        data: { userId, targetUserId, type: 'Hide' },
-      })
-      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
-      // already exists — idempotent, so fall through to the cache refreshes
-      // (which read DB truth) instead of bubbling a 500.
-      .catch((error) => {
-        if (!isPrismaUniqueViolation(error)) throw error;
-      });
-  else if (engagement.type === 'Hide' && setTo !== true)
-    await dbWrite.userEngagement.delete({
-      where: { userId_targetUserId: { userId, targetUserId } },
+  // `setTo` carries the caller's INTENT; fall back to flipping only when none was
+  // supplied. The row this reads may be gone or a different type by the time the
+  // write lands, so every statement below is scoped by `type` rather than by the
+  // PK alone — an unqualified `update`/`delete` here would overwrite whatever
+  // Follow or Block a sibling writer had just established.
+  const hiding = setTo ?? engagement?.type !== UserEngagementType.Hide;
+
+  // A Block already hides the target and is strictly stronger, so it is the one
+  // type a hide must never overwrite. Un-hiding removes a Hide and only a Hide:
+  // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
+  // on intent it created a Hide row when asked to un-hide a pair that had none.
+  let hidden = false;
+  if (hiding) {
+    hidden = await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+    // Whether the Hide was claimed or a standing Block kept it out, the pair does
+    // not carry a Follow afterwards.
+    await setUserFollowCached({ userId, targetUserId, following: false });
+  } else {
+    const removed = await clearUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Hide,
     });
-  else
-    await dbWrite.userEngagement.update({
-      where: { userId_targetUserId: { userId, targetUserId } },
-      data: { type: 'Hide' },
-    });
+    // Removing a Hide leaves the pair empty. Matching NOTHING means it holds
+    // something else — a Follow, possibly — and only the origin knows which.
+    if (removed) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
+  }
 
-  // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
-  // const user = await dbRead.user.findUnique({
-  //   where: { id: targetUserId },
-  //   select: { id: true, username: true },
-  // });
-
-  // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
-
-  await userFollowsCache.refresh(userId);
   await HiddenUsers.refreshCache({ userId });
 
   return {
     added: [],
     removed: [],
+    hidden,
   };
 }
 
@@ -812,10 +864,12 @@ async function toggleBlockUser({
   userId,
   targetUserId,
   setTo,
+  hideComments,
 }: {
   userId: number;
   targetUserId: number;
   setTo?: boolean;
+  hideComments?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   if (targetUserId === userId) throw new Error('Cannot block yourself');
   if (targetUserId === -1) throw new Error('Cannot block civitai account');
@@ -824,52 +878,116 @@ async function toggleBlockUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
-  const unblocking = engagement?.type === 'Block' && setTo !== true;
-  if (!engagement)
+  // `setTo` carries the caller's INTENT. Without it this fell back to a blind
+  // flip, so a client whose block list was stale sent "block" and got an
+  // unblock — with a success toast either way. Only fall back to flipping when
+  // no intent was supplied at all.
+  const alreadyBlocked = engagement?.type === 'Block';
+  const blocking = setTo ?? !alreadyBlocked;
+  // If you ever make the read above conditional, keep the `setTo === undefined`
+  // branch explicit. Dropping the read collapses this to `setTo ?? true`, which
+  // reads harmlessly and means an omitted intent can only ever BLOCK and never
+  // unblock. Nothing in the type system catches that.
+
+  // Both statements are idempotent and unconditional, which is what makes them
+  // safe against a concurrent write to the same PK. Branching on the row we
+  // read a moment ago is not: a block that read `Block` and then lost the row
+  // to a concurrent unblock would fall through every branch, write nothing,
+  // and still report success — silently leaving a safety control off. `upsert`
+  // re-establishes it instead (and needs no P2002 catch, since the conflict is
+  // resolved in the statement). `deleteMany` cannot raise P2025 on an
+  // already-removed row, and its `type` filter makes "never delete a Follow or
+  // a Hide" structural rather than a branch condition.
+  let blocked = true;
+  if (blocking) {
     await dbWrite.userEngagement
-      .create({
-        data: { userId, targetUserId, type: 'Block' },
+      .upsert({
+        where: { userId_targetUserId: { userId, targetUserId } },
+        create: { userId, targetUserId, type: 'Block' },
+        update: { type: 'Block' },
       })
-      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
-      // already exists — idempotent, so fall through to the cache refreshes
-      // (which read DB truth) instead of bubbling a 500.
+      // Belt-and-braces, and deliberately not load-bearing. This call meets every
+      // documented condition for Prisma to compile it to a native
+      // `INSERT … ON CONFLICT DO UPDATE` (single model, scalar-only create/update,
+      // one unique in `where`, `where` values equal to `create` values), under
+      // which P2002 cannot be raised and this catch is dead. That was inferred
+      // from the schema, NOT observed in a query log — so if the query ever falls
+      // back to read-then-write, the loser of a concurrent block would 500 on a
+      // safety control instead of succeeding idempotently. One line to not depend
+      // on an unverified premise.
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
+        // The Block did NOT land, so the pair can still hold a Follow. The comment
+        // above says this catch is almost certainly dead — it exists so that nothing
+        // DEPENDS on that inference, and a follow assertion made here would.
+        blocked = false;
       });
-  else if (engagement.type === 'Block' && setTo !== true)
-    await dbWrite.userEngagement.delete({
-      where: { userId_targetUserId: { userId, targetUserId } },
+    // The pair carries a Block now, so it carries no Follow.
+    if (blocked) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
+  } else {
+    const removed = await clearUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Block,
     });
-  else
-    await dbWrite.userEngagement.update({
-      where: { userId_targetUserId: { userId, targetUserId } },
-      data: { type: 'Block' },
-    });
+    // Same as the un-hide above: a removed Block leaves the pair empty, while
+    // matching nothing means something else holds it.
+    if (removed) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
+  }
 
-  await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 
-  if (!unblocking) await cascadeBlockToPlacements({ userId, targetUserId });
+  // Every block cascades, not only a newly established one. `declinePlacementsOnBlock`
+  // touches only `pending` rows and caps at 200 per run, so a user with a larger
+  // backlog — or one whose first cascade hit a Buzz outage — drains the rest by
+  // blocking again. Gating on the transition would have removed that retry.
+  if (blocking) await cascadeBlockToPlacements({ userId, targetUserId });
+
+  // After the block has committed and outside any transaction: this can take seconds for a
+  // prolific commenter, and it reports failure instead of throwing, so it cannot undo the block.
+  // Only on a NEW block, so re-sending the same block cannot re-run seconds of replica work.
+  const commentsHidden: BlockHideCommentsResult | undefined = !(blocking && hideComments)
+    ? undefined
+    : alreadyBlocked
+    ? { status: 'skipped' }
+    : await import('~/server/services/block-hide-comments.service')
+        .then(({ hideBlockedUserCommentsOnOwnContent }) =>
+          hideBlockedUserCommentsOnOwnContent({ ownerId: userId, blockedUserId: targetUserId })
+        )
+        .catch((): BlockHideCommentsResult => ({ status: 'failed', count: 0 }));
 
   return {
     added: [],
     removed: [],
+    commentsHidden,
   };
 }
 
 async function toggleHideImage({
   userId,
   imageId,
+  setTo,
 }: {
   userId: number;
   imageId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.imageEngagement.findUnique({
     where: { userId_imageId: { userId, imageId } },
     select: { type: true },
   });
-  if (!engagement)
+  const hiding = setTo ?? engagement?.type !== 'Hide';
+
+  // Same shape as `toggleHideModel`: scoped by the type read, so un-hiding cannot
+  // delete a Favorite and hiding cannot overwrite one it never saw.
+  if (!hiding)
+    await dbWrite.imageEngagement.deleteMany({
+      where: { userId, imageId, type: 'Hide' },
+    });
+  else if (!engagement)
     await dbWrite.imageEngagement
       .create({ data: { userId, imageId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent
@@ -877,13 +995,9 @@ async function toggleHideImage({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.imageEngagement.delete({
-      where: { userId_imageId: { userId, imageId } },
-    });
-  else
-    await dbWrite.imageEngagement.update({
-      where: { userId_imageId: { userId, imageId } },
+  else if (engagement.type !== 'Hide')
+    await dbWrite.imageEngagement.updateMany({
+      where: { userId, imageId, type: engagement.type },
       data: { type: 'Hide' },
     });
 
@@ -895,5 +1009,111 @@ async function toggleHideImage({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
+  };
+}
+
+/**
+ * The viewer's own `Hide` rows for one creator's images.
+ *
+ * Deliberately not the feed query. Both feed paths require `postId IS NOT NULL`
+ * and cap by browsing level, and a profile cover is post-less — so a hidden
+ * cover was listed by nothing, and `getImage` 404s it for everyone but its
+ * owner, leaving no surface anywhere that could unhide it (ClickUp 868m5qc3b).
+ */
+export async function getHiddenImagesForUser({
+  userId,
+  targetUserId,
+  limit = 200,
+}: {
+  userId: number;
+  targetUserId: number;
+  limit?: number;
+}) {
+  const [engagements, profile] = await Promise.all([
+    dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide', image: { userId: targetUserId } },
+      select: {
+        createdAt: true,
+        image: {
+          select: {
+            id: true,
+            name: true,
+            url: true,
+            nsfwLevel: true,
+            width: true,
+            height: true,
+            hash: true,
+            type: true,
+            postId: true,
+            userId: true,
+            ingestion: true,
+            nsfwLevelLocked: true,
+            metadata: true,
+            scanJobs: true,
+            // `ImageGuard2` reads these off the image it is handed (`useImageStore`
+            // spreads it), and swaps the tile for the ToS notice on `tosViolation`.
+            tosViolation: true,
+            needsReview: true,
+            post: { select: { publishedAt: true, availability: true, userId: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+    }),
+    // The green domain serves `sfwCoverImage` instead (see `getUserWithProfile`),
+    // so both are covers and either can be the one that was hidden.
+    dbRead.userProfile.findUnique({
+      where: { userId: targetUserId },
+      select: { coverImageId: true, sfwCoverImageId: true },
+    }),
+  ]);
+
+  const coverImageIds = new Set(
+    [profile?.coverImageId, profile?.sfwCoverImageId].filter(isDefined)
+  );
+  const now = new Date();
+  const hasMore = engagements.length > limit;
+
+  return {
+    items: engagements.slice(0, limit).map(({ image, createdAt }) => {
+      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, ...rest } = image;
+      const isProfileCover = coverImageIds.has(image.id);
+      const isOwner = image.userId === userId;
+
+      // A row is listed however it is gated — it has to be, or it can never be
+      // unhidden — but the media only rides along while the viewer could still
+      // see the image elsewhere. Hiding predates any later takedown, unpublish
+      // or privacy change, and this is not `getImage`: nothing else here would
+      // stop a revoked image from being handed back to the browser.
+      const canViewMedia =
+        isOwner ||
+        (isImageReviewed({
+          ingestion,
+          nsfwLevelLocked,
+          nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)
+            ?.nsfwLevelReason,
+          scanFailureClass: (scanJobs as { error?: { failureClass?: string } } | null)?.error
+            ?.failureClass,
+        }) &&
+          rest.nsfwLevel !== NsfwLevel.Blocked &&
+          !rest.tosViolation &&
+          !rest.needsReview &&
+          (post
+            ? !!post.publishedAt &&
+              post.publishedAt <= now &&
+              post.availability !== Availability.Private
+            : isProfileCover));
+
+      return {
+        ...rest,
+        url: canViewMedia ? rest.url : null,
+        canViewMedia,
+        hiddenAt: createdAt,
+        isProfileCover,
+      };
+    }),
+    hasMore,
   };
 }

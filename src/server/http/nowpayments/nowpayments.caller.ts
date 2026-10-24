@@ -1,7 +1,9 @@
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
+import { logToAxiom } from '~/server/logging/client';
 
 // DOCUMENTATION
 // https://documenter.getpostman.com/view/7907941/2s93JusNJt#api-documentation
@@ -45,11 +47,7 @@ class NOWPaymentsCaller extends HttpCaller {
     const hash = createHmac('sha512', env.NOW_PAYMENTS_IPN_KEY)
       .update(JSON.stringify(sortedPayload))
       .digest('hex');
-    return {
-      isValid: hash.toString().toLowerCase() === signature,
-      hash: hash.toString().toLowerCase(),
-      signature,
-    };
+    return { isValid: timingSafeEqualStrings(hash.toLowerCase(), signature) };
   }
 
   static getInstance(): NOWPaymentsCaller {
@@ -152,14 +150,27 @@ class NOWPaymentsCaller extends HttpCaller {
   async getPaymentStatus(
     payment_id: string | number
   ): Promise<NOWPayments.CreatePaymentResponse | null> {
+    return (await this.lookupPayment(payment_id)).payment;
+  }
+
+  /** getPaymentStatus, keeping the HTTP status of a failed lookup. */
+  async lookupPayment(payment_id: string | number) {
     const response = await this.getRaw(`/payment/${payment_id}`);
-    if (response.status === 404) return null;
     if (!response.ok) {
-      console.error('Failed to get payment status', response.statusText);
-      return null;
+      logToAxiom({
+        name: 'nowpayments-caller',
+        type: 'error',
+        stage: 'payment-status-failed',
+        paymentId: payment_id,
+        status: response.status,
+      }).catch(() => null);
+      return { payment: null, status: response.status };
     }
     const data = await response.json();
-    return NOWPayments.createPaymentResponseSchema.parse(data);
+    return {
+      payment: NOWPayments.createPaymentResponseSchema.parse(data),
+      status: response.status,
+    };
   }
 
   async getListPayments(params: {
@@ -186,9 +197,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   /** Fetch all payments associated with an invoice (wallet). Handles pagination. */
-  async getPaymentsByInvoiceId(
-    invoiceId: number
-  ): Promise<NOWPayments.CreatePaymentResponse[]> {
+  async getPaymentsByInvoiceId(invoiceId: number): Promise<NOWPayments.CreatePaymentResponse[]> {
     const PAGE_SIZE = 100;
     let page = 0;
     const all: NOWPayments.CreatePaymentResponse[] = [];
@@ -231,17 +240,6 @@ class NOWPaymentsCaller extends HttpCaller {
     }
     const data = await response.json();
     return NOWPayments.fullCurrenciesResponseSchema.parse(data);
-  }
-
-  async getBalance(): Promise<NOWPayments.BalanceResponse | null> {
-    const response = await this.getRaw(`/balance`);
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      console.error('Failed to get balance', response.statusText);
-      return null;
-    }
-    const data = await response.json();
-    return NOWPayments.balanceResponseSchema.parse(data);
   }
 
   async getPayoutCurrencies(): Promise<NOWPayments.PayoutCurrenciesResponse | null> {
@@ -295,22 +293,6 @@ class NOWPaymentsCaller extends HttpCaller {
       createdAt: Date.now(),
     };
     return parsed.token;
-  }
-
-  async createPayout(
-    input: NOWPayments.CreatePayoutInput,
-    jwtToken: string
-  ): Promise<NOWPayments.CreatePayoutResponse | null> {
-    const response = await this.postRaw('/payout', {
-      body: JSON.stringify(input),
-      headers: { Authorization: `Bearer ${jwtToken}` },
-    });
-    if (!response.ok) {
-      console.error('Failed to create payout', response.statusText);
-      return null;
-    }
-    const data = await response.json();
-    return NOWPayments.createPayoutResponseSchema.parse(data);
   }
 }
 

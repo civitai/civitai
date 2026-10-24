@@ -9,7 +9,7 @@ import {
   getMetricJson,
   snippets,
 } from '~/server/metrics/metric-helpers';
-import { bountiesSearchIndex } from '~/server/search-index';
+import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -141,7 +141,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('c."createdAt"')} as "commentCount"
         FROM "Thread" t
         JOIN "Bounty" b ON b.id = t."bountyId" -- ensure the bounty exists
-        JOIN "CommentV2" c ON c."threadId" = t.id
+        JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
         WHERE t."bountyId" = ANY(${ids}::int[])
         GROUP BY t."bountyId", tf.timeframe

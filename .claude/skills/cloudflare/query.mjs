@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parseFlags } from './parse-flags.mjs';
 
 /**
  * Cloudflare Analytics Query Tool
@@ -655,17 +656,14 @@ async function cmdListZones() {
 // --- CLI ---
 
 const args = process.argv.slice(2);
-const flags = {};
-const positional = [];
 
-for (let i = 0; i < args.length; i++) {
-  if (args[i].startsWith('--')) {
-    const key = args[i].slice(2);
-    const val = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : 'true';
-    flags[key] = val;
-  } else {
-    positional.push(args[i]);
-  }
+let flags;
+let positional;
+try {
+  ({ flags, positional } = parseFlags(args));
+} catch (err) {
+  console.error(`Error: ${err.message}`);
+  process.exit(1);
 }
 
 const cmd = positional[0];

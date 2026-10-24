@@ -65,7 +65,7 @@ async function applyUpvotes() {
   `;
 
   await upsertTagsOnImageNew(
-    toAdd.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: false }))
+    toRestore.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: false }))
   );
 
   // Get affected images to update search index, cache, and votes

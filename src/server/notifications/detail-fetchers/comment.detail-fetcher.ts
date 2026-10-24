@@ -12,9 +12,17 @@ export const commentDetailFetcher = createDetailFetcher({
     const commentIds = notifications
       .map((n) => (n.details.version !== 2 ? (n.details.commentId as number | undefined) : null))
       .filter(isDefined);
+    // A removed comment must not keep serving its body here. This runs at READ time, so the preview
+    // is re-fetched every time the panel opens — a phishing reply taken down by a moderator (or by a
+    // ban's comment purge) otherwise stays legible in every recipient's inbox indefinitely.
+    //
+    // BOTH columns, because the two takedown paths write different ones: a moderator sets
+    // `tosViolation`, while `entity-moderation`'s automated sweep sets `hidden` and never touches the
+    // flag — and the unattended path is the one that catches a scam wave first. Neither is nullable in
+    // practice (0 NULLs in either table), so the equality predicates are live rather than dead.
     const comments = commentIds.length
       ? await db.comment.findMany({
-          where: { id: { in: commentIds } },
+          where: { id: { in: commentIds }, tosViolation: false, hidden: false },
           select: { id: true, content: true, user: { select: simpleUserSelect } },
         })
       : [];
@@ -24,7 +32,7 @@ export const commentDetailFetcher = createDetailFetcher({
       .filter(isDefined);
     const commentsV2 = commentV2Ids.length
       ? await db.commentV2.findMany({
-          where: { id: { in: commentV2Ids } },
+          where: { id: { in: commentV2Ids }, tosViolation: false, hidden: false },
           select: { id: true, content: true, user: { select: simpleUserSelect } },
         })
       : [];

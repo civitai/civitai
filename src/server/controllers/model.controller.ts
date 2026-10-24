@@ -1,4 +1,13 @@
+import { Flags } from '~/shared/utils/flags';
+import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
+import {
+  coverageAudience,
+  coveragePair,
+  coveragePairForUser,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
@@ -9,6 +18,7 @@ import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import {
   EntityAccessPermission,
   ModelSort,
@@ -17,12 +27,25 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
+import {
+  assertTrainingSourcePublishable,
+  stampWorkflowPublished,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
+import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
+import {
+  applyTrainingWorkflowOverlay,
+  collectTrainingWorkflowRefs,
+  emptyTrainingOverlay,
+} from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -66,6 +89,7 @@ import type {
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelSfwOnlyInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -85,7 +109,11 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import {
+  bustMvCache,
+  getLinkedVaeIds,
+  withPairedStrength,
+} from '~/server/services/model-version.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -106,6 +134,7 @@ import {
   publishPrivateModel,
   restoreModelById,
   setModelMinor,
+  setModelSfwOnly,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
@@ -114,8 +143,13 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
+import { getOfficialModelIds } from '~/server/services/resource-select.service';
+import {
+  closeAppealsDeletedByOwner,
+  closeAppealsOnDeletedModel,
+} from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestModelAppeal } from '~/server/services/report.service';
+import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -126,6 +160,7 @@ import {
 import {
   amIBlockedByUser,
   bustUserDownloadsCache,
+  getCosmeticsAndProfilePicturesForUsers,
   getUserSettings,
 } from '~/server/services/user.service';
 import {
@@ -135,7 +170,13 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import {
+  getRequestBrowsingLevel,
+  resolveRequestBrowsingLevels,
+} from '~/server/utils/browsing-level';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -143,10 +184,13 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -157,6 +201,7 @@ import {
   Availability,
   BountyType,
   CollectionItemStatus,
+  EntityType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -166,10 +211,10 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
-import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { redis, REDIS_KEYS } from '../redis/client';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
@@ -199,7 +244,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+      throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: model.user.id });
@@ -208,20 +254,24 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    const withSfwFace =
+      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    const now = new Date();
-    const filteredVersions = isOwner
-      ? model.modelVersions
-      : model.modelVersions.filter(
-          (version) =>
-            version.status === ModelStatus.Published &&
-            (!version.publishedAt || version.publishedAt <= now)
-        );
+    const filteredVersions = model.modelVersions.filter((version) =>
+      canViewModelVersionStatus({
+        viewer: ctx.user,
+        ownerId: model.user.id,
+        modelStatus: model.status,
+        versionStatus: version.status,
+        publishedAt: version.publishedAt,
+      })
+    );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
@@ -243,6 +293,7 @@ export const getModelHandler = async ({
     const modelCategories = await getCategoryTags('model');
 
     const sfwOnly = !!features.isGreen;
+    const { next: useNext, member } = await coverageAudience(ctx.user ?? undefined);
     const versionGenStates = await resolveCanGenerateForVersions(
       filteredVersions.map((v) => ({
         id: v.id,
@@ -250,7 +301,7 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered: v.generationCoverage?.covered ?? false,
+        ...coveragePairForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }),
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,
@@ -277,8 +328,6 @@ export const getModelHandler = async ({
         id: x.id,
         ownerId: model.user.id,
         licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
-        modelType: model.type,
-        baseModel: x.baseModel,
       })),
       viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
     });
@@ -368,7 +417,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee, effectiveLicensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, sale } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -433,8 +482,9 @@ export const getModelHandler = async ({
 
       return {
         ...version,
+        // A .com face has no per-version description; the .red one is not shown in its place.
+        description: withSfwFace ? null : version.description,
         licensingFee,
-        effectiveLicensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {
@@ -450,7 +500,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
@@ -474,7 +524,7 @@ export const getModelHandler = async ({
           .map((item) => {
             const match = generationResources.find((x) => x.id === item.resource.id);
             if (!match) return null;
-            return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            return withPairedStrength(match, item.settings);
           })
           .filter(isDefined),
         linkedComponents: selectLiveLinkedComponents(
@@ -507,12 +557,28 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
-    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+    const minorAppeal = isOwner
+      ? await getLatestAppeal({
+          entityType: EntityType.Model,
+          entityId: model.id,
+          userId: model.user.id,
+        })
+      : null;
+
+    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+      getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
+      getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+    ]);
 
     return {
-      ...model,
+      ...resolveModelFace(model, withSfwFace),
+      hasSfwFace: hasCompleteSfwFace(model),
+      sfwName: isOwner ? model.sfwName : null,
+      sfwDescription: isOwner ? model.sfwDescription : null,
+      user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
+      ownerMetricPrivacyDefaults,
       rank: {
         downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
@@ -529,6 +595,17 @@ export const getModelHandler = async ({
       // (and by whom) is not a visitor's business.
       minorFlagged: resolveMinorFlagged({
         isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
@@ -564,6 +641,10 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+    // caller who omits it where the domain caps nothing would otherwise reach the query
+    // with no level and get no rows.
+    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -578,15 +659,41 @@ export const getModelsInfiniteHandler = async ({
     // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
+    const queryOptions = {
+      user: ctx.user,
+      domain: getRequestBoardDomainColor(ctx.req),
+      imagesPerModel,
+      biasImageSlice: slim,
+      metricPrivacyEnabled,
+      // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+      eventDecorationViewer: ctx.user,
+    };
+
+    // Hot with a base-model filter leads with the official checkpoints for that base. They are
+    // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
+    // the first page through the same query, so every other filter still applies to them.
+    const pinnedIds =
+      input.sort === ModelSort.Hot && input.baseModels?.length && !input.query
+        ? ((await getOfficialModelIds()) ?? [])
+            .filter((m) => m.type === ModelType.Checkpoint)
+            .map((m) => m.id)
+        : [];
+    const pinned =
+      pinnedIds.length && !input.cursor
+        ? await getModelsWithImagesAndModelVersions({
+            ...queryOptions,
+            input: { ...input, limit: pinnedIds.length },
+            onlyModelIds: pinnedIds,
+          })
+        : undefined;
+    if (pinned?.isPrivate) isPrivate = true;
+
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
+        ...queryOptions,
         input,
-        user: ctx.user,
-        domain: getRequestBoardDomainColor(ctx.req),
-        imagesPerModel,
-        biasImageSlice: slim,
-        metricPrivacyEnabled,
+        excludeModelIds: pinnedIds,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -596,8 +703,9 @@ export const getModelsInfiniteHandler = async ({
       nextCursor = result.nextCursor;
       loopCount++;
     }
+
     if (isPrivate) ctx.cache.canCache = false;
-    return { items: results, nextCursor };
+    return { items: [...(pinned?.items ?? []), ...results], nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -630,6 +738,10 @@ export const getModelsPagedSimpleHandler = async ({
         : false,
     },
   });
+
+  // Same signal getModelsInfiniteHandler acts on: getModels reports when the row
+  // set it returned depends on who asked, which no cache key can express.
+  if (results.isPrivate && ctx.cache) ctx.cache.canCache = false;
 
   const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
@@ -762,12 +874,13 @@ export const publishModelHandler = async ({
   ctx,
 }: {
   input: PublishModelSchema;
-  ctx: ProtectedContext;
+  // Narrowed so `/api/mod/model/republish` can run the same path with its own actor and tracker.
+  ctx: Pick<ProtectedContext, 'user' | 'track'>;
 }) => {
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw: true },
+      select: { status: true, meta: true, nsfw: true, userId: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -776,13 +889,41 @@ export const publishModelHandler = async ({
     const { isModerator } = ctx.user;
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
+    // The model's status says nothing about its versions: one a moderator took down while the
+    // model stayed public must not come back because its id was in this list.
+    if (!isModerator && input.versionIds?.length) {
+      const downed = await dbWrite.modelVersion.count({
+        where: {
+          id: { in: input.versionIds },
+          modelId: input.id,
+          status: { in: constants.modPublishOnlyStatuses },
+        },
+      });
+      if (downed)
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+    }
 
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    await assertTrainingSourcePublishable({
+      modelId: input.id,
+      meta: modelMeta,
+      ownerId: model.userId,
+      callerId: ctx.user.id,
+    });
+    await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
+
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    const updatedModel = await publishModelById({ ...input, meta, republishing });
+    const updatedModel = await publishModelById({
+      ...input,
+      meta: withModelRulesClearance(meta, modelMeta, isModerator),
+      republishing,
+      enforceModelRules: !isModerator,
+    });
+    // Held for review: not published, so no publish side effects below.
+    if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -804,6 +945,18 @@ export const publishModelHandler = async ({
         type: 'published',
         entityType: 'model',
         entityId: updatedModel.id,
+      });
+    }
+
+    // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
+    // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
+    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
+      await stampWorkflowPublished({
+        ownerId: updatedModel.userId,
+        callerId: ctx.user.id,
+        workflowId: modelMeta.trainingStudioWorkflowId,
+        modelId: updatedModel.id,
+        modelVersionId: updatedModel.modelVersions[0]?.id,
       });
     }
 
@@ -868,6 +1021,19 @@ export const deleteModelHandler = async ({
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+    // The owner's own delete closes the appeal with a notice. A permanent delete leaves no row to
+    // read `deletedBy` from. Any other delete, including a moderator's earlier one that this call
+    // repeats, closes it quietly.
+    const deletedByCaller =
+      permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
+    if (model.userId === ctx.user.id && deletedByCaller)
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Model,
+        entityIds: [id],
+        ownerId: ctx.user.id,
+      });
+    else await closeAppealsOnDeletedModel({ modelId: id });
 
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',
@@ -1148,8 +1314,11 @@ export const getDownloadCommandHandler = async ({
       }
     }
 
-    const fileName = getDownloadFilename({ model, modelVersion, file });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1170,7 +1339,12 @@ export const getDownloadCommandHandler = async ({
       const additionalFile = files.find((f) => f.type === type);
       if (!additionalFile) continue;
 
-      const additionalFileName = getDownloadFilename({ model, modelVersion, file: additionalFile });
+      const additionalFileName = getDownloadFilename({
+        model,
+        modelVersion,
+        file: additionalFile,
+        versionFiles: files,
+      });
       commands.push({
         type: 'resources:add',
         resource: {
@@ -1179,8 +1353,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }
@@ -1272,6 +1450,10 @@ export const getMyDraftModelsHandler = async ({
         updatedAt: true,
         modelVersions: {
           select: {
+            id: true,
+            name: true,
+            status: true,
+            publishedAt: true,
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },
@@ -1361,10 +1543,24 @@ export const getMyTrainingModelsHandler = async ({
       db
     );
 
+    // Live state for every run still inside the orchestrator's 30-day retention window; older
+    // rows, and every row when the flag is off or the orchestrator is unreachable, fall through
+    // to the stored copy. Note the asymmetry this creates: `trainingStatus` filtering and the
+    // total count are still computed in SQL from the stored value, so a row whose live status
+    // has moved on can display a status outside the active filter. Fixing that needs
+    // orchestrator-side filtering — see docs/features/training-orchestrator-source-of-truth.md.
+    const overlay = ctx.features.trainingOrchestratorState
+      ? await getTrainingWorkflowOverlay({
+          userId,
+          ctx,
+          refs: collectTrainingWorkflowRefs(results.items),
+        })
+      : emptyTrainingOverlay();
+
     return {
       ...results,
       items: results.items.map((item) => ({
-        ...item,
+        ...applyTrainingWorkflowOverlay(item, overlay),
         model: {
           ...item.model,
           _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
@@ -1460,7 +1656,33 @@ export const setModelMinorHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await setModelMinor({ ...input, userId: ctx.user.id });
+    return await setModelMinor({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setModelSfwOnlyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetModelSfwOnlyInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await setModelSfwOnly({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1489,8 +1711,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
-    // upsert ran the non-moderator profanity filter over the model name and re-triggered
-    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
       data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
@@ -1656,6 +1877,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   try {
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
+    const useNext = await nextCoverageEnabled();
     const associatedResources = await dbRead.modelAssociations.findMany({
       where: { fromModelId: fromId, type },
       select: { toModelId: true, toArticleId: true },
@@ -1667,6 +1889,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? { id: toModelId, resourceType: 'model' as const }
         : { id: toArticleId, resourceType: 'article' as const }
     );
+
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
+        : undefined;
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+    }
 
     if (!resourcesIds.length) return [];
 
@@ -1730,7 +1973,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 status: v.status,
                 availability: v.availability,
                 baseModel: v.baseModel,
-                covered: v.covered,
+                ...coveragePair(v, useNext),
                 modelUserId: m.user.id,
                 modelType: m.type,
                 flags: v.flags,
@@ -1762,7 +2005,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const ownerId = m.user.id;
         if (assocIsMod || ownerId === user?.id) continue;
         const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
-        if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
+        if (anyMetricHidden(getMetaMetricPrivacy(m.metricPrivacy)) || anyMetricHidden(defHidden))
           assocMembershipCandidates.add(ownerId);
       }
       assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
@@ -1782,11 +2025,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const isOwner = assocIsMod || model.user.id === user?.id;
         const hiddenMetrics = gateHiddenMetrics(metricPrivacyEnabled, () =>
           resolveModelHiddenMetrics({
-            modelMeta: {
-              hideBuzz: metricPrivacy.buzz,
-              hideDownloads: metricPrivacy.downloads,
-              hideGenerations: metricPrivacy.generations,
-            },
+            modelMeta: metricPrivacy,
             userSettings: assocOwnerSettingsMap.get(model.user.id),
             isOwnerOrModerator: isOwner,
             hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,
@@ -1833,8 +2072,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);
@@ -1844,29 +2091,14 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
-export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
-  const { hashes } = input;
-
-  if (hashes.length === 0) {
-    return [];
-  }
-
-  const modelsByHashes = await dbRead.$queryRaw<
-    { userId: number; modelId: number; hash: string }[]
-  >`
-    SELECT m."userId",
-           m."id",
-           mfh."hash"
-    FROM "ModelFileHash" mfh
-           JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
-           JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
-           JOIN "Model" m ON mv."modelId" = m.id
-    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))})
-      AND m."deletedAt" IS NULL;
-  `;
-
-  return modelsByHashes;
-};
+/** Per matched hash, whether a model the caller does not own already has a file with it. */
+export const getModelByHashesHandler = ({
+  input,
+  ctx,
+}: {
+  input: ModelByHashesInput;
+  ctx: ProtectedContext;
+}) => findHashOwnership({ hashes: input.hashes, userId: ctx.user.id });
 
 export async function getSimpleModelsInfiniteHandler({
   input,
@@ -2070,8 +2302,7 @@ export const updateGallerySettingsHandler = async ({
       id,
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
-    // Clear cache
-    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+    await bustModelGallerySettings([id]);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {
@@ -2235,6 +2466,19 @@ export const privateModelFromTrainingHandler = async ({
       await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
+    // Publishes the model (privately), so the training-source check applies like any publish.
+    const stored = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { userId: true, meta: true },
+    });
+    if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
+      await assertTrainingSourcePublishable({
+        modelId: input.id,
+        meta: stored.meta as ModelMeta | null,
+        ownerId: stored.userId,
+        callerId: ctx.user.id,
+      });
+
     const model = await privateModelFromTraining({
       ...input,
       user: ctx.user,
@@ -2284,7 +2528,7 @@ export const publishPrivateModelHandler = async ({
     const { id: userId } = ctx.user;
     const model = await getModel({
       id: input.modelId,
-      select: { id: true, userId: true, status: true, availability: true },
+      select: { id: true, userId: true, status: true, availability: true, meta: true },
     });
 
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -2297,14 +2541,31 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { versionIds } = await publishPrivateModel(input);
+    await assertTrainingSourcePublishable({
+      modelId: model.id,
+      meta: model.meta as ModelMeta | null,
+      ownerId: model.userId,
+      callerId: userId,
+    });
+    await assertNotCrossOwnerDuplicate({
+      modelId: model.id,
+      ownerId: model.userId,
+      isModerator: ctx.user.isModerator,
+    });
+
+    const { versionIds, held } = await publishPrivateModel(
+      { ...input, isModerator: ctx.user.isModerator },
+      { enforceModelRules: !ctx.user.isModerator }
+    );
+    // The hold refreshed the caches itself and nothing went public, so no publish side effects.
+    if (held) return { held };
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
-    return true;
+    return { held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -1,0 +1,77 @@
+-- ============================================================
+-- Re-predicate Post_blockPublishedAppId_idx so the sweep query can actually use it
+-- ============================================================
+-- Supersedes 20260913120000_post_block_published_app_id_index, which created this
+-- index with the predicate `metadata ? 'blockPublishedAppId'`. That index is correct,
+-- tiny and valid -- and UNUSABLE by the query its own header documents.
+--
+-- WHAT WAS MEASURED (production primary, 2026-09-17, index live and valid):
+--
+--   -- the form the previous migration's header documents:
+--   SELECT id, "userId", "publishedAt" FROM "Post"
+--    WHERE metadata->>'blockPublishedAppId' = $1;
+--   => Parallel Seq Scan on "Post", cost 962412
+--
+--   -- the same query with the index predicate restated:
+--   ... WHERE metadata ? 'blockPublishedAppId'
+--       AND metadata->>'blockPublishedAppId' = $1;
+--   => Index Scan using "Post_blockPublishedAppId_idx", cost 2.34
+--
+-- ~411,000x apart. And this is a PROVABILITY limit, not a costing preference: with
+-- `SET enable_seqscan = off` the planner marks the sequential scan `Disabled: true`
+-- and uses it anyway, i.e. there is no viable index alternative at all. A partial
+-- index is only usable when the planner can prove the query implies its predicate,
+-- and Postgres cannot derive `metadata ? 'k'` from `metadata->>'k' = 'v'`. The two
+-- are semantically equivalent -- `->>` yields NULL for an absent key and `NULL = x`
+-- is never true -- but `predicate_implied_by` reasons over operator rules and knows
+-- no such relationship between these two jsonb operators.
+--
+-- 🔴 WHY THIS IS A MIGRATION AND NOT A COMMENT FIX. Documenting "remember to add
+-- `metadata ? 'blockPublishedAppId'`" is a guard you have to READ and OBEY. The next
+-- person writes the obvious query, gets a plan that is correct and 411,000x too
+-- expensive, and nothing tells them -- least of all at the moment this index exists
+-- for, which is an incident. `(metadata->>'k') IS NOT NULL` IS provable from
+-- `metadata->>'k' = 'v'` (measured: with both variants present the planner selects
+-- the IS NOT NULL one and cannot use the `?` one), so re-predicating makes the
+-- obvious query the fast one and deletes the footgun instead of annotating it.
+--
+-- SEMANTIC DELTA, and it runs the right way. `metadata ? 'k'` matches a row whose
+-- key is present with a JSON `null` value; `(metadata->>'k') IS NOT NULL` does not.
+-- For this marker the server writes a non-null OauthClient id unconditionally, so
+-- that row shape should not occur -- and a sweep matching `= $1` could never return
+-- one anyway. The new predicate is strictly better aligned with the only reader.
+--
+-- Everything the original migration argued still holds: PARTIAL on purpose (it
+-- matches only rows an app created, a vanishingly small fraction of `Post`, so the
+-- index stays tiny and its maintenance cost falls only on inserts that carry the
+-- key), and CONCURRENTLY because `Post` is large and hot.
+--
+-- 🔴 DROP-THEN-CREATE IS SAFE *HERE* ONLY. It leaves a window with no index, which is
+-- fine because this index currently covers ZERO rows and has no code reader yet
+-- (nothing in `src/` queries the marker; the sweep is run by hand). If it were ever
+-- load-bearing, create under a temporary name CONCURRENTLY and then swap with
+-- ALTER INDEX ... RENAME TO, rather than dropping first.
+--
+-- 🔴 APPLIED BY HAND, and this database's `statement_timeout` is 300000 ms, which a
+-- CONCURRENTLY build on `Post` can exceed -- a build killed by it leaves an INVALID
+-- index that is never used and never cleaned up on its own. Feed this file to psql on
+-- STDIN (so each statement runs in its own implicit transaction; CONCURRENTLY cannot
+-- run inside a transaction block and a multi-statement `-c` would wrap it in one).
+--
+-- IF A BUILD FAILS, check for the corpse before retrying:
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--    WHERE indexrelid = '"Post_blockPublishedAppId_idx"'::regclass;
+--   -- note the embedded quotes: regclass::text renders a mixed-case identifier
+--   -- QUOTED, so comparing it to the bare name silently matches nothing.
+-- and DROP INDEX CONCURRENTLY IF EXISTS "Post_blockPublishedAppId_idx"; first.
+--
+-- The query it serves -- now the plain one, no predicate to remember:
+--   SELECT id, "userId", "publishedAt" FROM "Post"
+--    WHERE metadata->>'blockPublishedAppId' = $1;
+SET statement_timeout = 0;
+
+DROP INDEX CONCURRENTLY IF EXISTS "Post_blockPublishedAppId_idx";
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Post_blockPublishedAppId_idx"
+  ON "Post" ((metadata ->> 'blockPublishedAppId'))
+  WHERE (metadata ->> 'blockPublishedAppId') IS NOT NULL;

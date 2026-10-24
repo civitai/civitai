@@ -1,4 +1,5 @@
 import { Menu, useComputedColorScheme } from '@mantine/core';
+import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -10,9 +11,9 @@ import {
   IconDotsVertical,
   IconFlag,
   IconGift,
-  IconInfoCircle,
   IconGraphOff,
   IconGraph,
+  IconEye,
   IconMicrophone,
   IconMicrophoneOff,
   IconRefresh,
@@ -20,6 +21,8 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
+import { openHiddenImagesFromUserModal } from '~/components/Dialog/triggers/hidden-images-from-user';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -29,8 +32,8 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -38,12 +41,18 @@ import { showErrorNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { impersonate } = useAccountContext();
+  // A hidden profile cover is filtered out of the header along with its own
+  // context menu, so this menu is the only place left to reach it from.
+  const hasHiddenImages = useHiddenPreferencesData().hiddenImages.some((x) => x.hidden);
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
@@ -55,14 +64,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     !!currentUser.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(username);
   const removeContentMutation = trpc.user.removeAllContent.useMutation();
-  // const deleteAccountMutation = trpc.user.delete.useMutation({
-  //   onSuccess() {
-  //     showSuccessNotification({
-  //       title: 'Account Deleted',
-  //       message: 'This account has been deleted.',
-  //     });
-  //   },
-  // });
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
@@ -209,16 +210,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   //     onConfirm: () => removeContentMutation.mutate({ id: user.id }),
   //   });
   // };
-  // const handleDeleteAccount = () => {
-  //   if (!user) return;
-  //   openConfirmModal({
-  //     title: 'Delete Account',
-  //     children: `Are you sure you want to delete this account? This action cannot be undone.`,
-  //     labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
-  //     confirmProps: { color: 'red' },
-  //     onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
-  //   });
-  // };
   const handleEnableTipalti = () => {
     if (user) enableTipaltiMutation.mutate({ id: user.id });
   };
@@ -276,16 +267,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
-                <Menu.Item
-                  component="a"
-                  target="_blank"
-                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
-                >
-                  Lookup User
-                </Menu.Item>
-              )}
+              <ModeratorLookupMenuItem path={moderatorUserLookupPath(user.id)}>
+                Lookup User
+              </ModeratorLookupMenuItem>
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"
@@ -330,13 +314,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 Remove all content
               </Menu.Item> */}
-              {/* <Menu.Item
-                color="red"
-                leftSection={<IconUserMinus size={14} stroke={1.5} />}
-                onClick={handleDeleteAccount}
-              >
-                Delete Account
-              </Menu.Item> */}
               <Menu.Item
                 leftSection={
                   user.muted ? (
@@ -379,10 +356,35 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               Gift a membership
             </Menu.Item>
           )}
+          <AddToHubMenuItem
+            onClick={() =>
+              openAddToHubModal({
+                props: {
+                  source: {
+                    type: UserHubSourceType.User,
+                    targetId: user.id,
+                    alias: user.username,
+                  },
+                },
+              })
+            }
+          />
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>
               Manage model categories
+            </Menu.Item>
+          )}
+          {hasHiddenImages && (
+            <Menu.Item
+              leftSection={<IconEye size={14} stroke={1.5} />}
+              onClick={() =>
+                openHiddenImagesFromUserModal({
+                  props: { userId: user.id, username: user.username },
+                })
+              }
+            >
+              Review hidden images
             </Menu.Item>
           )}
           <HideUserButton as="menu-item" userId={user.id} />

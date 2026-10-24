@@ -1,0 +1,153 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as SubmitModule from '~/server/services/text-scan/submit';
+
+// Pinned off so this suite stays about the XGuard path, not about what Flipt answers here.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubmitModule>()),
+  checkModelRulesInBackground: vi.fn(),
+}));
+// Hand-listed, as in challenge-moderation-adapter.test.ts: the text-scan notify path imports it.
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(),
+}));
+// Task 4 adapter module imports nsfwLevels.service, which pulls modelsSearchIndex ->
+// meilisearch/prom at module load — mock it or the suite fails to load, not just fails.
+vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
+
+const { submitModelTextModeration, MODEL_MODERATION_SCAN_LABELS } = await import(
+  '~/server/services/model-moderation.adapter'
+);
+const { submitTextModeration } = await import('~/server/services/text-moderation.service');
+const { isFlipt } = await import('~/server/flipt/client');
+const { checkModelRulesInBackground } = await import('~/server/services/text-scan/submit');
+
+describe('submitModelTextModeration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
+  });
+
+  it('does not submit for a model that is not public', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+
+    await submitModelTextModeration({ id: 7, name: 'My LoRA', description: null });
+
+    expect(dbMock.dbWrite.model.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 7,
+          deletedAt: null,
+          status: { in: ['Published', 'Scheduled'] },
+          availability: { not: 'Private' },
+        },
+      })
+    );
+    // The primary: a publish scans right after its commit, before a replica has the new status.
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it('submits when the flag is on, keyed on the model id', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+
+    await submitModelTextModeration({ id: 7, name: 'My LoRA', description: '<p>text</p>' });
+
+    expect(isFlipt).toHaveBeenCalledWith('model-text-moderation-xguard', '7');
+    // IMPORTANT 3(e) — widened from entityType/entityId/content alone: deleting
+    // `recordForReview: true` would silently zero out scanner_label_results, the shadow
+    // phase's primary output, with no assertion here to catch it.
+    expect(submitTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: 7,
+        content: 'My LoRA text',
+        labels: [...MODEL_MODERATION_SCAN_LABELS],
+        priority: 'low',
+        recordForReview: true,
+      })
+    );
+  });
+
+  it('does not submit when the flag is off', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(false);
+
+    await submitModelTextModeration({ id: 7, name: 'My LoRA', description: null });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  // IMPORTANT 1 — the doc's "moderator-authored saves are not scanned" carve-out, matching
+  // the profanity branch's `!isModerator` guard. Without this, a mod clearing an nsfw lock
+  // while fixing a title produces a new contentHash, a new scan, and applyResult re-flips
+  // nsfw and re-locks it — undoing the moderator's own decision.
+  it('does not submit for a moderator-authored save, even with the flag on', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+
+    await submitModelTextModeration({
+      id: 7,
+      name: 'My LoRA',
+      description: null,
+      isModerator: true,
+    });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+    expect(isFlipt).not.toHaveBeenCalled();
+  });
+
+  // upsertModel must never fail because moderation submission failed.
+  it('swallows a submit failure', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+    vi.mocked(submitTextModeration).mockRejectedValue(new Error('orchestrator down'));
+
+    await expect(
+      submitModelTextModeration({ id: 7, name: 'X', description: null })
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not submit for an empty text payload', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+
+    await submitModelTextModeration({ id: 7, name: '', description: null });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  describe('the Model rules check', () => {
+    beforeEach(() => {
+      vi.mocked(isFlipt).mockResolvedValue(false);
+    });
+
+    it.each([
+      ['unset', undefined, 1],
+      ['true', true, 1],
+      ['false', false, 0],
+    ])('rules %s queues %i check(s)', async (_label, rules, times) => {
+      await submitModelTextModeration({ id: 7, name: 'My LoRA', rules });
+      expect(checkModelRulesInBackground).toHaveBeenCalledTimes(times);
+      if (times) expect(checkModelRulesInBackground).toHaveBeenCalledWith(7);
+    });
+
+    it('queues none for a moderator-authored save, whatever rules says', async () => {
+      await submitModelTextModeration({ id: 7, name: 'My LoRA', isModerator: true });
+      await submitModelTextModeration({ id: 7, name: 'My LoRA', isModerator: true, rules: true });
+      expect(checkModelRulesInBackground).not.toHaveBeenCalled();
+    });
+
+    it('queues the check before the public check, which skips a model that is not public yet', async () => {
+      dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+      await submitModelTextModeration({ id: 7, name: 'My LoRA' });
+      expect(checkModelRulesInBackground).toHaveBeenCalledTimes(1);
+    });
+  });
+});

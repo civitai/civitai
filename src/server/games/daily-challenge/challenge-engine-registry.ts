@@ -49,6 +49,7 @@ export function buildJudgingEngineContext(input: {
   collectionId: number;
   theme: string;
   themeElements?: string[];
+  resourceConcept?: string;
   categories?: ChallengeJudgingCategory[];
 }): JudgingEngineContext {
   const categories = input.categories?.length
@@ -62,6 +63,7 @@ export function buildJudgingEngineContext(input: {
     collectionId: input.collectionId,
     theme: input.theme,
     themeElements: input.themeElements,
+    resourceConcept: input.resourceConcept,
     categories,
     criteriaByKey,
   };

@@ -31,7 +31,7 @@ export function ToggleLockComments({
   const { mutate, isPending: isLoading } = trpc.commentv2.toggleLockThread.useMutation({
     onMutate: async () => {
       queryUtils.commentv2.getThreadDetails.setData({ entityId, entityType }, (old) => {
-        if (!old) return { id: -1, locked: true, hiddenCount: 0 };
+        if (!old) return { id: -1, locked: true };
         return { ...old, locked: !old.locked };
       });
     },

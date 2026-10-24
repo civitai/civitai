@@ -33,14 +33,14 @@ export function ModelGallery(props: ModelGalleryProps) {
     triggerOnce: true,
   });
 
-  const content = inView && (
-    <ImagesAsPostsInfinite source={{ kind: 'model', model }} {...rest} />
-  );
+  const content = inView && <ImagesAsPostsInfinite source={{ kind: 'model', model }} {...rest} />;
   const forceMinorLevel = !!model.minor && !currentUser?.isModerator;
   const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
   return (
-    <div ref={ref} className="min-h-80 w-full">
+    // The tour targets this wrapper, not the gallery's own heading: the heading
+    // only exists once `inView` has fired, and the step runs before that.
+    <div ref={ref} data-tour="model:gallery" className="min-h-80 w-full">
       {forceMinorLevel ? (
         <BrowsingLevelProvider forcedBrowsingLevel={minorBrowsingLevel}>
           <BrowsingSettingsAddonsProvider>

@@ -33,7 +33,7 @@ export default function BountySearch() {
 const RenderFilters = () => {
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="bounties" />
       <SortBy
         title="Sort bounties by"
         items={[

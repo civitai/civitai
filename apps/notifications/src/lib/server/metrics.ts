@@ -91,7 +91,28 @@ export const redisErrorsTotal = new Counter({
   registers: [register],
 });
 
+/**
+ * Web-push sends by outcome. `accepted` means the push service took the message (201) — NOT that the
+ * device received it or the user saw it; do not build a "delivery rate" on it. `expired` (404/410 →
+ * row deleted) is the normal churn path, not an error.
+ */
+export const pushDeliveryTotal = new Counter({
+  name: 'notifications_push_delivery_total',
+  help: 'Web-push send attempts, labeled by outcome (accepted/expired/rate_limited/payload_too_large/failure/capped).',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});
+
 // Baseline series at load so they export a 0 before the first event (see the cardinality note above).
 for (const outcome of ['success', 'failure'] as const) signalsDeliveryTotal.inc({ outcome }, 0);
+for (const outcome of [
+  'accepted',
+  'expired',
+  'rate_limited',
+  'payload_too_large',
+  'failure',
+  'capped',
+] as const)
+  pushDeliveryTotal.inc({ outcome }, 0);
 for (const operation of ['get', 'set', 'increment', 'has', 'clearCategory', 'bustUser'] as const)
   redisErrorsTotal.inc({ operation }, 0);

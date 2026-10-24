@@ -28,7 +28,7 @@ GET /ecosystems/[key]                       (SSR via createServerSideProps)
   render(config, live)                      // + JSON-LD (FAQPage, BreadcrumbList)
 ```
 
-- **Generic layer** — `src/server/services/ecosystem-seo.service.ts`. One `redis.get`/`set` with `EX: 24h`, JSON value, fail-open to a direct DB read on cache miss/outage (mirrors `getPopularCheckpointForEcosystem` in `services/blocks/checkpoint.service.ts`). Keyed `packed:caches:ecosystem-seo:<key>`. Queries filter to the ecosystem's whole **family** (`getFamilyBaseModels(key)` — every `baseModel` string under the key's `familyId`, so `/ecosystems/Flux1` covers Flux.1 + Flux.2 + Klein), not just the single ecosystem's base models. **Cache-bust:** append `?refresh=true` to the page URL to skip the cache read and recompute — gated to moderators (the page only passes `refresh` through when `session.user.isModerator`), so it can't be an anonymous stampede vector.
+- **Generic layer** — `src/server/services/ecosystem-seo.service.ts`. One `redis.get`/`set` with `EX: 24h`, JSON value, fail-open to a direct DB read on cache miss/outage (mirrors `getPopularCheckpointForEcosystem` in `services/blocks/checkpoint.service.ts`). Keyed `packed:caches:ecosystem-seo:<key>`. Queries filter to the page's **declared** ecosystems only — `getEcosystemOwnBaseModels(key)` over `key` + `additionalEcosystemKeys`, matched by `ecosystemId`, with no `familyId` or `parentEcosystemId` expansion. So `/ecosystems/Flux1` covers Flux.1, Flux Krea and Flux.1 Kontext, not Flux.2, Flux 3 Video or Flux.3; a page that should cover a sibling declares it. **Cache-bust:** append `?refresh=true` to the page URL to skip the cache read and recompute — gated to moderators (the page only passes `refresh` through when `session.user.isModerator`), so it can't be an anonymous stampede vector.
 - **Constant layer** — `src/shared/constants/ecosystem-seo.constants.ts`. `ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig>`. Adding an ecosystem = adding one entry (featured model IDs, image IDs, copy). Presence in this map is also the allow-list: a `key` with no entry 404s, so we launch pages deliberately, not all ~60 thin at once.
 - **Page** — `src/pages/ecosystems/[key]/index.tsx`. SSR (not ISR) so counts are always the cached-fresh value and the HTML is fully populated for crawlers. Public + indexable (unlike `/generate`).
 
@@ -52,16 +52,9 @@ A comparison cell may hold a `{loras:Key}` token (`Key` = an `ECOSYSTEM_SEO` key
 
 When a hosted model gets an announced end-of-life, add `sunset: { date, note }` to its config. Before `date` the page shows a warning banner; from `date` on the banner switches to past tense, the page goes `noindex`, and it drops out of the sitemap — an SEO page that ranks for a model nobody can run is worse than no page. The `/ecosystems` index card shows a "Retiring" badge as soon as the field is set.
 
-## The funnel — and the one real blocker
+## The funnel
 
-CTAs deep-link into the generator, pre-selecting the ecosystem: `/generate?modelVersionId=<featuredVersionId>`.
-
-**Blocker:** `/generate` today (`src/pages/generate/index.tsx`) redirects logged-out users to login and is `deIndex`ed, and it does **not** parse `modelVersionId` from the URL — pre-selection happens client-side through the generation panel. So an anonymous visitor clicking "Generate" hits a login wall with no ecosystem primed. Two things needed before launch:
-
-1. Have `/generate` read `?modelVersionId=` (or a new `?baseModel=<key>`) and prime the panel.
-2. Confirm the login `returnUrl` round-trips back to that primed URL (search → page → generate → signup → generate).
-
-Until then the CTA still works as a signup funnel, just without pre-selection.
+CTAs deep-link into the generator, pre-selecting the ecosystem: `/generate?modelVersionId=<featuredVersionId>`. `/generate` is `deIndex`ed but open to logged-out visitors: it primes the form from `?modelVersionId=`, and login is asked only when they press Generate, with the same URL as the `returnUrl` so the primed form is waiting after signup.
 
 ## Adding an ecosystem
 

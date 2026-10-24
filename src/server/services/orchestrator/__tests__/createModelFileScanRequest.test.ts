@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as LoggingClient from '~/server/logging/client';
 
 const {
   mockDbWrite,
@@ -7,6 +9,7 @@ const {
   mockStringifyAIR,
   mockResolveDownloadUrl,
   mockIsProd,
+  mockIsFlipt,
 } = vi.hoisted(() => ({
   mockDbWrite: {
     modelFile: { update: vi.fn() },
@@ -19,11 +22,12 @@ const {
   // don't regress; failure-path tests reset to mockRejectedValue.
   mockResolveDownloadUrl: vi.fn().mockResolvedValue({ url: 'https://cdn.example/file' }),
   mockIsProd: { value: true },
+  mockIsFlipt: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // surface enums consumed at module-load time
   WorkflowStatus: {},
@@ -34,13 +38,27 @@ vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: {},
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+// Spread the original: `safeError` is real, pure serialization logic the submit-failure
+// log depends on, and a hand-listed factory silently dropped it.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mockLogToAxiom,
+}));
 
 vi.mock('~/shared/utils/air', () => ({ stringifyAIR: mockStringifyAIR }));
 
-vi.mock('~/utils/delivery-worker', () => ({
-  resolveDownloadUrl: mockResolveDownloadUrl,
-}));
+// Spread the REAL module and override only `resolveDownloadUrl`. A wholesale
+// one-key mock would (a) go stale the moment the module gains an export — it
+// already did, when `isDefiniteNotFound` was added — and (b) make the not-found
+// vs transient classification a property of the fake instead of the code under
+// test. The error classes and the classifier here are the real ones.
+vi.mock('~/utils/delivery-worker', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/utils/delivery-worker')>();
+  return {
+    ...actual,
+    resolveDownloadUrl: mockResolveDownloadUrl,
+  };
+});
 
 // Use a getter so tests can flip isProd between cases.
 vi.mock('~/env/other', () => ({
@@ -54,19 +72,38 @@ vi.mock('~/env/server', () => ({
     ORCHESTRATOR_ACCESS_TOKEN: 'token',
     NEXTAUTH_URL: 'https://civitai.test',
     WEBHOOK_TOKEN: 'wh-token',
+    // Required because the delivery-worker mock above spreads the REAL module,
+    // which transitively imports s3-utils — and s3-utils does `new URL(...)` on
+    // these at module load. Without them the whole suite fails to import
+    // (vitest reports `1 failed` and `Tests no tests` — loud, but the TEST count
+    // is zero, so read the count and not just the pass/fail line).
+    S3_UPLOAD_ENDPOINT: 'https://abcd1234.r2.cloudflarestorage.com',
+    S3_UPLOAD_B2_ENDPOINT: 'https://s3.us-west-004.backblazeb2.com',
+    DELIVERY_WORKER_ENDPOINT: 'https://delivery.example.com/',
+    DELIVERY_WORKER_TOKEN: 'tok',
+    STORAGE_RESOLVER_ENDPOINT: '',
+    STORAGE_RESOLVER_AUTH: '',
+    LOGGING: [],
   },
 }));
 
-// orchestrator.service.ts pulls in cf-images-utils which validates
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
+}));
+
+// orchestrator.service.ts pulls in edge-url which validates
 // NEXT_PUBLIC_* env vars at import-time. Stub it to keep tests hermetic.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => url,
 }));
 
 import {
+  createImageIngestionRequest,
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
+import { DeliveryWorkerError, StorageResolverError } from '~/utils/delivery-worker';
 
 const baseInput = {
   fileId: 1,
@@ -237,9 +274,7 @@ describe('createModelFileScanRequest', () => {
       await createModelFileScanRequest(baseInput);
 
       const submitCall = mockSubmitWorkflow.mock.calls[0][0];
-      expect(submitCall.body.callbacks[0].url).toContain(
-        '/api/webhooks/model-file-scan-result'
-      );
+      expect(submitCall.body.callbacks[0].url).toContain('/api/webhooks/model-file-scan-result');
       expect(submitCall.body.callbacks[0].url).toContain('token=wh-token');
       expect(submitCall.body.callbacks[0].type).toEqual([
         'workflow:succeeded',
@@ -304,7 +339,9 @@ describe('createModelFileScanRequest', () => {
       expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
       expect(err.code).toBe('transient');
       expect(err.status).toBe(400);
-      expect(err.message).toMatch(/Failed to submit model file scan workflow for file 1.*status 400/);
+      expect(err.message).toMatch(
+        /Failed to submit model file scan workflow for file 1.*status 400/
+      );
     });
 
     it('logs to Axiom with file context + submissionErrorCode=transient before throwing', async () => {
@@ -340,6 +377,20 @@ describe('createModelFileScanRequest', () => {
       // Only the post-success update would write scanRequestedAt; verify it didn't run.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
     });
+
+    it("carries a 429's Retry-After so the fallback job can wait for it", async () => {
+      mockSubmitWorkflow.mockResolvedValue({
+        data: null,
+        error: { status: 429, detail: 'Too many requests' },
+        response: new Response(null, { status: 429, headers: { 'Retry-After': '420' } }),
+      });
+
+      const err = await createModelFileScanRequest(baseInput).catch((e) => e);
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(err.status).toBe(429);
+      expect(err.retryAfter).toBe(420);
+    });
   });
 
   describe('pre-flight URL resolution (not-found path)', () => {
@@ -354,8 +405,33 @@ describe('createModelFileScanRequest', () => {
       await createModelFileScanRequest(baseInput);
 
       expect(mockResolveDownloadUrl).toHaveBeenCalledTimes(1);
-      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(1, 's3://bucket/key.safetensors');
+      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(
+        1,
+        's3://bucket/key.safetensors',
+        undefined,
+        {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        }
+      );
       expect(mockSubmitWorkflow).toHaveBeenCalled();
+    });
+
+    it('gives the submit a deadline of its own', async () => {
+      // No `wait` is passed, so this is an enqueue: without a signal it inherits undici's 300s
+      // default while the upload response and the import job's lock both wait on it.
+      mockResolveDownloadUrl.mockResolvedValueOnce({ url: 'https://cdn/x' });
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: undefined,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest(baseInput);
+
+      const [submitted] = mockSubmitWorkflow.mock.calls[0];
+      expect(submitted.signal).toBeInstanceOf(AbortSignal);
+      expect(submitted.query?.wait).toBeUndefined();
     });
 
     it('retries pre-flight once after a 60s wait when the first attempt fails (sync-lag tolerance)', async () => {
@@ -377,10 +453,10 @@ describe('createModelFileScanRequest', () => {
       expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
 
-    it('throws code=not-found when both pre-flight attempts fail', async () => {
+    it('throws code=not-found when the retry fails with a 404 (absence PROVEN)', async () => {
       mockResolveDownloadUrl
-        .mockRejectedValueOnce(new Error('first miss'))
-        .mockRejectedValueOnce(new Error('still missing'));
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
 
       const promise = createModelFileScanRequest(baseInput).catch((e) => e);
       await vi.advanceTimersByTimeAsync(60_000);
@@ -401,6 +477,177 @@ describe('createModelFileScanRequest', () => {
       );
     });
 
+    // 🔴 REGRESSION GUARD. Before this was fixed, EVERY second pre-flight failure
+    // produced code=not-found, and the caller writes a PERMANENT
+    // ModelFile.exists=false tombstone on that code — which also permanently
+    // excludes the file from the scan retry job. A resolver outage therefore left
+    // Published, Public files downloadable and unscannable forever. Measured
+    // 2026-08-20: 41 of 41 readable tombstoned files were still fully
+    // downloadable, i.e. the tombstones recorded outages, not missing objects.
+    // These cases MUST be transient. This test fails on the pre-fix code.
+    it.each([
+      ['resolver 503', () => new StorageResolverError(503, 'Service Unavailable')],
+      ['resolver 500', () => new StorageResolverError(500, 'Internal Server Error')],
+      ['resolver 401 (auth)', () => new StorageResolverError(401, 'Unauthorized')],
+      ['delivery worker 429 (rate limit)', () => new DeliveryWorkerError(429, 'Too Many Requests')],
+      ['delivery worker 503', () => new DeliveryWorkerError(503, 'Service Unavailable')],
+      ['a status-less transport error', () => new Error('ECONNRESET')],
+      ['a non-Error rejection', () => 'boom' as unknown as Error],
+    ])('throws code=transient (never not-found) for %s — no tombstone', async (_label, makeErr) => {
+      mockResolveDownloadUrl.mockRejectedValueOnce(makeErr()).mockRejectedValueOnce(makeErr());
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // NB: this function never writes the tombstone itself — the CALLER does,
+      // keyed off `code`. So `code === 'transient'` above is the load-bearing
+      // assertion; this one only pins that no write leaked into this path.
+      expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'model-file-scan',
+          submissionErrorCode: 'transient',
+          fileId: 1,
+        })
+      );
+    });
+
+    it('classifies on the RETRY, so a transient first failure followed by a 404 is not-found', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new StorageResolverError(503, 'Service Unavailable'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('not-found');
+    });
+
+    it('and the mirror: a 404 first, then a 5xx, is transient — absence was not re-proven', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new StorageResolverError(503, 'Service Unavailable'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('transient');
+    });
+
+    // These fields exist ONLY to make a tombstone auditable after the fact, so
+    // nothing else in the codebase reads them — which means without an assertion
+    // here, swapping resolverStatus and deliveryWorkerStatus, or dropping either,
+    // passes a fully green suite while making every future audit read the wrong
+    // authority's answer. Assert the exact values, not merely that they exist.
+    it('logs WHICH authority reported what, so the verdict is auditable', async () => {
+      const dwError = new DeliveryWorkerError(404, 'Not Found');
+      dwError.resolverError = new StorageResolverError(503, 'Service Unavailable');
+      mockResolveDownloadUrl.mockRejectedValueOnce(dwError).mockRejectedValueOnce(dwError);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      // The resolver was down, so the delivery worker's 404 is not proof.
+      expect(err.code).toBe('transient');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          submissionErrorCode: 'transient',
+          deliveryWorkerStatus: 404,
+          resolverStatus: 503,
+          resolverError: 'StorageResolverError: Storage resolver error: Service Unavailable',
+        })
+      );
+    });
+
+    it('logs the resolver failure even when it has no status (transport reject)', async () => {
+      // The outage shape this change exists for: a resolver pod that refuses the
+      // connection rejects at the transport layer, so there IS no status. Without
+      // resolverError the log would carry the delivery worker's text twice and no
+      // resolver signal at all.
+      const dwError = new DeliveryWorkerError(404, 'Not Found');
+      dwError.resolverError = new TypeError('fetch failed');
+      mockResolveDownloadUrl.mockRejectedValueOnce(dwError).mockRejectedValueOnce(dwError);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('transient');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryWorkerStatus: 404,
+          resolverStatus: undefined,
+          resolverError: 'TypeError: fetch failed',
+        })
+      );
+    });
+
+    it('omits the resolver fields when the resolver was never consulted', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('not-found');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryWorkerStatus: 404,
+          resolverStatus: undefined,
+          resolverError: undefined,
+        })
+      );
+    });
+
+    // The verdict is deliberately taken from the RETRY, and so are the audit
+    // fields. Every other fixture here rejects with the same object twice, which
+    // cannot tell the two apart — so re-sourcing the log from `firstError` passes
+    // a fully green suite while making the log describe the wrong attempt. Give
+    // the two attempts pairwise-distinct values so that mutant is observable.
+    // 🔴 The retry carries 410, NOT 404, on purpose. 404 is the only value
+    // `deliveryWorkerStatus` takes anywhere else in this suite, so asserting 404
+    // here could not distinguish "reads the retry" from "hardcoded to 404" — a
+    // fixture that can only ever produce the constant it names cannot detect a
+    // mutant that returns that constant. 410 is a value no other fixture emits.
+    it('sources the audit fields from the RETRY, not the first attempt', async () => {
+      const firstFailure = new DeliveryWorkerError(404, 'Not Found');
+      firstFailure.resolverError = new StorageResolverError(503, 'Service Unavailable');
+      const retryFailure = new DeliveryWorkerError(410, 'Gone');
+      retryFailure.resolverError = new TypeError('fetch failed');
+
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(firstFailure)
+        .mockRejectedValueOnce(retryFailure);
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await promise;
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // 410 from the retry, NOT 404 from the first attempt.
+          deliveryWorkerStatus: 410,
+          // The retry's resolver failure had no status; the first attempt's did.
+          resolverStatus: undefined,
+          resolverError: 'TypeError: fetch failed',
+          // These two are what an on-call reader uses to reconstruct which
+          // attempt said what, and nothing else in the suite asserts them —
+          // swapping or dropping them survives a green run without this.
+          firstError: 'Delivery worker error: Not Found',
+          retryError: 'Delivery worker error: Gone',
+        })
+      );
+    });
+
     it('skips pre-flight entirely when preflight=false (inline upload path)', async () => {
       mockResolveDownloadUrl.mockRejectedValue(new Error('would fail if called'));
       mockSubmitWorkflow.mockResolvedValue({
@@ -413,6 +660,157 @@ describe('createModelFileScanRequest', () => {
 
       expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('createImageIngestionRequest', () => {
+  const submittedSteps = () =>
+    mockSubmitWorkflow.mock.calls[0][0].body.steps as Array<{ $type: string; input: unknown }>;
+
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmitWorkflow.mockResolvedValue({
+      data: { id: 'workflow-1' },
+      response: { status: 200, headers: new Headers() },
+    });
+  });
+
+  it('submits wdTagging + mediaRating while the imageScanning flag is off', async () => {
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+    expect(mockIsFlipt).toHaveBeenCalledWith('image-ingestion-image-scanning', '1');
+    // The legacy submit is the production path; its inputs must stay exactly as they were.
+    const metadata = { imageId: 1 };
+    const priority = 'normal';
+    const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
+    expect(submittedSteps()).toEqual([
+      {
+        $type: 'wdTagging',
+        name: 'tags',
+        metadata,
+        priority,
+        input: {
+          mediaUrl,
+          model:
+            'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar',
+          threshold: 0.55,
+        },
+      },
+      {
+        $type: 'mediaRating',
+        name: 'rating',
+        metadata,
+        priority,
+        input: {
+          mediaUrl,
+          engine: 'civitai',
+          includeAgeClassification: true,
+          includeAIRecognition: false,
+          includeFaceRecognition: false,
+          includeAnimeRecognition: false,
+        },
+      },
+      {
+        $type: 'mediaHash',
+        name: 'hash',
+        metadata,
+        priority,
+        input: { mediaUrl, hashTypes: ['perceptual'] },
+      },
+    ]);
+  });
+
+  it.each([
+    [false, 'image-ingestion'],
+    [true, 'image-scanning-ingestion'],
+  ])('logs a failed submit under its pipeline name (flag %s)', async (flagOn, name) => {
+    vi.useRealTimers();
+    mockIsFlipt.mockResolvedValue(flagOn);
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: 'bad request',
+      response: { status: 400, headers: new Headers() },
+    });
+    const result = await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+
+    expect(result.useImageScanning).toBe(flagOn);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name, imageId: 1 }));
+  });
+
+  // A no-response submit is the one case where the error's identity IS the diagnosis, and
+  // `JSON.stringify(new Error())` is `{}` — so logging the error object recorded nothing.
+  it('serializes an Error from a failed submit instead of logging an empty object', async () => {
+    vi.useRealTimers();
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: new Error('The operation was aborted due to timeout'),
+      response: undefined,
+    });
+
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+
+    const logged = mockLogToAxiom.mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(logged?.error)).not.toBe('{}');
+    expect(logged?.error).toEqual(
+      expect.objectContaining({
+        name: 'Error',
+        message: 'The operation was aborted due to timeout',
+      })
+    );
+    // Tells three 15s aborts apart from an instant rejection; the attempt count cannot.
+    expect(typeof logged?.elapsedMs).toBe('number');
+  });
+
+  it('submits one imageScanning step when the flag is on', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+    const steps = submittedSteps();
+    expect(steps.map((step) => step.$type)).toEqual(['imageScanning', 'mediaHash']);
+    expect(steps[0].input).toEqual({ image: { $ref: '$arguments', path: 'mediaUrl' } });
+    expect(steps[1].input).toEqual({
+      mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
+      hashTypes: ['perceptual'],
+    });
+  });
+
+  const frameUrl = { $ref: 'frame', path: 'url' };
+  it.each([
+    [
+      false,
+      [
+        ['wdTagging', 'mediaUrl'],
+        ['mediaRating', 'mediaUrl'],
+      ],
+    ],
+    [true, [['imageScanning', 'image']]],
+  ])('repeats the per-frame steps over video frames (flag %s)', async (flagOn, templates) => {
+    mockIsFlipt.mockResolvedValue(flagOn);
+    await createImageIngestionRequest({ imageId: 1, url: 'video-key', type: 'video' });
+    const steps = submittedSteps() as Array<{
+      $type: string;
+      input: {
+        videoUrl?: unknown;
+        for?: unknown;
+        template?: { $type: string; input: Record<string, unknown> };
+      };
+    }>;
+
+    expect(steps[0]).toMatchObject({
+      $type: 'videoFrameExtraction',
+      input: {
+        videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
+        frameRate: 1,
+        uniqueThreshold: 0.9,
+        maxFrames: 50,
+      },
+    });
+    expect(steps.slice(1)).toHaveLength(templates.length);
+    steps.slice(1).forEach((step, i) => {
+      const [type, urlField] = templates[i];
+      expect(step.$type).toBe('repeat');
+      expect(step.input.for).toEqual({ $ref: 'videoFrames', path: 'output.frames', as: 'frame' });
+      expect(step.input.template?.$type).toBe(type);
+      expect(step.input.template?.input[urlField]).toEqual(frameUrl);
     });
   });
 });

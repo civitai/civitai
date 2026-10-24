@@ -32,14 +32,12 @@ const {
   mockResolveCanGenerateForVersions,
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
-  mockGetCapTiers,
   currentUser,
 } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
   mockGetFeaturedModels: vi.fn(),
-  mockGetCapTiers: vi.fn(),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
 }));
 
@@ -57,10 +55,6 @@ vi.mock('~/server/services/model.service', () => ({
   getFeaturedModels: mockGetFeaturedModels,
 }));
 
-vi.mock('~/server/services/paid-access.service', () => ({
-  getCapTiers: mockGetCapTiers,
-}));
-
 // MixedAuthEndpoint resolves the (optional) session and passes it as the 3rd
 // argument. Swap it for a pass-through that injects whatever `currentUser`
 // holds, so the owner/moderator branches are reachable from a test.
@@ -71,10 +65,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { modelVersionToAir } from '~/server/utils/resource-air';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
@@ -208,6 +204,7 @@ const versionRow = {
   requireAuth: false,
   checkPermission: false,
   covered: true,
+  isPromoted: false,
   generationAlias: null,
   minor: false,
   sfwOnly: false,
@@ -230,11 +227,14 @@ const versionRow = {
 
 type Body = {
   air: string;
+  defaultFileId: number | null;
   size: number;
   fileType: string;
   fileName: string;
   hashes: Record<string, string>;
   downloadUrls: string[];
+  isPromoted?: boolean;
+  evictable?: boolean;
 };
 
 async function run(
@@ -304,7 +304,6 @@ beforeEach(() => {
   );
   mockGetShouldChargeForResources.mockResolvedValue({ 77: false });
   mockGetFeaturedModels.mockResolvedValue([]);
-  mockGetCapTiers.mockResolvedValue(new Map());
 });
 
 describe('createModelFileDownloadUrl', () => {
@@ -401,6 +400,14 @@ describe('GET /api/v1/model-versions/mini/[id] — url names the advertised file
     const { body } = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
     expect(body.fileName).toBe(GGUF.name);
     expect(urlFileId(body)).toBe(String(GGUF.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — isPromoted', () => {
+  it.each([true, false])('reports the version row’s isPromoted (%s)', async (isPromoted) => {
+    const { status, body } = await run([SAFETENSOR], {}, { isPromoted });
+    expect(status).toBe(200);
+    expect(body.isPromoted).toBe(isPromoted);
   });
 });
 
@@ -593,6 +600,13 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
     expect(lastAirArgs()?.modelFileId).toBe(String(GGUF.id));
     expect(urlFileId(supplied.body)).toBe(String(GGUF.id));
   });
+
+  it('names the default file whichever file was pinned, so consumers can recognise a pin to it', async () => {
+    const pinnedDefault = await run([SAFETENSOR, GGUF], { modelFileId: String(SAFETENSOR.id) });
+    expect(pinnedDefault.body.defaultFileId).toBe(SAFETENSOR.id);
+    const pinnedOther = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
+    expect(pinnedOther.body.defaultFileId).toBe(SAFETENSOR.id);
+  });
 });
 
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
@@ -747,5 +761,137 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     const { body } = await run([TRAINING_FILE, SAFETENSOR]);
     expect(body.fileName).toBe(SAFETENSOR.name);
     expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the generation file', () => {
+  it('never advertises a replaced file, even the best-scoring one', async () => {
+    const replaced = {
+      ...PRIVATE_MODEL,
+      id: 707,
+      visibility: 'Public',
+      name: 'replaced-pruned.safetensors',
+      replacedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { body } = await run([replaced, SAFETENSOR]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('hands the orchestrator the AIR type the cache bust invalidates', async () => {
+    const files = [PRIVATE_MODEL, PUBLIC_DIFFUSION];
+    const { status } = await run(files);
+    expect(status).toBe(200);
+    const miniType = lastAirArgs()?.type;
+
+    modelVersionToAir({
+      id: VERSION_ID,
+      baseModel: versionRow.baseModel,
+      model: { id: versionRow.modelId, type: 'Checkpoint' },
+      files,
+    });
+
+    expect(miniType).toBe('diffusionmodel');
+    expect(lastAirArgs()?.type).toBe(miniType);
+  });
+});
+
+describe('evictable', () => {
+  it.each([
+    [0, true],
+    [ModelVersionFlag.NotEvictable, false],
+    [ModelVersionFlag.NotEvictable | ModelVersionFlag.GenerationDisabled, false],
+    [ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative, true],
+  ])('versionFlags %i -> evictable %s', async (versionFlags, evictable) => {
+    const { status, body } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(body.evictable).toBe(evictable);
+  });
+
+  it('is the same whichever file the caller asks about', async () => {
+    const versionFlags = ModelVersionFlag.NotEvictable;
+    const byDefault = await run([SAFETENSOR, GGUF], {}, { versionFlags });
+    const byFileId = await run(
+      [SAFETENSOR, GGUF],
+      { modelFileId: String(GGUF.id) },
+      { versionFlags }
+    );
+    expect(byFileId.body.fileName).toBe(GGUF.name);
+    expect(byDefault.body.evictable).toBe(false);
+    expect(byFileId.body.evictable).toBe(false);
+  });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
+  });
+});
+
+describe('additionalResourceCharge', () => {
+  // The orchestrator charges the additional-resource fee off this field, so the version's
+  // flags have to reach the charge decision, not just the response.
+  it('hands the version flags to the charge decision', async () => {
+    const versionFlags =
+      ModelVersionFlag.NoAdditionalResourceFee | ModelVersionFlag.GenerationDisabled;
+    const { status } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledWith([
+      {
+        modelType: versionRow.type,
+        modelId: versionRow.modelId,
+        fileSizeKB: SAFETENSOR.sizeKB,
+        versionFlags,
+      },
+    ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
+  });
+});
+
+describe('payoutEnabled and tipsEnabled', () => {
+  const payouts = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { payoutEnabled, tipsEnabled } = body as Body & {
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { payoutEnabled, tipsEnabled };
+  };
+
+  it('an ordinary version gets both', async () => {
+    expect(await payouts({})).toEqual({ payoutEnabled: true, tipsEnabled: true });
+  });
+
+  it('a licensing fee turns off compensation but NOT tips', async () => {
+    expect(await payouts({ licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('an owner with DisablePayout gets neither', async () => {
+    expect(await payouts({ userFlags: 1 })).toEqual({ payoutEnabled: false, tipsEnabled: false });
+  });
+
+  it('DisablePayout wins over a licensing fee', async () => {
+    expect(await payouts({ userFlags: 1, licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a system-owned (-1) version gets no tips', async () => {
+    expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });

@@ -178,9 +178,15 @@ type Scan = {
 const SCANNED_TOKENS = [...SPEND_FIELDS, RAW_COLUMN] as const;
 
 async function scanSourceTree(): Promise<Scan> {
-  const files = (await walk(join(ROOT, 'src'), []))
-    .map((f) => relative(ROOT, f))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
+  // Repo-relative paths are IDENTIFIERS here — matched against the `/`-separated
+  // literals in PUBLISHER_REACHABLE and by `/`-anchored regexes — so they carry
+  // posix separators on every platform. Without this `alwaysDecode` never hits on
+  // Windows, and the ENOENT that is supposed to announce a renamed publisher path
+  // silently becomes an empty `raw` map instead.
+  const scanned = (await walk(join(ROOT, 'src'), []))
+    .map((abs) => ({ abs, file: relative(ROOT, abs).replace(/\\/g, '/') }))
+    .filter(({ file }) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(file));
+  const files = scanned.map((s) => s.file);
 
   const code = new Map<string, string>();
   const raw = new Map<string, string>();
@@ -189,8 +195,11 @@ async function scanSourceTree(): Promise<Scan> {
   // renamed or deleted path a loud ENOENT instead of a silently vacuous pass.
   const alwaysDecode = new Set<string>(PUBLISHER_REACHABLE);
 
-  await forEachConcurrent(files, READ_CONCURRENCY, async (file) => {
-    const bytes = await readFile(join(ROOT, file));
+  await forEachConcurrent(scanned, READ_CONCURRENCY, async ({ abs, file }) => {
+    // Read the path the walk produced, never the normalised key: the key is an identifier,
+    // and handing a posix-separated string back to the filesystem happens to work today but
+    // would not under a `\\?\` prefixed path.
+    const bytes = await readFile(abs);
     if (!alwaysDecode.has(file) && !INTERESTING.some((t) => bytes.includes(t))) return;
     const text = bytes.toString('utf8');
     if (alwaysDecode.has(file)) raw.set(file, text);

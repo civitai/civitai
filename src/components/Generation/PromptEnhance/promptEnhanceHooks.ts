@@ -10,10 +10,14 @@ import type {
   PromptEnhancementInput,
   PromptEnhancementOutput,
   PromptEnhancementStep,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { useEffect, useMemo, useRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
+import {
+  PROMPT_ENHANCEMENT_TAGS,
+  findPromptEnhancementStep,
+} from '~/shared/constants/prompt-enhancement.constants';
 import { trpc, trpcVanilla } from '~/utils/trpc';
 import {
   type WorkflowItem,
@@ -24,12 +28,6 @@ import {
   fetchWorkflowById,
   onWorkflowSignal,
 } from '~/components/Orchestrator/workflowHooks';
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-const PROMPT_ENHANCEMENT_TAGS = ['prompt-enhancement'];
 
 // =============================================================================
 // Types
@@ -56,9 +54,7 @@ export type PromptEnhancementRecord = {
 // =============================================================================
 
 function mapWorkflowToRecord(workflow: WorkflowItem): PromptEnhancementRecord | null {
-  const step = workflow.steps?.find(
-    (s) => s.$type === 'promptEnhancement' || s.name === 'prompt-enhancement'
-  ) as PromptEnhancementStep | undefined;
+  const step = findPromptEnhancementStep(workflow) as PromptEnhancementStep | undefined;
   if (!step?.input) return null;
 
   const input = step.input as PromptEnhancementInput | undefined;

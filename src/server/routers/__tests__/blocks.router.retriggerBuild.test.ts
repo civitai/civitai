@@ -26,19 +26,13 @@ import type * as RedisClient from '@civitai/redis/client';
  * importing the router doesn't drag in the generated Prisma client.
  */
 
-const { mockIsAppBlocksEnabled, mockRetrigger, mockDbRead } = vi.hoisted(() => ({
+const { mockIsAppBlocksEnabled, mockRetrigger } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockRetrigger: vi.fn<(...a: any[]) => Promise<unknown>>(async () => ({
     publishRequestId: 'pubreq_1',
     appBlockId: 'apb_x',
     forgejoCommitSha: 'a'.repeat(40),
   })),
-  mockDbRead: {
-    appBlockPublishRequest: { findMany: vi.fn(), findUnique: vi.fn() },
-    appListing: { findMany: vi.fn() },
-    appListingModerationEvent: { findMany: vi.fn() },
-    blockUserSubscription: { groupBy: vi.fn() },
-  },
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -70,20 +64,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof RedisClient>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn() },
-    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({ getUserBuzzAccounts: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     listForModel: vi.fn(),
@@ -102,6 +86,10 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
 
 function fakeCtx(user: unknown) {
   return {

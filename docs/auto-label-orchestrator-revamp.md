@@ -23,9 +23,9 @@ End-to-end target flow:
 
 ## Existing scaffolding to reuse
 
-- `src/server/services/orchestrator/consumerBlobUpload.ts` — already wraps `getConsumerBlobUploadUrl` from `@civitai/client`. Currently uses the **user** token and is exposed via a legacy `/api/orchestrator/getConsumerBlobUploadUrl` endpoint, **not** tRPC. We need a new tRPC entry that uses the system token.
+- `src/server/services/orchestrator/consumerBlobUpload.ts` — already wraps `getConsumerBlobUploadUrl` from `@civitai/orchestration-client`. Currently uses the **user** token and is exposed via a legacy `/api/orchestrator/getConsumerBlobUploadUrl` endpoint, **not** tRPC. We need a new tRPC entry that uses the system token.
 - `src/server/services/orchestrator/client.ts` — `internalOrchestratorClient` is built with `env.ORCHESTRATOR_ACCESS_TOKEN`. Use this for everything in this revamp.
-- `@civitai/client` exports we'll lean on: `getConsumerBlobUploadUrl`, `submitWorkflow`, `getWorkflow`, plus the step types `MediaCaptioningStepTemplate` and `WdTaggingStepTemplate`.
+- `@civitai/orchestration-client` exports we'll lean on: `getConsumerBlobUploadUrl`, `submitWorkflow`, `getWorkflow`, plus the step types `MediaCaptioningStepTemplate` and `WdTaggingStepTemplate`.
 - `applyTagPostProcess` / `applyCaptionPostProcess` — these don't exist yet; we'll extract the existing post-processing logic out of the `useOrchestratorUpdateSignal` callback in `TrainingCommon.ts` so it's reusable from the new helper.
 
 ## Phase 1 — Server: three new tRPC procedures (under `training`)

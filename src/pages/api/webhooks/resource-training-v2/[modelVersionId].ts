@@ -1,4 +1,4 @@
-import { WorkflowStatus } from '@civitai/client';
+import { WorkflowStatus } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';

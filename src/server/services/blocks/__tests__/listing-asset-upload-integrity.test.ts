@@ -93,6 +93,17 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   }),
 }));
 
+// Imported here rather than from inside the helpers below. Reached from a test BODY, this graph is
+// billed to that one test's `duration` instead of to `collect` — it put 6664ms of this file's
+// 6992ms on the first test to run. The mocks above still apply: vi.mock is hoisted above imports.
+import {
+  addListingScreenshot,
+  setListingCover,
+  setListingIcon,
+} from '../app-listing-assets.service';
+import { persistListingAssetImage } from '../offsite-listing.service';
+import { readRecordedEtag } from '../stored-object-integrity';
+
 // ---------------------------------------------------------------------------
 // A minimal object store the real probe + the real head both talk to.
 // ---------------------------------------------------------------------------
@@ -176,7 +187,6 @@ const owner = { id: OWNER, isModerator: false } as never;
  */
 async function persistAndCaptureMetadata() {
   mockCreateImage.mockClear();
-  const { persistListingAssetImage } = await import('../offsite-listing.service');
   await persistListingAssetImage({
     input: { url: KEY, name: 'icon.png', width: 1, height: 1, mimeType: 'image/png' },
     userId: OWNER,
@@ -202,7 +212,6 @@ function rowWith(metadata: unknown, measured: { width: number; height: number })
 }
 
 async function attachAsIcon() {
-  const { setListingIcon } = await import('../app-listing-assets.service');
   return setListingIcon({ listingId: 'apl_1', imageId: 500 }, owner);
 }
 
@@ -230,7 +239,6 @@ const KIND_FIXTURES = [
     measured: { width: 1280, height: 720 },
     sameShape: { width: 1280, height: 720, shade: 200 },
     attach: async () => {
-      const { setListingCover } = await import('../app-listing-assets.service');
       return setListingCover({ listingId: 'apl_1', imageId: 500 }, owner);
     },
     attached: { status: 'attached', coverId: 500 },
@@ -241,7 +249,6 @@ const KIND_FIXTURES = [
     measured: { width: 1280, height: 720 },
     sameShape: { width: 1280, height: 720, shade: 200 },
     attach: async () => {
-      const { addListingScreenshot } = await import('../app-listing-assets.service');
       return addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner);
     },
     attached: { status: 'attached', id: 'apls_test_1', order: 0 },
@@ -275,7 +282,6 @@ describe('listing media — the persisted measurement is re-verified at attach',
     // Recorded, and recorded as the store's own token for THESE bytes — not some
     // value the caller supplied and not a constant.
     expect(metadata).toMatchObject({ size: original.byteLength });
-    const { readRecordedEtag } = await import('../stored-object-integrity');
     expect(readRecordedEtag(metadata)).toBe(etagOf(original).replaceAll('"', ''));
   });
 
@@ -515,7 +521,6 @@ describe('listing media — every non-match verdict is reported with its reason'
     mockLogToAxiom.mockClear();
     putObject(KEY, await flatPng(160, 120, 200));
 
-    const { setListingCover } = await import('../app-listing-assets.service');
     await expect(setListingCover({ listingId: 'apl_1', imageId: 500 }, owner)).rejects.toThrow();
     expect(integrityEvents()).toEqual([expect.objectContaining({ kind: 'cover' })]);
   });

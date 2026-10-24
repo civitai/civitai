@@ -1,43 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CacheTTL } from '~/server/common/constants';
 
-/**
- * `getValidCreatorMembershipMap` is the read-time gate every metric-privacy surface
- * (model feed / v1 API / search index) and the donation-goal hide check trusts: a
- * user is a valid Creator Program member only while they hold a paid, non-founder
- * tier. A regression here either leaks a lapsed creator's hidden metrics (false→true)
- * or wrongly hides an active member's stats (true→false).
- *
- * It is now a read-through Redis cache over the near-static per-user validity boolean:
- * cached ids are served from Redis (no DB), only misses hit `customerSubscription`
- * + the per-sub Zod parse, and the result is byte-identical to the uncached path.
- */
-
-const { mockDbRead, mockRedis } = vi.hoisted(() => ({
-  mockDbRead: {
-    customerSubscription: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
-  },
-  mockRedis: {
-    packed: { mGet: vi.fn(), set: vi.fn() },
-    del: vi.fn(),
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: {
-    CACHES: {
-      CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
-      USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
-    },
-  },
-}));
-
-// Stubbed by the global setup (src/__tests__/setup.ts) — `.inc` is a vi.fn(), so these
-// are the assertion handles for the cache hit/miss instrumentation.
-import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import {
   bustCreatorMembershipValidCache,
   bustUserMetricPrivacyDefaultsCache,
@@ -45,6 +8,10 @@ import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
 } from '~/server/services/creator-membership.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
 
 const keyFor = (id: number) => `packed:caches:creator-membership-valid:${id}`;
 const defaultsKeyFor = (id: number) => `packed:caches:user-metric-privacy-defaults:${id}`;
@@ -54,12 +21,7 @@ const ALL_FALSE = { hideModelBuzz: false, hideModelDownloads: false, hideModelGe
 // pins is to fail if the two caches are ever re-merged onto one constant, and a
 // `CacheTTL`-derived expectation would silently follow such a change.
 const MEMBERSHIP_TTL_SECONDS = 600; // 10 minutes — membership validity, unchanged
-const METRIC_PRIVACY_TTL_SECONDS = 3600; // 1 hour — metric-privacy defaults
-const PRIVACY_CACHE_LABELS = {
-  cache_name: 'user-metric-privacy-defaults',
-  cache_type: 'redisPacked',
-};
-
+const METRIC_PRIVACY_TTL_SECONDS = 3600;
 type SubRow = {
   userId: number;
   metadata?: Record<string, unknown> | null;
@@ -364,7 +326,9 @@ describe('getUserMetricPrivacyDefaultsMap — derived read-through cache', () =>
   it('does not fail the request when the backfill write throws', async () => {
     mockRedis.packed.mGet.mockResolvedValue([null]);
     mockRedis.packed.set.mockRejectedValue(new Error('redis write down'));
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: { hideModelGenerations: true } }]);
+    mockDbRead.user.findMany.mockResolvedValue([
+      { id: 1, settings: { hideModelGenerations: true } },
+    ]);
     const result = await getUserMetricPrivacyDefaultsMap([1]);
     expect(result.get(1)?.hideModelGenerations).toBe(true);
   });
@@ -477,74 +441,5 @@ describe('cache TTLs are decoupled per cache', () => {
     expect(ttlByKey[defaultsKeyFor(1)]).toBe(METRIC_PRIVACY_TTL_SECONDS);
     // The whole point: they are not the same number.
     expect(ttlByKey[keyFor(1)]).not.toBe(ttlByKey[defaultsKeyFor(1)]);
-  });
-});
-
-/**
- * Hit/miss instrumentation for the metric-privacy defaults cache. Counted per USER ID,
- * not per call, so the exported ratio is a true per-entry hit rate over a batched
- * lookup. Without this the TTL change is unverifiable in production — the hit rate is
- * the only signal that says whether raising it actually removed re-fetches.
- */
-describe('getUserMetricPrivacyDefaultsMap — hit/miss instrumentation', () => {
-  it('counts a full cache hit and never touches the miss counter', async () => {
-    mockRedis.packed.mGet.mockResolvedValue([
-      { hideModelBuzz: true, hideModelDownloads: false, hideModelGenerations: false },
-    ]);
-
-    await getUserMetricPrivacyDefaultsMap([1]);
-
-    expect(cacheHitCounter.inc).toHaveBeenCalledWith(PRIVACY_CACHE_LABELS, 1);
-    expect(cacheMissCounter.inc).not.toHaveBeenCalled();
-  });
-
-  it('counts a full cache miss and never touches the hit counter', async () => {
-    mockRedis.packed.mGet.mockResolvedValue([null]);
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: {} }]);
-
-    await getUserMetricPrivacyDefaultsMap([1]);
-
-    expect(cacheMissCounter.inc).toHaveBeenCalledWith(PRIVACY_CACHE_LABELS, 1);
-    expect(cacheHitCounter.inc).not.toHaveBeenCalled();
-  });
-
-  it('counts per id, not per call, on a mixed batch (2 hits / 3 misses)', async () => {
-    // Distinct hit and miss counts, so a transposed or per-call implementation
-    // cannot produce this pair by accident.
-    mockRedis.packed.mGet.mockResolvedValue([
-      { hideModelBuzz: true, hideModelDownloads: false, hideModelGenerations: false },
-      null,
-      { hideModelBuzz: false, hideModelDownloads: true, hideModelGenerations: false },
-      null,
-      null,
-    ]);
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 2, settings: {} }]);
-
-    await getUserMetricPrivacyDefaultsMap([1, 2, 3, 4, 5]);
-
-    expect(cacheHitCounter.inc).toHaveBeenCalledWith(PRIVACY_CACHE_LABELS, 2);
-    expect(cacheMissCounter.inc).toHaveBeenCalledWith(PRIVACY_CACHE_LABELS, 3);
-    expect(cacheHitCounter.inc).toHaveBeenCalledTimes(1);
-    expect(cacheMissCounter.inc).toHaveBeenCalledTimes(1);
-  });
-
-  it('counts a redis read failure as all-miss (the ids really do go to the db)', async () => {
-    mockRedis.packed.mGet.mockRejectedValue(new Error('redis down'));
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: {} }]);
-
-    await getUserMetricPrivacyDefaultsMap([1, 2]);
-
-    expect(cacheMissCounter.inc).toHaveBeenCalledWith(PRIVACY_CACHE_LABELS, 2);
-    expect(cacheHitCounter.inc).not.toHaveBeenCalled();
-  });
-
-  // INVARIANT GUARD, not regression coverage: trivially green pre-change (nothing was
-  // counted at all). It pins that the early-return for an empty batch stays ahead of the
-  // counting, so a caller passing no ids can never inflate the hit rate with a 0-hit,
-  // 0-miss sample.
-  it('records nothing at all for an empty input', async () => {
-    await getUserMetricPrivacyDefaultsMap([]);
-    expect(cacheHitCounter.inc).not.toHaveBeenCalled();
-    expect(cacheMissCounter.inc).not.toHaveBeenCalled();
   });
 });

@@ -143,8 +143,13 @@ setup('mint preview sessions', async ({ request }) => {
   if (mod) {
     // /moderator/* render only for a moderator (gold would be bounced), so warm the
     // moderation-spec pages with the mod cookie.
+    // These MUST be paths this app still serves. /moderator/reports + /moderator/images
+    // migrated to the standalone moderator app in #3573 and now 302 off-origin to
+    // MODERATOR_APP_URL — which defaults to PRODUCTION — so warming them warmed prod
+    // and compiled nothing here (civitai#4171). Keep this list in step with
+    // MODERATOR_SURFACES in preview-moderation.spec.ts.
     const headers = { cookie: `${COOKIE_NAME}=${mod}` };
-    for (const path of ['/moderator/reports', '/moderator/images']) {
+    for (const path of ['/moderator/rewards', '/moderator/suspicious-audit-matches']) {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
   }
@@ -154,10 +159,11 @@ setup('mint preview sessions', async ({ request }) => {
   // can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
   // NOT poll-until-ready: the earlier 12x6s gate wasted up to ~72s when search was
   // overloaded for the whole window, and it was never the load-bearing fix anyway —
-  // each search-dependent spec (whatIf, /moderator/images, image-feed) wraps its
-  // query in retryFlaky (preview-retry.ts), which rides out a transient 408/5xx with
-  // backoff. So a single fire-and-forget warm-up is all that's useful here.
-  // (/moderator/images is already warmed by the mod loop above.)
+  // each search-dependent spec (whatIf, image-feed) wraps its query in retryFlaky
+  // (preview-retry.ts), which rides out a transient 408/5xx with backoff. So a single
+  // fire-and-forget warm-up is all that's useful here.
+  // (/moderator/images used to be warmed by the mod loop above; it migrated out of
+  // this app in #3573 and is no longer a search consumer here — civitai#4171.)
   if (gold) {
     await request
       .get('/api/v1/images?sort=Most%20Reactions&limit=1', {

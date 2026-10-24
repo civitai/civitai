@@ -140,6 +140,14 @@ const NOW = new Date('2026-08-10T12:00:00Z');
  * 🔴 PAIRWISE-DISTINCT VALUES on purpose: the on-site and off-site rows differ in id,
  * slug, kind, appBlockId AND appBlock, so an assertion cannot be satisfied by the wrong
  * row happening to look like the right one.
+ *
+ * 🔴 EVERY ROW CARRIES `status: 'approved'`, and it is not decoration. The seat-GRANT paths
+ * (`inviteCollaborator`, and `respondToInvite` on an accept) now refuse a listing whose
+ * status is not authorable, and `toSeatListing` reads a missing column as `''` — i.e. FAILS
+ * CLOSED — so a fixture that omits it refuses every invite in this file. The refusal itself
+ * is exercised in `app-collaborator.seat-grant-status.test.ts`, deliberately not here: this
+ * file's subject is seat mechanics, and burying a status case in it would make every OTHER
+ * assertion depend on a value that has nothing to do with what it is testing.
  */
 function listingTable(): Record<string, Record<string, unknown>> {
   return {
@@ -147,6 +155,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: LISTING,
       slug: SLUG,
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: APP,
       revisionOfId: null,
@@ -157,6 +166,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE,
       slug: OFFSITE_SLUG,
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: null,
       revisionOfId: null,
@@ -167,6 +177,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: SHADOW,
       slug: SLUG,
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       // A shadow carries appBlockId: null by construction (@unique stays on the parent).
       appBlockId: null,
@@ -179,6 +190,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE_WITH_REPO,
       slug: 'offsite-store-slug',
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: 'ab_offsiteBlock',
       revisionOfId: null,
@@ -194,6 +206,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: ONSITE_NO_BLOCK,
       slug: 'onsite-no-block-slug',
       kind: 'onsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: null,
       revisionOfId: null,
@@ -207,6 +220,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: OFFSITE_BLOCK_DRIFTED,
       slug: 'offsite-block-drifted',
       kind: 'offsite',
+      status: 'approved',
       userId: OWNER,
       appBlockId: 'ab_offsiteDrifted',
       revisionOfId: null,
@@ -222,6 +236,7 @@ function listingTable(): Record<string, Record<string, unknown>> {
       id: DRIFTED,
       slug: 'drifted-slug',
       kind: 'onsite',
+      status: 'approved',
       userId: STALE_OWNER,
       appBlockId: 'ab_drifted',
       revisionOfId: null,
@@ -427,6 +442,69 @@ describe('inviteCollaborator', () => {
       })
     ).rejects.toMatchObject({ code: 'BANNED' });
     expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 The enforcement point and the picker's screening call must refuse the SAME set. The
+   * screen rejected banned, soft-deleted and missing while this selected only `{id, bannedAt}`
+   * and let a soft-deleted account through — so the two disagreed and a comment claimed they
+   * did not. Refused as NOT FOUND, not as a ban: to anyone outside moderation the account is
+   * gone, and a distinct refusal would disclose that it exists.
+   */
+  it('🔴 a SOFT-DELETED target cannot be seated either, and reads as not-found', async () => {
+    mockDb.user.findUnique.mockResolvedValue({
+      id: TARGET,
+      bannedAt: null,
+      deletedAt: new Date(),
+    });
+    await expect(
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: TARGET,
+        actorUserId: OWNER,
+        now: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(mockDb.appCollaborator.upsert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE GUARD AND ITS DATA SOURCE, PINNED TOGETHER. Prisma's `select` is EXCLUSIVE: narrow it
+   * back to `{ id, bannedAt }` and `target.deletedAt` is `undefined` in production, so the branch
+   * above is dead — while every test here still passes, because the mock answers the same object
+   * whatever is selected. Guard text present, data source dead, suite green; the same shape that
+   * walked two earlier guards in this change. `app-collaborator.screen-targets.test.ts` pins the
+   * screening side's `select` for the identical reason, so the two sides stay symmetric.
+   */
+  it('🔴 …and it SELECTS the columns those two refusals read', async () => {
+    mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null, deletedAt: null });
+    await inviteCollaborator({
+      appListingId: LISTING,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+
+    const call = mockDb.user.findUnique.mock.calls.find(
+      (c: unknown[]) => (c[0] as any)?.where?.id === TARGET
+    );
+    expect(call, 'the invite never looked the target account up').toBeDefined();
+    expect((call![0] as any).select).toMatchObject({ bannedAt: true, deletedAt: true });
+  });
+
+  /**
+   * The presence half of both refusals: a live account with neither flag IS seatable. Without
+   * it, a mutant refusing every target passes the ban and soft-delete cases above.
+   */
+  it('…while a live target with neither flag is seated', async () => {
+    mockDb.user.findUnique.mockResolvedValue({ id: TARGET, bannedAt: null, deletedAt: null });
+    await inviteCollaborator({
+      appListingId: LISTING,
+      targetUserId: TARGET,
+      actorUserId: OWNER,
+      now: NOW,
+    });
+    expect(mockDb.appCollaborator.upsert).toHaveBeenCalledTimes(1);
   });
 
   it('re-inviting an ALREADY ACCEPTED collaborator is ALREADY_SEATED', async () => {
@@ -1607,15 +1685,6 @@ describe('mapCollaboratorError — the router’s status-code contract', () => {
     const raw = new Error('connection reset');
     expect(mapCollaboratorError(raw)).toBe(raw);
     expect(mapCollaboratorError(raw)).not.toBeInstanceOf(TRPCError);
-  });
-
-  it('POSITIVE CONTROL: FORBIDDEN and BAD_REQUEST are distinguishable values', () => {
-    // Otherwise the whole table could be satisfied by one constant.
-    const a = mapCollaboratorError(new AppCollaboratorError('NOT_OWNER', 'x'));
-    const b = mapCollaboratorError(new AppCollaboratorError('CAP_REACHED', 'x'));
-    expect((a as InstanceType<typeof TRPCError>).code).not.toBe(
-      (b as InstanceType<typeof TRPCError>).code
-    );
   });
 });
 

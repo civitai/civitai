@@ -1,0 +1,26 @@
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { canAccessMinorQueue } from '$lib/server/minor-queue-access';
+import { getAutoFlaggedMinorDetail, getMinorHashMatchDetail } from '$lib/server/minor-hash.service';
+
+// Per-row on expand, not joined into the list: covers, uploader counts and flag provenance are
+// per-model lookups that would turn a 50-row page into 50x the work for detail most rows never show.
+// `/api/*` is exempt from the global route gate, so this checks the pages' own paths itself.
+export const GET: RequestHandler = async ({ params, url, locals }) => {
+  if (!locals.user || !canAccessMinorQueue(locals.user))
+    return json({ error: 'No access.' }, { status: 403 });
+
+  const modelId = Number(params.modelId);
+  if (!modelId) return json({ error: 'Bad model id.' }, { status: 400 });
+
+  // The Pending tab already knows which seed matched, so it passes it and skips re-deriving. The
+  // other two tabs have no pointer to the seed and must resolve it from the hash.
+  const minorModelId = Number(url.searchParams.get('minorModelId')) || null;
+  const label = url.searchParams.get('label') === 'poi' ? 'poi' : 'minor';
+  if (minorModelId)
+    return json({
+      match: null,
+      detail: await getMinorHashMatchDetail({ modelId, minorModelId, label }),
+    });
+  return json(await getAutoFlaggedMinorDetail({ modelId, label }));
+};

@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
  *
  * WHY THIS FILE EXISTS — measured, not hypothetical. The PR that extracted
  * `hasAppsStoreAccess` converted SIX sites, but only TWO of them
- * (`resolveAppsPageAccess`, `AppsSubNav`) had behavioural tests that could
+ * (`resolveAppsPageAccess`, `useAppsNavSections`) had behavioural tests that could
  * observe the conversion. An adversarial audit reverted the other four to
  * `!!features.appBlocks` and re-ran the ENTIRE cited suite — 93/93 component +
  * 21/21 unit still GREEN. The mutant survived completely. A consolidation that
@@ -24,21 +24,44 @@ import { describe, it, expect } from 'vitest';
  * the predicate; it cannot prove the call was passed the right argument, and it
  * would type-check past `hasAppsStoreAccess(someOtherObject)`. Behavioural
  * coverage lives alongside it and is deliberately NOT replaced by this file:
- *   - `AppsSubNav.storeGate.browser.test.tsx`      — the sub-nav's rendered output
+ *   - `AppsRailNav.storeGate.browser.test.tsx`     — the rail's rendered output
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
- * THREE of the six sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * THREE of the eight sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
  * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
  * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
  * selection helper and never mounts the component, so it never touches
  * `useFeatureFlags` / `canSeeStore`). Those three are covered against REVERSION,
- * not against a wrong-argument call. Stated rather than implied.
+ * not against a wrong-argument call. Stated rather than implied. The seventh —
+ * `appsNavVisibility.ts` — has behavioural cover in the same unit project
+ * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
+ * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
+ * checked. The eighth — `nav-registry.ts` — has behavioural cover in
+ * `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`, which drives
+ * `resolveNavItems` over the per-flag cohorts (listings-only, blocks-only,
+ * external-only, none) against the REAL registry.
  *
- * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
- * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
- * is precisely why a hole in its masker (see below) is worth more than it looks.
+ * ⚠️ THE SEAM THIS PARAGRAPH USED TO CALL UNTESTED IS NOW HALF-COVERED, and the
+ * remaining half is named rather than implied. It said: "that `useGetMenuItems`
+ * hands it the real `useFeatureFlags()` object and wires `appsNav.marketplace` to
+ * the right menu item" was untested for both nav entries. The two entries are now
+ * ONE (`/apps` with store access, `/apps/get-started` without), and
+ * `AppHeader/appsMenuEntry.test.ts` — also in this blocking unit project — extracts
+ * that row's `href` / `visible` expressions from the real `hooks.tsx` source and
+ * EVALUATES them across every combination of the two booleans. So the WIRING half is
+ * covered. What is still not: that the object `useGetMenuItems` passes into
+ * `appsNavVisibility(...)` is the real `useFeatureFlags()` result rather than some
+ * other object — a source scan cannot see that, and no render-level test mounts this
+ * hook.
+ *
+ * 🔴 AND THE SCOPE THAT MATTERS IN THE NODE TIER: five of the eight sites are pinned
+ * STRUCTURALLY ONLY there, by this file — which is why a hole in its masker (see below) still
+ * matters. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the exceptions:
+ * their behavioural tests are unit tests too — the resolver's cover is the two
+ * `resolveAppsPageAccess` describe blocks inside `hasAppsStoreAccess.test.ts`. Two more are
+ * browser-covered (`AppsRailNav`, `AppListingsMarketplaceBody`) and have no node-tier pin:
+ * enumerated, 3 + 2 + 3 = 8.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
@@ -64,39 +87,67 @@ const SRC = path.resolve(__dirname, '../../..');
  *
  * ── NOT in this ledger, on purpose ──────────────────────────────────────────
  *
- * 1. The block-RUNTIME surfaces (`/apps/installed`, `/apps/review`,
- *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on
- *    `appBlocks` ALONE because they need the runtime, not just the catalog.
- *    Sweeping them in here would be a silent access widening.
+ * 1. The block-RUNTIME surfaces (`/apps/activity`, `/apps/review`,
+ *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on the
+ *    RUNTIME flags because they need the runtime, not just the catalog.
+ *    Sweeping them in here would be a silent access widening. (`/apps/activity`
+ *    takes `appBlocks || appBlocksPages` via `canAccessAppsActivity` rather than
+ *    `appBlocks` alone — a second RUNTIME flag, not the store predicate, so the
+ *    distinction this paragraph draws is unaffected.)
  *
- * 2. 🔴 `components/AppLayout/AppHeader/appsNavVisibility.ts` — `marketplace:
- *    !!features.appBlocks`, which drives the user-menu "Apps" → `/apps` entry.
- *    That IS a store-visibility decision and it is NOT converted, deliberately:
- *    that module's own doc comment states the entry "stays gated on `appBlocks`",
- *    so it is a standing decision, not drift. It is also outside `SCAN_ROOTS`
- *    (`components/AppLayout`), so grow-detection below is STRUCTURALLY BLIND to
- *    it — do not read the ledger's exactness as covering it.
+ *    🔴 `pages/apps/activity.tsx` IS NEVERTHELESS IN THE LEDGER, AND THAT IS NOT A
+ *    CONTRADICTION — read the distinction rather than "fixing" it. Its PAGE gate is
+ *    still `canAccessAppsActivity`; what is store-gated is ONE affordance inside it,
+ *    the empty state's `/apps` anchor. `/apps` gates on `hasAppsStoreAccess`, and
+ *    `appBlocksPages` is not one of that predicate's three disjuncts — so once this
+ *    page widened to `appBlocks || appBlocksPages`, an ungated anchor became a link
+ *    into a `notFound` for the newly-admitted cohort. Same shape, same reason, as
+ *    `components/Apps/AppActivityPanel.tsx` below. A page can be gated on the runtime
+ *    and still contain a link that must be gated on the store.
  *
- *    CONSEQUENCE, recorded so nobody rediscovers it during the launch: for the
- *    `{appListings, NOT appBlocks}` cohort the store renders but has NO in-product
- *    entry point — that menu item is the only route TO `/apps` (the sub-nav's
- *    Marketplace tab only appears once you are already on `/apps/*`). Reachable by
- *    direct URL only. Tracked in issue #3907; not this file's to fix.
+ * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
+ *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
+ *    appsNavVisibility.ts` — which is why `SCAN_ROOTS` carries that directory
+ *    too. Earlier revisions of this comment recorded it as deliberately NOT
+ *    converted and therefore structurally invisible here; both halves are now
+ *    false, and the reason it changed is worth keeping:
  *
- *    🔴 THE EXTERNAL-ONLY COHORT INHERITS THAT GAP, AND IS THE FIRST REAL POPULATION
- *    TO HIT IT. `{appListingsPublicExternal, NOT appBlocks, NOT appListings}` holders
- *    now pass the six gates below but the user-menu entry still reads `appBlocks`
- *    alone, so `/apps` is direct-URL-only for them. Until #3907 lands, an
- *    external-only rollout needs its own entry point (a link in the announcement, a
- *    campaign URL) — the store being reachable is NOT the same as it being findable.
- *    Deliberately out of scope here: converting that menu item is a product decision
- *    on a module with its own standing doc, not a mechanical alignment.
+ *    that entry was the ONLY in-product route TO `/apps` when it was converted —
+ *    the top-nav pill (`components/HomeContentToggle/nav-registry.ts`, the eighth
+ *    ledger site) is the second. (The sub-nav's Marketplace tab still only appears
+ *    once you are already on `/apps/*`.) It read
+ *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
+ *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
+ *    NOT appListings}` — the live external-only tester cohort — both passed the
+ *    other six gates onto a store they could reach only by direct URL. Reachable
+ *    is not findable. Widening it moves DISCOVERY only: every runtime surface
+ *    behind `/apps` keeps its own `appBlocks` gate (see 1).
  */
 const STORE_GATE_SITES = [
+  'components/AppLayout/AppHeader/appsNavVisibility.ts',
+  // 🔴 THE TOP-NAV PILL — the `apps` entry in `navRegistry` (`/apps`, store access only).
+  // Same defect class as the user-menu entry above: a pill visible under different flags
+  // is a menu entry into the `notFound` the `/apps` SSR resolver answers for an
+  // ineligible viewer. Its behavioural cover is the per-flag cohort vectors in
+  // `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`.
+  'components/HomeContentToggle/nav-registry.ts',
+  // 🔴 THE `App` COLUMN'S NAME LINK ON `/apps/activity`. It points at
+  // `/apps/store-preview/<slug>`, which `getServerSideProps`-gates on
+  // `resolveAppsPageAccess` and answers `notFound` for — so an UNGATED link there is a
+  // 404 affordance, the #4668 defect class. The panel renders a plain `<Text>` instead
+  // for an ineligible viewer, and reads the flags through `useOptionalFeatureFlags` so
+  // the absence of a provider fails CLOSED. Note this file is NOT a store SURFACE: its
+  // own page gate is `canAccessAppsActivity`, and only this one affordance inside it is
+  // store-gated.
+  'components/Apps/AppActivityPanel.tsx',
   'components/Apps/AppListingsMarketplaceBody.tsx',
-  'components/Apps/AppsSubNav.tsx',
+  'components/Apps/useAppsNavSections.ts',
   'components/Apps/RelatedListings.tsx',
   'components/Apps/resolveAppsPageAccess.ts',
+  // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel
+  // entry above, and the reason note 1 in this header carries an explicit carve-out. The
+  // page itself is runtime-gated; this ONE anchor points at a store-gated route.
+  'pages/apps/activity.tsx',
   'pages/apps/index.tsx',
   'pages/apps/store-preview/[slug].tsx',
 ] as const;
@@ -104,8 +155,25 @@ const STORE_GATE_SITES = [
 /** The ONE module allowed to spell the boolean out — it defines it. */
 const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
 
-/** Directories scanned for a re-inlined gate. The definition lives outside them. */
-const SCAN_ROOTS = ['components/Apps', 'pages/apps'];
+/**
+ * Directories scanned for a re-inlined gate. The definition lives outside them.
+ *
+ * `components/AppLayout/AppHeader` is here for ONE file — `appsNavVisibility.ts`,
+ * the user-menu route to the store (#3907). Scanning the whole directory rather
+ * than allowlisting that file is deliberate: the header is where a future "show
+ * the Apps entry when …" tweak would most plausibly open-code the gate, and the
+ * re-inline scan below only has teeth over directories it walks.
+ * `components/HomeContentToggle` is here for ONE file — `nav-registry.ts`, the top-nav
+ * pill's `visible` gate. Same deliberate whole-directory scan as AppHeader: the toggle
+ * is where a future "show the Apps pill when …" tweak would most plausibly open-code
+ * the gate.
+ */
+const SCAN_ROOTS = [
+  'components/AppLayout/AppHeader',
+  'components/HomeContentToggle',
+  'components/Apps',
+  'pages/apps',
+];
 
 /**
  * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
@@ -345,19 +413,142 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     expect(masked).not.toContain('any other installs');
   });
 
-  it('🔴 the real installed.tsx keeps its post-apostrophe code visible', () => {
+  it('🔴 the real activity.tsx keeps its post-apostrophe code visible', () => {
     // Anchored on the FILE that broke it, not a fixture: a synthetic case can be
     // fixed while the real one still desyncs (different JSX nesting, entities…).
-    const raw = read('pages/apps/installed.tsx');
-    const masked = maskNonCode(raw, 'installed.tsx');
+    // 🔴 THE FILE MOVED, THE ANCHOR DID NOT: this was `pages/apps/installed.tsx` until
+    // the `/apps/activity` rename. Same file, same apostrophe, same trigger — repointed
+    // rather than deleted, because the defect it pins is about THIS file's JSX.
+    const raw = read('pages/apps/activity.tsx');
+    const masked = maskNonCode(raw, 'activity.tsx');
     expect(raw).toMatch(/app's/); // the trigger is still present upstream
-    // Both live gates sit AFTER it (~line 460 and ~500) and must remain readable.
+    // The live gate sits AFTER it and must remain readable.
     expect(masked.match(/features\.appBlocks/g) ?? []).toHaveLength(
       (raw.match(/features\.appBlocks/g) ?? []).length
     );
     // Blanking must be bounded: the file cannot be mostly spaces.
-    const blanked = masked.split('').filter((c) => c === ' ').length;
-    expect(blanked / masked.length).toBeLessThan(0.55);
+    //
+    // 🔴 THE BOUND MOVED 0.55 → 0.65, AND THE OLD NUMBER WAS NOT A MARGIN — IT WAS A
+    // COINCIDENCE. Measured on `origin/main`'s copy of this file the ratio was 0.5486
+    // against a 0.55 bound, i.e. 0.0014 of headroom: adding a few lines of DOCUMENTATION
+    // to the page (or one longer JSX string, which masks as blanks too) tripped it, which
+    // is a fact about comment density and nothing to do with the masker. Measured here
+    // after the `/apps/activity` rename: 0.5648.
+    //
+    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS —
+    // BUT NOT MOSTLY BECAUSE OF THE CHANGE THAT TRIPPED IT. ⚠️ The `0.5648` above is STALE
+    // (it dates from #4699). Measured with this file's own masker at the moment of the
+    // re-cut: `origin/main` ALREADY read ≈0.645 — under 0.005 of headroom on the old 0.65
+    // bound — and the permissions-copy widening moved it by ≈0.01, not by the ≈0.09 an
+    // earlier revision of this paragraph claimed by differencing against the stale figure.
+    // So the bound was going to trip for whoever added the next comment either way, which
+    // is exactly the failure the paragraph above describes. (Point-in-time, and rounded on
+    // purpose — see the next paragraph on why exact ratios do not survive in prose here.)
+    //
+    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE — the control sits far above
+    // the bound while the live value sits below it, which is the property that matters.
+    //
+    // ⚠️ DELIBERATELY NOT QUOTING THE TWO MEASUREMENTS AS PINNED NUMBERS, because they DRIFT
+    // WITH THIS FILE AND KEEP FALSIFYING THE COMMENT. Three successive revisions quoted a
+    // control figure and each was stale within one edit (0.8510 — an uncommitted
+    // intermediate — then 0.8482, then 0.8499 after one more paragraph landed here); every
+    // line added to `activity.tsx`, code or comment, moves both. The BOUNDS are asserted in
+    // code below and cannot go stale; the ratios are outputs. Re-derive rather than trusting
+    // a number in prose — run this from the repo root:
+    //   node -e "const f=require('fs').readFileSync('src/pages/apps/activity.tsx','utf8'),
+    //     r=t=>t.split('').filter(c=>c===' ').length/t.length,
+    //     i=f.indexOf(String.fromCharCode(97,112,112,39,115));
+    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g,' ')))"
+    // ⚠️ THE `String.fromCharCode` IS NOT AFFECTATION — it spells the apostrophe in `app's`,
+    // and an earlier revision of this command wrote that literal inside a SINGLE-quoted
+    // `node -e '…'`. The apostrophe closed the shell string, so pasting it gave
+    // `unexpected EOF` and printed nothing: a re-derivation instruction that could not be
+    // run, replacing figures that were merely stale. Verified by RUNNING the form above, as
+    // written, in both bash and zsh — test the pasted form, not the program.
+    // That prints the CONTROL; the live masked ratio is whatever this test reports when the
+    // bound below fails. A bound set just above whatever the file currently reads would
+    // repeat the no-headroom mistake — for the 0.55 bound that margin was 0.0014 (see five
+    // paragraphs up); against 0.65 on `origin/main` it was ≈0.0049, per the measurement
+    // above. (An earlier revision wrote 0.0018 here, which is the margin at THIS PR's own
+    // round-1 commit — a tree this comment never names, and irreconcilable with the ≈0.645
+    // figure 25 lines up.)
+    //
+    // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
+    // PARTIAL, late-file desync than 0.65 was — a blanking confined to the tail can now
+    // pass. Measured at `775abdfe34` by two independent re-implementations of the masker:
+    // a trailing desync must cover ≈19.6% of the file before it trips 0.70. POINT-IN-TIME
+    // — it moves with `L` and with the tail's own density, exactly like the ratios above,
+    // so re-measure rather than trusting it.
+    // ⚠️ Do NOT re-derive it from `L + p(1−L) = 0.70`; that model gives ≈11.8% because it
+    // assumes the blanked tail becomes ALL spaces, whereas this file's tail is comment- and
+    // JSX-dense and already ≈0.77 spaces after masking. One earlier revision of this clause
+    // carried the naive figure (`≲13%`) for that reason.
+    // Accepted regardless: 0.65 was unusable at the headroom above, and the functional
+    // check in this test is the `features.appBlocks` occurrence count, not the ratio.
+    //
+    // 🔴 0.70 → 0.73, AND THIS TIME THE RE-CUT IS NOT THE POINT — THE PAIR IS CONVERGING AND
+    // THE RATIO IS NEARLY OUT OF DISCRIMINATING POWER. Every previous re-cut here was "the
+    // live value drifted up, move the bound up". Measured across the phase-3 revoke-UI change
+    // to `activity.tsx`, the SEPARATION collapsed:
+    //     base  a5a34418b6 : live ≈0.645, control ≈0.7213  → gap ≈0.076
+    //     head  253c0d0d12 : live ≈0.7221, control ≈0.7395 → gap ≈0.017
+    // So the bound now has to fit inside a 0.017-wide window and 0.73 leaves ≈0.008 either
+    // side. That is WORSE headroom than the 0.0049 this file already calls out as the mistake
+    // not to repeat, and it will trip again on the next comment added anywhere in
+    // `activity.tsx`. Recorded rather than quietly nudged.
+    //
+    // 🔴 THE MECHANISM, because it says why nudging cannot fix it. The masker blanks COMMENTS,
+    // so every comment line added to `activity.tsx` pushes the LIVE masked ratio up fast. The
+    // control blanks everything after the `app's` apostrophe regardless, so comment added
+    // BEFORE that apostrophe barely moves it (+0.018 against the live +0.077 here). This
+    // repo's idiom actively rewards comment density, so the live ratio chases the control by
+    // construction and the two meet. A ratio bound cannot survive that; it is not a tuning
+    // problem.
+    //
+    // 🔴 TWO REAL REMEDIES FOR WHOEVER TRIPS THIS NEXT — pick one instead of nudging to 0.74:
+    //   (a) RE-POINT THE CONTROL EARLIER. The desync trigger is the FIRST `app's`, at ≈32% of
+    //       the file. A trigger nearer the top blanks more and lifts the control well clear of
+    //       the live value, restoring separation. The `expect(apostrophe, 'the trigger moved;
+    //       re-point this control')` assertion below already exists for exactly this.
+    //   (b) RETIRE THE RATIO. This test's own comment three paragraphs up already concedes the
+    //       functional check is the `features.appBlocks` OCCURRENCE COUNT, not the ratio. A
+    //       desync that blanks live code fails that count directly, without a proxy that has
+    //       to be re-cut every few PRs.
+    // ⚠️ I did neither, deliberately: both change what this test MEASURES, and this change is
+    // a revoke-UI change that merely tripped the bound. Moving it is the minimum that keeps a
+    // gate green without silently redefining someone else's instrument — but it is a stopgap
+    // and the numbers above are why.
+    const spaceRatio = (text: string) =>
+      text.split('').filter((c) => c === ' ').length / text.length;
+    expect(spaceRatio(masked)).toBeLessThan(0.73);
+
+    // 🔴 NEGATIVE CONTROL, ON THE REAL FILE: a bound nobody has watched fire is a claim
+    // about a number. Reproduce the historical desync — everything after the apostrophe
+    // blanked — and confirm it exceeds the bound the live value passes.
+    const apostrophe = raw.indexOf("app's");
+    expect(apostrophe, 'the trigger moved; re-point this control').toBeGreaterThan(-1);
+    const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
+    // 🔴 THE SAME NUMBER AS THE LIVE BOUND, DELIBERATELY. If this stayed at 0.65 while the
+    // bound above moved to 0.70, the control would no longer prove separation — a desync
+    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Move the two
+    // together or the control stops being one. (No measured ratio quoted here either — see
+    // the paragraph above on why those figures drift.)
+    // 🔴 MOVED TO 0.73 WITH THE LIVE BOUND. Leaving it at 0.70 while the bound above went to 0.73
+    // BROKE THE CONTROL in exactly the way the paragraph directly above it forbids ("Move the two
+    // together or the control stops being one"): the pair then admitted a 0.03-wide overlap where
+    // BOTH assertions hold, and — measured — the LIVE masked ratio 0.7221 already exceeded 0.70, so
+    // the non-desynced text satisfied the desync control. That is the control being dead, not weak.
+    // Caught by the test-review lane in the same round that introduced it.
+    //
+    // ⚠️ THE LANE'S RECOMMENDATION IS TO RETIRE THE RATIO ENTIRELY, and it is recorded here rather
+    // than acted on. Its case: the bound has been re-cut four times (0.55 → 0.65 → 0.70 → 0.73), the
+    // separation window is now 0.017 wide (live 0.7221 vs control 0.7395) and narrows with every
+    // comment added to `activity.tsx`, and this test's own functional claim — the
+    // `features.appBlocks` occurrence-count equality — fails directly on a desync that blanks live
+    // code, with no proxy to re-cut. Not done here because retiring another change's instrument is
+    // wider than a revoke-UI phase should reach; the numbers are recorded so the next person to trip
+    // it can act instead of nudging again.
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.73);
   });
 
   it('nested quotes, templates and regex literals do not desync it either', () => {
@@ -502,10 +693,10 @@ describe('🔒 every store-visibility site routes through the shared predicate',
         flatten(f.comments)
       )
     ).map((f) => f.rel);
-    // ⚠️ "EXACT" is scoped to SCAN_ROOTS. `components/AppLayout/AppHeader/
-    // appsNavVisibility.ts` is a real store-visibility decision that lives outside
-    // them and is deliberately excluded — see the STORE_GATE_SITES doc. This
-    // assertion cannot and does not speak for it.
+    // ⚠️ "EXACT" is scoped to SCAN_ROOTS — three directories now, the third
+    // added for the user-menu entry (#3907). A store-visibility decision made
+    // OUTSIDE those roots is still invisible here; the scoping is the limit, not
+    // the file list.
     expect(importers.sort()).toEqual([...STORE_GATE_SITES].sort());
   });
 });

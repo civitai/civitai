@@ -7,14 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // detected in sentinel mode. Coercing the Buffer to utf8 first restores the
 // intended behavior. Mirrors the #2700 buffer-flag test pattern.
 
-const { get } = vi.hoisted(() => ({
-  get: vi.fn(),
-}));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { get, set: vi.fn(), del: vi.fn() },
-  REDIS_SYS_KEYS: { SCANNER_POLICY: { RUN_CANCEL: 'scanner-policy:run-cancel' } },
-}));
+
 
 // Fail-open logger is invoked only in the catch path; keep it inert.
 vi.mock('~/server/redis/fail-open-log', () => ({
@@ -29,6 +23,8 @@ vi.mock('~/server/schema/scanner-policies.schema', () => ({
 }));
 
 import { isRunCancelled } from '~/server/services/scanner-policies.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const get = redisMock.sysRedis.get;
 
 beforeEach(() => {
   vi.clearAllMocks();

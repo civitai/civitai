@@ -82,6 +82,7 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     status: z.enum(Model3DStatus).optional(),
     statuses: z.array(z.enum(Model3DStatus)).optional(),
     tagIds: z.array(z.number().int().positive()).optional(),
+    collectionId: z.number().int().positive().optional(),
     includeDrafts: z.boolean().optional(),
     sort: z.enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]]).optional(),
     period: z.enum(MetricTimeframe).optional(),
@@ -149,11 +150,6 @@ export const getModel3DFilesSchema = z.object({
 export type TrackModel3DDownloadInput = z.infer<typeof trackModel3DDownloadSchema>;
 export const trackModel3DDownloadSchema = z.object({
   id: z.number().int().positive(),
-});
-
-export type GetModel3DByThumbnailImageIdInput = z.infer<typeof getModel3DByThumbnailImageIdSchema>;
-export const getModel3DByThumbnailImageIdSchema = z.object({
-  imageId: z.number().int().positive(),
 });
 
 // Public lookup used by the image viewers to surface the "Posted to 3D

@@ -6,11 +6,24 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
+// cached for a minute).
+import '~/server/prom/resource-intent-cooc.metrics';
+// Side-effect import: registers the v1 tag index's metrics: the holder's load counters (seeded at 0)
+// and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
+// ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
+import '~/server/prom/resource-intent-tags.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
 // which is the exact ambiguity that counter exists to remove.
 import '~/server/auth/session-metrics';
+// Side-effect import: registers the Flipt eval-cache counters (collect()-based), so the
+// series exist from the first scrape rather than only after some other module happens to
+// pull them in. Same reasoning as the neighbours — an absent series here would read as
+// "the cache is idle" when it actually means "nobody loaded the module", and the whole
+// point of these counters is to decide between two config knobs.
+import '~/server/metrics/flipt-eval-cache.metrics';
 // Same reason (#3665): seeds all 12 (reason, surface) series of
 // civitai_generation_model_substitutions_total at 0. Without this call the
 // counter is registered only by the FIRST substitution on this pod, so
@@ -22,9 +35,54 @@ import '~/server/auth/session-metrics';
 // only consumer is the scrape, and this module is what serves it, so the series
 // are present in every response that could ever observe them.
 import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metrics/generation-model-substitution.metrics';
+// Same reason as the neighbour above, and the case where it matters most: seeds the full
+// outcome x producer cross product of civitai_image_upload_relay_total at 0. The image-upload relay is a
+// FALLBACK that fires for the handful of clients who cannot reach the storage host at
+// all, so on almost every pod the honest reading of that counter is a row of zeros —
+// and prom-client materialises a child only on its first inc(), so without this the
+// series are absent until a relay happens on that pod. `no data` and "the relay has
+// never rescued anyone here" would then be the same observation, which is precisely
+// the ambiguity that counter was added to remove.
+import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-upload-relay.metrics';
+// Same reason as the two neighbours above, and the case where it matters MOST: seeds all
+// 12 reachable (path, type, outcome) series of civitai_csam_archive_total at 0. CSAM
+// archives are RARE — so on
+// almost every pod, for almost all of its life, the honest reading of this counter is a
+// row of zeros. prom-client materialises a child only on its first inc(), so without this
+// `…{path="stream"}` returns `no data`, and "streaming has never run here" would be
+// indistinguishable from "the instrument is not wired" — which is the precise ambiguity
+// this counter was added to end, so leaving it unseeded would reproduce the defect one
+// level down.
+import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
+// Same reason (#3665 again, one level down): seeds one zero-valued series per surface of
+// generation_validation_refused_total. That counter replaces the only signal a hub refusal
+// had — the removed data-graph shadow comparison — and its alarm is "any sustained
+// non-zero". Every caller that can increment it is non-browser (the on-site footer returns
+// before the network call), so absent is the expected reading for long stretches and is
+// otherwise indistinguishable from an unloaded module.
+import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
+import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
+import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
+// Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
+// as zeros rather than as an absent series on every pod that has not received a callback.
+import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+// Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
+// Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
+// that module's graph never loads the redis client.
+import '~/server/prom/ingestion-gauge-store';
+import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
+seedGenerationValidationMetrics();
+ensureRegisterImageUploadRelayMetrics();
+ensureRegisterCsamArchiveMetrics();
+ensureRegisterAppBlockBuildMetrics();
+ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -90,14 +148,86 @@ async function collectPrismaMetrics(db: typeof dbRead | typeof dbWrite, type: 'r
   }
 }
 
+// Same hazard as the Prisma block above, one level up, and the reason it is worth its own
+// guard: `Registry.metrics()` is a `Promise.all` over every registered metric's `get()`, so
+// ONE collect() callback that throws rejects the whole call. A collect()-based gauge is
+// ordinary application code reading live state — `Gauge.set` alone throws
+// `TypeError: Value is not a valid number` on a non-number — so "no collector will ever
+// throw" is an assumption about every present and future gauge, not an invariant.
+//
+// Unguarded, a single bad read takes down the ENTIRE scrape: default metrics, every
+// instrumentation metric, every seeded counter and the Prisma series with it — precisely
+// when you most want to be able to see the pod. Degrade to losing one registry's block.
+//
+// Both registries are wrapped rather than only the one that recently grew collectors,
+// because the asymmetry would be arbitrary: they are the same construct with the same
+// failure mode, and the next collector could be added to either.
+//
+// 🔴 IT LIVES ON `instrumentationRegistry`, NOT ON THE DEFAULT REGISTRY IT REPORTS ON.
+// A failure counter that is dropped by the very failure it counts is not a signal. When
+// `client.register.metrics()` rejects, its ENTIRE block is absent from the response — and a
+// counter registered there would go with it, leaving a permanently missing series exactly when it
+// should read 1, 2, 3. Registering on the other registry means the far more consequential failure
+// (the default registry carries the default metrics plus every seeded counter) stays observable.
+// Residual blind spot, stated rather than hidden: if the INSTRUMENTATION registry is the one that
+// fails, this counter goes with it — but that failure also removes every instrumentation metric at
+// once, which is not a subtle signal.
+const REGISTRY_SCRAPE_FAILURES = 'registry_scrape_failures_total';
+const registryScrapeFailures =
+  (instrumentationRegistry.getSingleMetric(
+    REGISTRY_SCRAPE_FAILURES
+  ) as client.Counter<'registry'>) ??
+  new client.Counter({
+    name: REGISTRY_SCRAPE_FAILURES,
+    help: "Scrapes where a prom-client Registry's metrics() rejected — one collect() callback threw — so that registry's entire block is absent from the response.",
+    labelNames: ['registry'] as const,
+    registers: [instrumentationRegistry],
+  });
+
+// Seeded for the same reason as the Prisma counter: a healthy pod must report an
+// observable 0, or an absent series reads as "nothing ever went wrong" when it may
+// equally mean "this was never checked". Guarded because it runs at module scope.
+try {
+  registryScrapeFailures.inc({ registry: 'default' }, 0);
+  registryScrapeFailures.inc({ registry: 'instrumentation' }, 0);
+} catch {
+  // Seeding is a readability nicety; losing it must not cost the scrape.
+}
+
+async function collectRegistryMetrics(
+  registry: client.Registry,
+  registryName: 'default' | 'instrumentation'
+) {
+  try {
+    return await registry.metrics();
+  } catch {
+    try {
+      registryScrapeFailures.inc({ registry: registryName });
+    } catch {
+      // The `as` cast above is unchecked, so `inc` can itself throw if this name is ever
+      // registered elsewhere with a different labelset. Unguarded, that would throw OUT of the
+      // very catch block whose job is to stop one bad collector from 500-ing the scrape —
+      // converting a degraded response into the total failure this function exists to prevent.
+      // Losing the count is survivable; losing the scrape is the thing being prevented.
+    }
+    return '';
+  }
+}
+
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
-  const metrics = await client.register.metrics();
+  await seedAppBlockStorageMetrics();
+  await seedAppBlockSharedStorageMetrics();
+
+  const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop
   // long-task detector) live in a separate `client.register` than this request-graph
   // one, so they must be scraped from the cross-graph shared `instrumentationRegistry`
   // explicitly. See the WHY note on instrumentationRegistry in src/server/prom/client.ts.
-  const instrumentationMetrics = await instrumentationRegistry.metrics();
+  const instrumentationMetrics = await collectRegistryMetrics(
+    instrumentationRegistry,
+    'instrumentation'
+  );
 
   const readMetrics = await collectPrismaMetrics(dbRead, 'read');
   const writeMetrics = await collectPrismaMetrics(dbWrite, 'write');

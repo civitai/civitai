@@ -27,7 +27,6 @@ type Props = CommentConnectorInput & {
   initialCount?: number;
   limit?: number;
   badges?: CommentV2BadgeProps[];
-  hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
   forceLocked?: boolean;
   hideWhenLocked?: boolean;
@@ -49,7 +48,6 @@ type ChildProps = {
   showMore: boolean;
   toggleShowMore: () => void;
   highlighted?: number;
-  hiddenCount: number;
   forceLocked?: boolean;
   sort: ThreadSort;
   setSort: (sort: ThreadSort) => void;
@@ -97,7 +95,6 @@ export const useSeededReplyThreads = () => useContext(SeededReplyThreadsCtx);
 export function RootThreadProvider({
   entityType: initialEntityType,
   entityId: initialEntityId,
-  hidden,
   ...props
 }: Props) {
   const router = useRouter();
@@ -172,7 +169,6 @@ export function RootThreadProvider({
       <CommentsProvider
         entityType={entity.entityType}
         entityId={entity.entityId}
-        hidden={hidden}
         level={1}
         {...props}
       />
@@ -199,7 +195,6 @@ export function CommentsProvider({
   initialCount,
   limit: initialLimit = 5,
   badges,
-  hidden,
   forceLocked,
   hideWhenLocked,
   level = 1,
@@ -220,9 +215,7 @@ export function CommentsProvider({
 
   const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery(
     { entityId, entityType },
-    seeded
-      ? { initialData: { id: seeded.id, locked: seeded.locked, hiddenCount: seeded.hiddenCount } }
-      : undefined
+    seeded ? { initialData: { id: seeded.id, locked: seeded.locked } } : undefined
   );
 
   // Notification deep-links pass ?highlight=<commentId>. Forward it to the server so the
@@ -235,7 +228,7 @@ export function CommentsProvider({
   // costs one request per page instead of one per comment per level. Levels past this stay
   // collapsed on their own: nothing seeds them, and an unseeded thread renders closed.
   const autoExpandDepth = constants.comments.getAutoExpandDepth({ entityType: rootEntityType });
-  const repliesDepth = level === 1 && !hidden && autoExpandDepth > 0 ? autoExpandDepth : undefined;
+  const repliesDepth = level === 1 && autoExpandDepth > 0 ? autoExpandDepth : undefined;
   const replyPageSize = constants.comments.replyPageSize;
 
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -245,7 +238,6 @@ export function CommentsProvider({
         entityType,
         limit: initialLimit,
         sort,
-        hidden: hidden ?? false,
         targetCommentId: highlighted,
         repliesDepth,
         repliesLimit: replyPageSize,
@@ -321,14 +313,19 @@ export function CommentsProvider({
     el.scrollIntoView({ block: 'start' });
   }, [level, isInitialThread, activeCommentId, threadSettled]);
 
-  const hiddenCount = threadDetails?.hiddenCount ?? 0;
-
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
     [created, comments]
   );
 
-  const isLocked = threadDetails?.locked ?? false;
+  // A lock closes the conversation, not one row of it. `getThreadDetails` answers only about this
+  // provider's own thread, and a reply thread is never the row a moderator locked — so a nested
+  // provider inherits the enclosing lock. Read through `useContext` rather than
+  // `useCommentsContext`, which throws at level 1 where there is no enclosing provider. Without
+  // this the server refuses the write (it resolves the whole chain) while the button is still
+  // offered, which is a dead end no one can explain from the UI.
+  const enclosingLocked = useContext(CommentsCtx)?.isLocked ?? false;
+  const isLocked = (threadDetails?.locked ?? false) || enclosingLocked;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
   const shouldHideComments = hideWhenLocked && isLocked;
@@ -353,7 +350,6 @@ export function CommentsProvider({
     showMore: shouldHideComments ? false : hasNextPage ?? false,
     toggleShowMore: loadMore,
     highlighted,
-    hiddenCount,
     forceLocked,
     sort,
     setSort,
@@ -378,7 +374,6 @@ export function CommentsProvider({
       showMore: shouldHideComments ? false : hasNextPage ?? false,
       toggleShowMore: loadMore,
       highlighted,
-      hiddenCount,
       forceLocked,
       sort,
       setSort,
@@ -402,7 +397,6 @@ export function CommentsProvider({
       hasNextPage,
       loadMore,
       highlighted,
-      hiddenCount,
       forceLocked,
       sort,
       setSort,

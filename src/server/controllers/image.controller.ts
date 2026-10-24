@@ -7,7 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { mapToViolationType } from '~/server/common/tos-reasons';
+import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -31,62 +31,82 @@ import {
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
+  raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
+  getOpenImageReportIds,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
+import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  canConfirmReRemoval,
+  heldRemovalSummary,
+  holdRemovals,
+} from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
+import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
   ImageModerationSchema,
-  ImageReviewQueueInput,
   SetTosViolationSchema,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
+import { requiresImageDbPath } from './../schema/image.schema';
+import { FEED_MAX_LIMIT } from '~/server/services/feed-shadow.service';
 import {
   getAllImages,
   getEntityCoverImage,
   getImage,
   getImageContestCollectionDetails,
-  getImageModerationReviewQueue,
   getImageResources,
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
-  moderateImages,
+  getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { moderatorApp } from '~/server/services/moderator-app.service';
+import { ModeratorClientError } from '@civitai/moderation';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 export const moderateImageHandler = async ({
   input,
@@ -96,40 +116,32 @@ export const moderateImageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const images = await moderateImages({
-      ...input,
-      include: ['user-notification', 'phash-block'],
-      moderatorId: ctx.user.id,
+    // Delegated to the moderator spoke, which owns image moderation now: block/unblock + every side effect
+    // (pHash blocklist, DeleteTOS analytics, tos-violation notification, feed-existence/gallery/comic
+    // invalidation). We stay the thin authed proxy because the client callers (NeedsReviewBadge,
+    // UnblockImage) can't hold the internal token. `violationType`/`violationDetails` aren't forwarded — no
+    // live caller sets them, and the spoke derives the same values via mapToViolationType + report details.
+    await moderatorApp.imageModerate({
+      ids: input.ids,
+      reviewAction: input.reviewAction,
+      userId: ctx.user.id,
+      ip: resolveClientIpOrNull(ctx.req) ?? undefined,
+      userAgent: ctx.req.headers['user-agent'],
+      ...(input.reviewAction === 'block' && {
+        canConfirmReRemoval: await canConfirmReRemoval(ctx.user),
+      }),
     });
-    if (input.reviewAction === 'block') {
-      const imageIds = images.map((img) => img.id);
-      const [imageTags, imageResources, reportDetails] = await Promise.all([
-        getTagNamesForImages(imageIds),
-        getResourceIdsForImages(imageIds),
-        getReportViolationDetailsForImages(imageIds),
-      ]);
-
-      await Limiter().process(images, (images) =>
-        ctx.track.images(
-          images.map(({ id, userId, nsfwLevel, needsReview }) => ({
-            type: 'DeleteTOS',
-            imageId: id,
-            nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-            tags: imageTags[id] ?? [],
-            resources: imageResources[id] ?? [],
-            tosReason: needsReview ?? 'other',
-            violationType:
-              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
-            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
-            ownerId: userId,
-            userId: ctx.user.id,
-          }))
-        )
-      );
-    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
+    // If the spoke rejects the action with a 4xx (a bad/conflicting request rather than a server fault),
+    // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
+    if (error instanceof ModeratorClientError && error.status && error.status < 500)
+      throw new TRPCError({
+        code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
+        message: error.message,
+        cause: error,
+      });
+    throw throwDbError(error);
   }
 };
 
@@ -149,6 +161,12 @@ export const deleteImageHandler = async ({
     const image = await deleteImageById(input);
 
     if (image) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: [input.id],
+        ownerId: ctx.user.id,
+      });
       await ctx.track.images([
         {
           type: 'Delete',
@@ -196,11 +214,30 @@ export const setTosViolationHandler = async ({
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
+    // Before anything changes: a held removal leaves the image, its reports and its owner untouched
+    // until a second moderator confirms it.
+    if (!(await canConfirmReRemoval(user))) {
+      const { held } = await holdRemovals(
+        [
+          {
+            imageId: id,
+            violationType,
+            violationDetails,
+            reportIds: await getOpenImageReportIds(id, ReportReason.TOSViolation),
+          },
+        ],
+        user.id,
+        'site.setTosViolation'
+      );
+      if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
+    }
+
     // Update all reports with this comment id to actioned
     const affectedReports = await updateImageReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(
@@ -218,6 +255,10 @@ export const setTosViolationHandler = async ({
         modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',
         url: `/images/${id}`,
+        // Only the moderator's own choice — the inferred fallback below is a classification for
+        // analytics, and telling someone their image broke a rule the moderator never picked is worse
+        // than telling them nothing.
+        ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
       },
     }).catch();
 
@@ -226,15 +267,36 @@ export const setTosViolationHandler = async ({
     await dbWrite.image.updateMany({
       where: { id },
       data: {
-        needsReview: null,
         ingestion: 'Blocked',
-        // nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
         updatedAt: new Date(),
       },
     });
+    await clearReviewFlagsOnBlock([id]);
+    await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
+    await refreshProfilePicturesForImages([id]);
+
+    // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
+    // would let a later account restore un-block what was just moderated.
+    await clearAccountDeletionImageMarkers({ ids: [id] });
+
+    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
+    // action — took this one image down. The other moderator-driven single-image blocks write it
+    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
+    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
+    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
+    //
+    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
+    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
+    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
+    // bytes left in place — which is the safe direction, but not the intended one.
+    await trackModActivity(user.id, {
+      entityType: 'image',
+      entityId: id,
+      activity: 'review',
+    });
 
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
@@ -266,7 +328,7 @@ export const setTosViolationHandler = async ({
         userId: ctx.user.id,
       },
     ]);
-    return image;
+    return { ...image, held: null };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -283,46 +345,42 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Params the search index physically can't serve â€” these must use the DB
-  // (getAllImages). The decision is server-side: there is no client `useIndex`
-  // flag, so a client can't force the expensive un-indexed path on a broad query.
-  // Correctness-critical filters (wrong results if the index ignored them):
-  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-  //   unique cache keys in BitDex that hurt cache hit rate)
-  // - collectionId: requires relational joins through CollectionItem
-  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
-  // - imageId: not a search-index filter
-  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
-  //   a modelId-only query would silently return the global feed (matches the
-  //   /api/v1/images legacy-method logic)
-  // Ordering-only:
-  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
-  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
-  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
-  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
-  const requiresDbPath =
-    !!input.postId ||
-    !!input.postIds?.length ||
-    !!input.collectionId ||
-    !!input.reactions?.length ||
-    !!input.imageId ||
-    (!!input.modelId && !input.modelVersionId) ||
-    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  // The hub pages and the whole hub router are behind `userHubs`, but `hubId` is a
+  // plain feed input, so `/images?hubId=N` would keep serving a hub after the flag
+  // was turned back off — the feed under someone else's chrome. Refused rather than
+  // ignored: silently dropping the filter serves the GLOBAL feed to a caller who
+  // asked for a hub.
+  if (input.hubId && !features.userHubs)
+    throw throwAuthorizationError('Hubs are not available yet');
 
-  // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
-  // can only run when the index can serve the query.
-  const bitdexMode = requiresDbPath
-    ? null
-    : await getFliptVariant(
-        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-        user?.id?.toString() || 'anonymous',
-        buildFliptContext(user)
-      );
-  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+  // `publishedOnly` + `userId` routes the own-content submit pickers onto the DB
+  // (see `requiresImageDbPath`), and both are plain URL params — so without this,
+  // `/images?userId=<anyone>&publishedOnly=true` would pin an ARBITRARY creator's
+  // feed to the raw-SQL path for any caller, logged out included. That is a wider
+  // promise than the pickers need: all three only ever send `currentUser?.id`.
+  //
+  // Withdrawn rather than refused, because for a foreign `userId` the flag is
+  // genuinely inert rather than ignored: on both the index and the DB path
+  // `publishedOnly`'s only job is to suppress the carve-out that ORs in the
+  // CALLER's own unpublished rows, and that arm cannot match rows already scoped
+  // to somebody else. Refusing would break a URL that works today and means the
+  // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
+  // reads the un-narrowed input and so stays the stricter of the two — it refuses
+  // a combination this would have served, which is the safe direction.
+  const scopedInput =
+    input.publishedOnly && input.userId && input.userId !== user?.id
+      ? { ...input, publishedOnly: undefined }
+      : input;
 
-  // Use getAllImagesIndex when BitDex is active or the index can serve the query;
-  // otherwise use getAllImages (DB).
-  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
+  const requiresDbPath = requiresImageDbPath(scopedInput);
+
+  // Use getAllImagesIndex when the index can serve the query; otherwise
+  // getAllImages (DB).
+  // A hub is only expressible on the index — its collection sources are served by
+  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
+  // for. Routing one to the DB would drop the filter rather than fail, so hubs
+  // pin the index path regardless of the feature flag.
+  const useIndex = !!input.hubId || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
@@ -331,17 +389,15 @@ export const getInfiniteImagesHandler = async ({
   try {
     if (useIndex) {
       return await getAllImagesIndex({
-        ...input,
+        ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
         signal,
-        // Forward pre-evaluated variant so getImagesFromSearch can skip a
-        // duplicate Flipt evaluation. `null` means "skipBitdex" path.
-        bitdexMode,
         actor: buildSearchActor({
           userId: user?.id,
           ip: ctx.ip,
@@ -350,19 +406,19 @@ export const getInfiniteImagesHandler = async ({
       });
     } else {
       const result = await getAllImages({
-        ...input,
+        ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
-      // return. Without it, a DB page and an index page that returned nothing are
-      // indistinguishable on the wire, and a client asking "is BitDex serving this
-      // feed" cannot tell the flag going off mid-session from the end of the feed.
+      // return. No client reads it today — it is the wire contract, and the routing
+      // tests assert on it to tell a DB page from an index page that returned nothing.
       return { ...result, source: 'db' as const };
     }
   } catch (error) {
@@ -387,6 +443,33 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
+// One completion fetch stays inside the search index's hit window (posts) and the feed service's
+// page (rows): a fetch the feed can't answer whole goes to the search index instead.
+const COMPLETION_POSTS_PER_FETCH = 25;
+const COMPLETION_ROWS_PER_FETCH = FEED_MAX_LIMIT;
+
+/**
+ * Groups posts into completion fetches of at most `COMPLETION_POSTS_PER_FETCH` posts and
+ * `COMPLETION_ROWS_PER_FETCH` rows, in order. A post larger than one fetch goes alone.
+ */
+export function packPostCompletions(postIds: number[], rowsOf: (postId: number) => number) {
+  const batches: number[][] = [];
+  let batch: number[] = [];
+  let rows = 0;
+  for (const postId of postIds) {
+    const r = rowsOf(postId);
+    const full = batch.length >= COMPLETION_POSTS_PER_FETCH || rows + r > COMPLETION_ROWS_PER_FETCH;
+    if (batch.length && full) {
+      batches.push(batch);
+      batch = [];
+      rows = 0;
+    }
+    batch.push(postId);
+    rows += r;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
@@ -396,24 +479,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
+    // Every fetch below names `user` as the event decoration viewer. Safe because only a signed-out
+    // response is edge-cached here (createContext), and that one names no viewer.
 
-    // Check BitDex mode â€” if active, always route through getAllImagesIndex.
-    // Skip BitDex for unsupported query types (collections, prioritized
-    // users). BitDex doesn't index `model3dId` yet, so model3d galleries
-    // still skip it — but Meilisearch DOES index `model3dId` (added with the
-    // `images-model3d:` gallery enablement), so we always allow the Meili
-    // index path below.
-    const skipBitdex =
-      !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
-    const bitdexMode = skipBitdex
-      ? null
-      : await getFliptVariant(
-          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-          user?.id?.toString() || 'anonymous',
-          buildFliptContext(user)
-        );
-    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    const useIndex = useBitdex || features.imageIndexFeed;
+    const useIndex = features.imageIndexFeed;
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true
@@ -435,10 +504,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      // Pinned posts: always use DB path (getAllImages) instead of BitDex.
-      // postId queries are ~2ms in Postgres (covered index) and create unique
-      // cache keys in BitDex that hurt cache hit rate. Model gallery queries
-      // (modelVersionId filter) stay on BitDex where they're needed.
+      // Pinned posts: always use the DB path (getAllImages). postId queries are
+      // ~2ms in Postgres on a covered index.
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
@@ -451,10 +518,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
         reviewId: undefined,
         // Max pinned posts (20) Ã— max images per post (20) = 400
         limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
-        useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -471,36 +538,85 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
+    // A paid, host-accepted promotion, shown after the pinned posts on the first
+    // page only. Fetched like a pinned post so the viewer's own level and filters
+    // still apply to it.
+    const sponsored: ResultType[] = [];
+    const sponsoredPost =
+      !cursor && input.modelId && input.modelVersionId
+        ? await getSponsoredGalleryPost({
+            modelId: input.modelId,
+            modelVersionId: input.modelVersionId,
+            features,
+          }).catch(() => undefined)
+        : undefined;
+    const sponsoredLevel = sponsoredPost
+      ? sponsoredBrowsingLevel({
+          browsingLevel: input.browsingLevel,
+          preCapBrowsingLevel: input.preCapBrowsingLevel,
+          servingLevel: sponsoredPost.servingLevel,
+        })
+      : 0;
+    if (sponsoredPost && sponsoredLevel && !versionPinnedPosts.includes(sponsoredPost.postId)) {
+      const { items: sponsoredImages } = await getAllImages({
+        ...input,
+        domain: getRequestBoardDomainColor(ctx.req),
+        modelVersionId: undefined,
+        modelId: undefined,
+        reviewId: undefined,
+        browsingLevel: sponsoredLevel,
+        limit: POST_IMAGE_LIMIT,
+        followed: false,
+        postIds: [sponsoredPost.postId],
+        user,
+        eventDecorationViewer: user,
+        headers: { src: 'getImagesAsPostsInfiniteHandler' },
+        include: [...input.include, 'tagIds', 'profilePictures'],
+        dbTarget: 'datapacket',
+      });
+      const approved = new Set(sponsoredPost.imageIds);
+      sponsored.push(
+        ...(sponsoredImages as ResultType[]).filter((image) => approved.has(image.id))
+      );
+    }
+    const sponsoredPostId = sponsored.length ? sponsoredPost?.postId : undefined;
+
     const actor = buildSearchActor({
       userId: user?.id,
       ip: ctx.ip,
       userAgent: ctx.req.headers['user-agent'],
     });
 
+    // TODO handle/remove all these (headers, include, ids)
+    const pageFetchArgs = {
+      ...input,
+      followed: false,
+      domain: getRequestBoardDomainColor(ctx.req),
+      ids: fetchHidden ? versionHiddenImages : undefined,
+      user,
+      eventDecorationViewer: user,
+      headers: { src: 'getImagesAsPostsInfiniteHandler' },
+      include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
+      dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
+      actor,
+    };
+
     while (true) {
-      // TODO handle/remove all these (headers, include, ids)
       const { nextCursor, items } = await fetchFn({
-        ...input,
-        followed: false,
-        domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
+        ...pageFetchArgs,
         cursor,
-        ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
-        user,
-        headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds', 'profilePictures'],
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        // Forward pre-evaluated variant â€” getImagesFromSearch ignores it on the
-        // DB path (getAllImages doesn't read it).
-        bitdexMode,
-        actor,
       });
 
       // Merge images by postId
       for (const image of items) {
         // Skip images that aren't part of a post or are pinned
-        if (!image?.postId || versionPinnedPosts.includes(image.postId)) continue;
+        if (
+          !image?.postId ||
+          versionPinnedPosts.includes(image.postId) ||
+          image.postId === sponsoredPostId
+        )
+          continue;
         if (!posts[image.postId]) posts[image.postId] = [];
         posts[image.postId].push(image);
       }
@@ -512,6 +628,45 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // If there are enough posts, stop
       if (Object.keys(posts).length >= limit) break;
       remaining = limit - Object.keys(posts).length;
+    }
+
+    // Pages are cut by image, so an image-level sort leaves a post holding only the images that
+    // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
+    // carousel loads the tail from, the same on every page. A post whose row count is already on
+    // the page cannot be incomplete, so only the others are fetched again. It runs only with lazy
+    // post images on, so turning that flag off restores the page as the query returned it.
+    if (features.galleryLazyPostImages) {
+      const pagePostIds = Object.keys(posts).map(Number);
+      const rowCounts = await getPostImageCounts({
+        postIds: pagePostIds,
+        dbTarget: pageFetchArgs.dbTarget,
+      }).catch((error: Error) => {
+        // Without counts, complete every post rather than leave one short.
+        logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
+        return undefined;
+      });
+      const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
+      const partialPostIds = pagePostIds.filter(
+        (postId) => rowCountOf(postId) > posts[postId].length
+      );
+      const completions = await Promise.all(
+        packPostCompletions(partialPostIds, rowCountOf).map((postIds) =>
+          fetchFn({
+            ...pageFetchArgs,
+            cursor: undefined,
+            postIds,
+            postIdsInRequestedSort: true,
+            // The rows a filtered fetch returns are a subset of the posts' rows.
+            limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
+          })
+        )
+      );
+      for (const { items: wholePosts } of completions) {
+        for (const image of wholePosts) {
+          const post = image?.postId ? posts[image.postId] : undefined;
+          if (post && !post.some((x) => x.id === image.id)) post.push(image);
+        }
+      }
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
@@ -569,7 +724,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
-      if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      if (input.sort === ImageSort.Newest)
+        images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
       let nsfwLevel = 0;
       for (const imageNsfwLevel of imageNsfwLevels) {
@@ -580,6 +736,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         postId: image.postId as number,
         // postTitle: image.postTitle,
         pinned: !!(image.postId && pinned[image.postId]),
+        sponsored: false,
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
@@ -667,6 +824,27 @@ export const getImagesAsPostsInfiniteHandler = async ({
         return aCreatedAt - bCreatedAt;
       });
 
+    if (sponsoredPostId) {
+      const [first] = sponsored;
+      const createdAt = sponsored.map((image) => new Date(image.sortAt)).sort()[0];
+      let nsfwLevel = 0;
+      for (const image of sponsored) nsfwLevel = Flags.addFlag(nsfwLevel, image.nsfwLevel);
+      const pinnedCount = results.filter((result) => result.pinned).length;
+      results.splice(sponsoredSlotIndex(pinnedCount, results.length), 0, {
+        postId: sponsoredPostId,
+        pinned: false,
+        sponsored: true,
+        nsfwLevel,
+        modelVersionId: first.modelVersionId,
+        publishedAt: first.publishedAt,
+        sortAt: first.sortAt,
+        createdAt,
+        user: first.user,
+        ...buildPostImagesWire(sponsored, { lazy: features.galleryLazyPostImages }),
+        review: undefined,
+      });
+    }
+
     return {
       nextCursor: cursor,
       items: results,
@@ -680,18 +858,42 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    const result = await getImage({
-      ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
-    });
+    const [image, eventDecorations] = await Promise.all([
+      getImage({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      }),
+      // The hat the image detail draws when it is opened on its own, with no feed to seed it.
+      // Safe per viewer only while image.get caches nothing per URL.
+      // A hat is decoration: its lookup failing must not fail the image.
+      getEventDecorationsForEntity({
+        ids: [input.id],
+        entity: 'Image',
+        viewer: eventViewerOf(ctx),
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'image-get-event-decoration',
+          message: (error as Error).message,
+          imageId: input.id,
+        }).catch(() => undefined);
+        return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
+      }),
+    ]);
+    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
       if (blocked) throw throwNotFoundError();
     }
 
-    return result;
+    const canSeeMedia = await viewerCanSeeImageMedia(ctx, {
+      nsfwLevel: result.nsfwLevel,
+      userId: result.user.id,
+      postId: result.postId ?? null,
+    });
+    return canSeeMedia ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -714,9 +916,22 @@ export const getImageResourcesHandler = async ({
   }
 };
 
-export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+export const getEntitiesCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEntitiesCoverImage;
+  ctx: Context;
+}) => {
   try {
-    return await getEntityCoverImage({ ...input, include: ['tags'] });
+    return await getEntityCoverImage({
+      ...input,
+      include: ['tags'],
+      viewer: ctx.user,
+      // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
+      // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
+      eventDecorationViewer: ctx.user,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -724,23 +939,6 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
 };
 
 // #endregion
-
-export const getModeratorReviewQueueHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ImageReviewQueueInput;
-  ctx: Context;
-}) => {
-  try {
-    return await getImageModerationReviewQueue({
-      ...input,
-    });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,
@@ -753,6 +951,7 @@ export const getImageContestCollectionDetailsHandler = async ({
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
@@ -817,6 +1016,10 @@ export async function handleUpdateImageNsfwLevel({
 }) {
   try {
     const { id: userId, isModerator } = ctx.user;
+    // The vote below is still recorded, so Knights and moderators still review a raise.
+    const applied =
+      !isModerator &&
+      (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
     if (isModerator) {
@@ -829,7 +1032,7 @@ export async function handleUpdateImageNsfwLevel({
       if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
     }
 
-    return updatedNsfwLevel;
+    return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

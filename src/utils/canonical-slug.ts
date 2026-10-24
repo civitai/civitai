@@ -17,7 +17,8 @@ export function getCanonicalSlugDestination({
   queryString = '',
 }: {
   basePath: string;
-  id: number;
+  // A string for routes whose public id is encoded rather than the row's int — hubs.
+  id: number | string;
   title: string;
   currentSlug?: string;
   queryString?: string;

@@ -1,8 +1,12 @@
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import {
+  BETA_MESSAGE_MAX,
   OFFSITE_CHANGELOG_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_DESCRIPTION_MAX,
@@ -14,8 +18,10 @@ import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
   MARKETPLACE_CATEGORIES,
   isMarketplaceCategory,
+  marketplaceCategoryLabel,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   SENSITIVE_TOKEN_SCOPES,
@@ -51,14 +57,41 @@ export const OFFSITE_SUBMIT_LIMITS = {
   descriptionMax: OFFSITE_DESCRIPTION_MAX,
   changelogMax: OFFSITE_CHANGELOG_MAX,
   urlMax: MAX_EXTERNAL_URL_LENGTH,
+  sourceRepoUrlMax: MAX_REPOSITORY_URL_LENGTH,
+  betaMessageMax: BETA_MESSAGE_MAX,
   justificationMax: SCOPE_JUSTIFICATION_MAX_LENGTH,
 } as const;
+
+/**
+ * The accepted source-repository hosts, as the form's help text spells them.
+ *
+ * 🔴 DERIVED from the server allowlist, never re-typed. A hard-coded copy here is how a
+ * form ends up promising a host the validator rejects (or, worse, omitting one it
+ * accepts) — the same single-sourcing the category/rating option lists above already
+ * do, for the same reason.
+ */
+export const SOURCE_REPO_HOSTS_LABEL = REPOSITORY_HOST_ALLOWLIST.join(', ');
 
 export type OffsiteSubmitFormValues = {
   slug: string;
   name: string;
   /** OPTIONAL homepage / Visit link (may be blank in the merged model). */
   externalUrl: string;
+  /** OPTIONAL public source-repository link ('' = none). */
+  sourceRepoUrl: string;
+  /**
+   * AUTHOR-DECLARED beta status + an optional short note ('' = none).
+   *
+   * 🔴 EDIT-ONLY IN PRACTICE, and deliberately still part of this SHARED view-model. Only
+   * `ExternalListingEditForm` renders inputs for these; the CREATE wizard does not, because
+   * "is this app in beta" is a claim about a listing that exists rather than part of
+   * submitting one. They live here anyway so `editContextToForm` / `buildScalarPatch` — the
+   * pure functions that turn a listing into this shape and back into a patch — have one
+   * value shape to work with. On the create path they keep their blank defaults and
+   * `toSubmitExternalInput` never reads them, so nothing is sent.
+   */
+  isBeta: boolean;
+  betaMessage: string;
   tagline: string;
   description: string;
   category: MarketplaceCategory | null;
@@ -80,16 +113,31 @@ export type OffsiteSubmitFormValues = {
 
 export type OffsiteSubmitFormErrors = Partial<Record<keyof OffsiteSubmitFormValues, string>>;
 
-/** Category `<Select>` data (value + human label). */
+/**
+ * Category `<Select>` data (value + human label).
+ *
+ * 🔴 The label comes from the SHARED map, not from re-deriving it here. This used
+ * to title-case the key (`c.charAt(0).toUpperCase() + c.slice(1)`), which happens
+ * to agree with `MARKETPLACE_CATEGORY_LABELS` for today's seven values and would
+ * silently stop agreeing for the first label that is not a plain capitalisation.
+ * An author picking "Analytics" here and a reader seeing something else in the
+ * store is the same one-rule-N-sites defect this whole change closes.
+ */
 export const OFFSITE_CATEGORY_OPTIONS: Array<{ value: MarketplaceCategory; label: string }> =
   MARKETPLACE_CATEGORIES.map((c) => ({
     value: c,
-    label: c.charAt(0).toUpperCase() + c.slice(1),
+    label: marketplaceCategoryLabel(c),
   }));
 
-/** Content-rating `<Select>` data. */
+/**
+ * Content-rating `<Select>` data.
+ *
+ * 🔴 Was `r.toUpperCase()`, which spelled the middle rung `PG13` — a spelling that
+ * exists nowhere else on the site (`browsingLevelLabels` says `PG-13`). The author
+ * picking the rating and the visitor reading it now see the same word.
+ */
 export const OFFSITE_CONTENT_RATING_OPTIONS: Array<{ value: OffsiteContentRating; label: string }> =
-  OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r.toUpperCase() }));
+  OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: offsiteContentRatingLabel(r) }));
 
 /** The blank initial form state (SFW default, no category, no client / scopes). */
 export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
@@ -97,6 +145,9 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     slug: '',
     name: '',
     externalUrl: '',
+    sourceRepoUrl: '',
+    isBeta: false,
+    betaMessage: '',
     tagline: '',
     description: '',
     category: null,
@@ -106,6 +157,54 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     requestedScopes: 0,
     scopeJustifications: {},
   };
+}
+
+/**
+ * Has the author entered ANYTHING that a Cancel would throw away?
+ *
+ * 🔴 The point of this predicate is what it must NOT report. `Cancel` in the create
+ * wizard navigates away and silently discards every field; confirming that is right,
+ * but confirming an UNTOUCHED form is a nag, and a confirmation people learn to
+ * dismiss protects nothing. So dirtiness is measured against the blank state, field
+ * by field — NOT against "did the component mount".
+ *
+ * 🔴 `contentRating` is compared to its DEFAULT (`'g'`), not to emptiness. It is the
+ * one field that starts non-empty, so an `Object.values(...).some(Boolean)` shortcut
+ * would call a pristine form dirty from the very first render and nag every single
+ * author. That is the mutation this predicate is written to survive.
+ *
+ * Whitespace-only text does not count as input: a stray space is not work worth a
+ * modal. `scopeJustifications` counts only if some entry has real text — the object
+ * is re-keyed (to empty strings) merely by picking a client, which `connectClientId`
+ * already reports.
+ */
+export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boolean {
+  const blank = emptyOffsiteSubmitForm();
+  const texts: Array<keyof OffsiteSubmitFormValues> = [
+    'slug',
+    'name',
+    'externalUrl',
+    // A typed-but-unsaved source link IS work worth a confirmation before Cancel
+    // discards it — the same claim every other text field here makes.
+    'sourceRepoUrl',
+    // A typed-but-unsaved beta note is work too. `isBeta` itself is covered by the explicit
+    // comparison below rather than here — this list is string fields, and `String(false)` is
+    // the non-empty `'false'`, so including a boolean here would report EVERY blank form as
+    // dirty and pop the discard-confirmation on a Cancel that discards nothing.
+    'betaMessage',
+    'tagline',
+    'description',
+    'changelog',
+  ];
+  if (texts.some((k) => String(values[k] ?? '').trim().length > 0)) return true;
+  if (values.isBeta !== blank.isBeta) return true;
+  if (values.category !== blank.category) return true;
+  if (values.contentRating !== blank.contentRating) return true;
+  if (values.connectClientId !== blank.connectClientId) return true;
+  if (values.requestedScopes !== blank.requestedScopes) return true;
+  return Object.values(values.scopeJustifications ?? {}).some(
+    (v) => String(v ?? '').trim().length > 0
+  );
 }
 
 /**
@@ -141,6 +240,22 @@ export function validateOffsiteSubmitForm(
   if (values.externalUrl.trim().length > 0) {
     const url = validateExternalUrl(values.externalUrl);
     if (!url.ok) errors.externalUrl = url.error;
+  }
+
+  // sourceRepoUrl is OPTIONAL — only validate the repo-root shape when one is provided.
+  // Delegates to the SAME `validateRepositoryUrl` the server runs, so an inline error
+  // here says exactly what a submit would say, in the same words.
+  if (values.sourceRepoUrl.trim().length > 0) {
+    const repo = validateRepositoryUrl(values.sourceRepoUrl);
+    if (!repo.ok) errors.sourceRepoUrl = repo.error;
+  }
+
+  // The beta note is OPTIONAL and free text — the only rule is the shared bound, mirrored
+  // from the server constant so this inline error and the zod refusal cannot disagree about
+  // the number. Deliberately no content rule: this is the same trust posture `description`
+  // has, and the mitigations are the bound plus PLAIN-TEXT rendering, not a word filter.
+  if (values.betaMessage.length > BETA_MESSAGE_MAX) {
+    errors.betaMessage = `Beta message must be at most ${BETA_MESSAGE_MAX} characters.`;
   }
 
   if (values.tagline.length > OFFSITE_TAGLINE_MAX) {
@@ -514,6 +629,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   requestedScopes: number;
   scopeJustifications: Record<string, string>;
   externalUrl?: string;
+  sourceRepoUrl?: string;
   tagline?: string;
   description?: string;
   category?: MarketplaceCategory;
@@ -533,6 +649,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     requestedScopes: values.requestedScopes,
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
+    sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,
     tagline: values.tagline.trim() || undefined,
     description: values.description.trim() || undefined,
     category: values.category ?? undefined,

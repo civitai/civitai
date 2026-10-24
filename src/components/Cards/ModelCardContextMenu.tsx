@@ -1,7 +1,8 @@
 import { Menu } from '@mantine/core';
-import { IconBabyCarriage, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconShieldCheck, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -13,14 +14,16 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
+import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
   const currentUser = useCurrentUser();
@@ -110,6 +113,18 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
             />
           ),
         },
+        {
+          key: 'add-event-decoration',
+          component: (
+            <AddEventDecorationMenuItem
+              key="add-event-decoration"
+              entityType={CosmeticEntity.Model}
+              entityId={data.id}
+              image={data.images[0]}
+              currentCosmetic={data.eventDecoration}
+            />
+          ),
+        },
       ]
     );
   }
@@ -130,7 +145,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
       ...[
         {
           key: 'hide-model',
-          component: <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+          component: <HideModelButton key="hide-model" as="menu-item" model={data} />,
         },
         {
           key: 'hide-button',
@@ -147,29 +162,18 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
 
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
-  if (currentUser?.isModerator && env.NEXT_PUBLIC_MODEL_LOOKUP_URL) {
+  if (currentUser?.isModerator) {
+    // Unshifted to the top rather than appended: the moderator items land after every user action, and
+    // the lookup is the one a moderator opens this menu FOR — it is the way out to the moderator app,
+    // not another action on the card. Moderator-gated, so nobody else's menu moves.
     contextMenuItems.unshift({
       key: 'lookup-model',
       component: (
-        <Menu.Item
-          component="a"
-          key="lookup-model"
-          target="_blank"
-          leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-          href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
-          onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
-          }}
-        >
+        <ModeratorLookupMenuItem key="lookup-model" path={moderatorModelLookupPath(data.id)}>
           Lookup Model
-        </Menu.Item>
+        </ModeratorLookupMenuItem>
       ),
     });
-  }
-
-  if (currentUser?.isModerator) {
     contextMenuItems.push({
       key: 'set-minor',
       component: (
@@ -189,6 +193,28 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         </ToggleMinorModel>
       ),
     });
+    // Minor already forces (and locks) sfwOnly, so the toggle would only ever offer an
+    // "Unset" the server refuses.
+    if (!data.minor)
+      contextMenuItems.push({
+        key: 'set-sfw-only',
+        component: (
+          <ToggleSfwOnlyModel key="set-sfw-only" modelId={data.id} sfwOnly={data.sfwOnly}>
+            {({ onClick }) => (
+              <Menu.Item
+                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onClick();
+                }}
+              >
+                {data.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
+              </Menu.Item>
+            )}
+          </ToggleSfwOnlyModel>
+        ),
+      });
   }
 
   if (setMenuItems) {

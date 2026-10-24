@@ -1,9 +1,18 @@
 import { Prisma } from '@prisma/client';
+import {
+  accountHoldSql,
+  assertAccountNotUnderLegalHold,
+  guardedAccountScrubSql,
+  isLegalHoldAbort,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
+  banReasonsAlwaysRemovingMedia,
   CacheTTL,
   constants,
   USERS_SEARCH_INDEX,
@@ -12,7 +21,6 @@ import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
   BlockedReason,
-  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -20,10 +28,12 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
+import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -36,6 +46,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  setUserFollowCached,
   userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
@@ -64,21 +75,33 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { refundBidsForVersions } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
-import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import {
+  isCosmeticAvailable,
+  refuseIfWithheldAfterEquip,
+} from '~/server/services/cosmetic.service';
+import {
+  WITHHELD_COSMETIC_ERROR,
+  getWithheldCosmeticIds,
+} from '~/server/services/creator-shop-withheld';
+import { bustModelSaleCacheForModels } from '~/server/services/paid-access.service';
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
-import { deleteImageById } from '~/server/services/image.service';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
+import { deleteImages } from '~/server/services/image.service';
 import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
@@ -88,10 +111,11 @@ import {
   BlockedByUsers,
   BlockedUsers,
   HiddenModels,
+  HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -99,7 +123,7 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { imageRemovalMode } from '~/server/utils/image-removal-mode';
+import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -115,8 +139,7 @@ import {
   ModelStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import blockedUsernames from '~/utils/blocklist-username.json';
-import { getBlocklistData } from '~/server/services/blocklist.service';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -128,6 +151,23 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
+import {
+  clearBlockInstancesForPublisher,
+  revokeBlockInstancesForPublisher,
+} from '~/server/services/blocks/publisher-ban-revocation.service';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { releaseUserMute, type MuteReleaseActivity } from '~/server/services/mute-release.service';
+import {
+  closeGenerationRestrictionsOfDeletedAccount,
+  reopenGenerationRestrictionsOfRestoredAccount,
+} from '~/server/services/user-restriction.service';
+import {
+  bustUserCreatorCache,
+  fetchUserCreator,
+  getCachedUserCreator,
+} from '~/server/services/user-creator.service';
+import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
+
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -162,90 +202,12 @@ export const getUserCreator = async ({
   leaderboardId?: string;
   isModerator?: boolean;
 }) => {
-  const user = await withSpan('user:getCreator:findUser', () =>
-    dbRead.user.findFirst({
-      where: {
-        ...where,
-        deletedAt: null,
-        AND: [
-          { id: { not: constants.system.user.id } },
-          { username: { not: constants.system.user.username } },
-        ],
-      },
-      select: {
-        id: true,
-        image: true,
-        username: true,
-        muted: true,
-        bannedAt: true,
-        deletedAt: true,
-        createdAt: true,
-        publicSettings: true,
-        settings: true,
-        excludeFromLeaderboards: true,
-        links: {
-          select: {
-            url: true,
-            type: true,
-          },
-        },
-        stats: {
-          select: {
-            downloadCountAllTime: true,
-            thumbsUpCountAllTime: true,
-            followerCountAllTime: true,
-            reactionCountAllTime: true,
-            uploadCountAllTime: true,
-            generationCountAllTime: true,
-          },
-        },
-        rank: {
-          select: {
-            leaderboardRank: true,
-            leaderboardId: true,
-            leaderboardTitle: true,
-            leaderboardCosmetic: true,
-          },
-        },
-        cosmetics: {
-          where: { equippedAt: { not: null } },
-          select: {
-            data: true,
-            cosmetic: {
-              select: simpleCosmeticSelect,
-            },
-          },
-        },
-        profilePicture: {
-          select: profileImageSelect,
-        },
-      },
-    })
-  );
-  if (!user) return null;
-
-  /**
-   * TODO: seems to be deprecated, we are getting model count from the stats
-   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
-   */
-  const modelCount = await withSpan('user:getCreator:countModels', () =>
-    dbRead.model.count({
-      where: {
-        userId: user?.id,
-        status: 'Published',
-      },
-    })
-  );
-
-  // Expose only whether the shop is public — never leak the raw settings blob.
-  const { settings, ...rest } = user;
-  const creatorShopEnabled =
-    (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true;
-  return {
-    ...rest,
-    creatorShopEnabled,
-    _count: { models: modelCount },
-  };
+  // An id on its own is the hot shape (creator card, header) and is served from a short-TTL
+  // per-user cache; what invalidates it is documented on `userCreatorCache`. A username lookup
+  // reads the database as before.
+  if (where.id !== undefined && where.username === undefined)
+    return await getCachedUserCreator(where.id);
+  return await fetchUserCreator(where);
 };
 
 type UserSearchResult = {
@@ -359,6 +321,21 @@ export const getUsers = async ({
     select.push(`u."meta"`);
   }
 
+  // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
+  // arbitrary twenty of them and a ban that had just succeeded landed anywhere — which is why it read
+  // as "the ban did nothing". Newest ban first is the only order that makes the write visible.
+  // `bannedAt` is an ISO-8601 UTC string, so the text sort is chronological; every row carries one
+  // (checked against production).
+  const orderBy = contestBanned
+    ? `ORDER BY u."meta" #>> '{contestBanDetails,bannedAt}' DESC`
+    : query
+    ? 'ORDER BY LENGTH(username) ASC'
+    : '';
+
+  // ORDER BY goes after every predicate. It used to share a line with `u."id" != -1`, above the
+  // `contestBanned` clause, so a caller passing both emitted `... ORDER BY ... AND ...` and Postgres
+  // rejected the statement with 42601. `user.getAll` routes here whenever a moderator sets
+  // `contestBanned`, and `query` is on the same input schema, so that combination is reachable.
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -374,10 +351,11 @@ export const getUsers = async ({
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
-      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+      AND u."id" != -1
       AND ${
         contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
       }
+      ${Prisma.raw(orderBy)}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
@@ -407,23 +385,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = async (username: string): Promise<boolean> => {
-  const lower = username.toLowerCase();
-
-  // Static JSON baseline (always enforced, can't be removed via UI)
-  const staticBlocked =
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x);
-  if (staticBlocked) return false;
-
-  // Dynamic blocklist from DB/Redis/in-memory cache
-  const [dynamicExact, dynamicPartial] = await Promise.all([
-    getBlocklistData(BlocklistType.UsernameExact),
-    getBlocklistData(BlocklistType.UsernamePartial),
-  ]);
-
-  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
-};
+export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
@@ -456,20 +418,42 @@ export async function clearUserProfileFields({
 }
 
 /**
- * Mod-driven: explicit mute/unmute (vs. legacy toggle).
+ * A moderator's mute, timed or not.
+ *
+ * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
+ * auditing, scam auto-mute) leaves it null, and `evaluateStrikeEscalation` will neither lift nor shorten
+ * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
+ * mute — and clears `mutedAt` with it.
+ *
+ * The unmute half is `releaseUserMute`, which needs the acting moderator.
  */
-export async function setUserMuted({ userId, muted }: { userId: number; muted: boolean }) {
-  const date = new Date();
+export async function setUserMuted(
+  args:
+    | { userId: number; muted: true; expiresAt?: Date | null }
+    | { userId: number; muted: false; actorId: number; activity?: MuteReleaseActivity }
+) {
+  if (!args.muted) {
+    const result = await releaseUserMute({
+      userId: args.userId,
+      actorId: args.actorId,
+      activity: args.activity,
+      updateSource: 'retool:unmute',
+    });
+    if (!result.released) throw new Error(`No user with id ${args.userId}`);
+    return result.user;
+  }
+
   const user = await updateUserById({
-    id: userId,
+    id: args.userId,
     data: {
-      muted,
-      mutedAt: muted ? date : null,
+      muted: true,
+      mutedAt: new Date(),
+      ...(args.expiresAt !== undefined ? { muteExpiresAt: args.expiresAt } : {}),
     },
-    updateSource: muted ? 'retool:mute' : 'retool:unmute',
+    updateSource: 'retool:mute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId, 'moderation');
+  await invalidateSession(args.userId, 'moderation');
   return user;
 }
 
@@ -547,16 +531,29 @@ export async function forceUpdateUserIdentity({
   }
   userUpdateCounter?.inc({ location: 'user.service:forceUpdateUserIdentity' });
 
-  // Cache-invalidate for any field on User that downstream caches key off of.
-  // (Username changes drop basic data; name/email touch profile + paddle.)
   if (data.username !== undefined || data.name !== undefined) {
     await deleteBasicDataForUser(userId);
-  }
-  if (data.email && user.paddleCustomerId) {
-    await updatePaddleCustomerEmail({
-      customerId: user.paddleCustomerId,
-      email: data.email as string,
-    });
+    // 🔴 A moderator-forced rename has to reach the search index, and NOTHING else will take
+    // it there. The incremental user-index sync scans on `createdAt`, so it never revisits an
+    // existing row, and the nightly reconciler only checks whether an id still qualifies — it
+    // never refreshes a field. Without this enqueue the index serves the OLD username
+    // indefinitely, which is exactly how a renamed account keeps being found (and acted on by
+    // id) under the name it was renamed away from. The self-serve profile save has always
+    // enqueued this; the moderator path did not.
+    // 🔴 NEVER LET THE ENQUEUE BREAK THE RENAME. It is a Redis write, and the rename has
+    // already committed by the time it runs — a blip would throw here, BEFORE
+    // `invalidateSession` below, leaving the account renamed with its old session still live
+    // while the moderator sees a 500. Every other side effect in this file is isolated the
+    // same way; a stale search document is the smallest of the failures available here.
+    await usersSearchIndex
+      .queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'force-update-identity-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -576,7 +573,11 @@ export const updateUserById = async ({
 }) => {
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
+    // Only a user with NO address on file can set one here, so the guard runs on exactly the writes
+    // that survive — an existing address was already vetted when it was set.
     if (existingData?.email) delete data.email;
+    else if (typeof data.email === 'string') await assertEmailAllowed(data.email);
+    else delete data.email;
   }
 
   if (
@@ -586,12 +587,20 @@ export const updateUserById = async ({
     data.browsingLevel = Flags.removeFlag(data.browsingLevel, NsfwLevel.Blocked);
   }
 
+  // The account form sends the username on every save; only a real rename is worth a scan.
+  const previousUsername =
+    typeof data.username === 'string'
+      ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
+      : undefined;
+
   const user = await dbWrite.user.update({ where: { id }, data });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
+  if (typeof data.username === 'string' && data.username !== previousUsername)
+    queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -638,7 +647,10 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
+      getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
+    ),
   ]);
 
   const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
@@ -825,19 +837,30 @@ export const toggleModelEngagement = async ({
   });
   setTo ??= engagement?.type === type ? false : true;
 
+  // Every write is scoped by the `type` the row was READ as, never by the PK alone.
+  // `ModelEngagement` holds one row per (user, model) carrying one of
+  // Favorite | Hide | Mute | Notify, and the four have no precedence order, so the
+  // only guard available is the type this call observed — a writer replaces what it
+  // saw or nothing. Unqualified, a Hide arriving here landed on whatever another
+  // writer had just established and reported success.
   if (engagement) {
     if (!setTo && engagement.type === type) {
-      await dbWrite.modelEngagement.delete({
-        where: { userId_modelId: { userId, modelId } },
-      });
+      await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type } });
       if (type === 'Hide') await HiddenModels.refreshCache({ userId });
       return false;
     } else if (setTo && engagement.type !== type) {
-      await dbWrite.modelEngagement.update({
-        where: { userId_modelId: { userId, modelId } },
+      const { count } = await dbWrite.modelEngagement.updateMany({
+        where: { userId, modelId, type: engagement.type },
         data: { type, createdAt: new Date() },
       });
-      return true;
+      // `HiddenModels` is keyed on `type = 'Hide'`, so a conversion in EITHER
+      // direction changes the hidden set. Nothing refreshed it here before, leaving
+      // a model hidden after the user converted the row to Notify.
+      if (count && (type === 'Hide' || engagement.type === 'Hide'))
+        await HiddenModels.refreshCache({ userId });
+      // Zero rows means a concurrent writer replaced the row we read; it does not
+      // carry `type`, and saying otherwise is a claim the caller acts on.
+      return count > 0;
     }
     return true; // no change
   } else if (setTo === false) return false;
@@ -856,9 +879,6 @@ export const toggleModelEngagement = async ({
 export const toggleModelNotify = async ({ userId, modelId }: { userId: number; modelId: number }) =>
   toggleModelEngagement({ userId, modelId, type: 'Notify' });
 
-export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
-  toggleModelEngagement({ userId, modelId, type: 'Hide' });
-
 export const toggleFollowUser = async ({
   userId,
   targetUserId,
@@ -871,20 +891,35 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // Every write below is scoped by `type`. The row read a moment ago may already
+  // be a different type — a block applied from another tab, say — and an
+  // unqualified `delete`/`update` on the PK would take that block with it while
+  // reporting success.
   if (engagement) {
     if (engagement.type === 'Follow') {
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-      await userFollowsCache.refresh(userId);
+      await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
+      await setUserFollowCached({ userId, targetUserId, following: false });
       return false;
     } else if (engagement.type === 'Hide') {
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Follow' },
+      const { count } = await dbWrite.userEngagement.updateMany({
+        where: { userId, targetUserId, type: UserEngagementType.Hide },
+        data: { type: UserEngagementType.Follow },
       });
-      await userFollowsCache.refresh(userId);
-      return true;
+      // Matching nothing does NOT mean "not following". The Hide this call read is
+      // gone, and one of the things that can hold the pair instead is a Follow — a
+      // second concurrent toggle that won this same `updateMany`. Asserting `false`
+      // there writes a WRONG entry that stands for the rest of the day-long TTL,
+      // where the refetch merely costs.
+      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
+      else await userFollowsCache.refresh(userId);
+      // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
+      // Without this the target stays hidden from the feed of the user who just
+      // followed them, until the hash TTL expires.
+      await HiddenUsers.refreshCache({ userId });
+      // Zero rows means the Hide is gone — replaced by a Block, most likely — so
+      // no follow was established and saying otherwise would be a lie the caller
+      // acts on (reward, notification, tracking event).
+      return count > 0;
     }
 
     return false;
@@ -896,17 +931,30 @@ export const toggleFollowUser = async ({
       select: { user: { select: { username: true } } },
     })
     .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The follow already exists — idempotent, so return
-      // null and fall through to the cache refresh. The racing winner already
-      // created the follow-notification (deduped by `key`), so we skip it here
-      // rather than bubble a 500.
+      // Something took the (userId, targetUserId) PK between the read and the
+      // insert. Which type it is decides the answer, so read it back below rather
+      // than bubble a 500.
       if (!isPrismaUniqueViolation(error)) throw error;
       return null;
     });
-  await userFollowsCache.refresh(userId);
 
-  if (ret) {
+  if (!ret) {
+    const winner = await dbWrite.userEngagement.findUnique({
+      where: { userId_targetUserId: { userId, targetUserId } },
+      select: { type: true },
+    });
+    // Usually the toggle racing itself, and the winner already sent the
+    // follow-notification (deduped by `key`) — but the row can equally be a Block,
+    // which outranks a Follow. Returning true there tells the user they follow
+    // someone they do not, and pays a follow reward for it.
+    const followed = winner?.type === UserEngagementType.Follow;
+    await setUserFollowCached({ userId, targetUserId, following: followed });
+    return followed;
+  }
+
+  await setUserFollowCached({ userId, targetUserId, following: true });
+
+  {
     const details: NotifDetailsFollowedBy = {
       username: ret.user.username,
       userId,
@@ -920,44 +968,6 @@ export const toggleFollowUser = async ({
     });
   }
 
-  return true;
-};
-
-export const toggleHideUser = async ({
-  userId,
-  targetUserId,
-}: {
-  userId: number;
-  targetUserId: number;
-}) => {
-  const engagement = await dbWrite.userEngagement.findUnique({
-    where: { userId_targetUserId: { targetUserId, userId } },
-    select: { type: true },
-  });
-
-  if (engagement) {
-    if (engagement.type === 'Hide')
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-    else if (engagement.type === 'Follow')
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Hide' },
-      });
-
-    return false;
-  }
-
-  await dbWrite.userEngagement
-    .create({ data: { type: 'Hide', targetUserId, userId } })
-    .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The engagement now exists — idempotent, so still
-      // refresh the cache + return true instead of bubbling a 500.
-      if (!isPrismaUniqueViolation(error)) throw error;
-    });
-  await userFollowsCache.refresh(userId);
   return true;
 };
 
@@ -1039,6 +1049,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     select: { id: true, meta: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
+  // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
+  // checks again in the same statement as its write.
+  const { markerView } = await assertAccountNotUnderLegalHold(user.id);
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }
@@ -1046,40 +1059,86 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
 
   const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
 
-  const result = await dbWrite.$transaction([
-    dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
-    dbWrite.account.deleteMany({ where: { userId: user.id } }),
-    dbWrite.session.deleteMany({ where: { userId: user.id } }),
-    dbWrite.userEngagement.deleteMany({
-      where: { OR: [{ userId: user.id, targetUserId: user.id }] },
-    }),
-    dbWrite.user.update({
-      where: { id: user.id },
-      data: {
-        deletedAt: new Date(),
-        email: null,
-        username: null,
-        paddleCustomerId: null,
-        image: null,
-        profilePictureId: null,
-        meta,
-      },
-    }),
-  ]);
+  const result = await dbWrite
+    .$transaction([
+      // A hold that landed after the check above fails this statement, and with it the whole
+      // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
+      // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
+      dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
+      dbWrite.account.deleteMany({ where: { userId: user.id } }),
+      dbWrite.session.deleteMany({ where: { userId: user.id } }),
+      // Two OR elements, not one carrying two fields — that is a single ANDed
+      // predicate (`userId = X AND targetUserId = X`), which matches only a
+      // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
+      // row, so no FK cascade covers for it: every follow and hide of a deleted account
+      // survived and kept being counted by `getUserList`.
+      //
+      // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
+      // brings the account back and restores nothing here — so clearing a Block would
+      // silently switch off a safety control that someone else set, with no event
+      // telling them. A Follow or a Hide is list noise; a Block is not.
+      dbWrite.userEngagement.deleteMany({
+        where: {
+          OR: [{ userId: user.id }, { targetUserId: user.id }],
+          type: { not: UserEngagementType.Block },
+        },
+      }),
+      // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+      // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+      dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+      dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
+      // The rest of the scrub is in `guardedAccountScrubSql`; meta is here because it carries the
+      // account's own data, which the guarded statement cannot take as a parameter.
+      dbWrite.user.update({ where: { id: user.id }, data: { meta } }),
+    ])
+    .catch((e) => {
+      if (isLegalHoldAbort(e)) throw new LegalHoldError();
+      throw e;
+    });
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+  void syncOwnerEventHats(user.id);
+  void syncEventRosterMember(user.id);
 
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBasicDataForUser(id);
+  // The account is deleted from here on. A failing step must not skip a later one (a skipped
+  // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
+  // an error: the user would read a completed deletion as a failed one and retry.
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      await logToAxiom({
+        name: step,
+        type: 'error',
+        source: 'deleteUser',
+        userId: user.id,
+        message: (error as Error)?.message,
+      }).catch(() => null);
+    }
+  };
 
-  // Cancel their subscription
-  await cancelSubscription({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('cancel-stripe-subscription', () =>
+    cancelSubscription({ userId: user.id, removeRecord: true })
   );
-  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+
+  // The engagement rows are gone for real now, so the deleted user's own follow set
+  // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
+  // their own TTL — a popular account has six figures of them, and what each holds
+  // is an id whose content this same call has already removed.
+  await runStep('bust-follows-cache', () => userFollowsCache.bust(user.id));
+  await runStep('search-index-delete', () =>
+    usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
-  await invalidateSession(id, 'moderation');
+  await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
+  await runStep('close-pending-restrictions', () =>
+    closeGenerationRestrictionsOfDeletedAccount(user.id)
+  );
+
+  // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
+  await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
 
   return result;
 };
@@ -1091,13 +1150,22 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 }
 
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is not restored, and
+ * do NOT read that as "the subscription is gone": the cancels below run through runStep, which
+ * swallows, the Paddle one never deletes the CustomerSubscription row, and the Stripe one only
+ * deletes it for an active/past_due/trialing row. 6,816 soft-deleted accounts hold a surviving
+ * row today, 96 of them still live (prod, 2026-09-21). Check the billing record independently. It also hard-deletes Account / Session / UserProfile / UserLink
+ * rows and every
+ * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
+ * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
  * We can only restore what survives the deletion: the User row's scrubbed fields (caller
  * supplies them) and the orphaned Model ownership (via ClickHouse audit).
@@ -1108,6 +1176,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
  *   so restoring inside the window brings the images back.
  * Posts are hard-deleted on the immediate path only and are not recoverable.
+ *
+ * UserProfile and UserLink rows are unrecoverable too, so a restored account comes back with an
+ * empty profile. Nothing restores name.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
@@ -1174,8 +1245,18 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+  // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
+  // account would inherit its old attempt count, so its first failure would already be backed off
+  // for hours and it would alert as stuck long before it is.
+  const {
+    imageRemoval: _removalChoice,
+    gdprStripeScrub: _scrubState,
+    ...meta
+  } = (user.meta ?? {}) as UserMeta;
 
+  // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
+  // moderator putting back the address a closed account already had, and re-judging it against a
+  // list that moved since would make some accounts unrestorable.
   await dbWrite.$transaction([
     dbWrite.user.update({
       where: { id },
@@ -1184,17 +1265,44 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     disarmAccountDeletionImagePurge(id),
   ]);
 
+  // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
+  await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
+    logToAxiom({
+      name: 'reopen-pending-restrictions',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null)
+  );
+
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
   // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.
   const imagesPendingRestore = await countPendingAccountDeletionImageRestores(id);
   if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
   // row; mirror that here so the restored identity is visible immediately instead of serving the
   // stale "deleted" values until the cache expires.
   await deleteBasicDataForUser(id);
+  // The sale badge only counts a sale whose owner owns the model, so while these models sat at
+  // userId -1 the cache recorded "no sale" for them, and that marker outlives a short TTL. Best-effort:
+  // the restore has committed, so a failed bust is logged rather than failing it.
+  try {
+    await bustModelSaleCacheForModels(restoredModelIds);
+  } catch (error) {
+    logToAxiom({
+      name: 'restore-user-model-sale-cache',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null);
+  }
 
   return {
     id,
@@ -1223,8 +1331,9 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     force: true,
     // Skip toggleBan's Moderated media block; softDeleteUser applies its own
     // CSAM block below. Avoids a redundant double-write and a Moderated->CSAM
-    // flip. Models still unpublish (removeModels defaults on).
-    removeMedia: false,
+    // flip. Not `removeMedia: false`, which a minor-safety ban ignores.
+    // Models still unpublish (removeModels defaults on).
+    mediaBlockedByCaller: true,
   });
 
   await dbWrite.image.updateMany({
@@ -1235,6 +1344,15 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
       blockedFor: BlockedReason.CSAM,
     },
   });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  //
+  // Account-wide here, unlike the ban branch in `toggleBan`: the UPDATE above carries no
+  // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
+  // block's scope are the same set, which is what makes the wide form correct in this one place.
+  await clearAccountDeletionImageMarkers({ userId: id });
+  await refreshProfilePicturesForUsers([id]);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1268,8 +1386,127 @@ export const updateAccountScope = async ({
   }
 };
 
-export const removeAllContent = async ({ id }: { id: number }) => {
-  const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
+/** The listed ids whose row no longer exists, read on the primary. */
+async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids: number[]) {
+  if (!ids.length) return [];
+  const left = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
+  const kept = new Set(left.map((r) => r.id));
+  return ids.filter((i) => !kept.has(i));
+}
+
+/** Queues a search-index Delete for each listed row that no longer exists. */
+async function unindexDeleted(
+  lists: [
+    { queueUpdate: typeof modelsSearchIndex.queueUpdate },
+    'Model' | 'Article' | 'Collection' | 'Bounty',
+    { id: number }[]
+  ][]
+) {
+  for (const [index, table, rows] of lists) {
+    const gone = await goneIds(
+      table,
+      rows.map((r) => r.id)
+    );
+    if (gone.length)
+      await index.queueUpdate(
+        gone.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  }
+}
+
+// `modelIds` alone when it could not be read which models went: some may still hold live bids, so
+// it names no versions to refund.
+type BidRefundFailure =
+  | { versionIds: number[]; transactionIds?: string[]; error?: string }
+  | { modelIds: number[]; error: string };
+
+/**
+ * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
+ * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
+ * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
+ */
+async function refundBidsForDeletedModels(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[],
+  wipe: { userId: number; actorUserId: number | null }
+): Promise<BidRefundFailure[]> {
+  const failures = await refundEachDeletedModel(models);
+  for (const failure of failures)
+    logToAxiom({
+      name: 'bid-refund-failed',
+      type: 'error',
+      message: 'A content wipe could not refund bids; refund them by hand',
+      source: 'remove-all-content',
+      userId: wipe.userId,
+      moderatorId: wipe.actorUserId,
+      ...failure,
+    }).catch(() => undefined);
+  return failures;
+}
+
+async function refundEachDeletedModel(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[]
+): Promise<BidRefundFailure[]> {
+  const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
+  let gone: Set<number>;
+  try {
+    gone = new Set(
+      await goneIds(
+        'Model',
+        models.map((m) => m.id)
+      )
+    );
+  } catch (e) {
+    return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
+  }
+  const failures: BidRefundFailure[] = [];
+  for (const m of models) {
+    if (!gone.has(m.id)) continue;
+    const versionIds = versionIdsOf(m);
+    try {
+      const { refundFailed } = await refundBidsForVersions({
+        versionIds,
+        name: m.name,
+        notificationKey: m.id,
+      });
+      if (refundFailed.length) failures.push({ versionIds, transactionIds: refundFailed });
+    } catch (e) {
+      failures.push({ versionIds, error: (e as Error).message });
+    }
+  }
+  return failures;
+}
+
+/**
+ * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
+ * above, which soft-deletes and has a live inverse in `restoreUser`.
+ *
+ * `actorUserId` is the acting moderator when one exists. It is OPTIONAL because
+ * one of the two callers genuinely has no user identity: `/api/mod/remove-all-
+ * content` is a `WebhookEndpoint`, authenticated by a shared secret, so there is
+ * no actor to thread. The tRPC caller (`user.removeAllContent`, a
+ * `moderatorProcedure`) passes `ctx.user.id`.
+ */
+export const removeAllContent = async ({
+  id,
+  actorUserId = null,
+  claimedModeratorId = null,
+}: {
+  id: number;
+  actorUserId?: number | null;
+  /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
+  claimedModeratorId?: number | null;
+}) => {
+  const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
+  // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
+  // held to it. The deletes that destroy evidence check again in their own statements.
+  const { markerView } = await assertAccountNotUnderLegalHold(id);
+  const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
+
+  const models = await dbRead.model.findMany({
+    where: { userId: id },
+    select: { id: true, name: true, modelVersions: { select: { id: true } } },
+  });
   const images = await dbRead.image.findMany({
     where: { userId: id },
     select: { id: true, url: true },
@@ -1279,69 +1516,302 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     where: { userId: id },
     select: { id: true },
   });
-  const bounties = await dbRead.collection.findMany({
-    where: { userId: id },
-    select: { id: true },
-  });
 
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  await dbWrite.bountyEntry.deleteMany({
-    where: { userId: id, benefactors: { none: {} } },
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
+  const unsettled = await dbWrite.bounty.findMany({
+    // `isPayoutPending` as a query; keep the two in step.
+    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
+    select: { id: true },
   });
-  await dbWrite.bounty.deleteMany({ where: { userId: id } });
-  await dbWrite.answer.deleteMany({ where: { userId: id } });
-  await dbWrite.question.deleteMany({ where: { userId: id } });
+  const keptBountyIds: number[] = [];
+  if (unsettled.length) {
+    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
+      '~/server/services/bounty.service'
+    );
+    for (const { id: bountyId } of unsettled)
+      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
+        keptBountyIds.push(bountyId);
+    if (keptBountyIds.length)
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: 'Kept bounties whose payout is not settled',
+        userId: id,
+        bountyIds: keptBountyIds,
+      }).catch(() => undefined);
+  }
+  // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
+  const bounties = await dbWrite.bounty.findMany({
+    where: { userId: id, id: { notIn: keptBountyIds } },
+    select: { id: true },
+  });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
   await dbWrite.userProfile.deleteMany({ where: { userId: id } });
-  await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2.deleteMany({ where: { userId: id } });
-  await dbWrite.comment.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
-  await dbWrite.article.deleteMany({ where: { userId: id } });
-  await dbWrite.post.deleteMany({ where: { userId: id } });
-  await dbWrite.model.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
-  // remove images from s3 buckets before deleting them
+  // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
+  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
+  // answers, questions and reviews are here because each cascades its comment thread.
+  const unlessHeld = Prisma.sql`NOT ${held}`;
+  let stopped: boolean;
   try {
-    for (const image of images) {
-      await deleteImageById({ id: image.id });
-    }
-  } catch (e) {}
-  await dbWrite.image.deleteMany({ where: { userId: id } });
+    await dbWrite.$executeRaw`
+      DELETE FROM "BountyEntry" be
+      WHERE be."userId" = ${id}
+        AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
+        AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      DELETE FROM "Bounty"
+      WHERE "userId" = ${id} AND id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // Rows, storage objects and caches; then any image uploaded since the list was read.
+    await deleteImages(
+      images.map((i) => i.id),
+      true,
+      { onlyWhere: unlessHeld }
+    );
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await refreshProfilePicturesForUsers([id]);
 
-  await modelsSearchIndex.queueUpdate(
-    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await imagesSearchIndex.queueUpdate(
-    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await imagesMetricsSearchIndex.queueUpdate(
-    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await articlesSearchIndex.queueUpdate(
-    articles.map((a) => ({ id: a.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await collectionsSearchIndex.queueUpdate(
-    collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await bountiesSearchIndex.queueUpdate(
-    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-
-  await userMetrics.queueUpdate(id);
-  await articleMetrics.queueUpdate(articles.map((a) => a.id));
-
-  for (const m of models) {
-    await deleteBidsForModel({ modelId: m.id });
+    // A hold that landed mid-wipe stopped the deletes above without an error.
+    const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+    stopped = after?.held !== false;
+  } catch (e) {
+    if (!isLegalHoldAbort(e)) throw e;
+    stopped = true;
   }
+
+  // Report it, drop from the indexes only what really went, and leave the apps store alone.
+  if (stopped) {
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: 'Stopped by a legal hold placed during the wipe',
+      userId: id,
+    }).catch(() => undefined);
+    await unindexDeleted([
+      [modelsSearchIndex, 'Model', models],
+      [articlesSearchIndex, 'Article', articles],
+      [collectionsSearchIndex, 'Collection', collections],
+      [bountiesSearchIndex, 'Bounty', bounties],
+    ]).catch((e: unknown) =>
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
+        userId: id,
+      }).catch(() => undefined)
+    );
+    await refundBidsForDeletedModels(models, alertedBy);
+    throw new LegalHoldStoppedError();
+  }
+
+  // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
+  // next step still runs; only the hold re-check below stops the rest.
+  const incomplete: string[] = [];
+  const failed = (step: string, message: string, details?: Record<string, unknown>) => {
+    incomplete.push(step);
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: `Step failed after the wipe: ${message}`,
+      step,
+      userId: id,
+      ...details,
+    }).catch(() => undefined);
+  };
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      failed(step, (error as Error)?.message);
+    }
+  };
+  const unindex = (step: string, index: typeof modelsSearchIndex, rows: { id: number }[]) =>
+    runStep(step, () =>
+      index.queueUpdate(
+        rows.map((r) => ({ id: r.id, action: SearchIndexUpdateQueueAction.Delete }))
+      )
+    );
+
+  await unindex('index-models', modelsSearchIndex, models);
+  await unindex('index-images', imagesSearchIndex, images);
+  await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
+  await unindex('index-articles', articlesSearchIndex, articles);
+  await unindex('index-collections', collectionsSearchIndex, collections);
+  await unindex('index-bounties', bountiesSearchIndex, bounties);
+  await unindex('index-user', usersSearchIndex, [{ id }]);
+
+  await runStep('user-metrics', () => userMetrics.queueUpdate(id));
+  await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
+
+  const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
+
+  // The two stores below are separate databases, so no statement there can carry the hold: check
+  // again before either.
+  await assertAccountNotUnderLegalHold(id).catch(() => {
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: 'Stopped by a legal hold before the App Blocks stores',
+      userId: id,
+    }).catch(() => undefined);
+    throw new LegalHoldStoppedError();
+  });
+
+  // ── App Blocks per-user storage ─────────────────────────────────────────────
+  // A user's App Storage rows live in per-app `app_<slug>` schemas in the separate
+  // apps database, so nothing above this point reaches them.
+  //
+  // 🔴 LAST, AND LOG-AND-CONTINUE: the main-database wipe is already complete and
+  // no transaction spans the two databases, so a failure here is logged and named
+  // in `incomplete`, never thrown. Recover by hand with
+  // `apps.mod.userStorage.purgeAccount`.
+  //
+  // Dynamic import: this module is already enormous and the purge service pulls in
+  // the apps-db pool, which nothing else on this path needs.
+  //
+  // The purge writes its audit row before deleting anything; keep it that way.
+  //
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep resolves even when apps fail
+  // (they land in `failures[]`), so a bare try/catch sees a clean resolve.
+  try {
+    const { purgeUserAppStorageForAccountWipe } = await import(
+      '~/server/services/apps/user-storage-purge.service'
+    );
+    const result = await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+    if (result.failures.length > 0) {
+      failed('app-storage', `${result.failures.length} app(s) failed`);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage purge INCOMPLETE (userId=${id}): ` +
+          `${result.failures.length} app(s) failed, ${result.totals.appCount} purged. ` +
+          `The content wipe COMPLETED and is unaffected — re-run via ` +
+          `apps.mod.userStorage.purgeAccount. Failures: ` +
+          result.failures
+            .map((f) => `${f.slug}(${f.auditEventId ?? 'no-audit-row'}): ${f.error}`)
+            .join('; ')
+      );
+    }
+    if (result.schemasTruncated) {
+      // The THIRD way the sweep can complete having deliberately skipped rows,
+      // alongside `failures[]` and `unmappedSchemas[]`. Unreachable today (the cap
+      // is 500 against ~20 schemas), but a reader of this block would reasonably
+      // assume all three conditions are covered, and two of three is how the next
+      // silent partial wipe happens.
+      // 🔴 DO NOT tell the operator to re-run `purgeAccount` here. That path
+      // enumerates the same `information_schema` names, `.sort()`s them and takes
+      // the same `.slice(0, MAX)` — so a re-run drops exactly the same schemas,
+      // deterministically, forever. (Re-running genuinely does help for
+      // `failures[]`, which is transient, and the `unmappedSchemas` warning
+      // correctly asks for a human; this one needed its own remedy.)
+      failed('app-storage-truncated', 'schema sweep hit its candidate cap');
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
+          `hit its candidate cap, so some schemas were NOT examined — and re-running ` +
+          `purgeAccount would skip the SAME ones (the candidate list is sorted and ` +
+          `truncated deterministically). Purge the remaining apps individually via ` +
+          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS. ` +
+          `NOTE: purgeApp records as a MODERATOR purge, so its audit row keeps the ` +
+          `per-key snapshot (key names, sizes, md5 fingerprints) that the wipe path ` +
+          `deliberately withholds for an erased account — prefer raising the cap.`
+      );
+    }
+    if (result.unmappedSchemas.length > 0) {
+      // Reported separately because it is a different condition with a different
+      // remedy: these schemas hold the user's rows but map to no single AppBlock,
+      // so the sweep deliberately skipped them and they need a human.
+      failed('app-storage-unmapped', `${result.unmappedSchemas.length} unmapped schema(s)`);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: ${result.unmappedSchemas.length} ` +
+          `schema(s) hold rows for userId=${id} but map to no single app block and were SKIPPED: ` +
+          result.unmappedSchemas.join(', ')
+      );
+    }
+  } catch (err) {
+    // The enumeration-stage faults only — a dead apps DB, a bad pool checkout.
+    failed('app-storage', err instanceof Error ? err.message : String(err));
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run via apps.mod.userStorage.purgeAccount: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+
+  const docStoreError = await wipeAccountFromDocStore(id);
+  if (docStoreError) failed('doc-store', docStoreError);
+
+  return { incomplete };
 };
+
+/**
+ * The App Blocks DOCUMENT STORE half of an account wipe (`DocStoreMaintenance.wipeAccount`):
+ * private documents, authored shared documents and marks deleted, usage released, in
+ * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
+ * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
+ * wipe: a failure is logged and returned for `incomplete`.
+ *
+ * RETRY: nothing retries it automatically. A wiped account leaves no state in the main database
+ * that a sweep could find it by (the user row stays, with no flag), so the review-storage sweep's
+ * pattern does not transfer. The wipe is idempotent, so the retry is re-running the content wipe
+ * (`user.removeAllContent`, or the webhook) for that user: every step of it, this one included,
+ * only removes what is still there. A namespace that failed rolled back in full.
+ */
+async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
+  try {
+    const { getDocStoreMaintenance } = await import(
+      '~/server/services/apps/doc-store-maintenance.instance'
+    );
+    const result = await getDocStoreMaintenance().wipeAccount(userId);
+    if (result.failures.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks document store wipe INCOMPLETE (userId=${userId}): ` +
+          `${result.failures.length} namespace(s) failed and were left unchanged, ` +
+          `${result.namespaces.length} wiped. The content wipe COMPLETED and is unaffected — ` +
+          `re-run user.removeAllContent for this user to retry. Failures: ` +
+          result.failures.map((f) => `${f.appId}/${f.ns}: ${f.error}`).join('; ')
+      );
+      return `${result.failures.length} namespace(s) failed`;
+    }
+    return null;
+  } catch (err) {
+    const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
+    // No store connection, or one the store refuses: nothing can be removed through it. Not
+    // logged, because that is every wipe in an environment without the store. Rows CAN survive
+    // here if the store was configured, written to, and then disabled or pointed at a role it
+    // refuses (logged once, by the store instance); re-running the wipe once the store is back
+    // removes them.
+    if (isDocStoreError(err, 'storage_disabled')) return null;
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks document store wipe failed (userId=${userId}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run user.removeAllContent for this ` +
+        `user to retry: ${message}`
+    );
+    return message;
+  }
+}
 
 export const getUserCosmetics = ({
   userId,
@@ -1354,6 +1824,7 @@ export const getUserCosmetics = ({
         where: equipped ? { equippedAt: { not: null } } : undefined,
         select: {
           obtainedAt: true,
+          equippedAt: true,
           equippedToId: true,
           equippedToType: true,
           forId: true,
@@ -1361,14 +1832,15 @@ export const getUserCosmetics = ({
           claimKey: true,
           data: true,
           cosmetic: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              type: true,
-              source: true,
-              data: true,
-            },
+            // Spread rather than hand-listed, so a field added to the shared
+            // selector reaches this read too — it is the one the whole cosmetics
+            // UI runs on, and a divergence here surfaces as one surface missing a
+            // field nobody thinks to check.
+            //
+            // `createdById` is extra: a scalar on the row already being selected,
+            // so no join and no extra round trip, and it is what lets the sticker
+            // tray filter to your own without asking a second procedure.
+            select: { ...simpleCosmeticSelect, createdById: true, flags: true },
           },
         },
       },
@@ -1403,14 +1875,107 @@ export async function getCosmeticsForUsers(userIds: number[]) {
 
 export async function deleteUserCosmeticCache(userId: number) {
   await userCosmeticCache.refresh(userId);
+  // The creator card carries the worn cosmetics too.
+  await bustUserCreatorCache(userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
   return await profilePictureCache.fetch(userIds);
 }
 
+export type CachedUserCosmeticsAndProfilePicture = Pick<
+  UserWithCosmetics,
+  'profilePicture' | 'cosmetics'
+>;
+
+/**
+ * The `profilePicture` and `cosmetics` that `userWithCosmeticsSelect` nests, in that shape, from the
+ * user caches — one batch per cache for every id. Returns a lookup; a user with neither gets
+ * `{ profilePicture: null, cosmetics: [] }`, as the nested select gives.
+ */
+export async function getCosmeticsAndProfilePicturesForUsers(
+  userIds: number[]
+): Promise<(userId: number) => CachedUserCosmeticsAndProfilePicture> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return () => ({ profilePicture: null, cosmetics: [] });
+
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(ids),
+    getCosmeticsForUsers(ids),
+  ]);
+
+  return (userId) => ({
+    profilePicture: profilePictures[userId] ?? null,
+    cosmetics: (cosmetics[userId] ?? []).flatMap(({ data, cosmetic }) =>
+      cosmetic
+        ? [
+            {
+              data,
+              cosmetic: {
+                id: cosmetic.id,
+                data: cosmetic.data,
+                type: cosmetic.type,
+                source: cosmetic.source,
+                name: cosmetic.name,
+              },
+            },
+          ]
+        : []
+    ),
+  });
+}
+
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+}
+
+/** The users whose profile picture is one of `imageIds`, from the primary. */
+export async function getProfilePictureUserIds(imageIds: number[]) {
+  if (!imageIds.length) return [];
+  const users = await dbWrite.user.findMany({
+    where: { profilePictureId: { in: imageIds } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
+}
+
+function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
+  logToAxiom({
+    type: 'error',
+    name: 'profile-picture-cache-refresh',
+    message: (error as Error)?.message,
+    ...meta,
+  }).catch(() => undefined);
+}
+
+/**
+ * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
+ * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ */
+export async function refreshProfilePicturesForUsers(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  try {
+    await profilePictureCache.refresh(ids);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  }
+}
+
+/**
+ * For a write that changed images' rating or ingestion: refreshes the cached profile picture of
+ * every user whose picture is one of them, so the avatar gate applies the new rating now rather
+ * than at the cache TTL. Never throws, for the same reason as `refreshProfilePicturesForUsers`.
+ */
+export async function refreshProfilePicturesForImages(imageIds: number[]) {
+  let userIds: number[];
+  try {
+    userIds = await getProfilePictureUserIds(imageIds);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { imageIds: imageIds.join(',') });
+    return;
+  }
+  await refreshProfilePicturesForUsers(userIds);
 }
 
 // #region [article engagement]
@@ -1469,6 +2034,66 @@ export const getUserBookmarkedModels = async ({ userId }: { userId: number }) =>
   return bookmarked.map(({ modelId }) => modelId).filter(isDefined);
 };
 
+const leaderboardRankInsert = ({
+  leaderboardFilter,
+  userFilter,
+  onConflict = Prisma.empty,
+}: {
+  leaderboardFilter: Prisma.Sql;
+  userFilter: Prisma.Sql;
+  onConflict?: Prisma.Sql;
+}) => Prisma.sql`
+  WITH user_positions AS (
+    SELECT
+      lr."userId",
+      lr."leaderboardId",
+      l."title",
+      lr.position,
+      -- The showcase is a PREFERENCE, not a filter. Applied as a WHERE clause it
+      -- deleted the badge outright whenever the showcased board couldn't produce
+      -- one — a RED-exclusive or non-public board, or one the user has since
+      -- dropped out of the top 100 on. Measured on prod 2026-08-14: 62 users had
+      -- a top-100 placement on an eligible board and no UserRank row at all.
+      row_number() OVER (
+        PARTITION BY lr."userId"
+        ORDER BY
+          (lr."leaderboardId" IS NOT DISTINCT FROM u."leaderboardShowcase") DESC,
+          lr."position"
+      ) row_num
+    FROM "User" u
+    JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+    JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+    WHERE lr.date = current_date
+      AND lr.position <= 100
+      ${leaderboardFilter}
+      ${userFilter}
+  ),
+  lowest_position AS (
+    SELECT
+      up."userId",
+      up.position,
+      up."leaderboardId",
+      up."title" "leaderboardTitle",
+      (SELECT data ->> 'url'
+       FROM "Cosmetic" c
+       WHERE c."leaderboardId" = up."leaderboardId"
+         AND up.position <= c."leaderboardPosition"
+       ORDER BY c."leaderboardPosition"
+       LIMIT 1) as "leaderboardCosmetic"
+    FROM user_positions up
+    WHERE row_num = 1
+  )
+  INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+  SELECT
+    "userId",
+    position,
+    "leaderboardId",
+    "leaderboardTitle",
+    "leaderboardCosmetic"
+  FROM lowest_position
+  ${onConflict};
+`;
+
 export const updateLeaderboardRank = async ({
   leaderboardIds,
 }: {
@@ -1484,56 +2109,44 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw`
-      WITH user_positions AS (
-        SELECT
-          lr."userId",
-          lr."leaderboardId",
-          l."title",
-          lr.position,
-          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
-        FROM "User" u
-        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
-        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-        WHERE lr.date = current_date
-          AND lr.position <= 100
-          -- UserRank is a single global table but the badge (title + cosmetic) renders
-          -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-          -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-          -- is visible on any SFW domain still earns a badge (requiring 'all' would
-          -- strip the badge from everyone on the green/blue-scoped boards).
-          AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
-          ${leaderboardFilter}
-          AND (
-            u."leaderboardShowcase" IS NULL
-            OR lr."leaderboardId" = u."leaderboardShowcase"
-          )
-      ),
-      lowest_position AS (
-        SELECT
-          up."userId",
-          up.position,
-          up."leaderboardId",
-          up."title" "leaderboardTitle",
-          (SELECT data ->> 'url'
-           FROM "Cosmetic" c
-           WHERE c."leaderboardId" = up."leaderboardId"
-             AND up.position <= c."leaderboardPosition"
-           ORDER BY c."leaderboardPosition"
-           LIMIT 1) as "leaderboardCosmetic"
-        FROM user_positions up
-        WHERE row_num = 1
-      )
-      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
-      SELECT
-        "userId",
-        position,
-        "leaderboardId",
-        "leaderboardTitle",
-        "leaderboardCosmetic"
-      FROM lowest_position;
-    `,
+    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
   ]);
+};
+
+/**
+ * Per-user variant, for when a user changes their showcase and expects to see it.
+ * `updateLeaderboardRank` cannot serve that: it TRUNCATEs a table the whole site
+ * reads, so calling it on a profile save blanks every user's badge mid-rebuild.
+ * Measured on the prod replica 2026-08-14: 0.87 ms scoped vs 196 ms full.
+ *
+ * Upsert-only, deliberately. Deleting first would strip a badge and then have nothing
+ * to replace it with on any day the 23:00 population failed — the exact symptom this
+ * path exists to fix, re-entered through a new door. `prepare-leaderboard` guards the
+ * nightly rebuild with `isLeaderboardPopulated` for that reason, and removal stays that
+ * job's business: under the ordering above a user with any eligible placement always
+ * produces a row, so a save never needs to remove one. It also keeps two concurrent
+ * saves off a delete-then-insert race into the `UserRank` primary key.
+ */
+export const updateLeaderboardRankForUsers = async ({
+  userIds,
+}: {
+  userIds: number | number[];
+}) => {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  if (!ids.length) return;
+
+  await dbWrite.$executeRaw(
+    leaderboardRankInsert({
+      leaderboardFilter: Prisma.empty,
+      userFilter: Prisma.sql`AND u.id IN (${Prisma.join(ids)})`,
+      onConflict: Prisma.sql`
+    ON CONFLICT ("userId") DO UPDATE SET
+      "leaderboardRank" = EXCLUDED."leaderboardRank",
+      "leaderboardId" = EXCLUDED."leaderboardId",
+      "leaderboardTitle" = EXCLUDED."leaderboardTitle",
+      "leaderboardCosmetic" = EXCLUDED."leaderboardCosmetic"`,
+    })
+  );
 };
 
 /**
@@ -1587,7 +2200,9 @@ async function bulkUnpublishModelsForBannedUser({
         UPDATE "Model"
         SET
           status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
-          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+          meta = ${asJsonbObjectSql('meta')} || ${unpublishedMeta}::jsonb,
+          -- Raw SQL skips @updatedAt; the creator score re-scores owners from it.
+          "updatedAt" = now()
         WHERE id IN (${Prisma.join(modelIds)})
       `;
 
@@ -1597,7 +2212,7 @@ async function bulkUnpublishModelsForBannedUser({
           UPDATE "ModelVersion"
           SET
             status = ${ModelStatus.Unpublished}::"ModelStatus",
-            meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+            meta = ${asJsonbObjectSql('meta')} || ${unpublishedMeta}::jsonb
           WHERE id IN (${Prisma.join(versionIds)})
         `;
 
@@ -1737,6 +2352,12 @@ async function bulkUnpublishModelsForBannedUser({
   };
 }
 
+export class AlreadyBannedError extends Error {
+  constructor(id: number) {
+    super(`User ${id} is already banned`);
+  }
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -1747,13 +2368,35 @@ export const toggleBan = async ({
   force,
   removeMedia,
   removeModels,
-}: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
+  removeComments,
+  mediaBlockedByCaller,
+  keepProfileLinks,
+  onlyBan,
+  banActivity,
+}: ToggleBanUser & {
+  userId: number;
+  isModerator?: boolean;
+  force?: boolean;
+  /** Server-only, never in the input schema: the caller blocks the media itself, more strictly. */
+  mediaBlockedByCaller?: boolean;
+  /** Server-only: a ban an unban may need to undo leaves the profile links, which no unban restores. */
+  keepProfileLinks?: boolean;
+  /**
+   * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
+   * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
+   * already banned rather than unbanning it, or replacing a ban that lands before the write.
+   */
+  onlyBan?: boolean;
+  /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
+  banActivity?: string;
+}) => {
   // Get user with username for search index deletion
-  const user = await getUserById({
-    id,
-    select: { bannedAt: true, meta: true, username: true, email: true },
-  });
+  const select = { bannedAt: true, meta: true, username: true, email: true } as const;
+  const user = onlyBan
+    ? await dbWrite.user.findUnique({ where: { id }, select })
+    : await getUserById({ id, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -1772,13 +2415,32 @@ export const toggleBan = async ({
         },
       };
 
-  const updatedUser = await updateUserById({
-    id,
-    data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
-    updateSource: 'toggleBan',
-  });
+  const data = { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta };
+  const updatedUser = onlyBan
+    ? await dbWrite.$transaction(async (tx) => {
+        const { count } = await tx.user.updateMany({ where: { id, bannedAt: null }, data });
+        if (!count) throw new AlreadyBannedError(id);
+        if (banActivity) {
+          await tx.modActivity.create({
+            data: { userId, entityType: 'user', entityId: id, activity: banActivity },
+          });
+        }
+        return tx.user.findUniqueOrThrow({ where: { id } });
+      })
+    : await updateUserById({ id, data, updateSource: 'toggleBan' });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 
-  await invalidateSession(id, 'ban');
+  // The ban has committed: a throw here would skip every step below and fail an action that took.
+  await invalidateSession(id, 'ban').catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-invalidate-session',
+      userId: id,
+      message: (error as Error).message,
+      error,
+    })
+  );
 
   if (!bannedAt) {
     // Run cleanup operations in parallel groups
@@ -1803,13 +2465,43 @@ export const toggleBan = async ({
 
       // Wipe public-profile UserLink rows so banned users' off-site links
       // disappear immediately (replaces a manual Retool DELETE step).
-      dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-delete-user-links',
-          message: (error as Error).message,
-        })
-      ),
+      keepProfileLinks
+        ? Promise.resolve()
+        : dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-delete-user-links',
+              message: (error as Error).message,
+            })
+          ),
+
+      // Revoke every live App Block instance of every block this user PUBLISHES.
+      // `invalidateSession` above ends their own browser sessions; it does not touch
+      // a block token, which is a separate RS256 JWT the runtime guards check against
+      // a per-instance Redis marker. Without this the tokens their blocks already hold
+      // keep authenticating against the REST and tRPC bridges until natural `exp` —
+      // 900s by default, 14400s for a `dev` token. See the writer's own docblock for
+      // what is and is not in that set (owner only, not seated collaborators).
+      //
+      // Isolated like every other leg of this fan-out: the marker write must never be
+      // able to fail the ban. `revokeInstance` already swallows Redis errors; this
+      // catch covers the DB read in front of it.
+      revokeBlockInstancesForPublisher({ userId: id })
+        .then((revoked) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-revoke-block-instances',
+            message: `revoked ${revoked} block instance(s) for banned publisher ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-block-instances',
+            message: (error as Error).message,
+            error,
+          })
+        ),
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
@@ -1839,13 +2531,57 @@ export const toggleBan = async ({
     ]);
 
     // Opt-in "remove all images & videos": block (not delete) the banned user's
-    // media, defaulting ON for SexualMinor bans. Blocking (Moderated) preserves
-    // the 7-day appeal window — the remove-blocked-images job hard-deletes them
-    // after that. CSAM semantics stay reserved for the softDeleteUser path.
+    // media. Minor-safety bans always remove it, whatever `removeMedia` says.
+    // Blocking (Moderated) preserves the 7-day appeal window — the
+    // remove-blocked-images job hard-deletes them after that. CSAM semantics
+    // stay reserved for the softDeleteUser path.
     const shouldRemoveMedia =
-      removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
+      !mediaBlockedByCaller &&
+      (removeMedia === true ||
+        (reasonCode !== undefined && banReasonsAlwaysRemovingMedia.includes(reasonCode)));
     if (shouldRemoveMedia) {
       try {
+        // The rows this ban is about to block that still carry account-deletion grace
+        // breadcrumbs. Read BEFORE the UPDATE: afterwards they are indistinguishable from the
+        // rows the grace pass itself blocked, because both end up `ingestion = 'Blocked'` with
+        // `blockedFor = 'moderated'`.
+        //
+        // 🔴 NOT `clearAccountDeletionImageMarkers({ userId: id })`, and do not "simplify" it back
+        // to that. Both of `remove-deleted-user-images`'s statements write the breadcrumb only on
+        // a row they leave `ingestion = 'Blocked'` — one sets it in the same UPDATE, the other
+        // requires it — and the UPDATE below only touches rows that are NOT Blocked. So for every
+        // row the grace pass marked, an account-wide clear here strips a breadcrumb off a row
+        // this ban provably did not touch. Lift the ban, restore the
+        // account, and `countPendingAccountDeletionImageRestores` (which keys on the breadcrumb)
+        // reads 0: `restoreUser` never queues the account, `restore-user-images` never runs, and
+        // the library stays Blocked with the recorded prior `ingestion` values gone — silent in
+        // the row and silent in the `imagesPendingRestore` the moderator is shown.
+        //
+        // This set is normally EMPTY. It is non-empty only for a row that was breadcrumbed and
+        // then un-blocked during the grace period — `handleUnblockImages` sets
+        // `ingestion = 'Scanned'` without stripping the breadcrumb — which is exactly the row a
+        // later account restore would otherwise un-block back out of this ban.
+        // Its own catch: this read is new, and the media block is the part of a ban that must not
+        // be able to fail because of it. Falling back to an empty set degrades the clear to what
+        // shipped before the breadcrumbs existed, which is the recoverable direction; letting it
+        // escape into the outer catch would skip the block and leave a banned account's media up.
+        let graceMarked: { id: number }[] = [];
+        try {
+          graceMarked = await dbWrite.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE "userId" = ${id}
+              AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+              AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+          `;
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-grace-marker-scan',
+            message: (error as Error).message,
+            error,
+          });
+        }
+
         await dbWrite.image.updateMany({
           where: { userId: id, ingestion: { not: 'Blocked' } },
           data: {
@@ -1854,6 +2590,12 @@ export const toggleBan = async ({
             blockedFor: BlockedReason.Moderated,
           },
         });
+
+        // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
+        // actually blocked rather than to the account: a ban outranks a grace block, so the
+        // restore breadcrumbs come off the rows it hid.
+        await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
+        await refreshProfilePicturesForUsers([id]);
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -1863,12 +2605,99 @@ export const toggleBan = async ({
         });
       }
     }
+
+    // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
+    // reopen. See `bulkSetCommentV2TosViolation`.
+    if (removeComments) {
+      try {
+        await Promise.all([
+          dbWrite.comment.updateMany({
+            where: { userId: id, tosViolation: false },
+            data: { tosViolation: true },
+          }),
+          dbWrite.commentV2.updateMany({
+            where: { userId: id, tosViolation: false },
+            data: { tosViolation: true },
+          }),
+        ]);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-comments',
+          message: (error as Error).message,
+          error,
+        });
+      }
+    }
+
+    // The LAST thing the ban branch does. `bannedAt` is written before any of the fan-out above, so a
+    // caller polling it is told the ban landed while the model unpublish, media block, comment
+    // flagging, index removal and subscription cancels are all still running on the primary — which is
+    // how Bulk Ban came to queue a thousand overlapping fan-outs. This is the only signal that means
+    // "the expensive half is done", and `banConfirmed` in the moderator app polls it.
+    //
+    // `jsonb_set` rather than another `updateUserById`: the fan-out takes seconds, and a read-modify-
+    // write of `meta` here would clobber anything written to that column in the meantime.
+    await dbWrite.$executeRaw`
+      UPDATE "User"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{banDetails,completedAt}', to_jsonb(NOW()))
+      WHERE id = ${id} AND meta -> 'banDetails' IS NOT NULL
+    `;
   } else {
     // Unbanning: reverse the at-period-end cancellation applied on ban, if the
     // membership is still within its paid period.
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
+    // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a
+    // dev token is involved — and re-minting did NOT help: `isRevoked` keys on
+    // `claims.blockInstanceId`, and every namespace's id is stable across a re-mint, so a
+    // fresh token carries the same id the marker names. The only remedy was a moderator
+    // deleting Redis keys by hand. (This card's own AC-3 asserted the opposite; it was
+    // wrong, and `blocks/publisher-ban-revocation.service.ts` carries the measurement.)
+    //
+    // Clears the BAN keyspace only — an INSTALL marker from a genuine uninstall or
+    // toggle-off is a different key and survives, so lifting a ban cannot silently
+    // re-enable an install its own consumer switched off.
+    //
+    // Isolated for the same reason as the search re-index below: the unban has already
+    // committed, and an unguarded throw here would skip the `account-unbanned` email and
+    // hand the moderator a 500 for an action that succeeded.
+    await clearBlockInstancesForPublisher({ userId: id })
+      .then((cleared) =>
+        logToAxiom({
+          type: 'info',
+          name: 'unban-user-clear-block-instances',
+          message: `cleared ${cleared} block-instance ban marker(s) for unbanned publisher ${id}`,
+        })
+      )
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-clear-block-instances',
+          message: (error as Error).message,
+          error,
+        })
+      );
+
+    // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
+    // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is
+    // never re-pulled, and the reconciler only deletes. Without this, a lifted ban leaves the
+    // account permanently unfindable — a one-way door.
+    // Isolated for the same reason as the rename path: the unban has already committed, and an
+    // unguarded throw here would skip the `account-unbanned` email below and hand the moderator
+    // a 500 for an action that succeeded.
+    await usersSearchIndex
+      .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-search-index',
+          message: (error as Error).message,
+        })
+      );
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin
@@ -2034,11 +2863,17 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
 };
 // Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
 // ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Post]: postMetrics,
-};
+// A function, not a module-level map: ~/server/metrics reaches this file again through the
+// image.service import cycle, so at load time it can still be half-initialised. A process that
+// imports image.service or post.service first crashed here.
+const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | undefined =>
+  ((
+    {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Post]: postMetrics,
+    } as Partial<Record<CollectionType, typeof articleMetrics>>
+  )[type]);
 export const toggleBookmarked = async ({
   entityId,
   type,
@@ -2081,7 +2916,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = collectionEntityMetrics(type);
   if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
@@ -2114,7 +2949,9 @@ export const toggleBookmarked = async ({
     // ON CONFLICT DO NOTHING, so the race resolves at the DB with no throw. The return value isn't
     // used (the function returns `!exists`).
     await dbWrite.collectionItem.createMany({
-      data: [{ collectionId: collection.id, [entityProp]: entityId }],
+      // addedById is what the CDC handler attributes the collectedCount event to; without it the
+      // event is dropped and the bookmark never counts.
+      data: [{ collectionId: collection.id, [entityProp]: entityId, addedById: userId }],
       skipDuplicates: true,
     });
   }
@@ -2189,6 +3026,7 @@ export async function toggleReview({
   }
 
   await preventReplicationLag('resourceReview', userId);
+  void onModelReviewsChanged([{ modelId, userId }]);
 
   return setTo;
 }
@@ -2358,29 +3196,50 @@ export const createUserReferral = async ({
   }
 };
 
+const cosmeticGrantSelect = {
+  id: true,
+  availableStart: true,
+  availableEnd: true,
+  source: true,
+} satisfies Prisma.CosmeticSelect;
+
 export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
   const cosmetic = await dbRead.cosmetic.findUnique({
-    where: { id, source: { in: [CosmeticSource.Claim, CosmeticSource.Trophy] } },
-    select: { id: true, availableStart: true, availableEnd: true, source: true },
+    where: { id, source: CosmeticSource.Claim },
+    select: cosmeticGrantSelect,
   });
   if (!cosmetic) return null;
-  if (cosmetic.source === CosmeticSource.Claim && !(await isCosmeticAvailable(cosmetic.id, userId)))
-    return null;
+  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
 
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+// Server-side award paths only; never expose through a router.
+export const awardTrophyCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
+  const cosmetic = await dbRead.cosmetic.findUnique({
+    where: { id, source: CosmeticSource.Trophy },
+    select: cosmeticGrantSelect,
+  });
+  if (!cosmetic) return null;
+
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+async function grantCosmetic({ cosmeticId, userId }: { cosmeticId: number; userId: number }) {
   const userCosmetic = await dbRead.userCosmetic.findFirst({
-    where: { userId, cosmeticId: cosmetic.id },
+    where: { userId, cosmeticId },
   });
   if (userCosmetic) throw throwConflictError('You already have this cosmetic');
 
   await dbWrite.userCosmetic.create({
-    data: { userId, cosmeticId: cosmetic.id },
+    data: { userId, cosmeticId },
   });
   await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
-
-  return cosmetic;
-};
+}
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
   let available = true;
@@ -2412,15 +3271,21 @@ export async function equipCosmetic({
 
   const userCosmetics = await dbRead.userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
-    select: { obtainedAt: true, cosmetic: { select: { type: true } } },
+    select: { obtainedAt: true, cosmetic: { select: { type: true, data: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+  // An event decoration is placed on content, never worn by the user: equipped here it would show
+  // on every user-level read, none of which applies the event's preview gate.
+  if (userCosmetics.some((x) => isEventDecorationData(x.cosmetic.data)))
+    throw new Error('Event decorations are placed on content, not equipped');
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
   // Stickers are owned, not equipped — everything you own is already in the
   // picker, so equipping has nothing to mean. Guarded here and not only in the
   // UI so an equipped sticker can't exist for the buckets to have to explain.
   if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
+  if ((await getWithheldCosmeticIds(cosmeticId, dbWrite)).size)
+    throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
@@ -2432,9 +3297,11 @@ export async function equipCosmetic({
       data: { equippedAt: new Date() },
     }),
   ]);
+  await refuseIfWithheldAfterEquip(cosmeticId);
 
   // Clear cache
   await deleteUserCosmeticCache(userId);
+  await queueWornCosmeticsUpdate([userId]);
 }
 
 export async function unequipCosmeticByType({
@@ -2449,6 +3316,7 @@ export async function unequipCosmeticByType({
     data: { equippedAt: null },
   });
   await deleteUserCosmeticCache(userId);
+  await queueWornCosmeticsUpdate([userId]);
 }
 
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
@@ -2505,30 +3373,37 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
 export async function amIBlockedByUser({
   userId,
   targetUserId,
-  targetUsername,
+  confirmOnPrimary = false,
 }: {
   userId: number;
   targetUserId?: number;
-  targetUsername?: string;
+  /**
+   * Write gates (comment and reaction via throwIfBlockedByOwners, tip, challenge entry, and
+   * the prompt-provenance mint) pass true: when the cache says "not blocked", confirm
+   * against the primary. A cache entry can miss a block that just
+   * landed (see the comment below), and a write path must not let a blocked user
+   * through for that window. Page views leave it off and stay cache-only.
+   */
+  confirmOnPrimary?: boolean;
 }) {
-  if (!(targetUserId || targetUsername)) return false;
-  if (!targetUserId && targetUsername)
-    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
-
-  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
-
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
-  const engagement = await dbRead.userEngagement.findFirst({
-    where: {
-      userId: targetUserId,
-      targetUserId: userId,
-      type: 'Block',
-    },
-  });
+  // For page views the cache is the answer. `BlockedByUsers` is invalidated for the blocked
+  // user by the only writer that creates a Block (`toggleBlockUser`), refills from the
+  // primary, and its hash carries a TTL as a backstop. There used to be a per-request
+  // `userEngagement` lookup here on every cache miss; it ran on every logged-in detail view
+  // and only caught a missed invalidation, which on a page view now persists until the
+  // hash TTL instead. The remaining window: a refill that read before the block committed
+  // and wrote after the invalidation.
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+  if (!confirmOnPrimary) return false;
 
+  const engagement = await dbWrite.userEngagement.findFirst({
+    where: { userId: targetUserId, targetUserId: userId, type: 'Block' },
+    select: { userId: true },
+  });
   return !!engagement;
 }
 
@@ -2549,52 +3424,50 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
-  domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
-  if (
-    blurNsfw !== undefined ||
-    showNsfw !== undefined ||
-    // Red domain we'll store in the settings.
-    (browsingLevel !== undefined && domain !== 'red') ||
-    autoplayGifs !== undefined
-  ) {
-    await dbWrite.user.update({
-      where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
-    });
-    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
-    await userSettingsCache().bust([userId]);
-  }
-  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
-    const settings = await getUserSettings(userId);
-    if (domain === 'red' && browsingLevel !== undefined) {
-      settings.redBrowsingLevel = browsingLevel;
+  try {
+    // Settings first: if the column write below then fails, the level did not change and the
+    // only loss is the retired red copy. The other order could commit a new level while
+    // leaving that copy for the one-off fold to apply over it.
+    if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
+      // Only the keys this call is changing. Re-reading the blob and writing it back
+      // would restore every other key to the value it held at read time, discarding a
+      // concurrent write to any of them (notice dismissals, feature toggles, …).
+      await patchUserSettings(userId, {
+        set: removeEmpty(data),
+        // A level set now supersedes any retired red-domain copy, so the one-off fold of those
+        // copies into the column never applies a stale value over it.
+        ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
+        location: 'user.service:updateContentSettings',
+      });
     }
-
-    await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
+    if (
+      blurNsfw !== undefined ||
+      showNsfw !== undefined ||
+      browsingLevel !== undefined ||
+      autoplayGifs !== undefined
+    ) {
+      await dbWrite.user.update({
+        where: { id: userId },
+        data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+      });
+      userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+      await userSettingsCache().bust([userId]);
+    }
+  } finally {
+    // Also when a later write throws: an earlier one may already have committed, and the
+    // cached session must not keep serving the old value for its whole lifetime.
+    //
+    // Await so the refresh marker is set in Redis before this mutation returns.
+    // Otherwise the fire-and-forget can race the next API call / session read
+    // and hand back a stale session.user, which then overrides the user's
+    // toggle client-side via BrowserSettingsProvider's smart-merge.
+    await refreshSession(userId, { caller: 'profile' }).catch((err) => {
+      console.error('Failed to refresh session for user', userId, err);
+    });
   }
-  // Await so the refresh marker is set in Redis before this mutation returns.
-  // Otherwise the fire-and-forget can race the next API call / session read
-  // and hand back a stale session.user, which then overrides the user's
-  // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
-    console.error('Failed to refresh session for user', userId, err);
-  });
 }
-
-export const getUserByPaddleCustomerId = async ({
-  paddleCustomerId,
-}: {
-  paddleCustomerId: string;
-}) => {
-  const user = await dbRead.user.findFirst({
-    where: { paddleCustomerId },
-    select: { id: true, username: true },
-  });
-
-  return user;
-};
 
 // #region [user settings]
 // User-level content preference columns that we cache alongside the settings
@@ -2609,6 +3482,11 @@ type CachedUserSettings = UserSettingsSchema & {
   autoplayGifs: boolean | null;
 };
 
+/** A stored `settings` value that is a JSON object (not null, not an array, not a scalar). */
+function isPlainSettingsObject(value: unknown): value is UserSettingsSchema {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // Built on first USE, not on import. A module-scope createCachedObject() runs during module
 // evaluation, so any suite that wholesale-mocks `~/server/utils/cache-helpers` or
 // `~/server/redis/client` and merely reaches this service transitively fails at COLLECTION —
@@ -2619,6 +3497,9 @@ function createUserSettingsCache() {
     idKey: 'userId',
     ttl: CacheTTL.hour * 4,
     staleWhileRevalidate: false,
+    // The bust window keeps a replica read from being re-cached; this lookup reads the primary, so
+    // a longer window would only add uncached primary reads. 1 is the minimum (it is the marker's EX).
+    debounceTime: 1,
     lookupFn: async (ids) => {
       const rows = await dbWrite.$queryRaw<
         {
@@ -2638,7 +3519,10 @@ function createUserSettingsCache() {
           x.id,
           {
             userId: x.id,
-            ...((x.settings ?? {}) as UserSettingsSchema),
+            // Spread only a plain object. Nothing enforces a shape on the JSON column, and
+            // spreading an array yields `"0"`, `"1"`, … keys — fed back into a write, that
+            // nests each copy of the blob inside the next.
+            ...(isPlainSettingsObject(x.settings) ? x.settings : {}),
             showNsfw: x.showNsfw,
             blurNsfw: x.blurNsfw,
             autoplayGifs: x.autoplayGifs,
@@ -2655,9 +3539,14 @@ function userSettingsCache() {
 }
 
 /**
- * JSON-settings-only view. Used by internal callers (e.g. setUserSetting) that
- * need to read the JSON blob and write it back without polluting it with the
- * User-column fields.
+ * JSON-settings-only view, without the User-column fields.
+ *
+ * 🔴 Redis-backed (4h TTL) and READ-ONLY as far as writers are concerned. No caller may
+ * read this and write the result back — that read-modify-write is the lost-update bug
+ * `patchUserSettings` exists to remove, and the cache makes its window the TTL rather
+ * than a few milliseconds. Read it to DECIDE something (a toggle's next value, whether a
+ * value changed); never to build a write payload. Do not call it inside a transaction
+ * either: it is a Redis round trip on the transaction's clock.
  */
 export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
   const result = await userSettingsCache().fetch([id]);
@@ -2680,48 +3569,290 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
   return rest;
 }
 
-export async function setUserSetting(userId: number, settings: UserSettingsInput) {
-  const toSet = removeEmpty(settings);
-  const keys = Object.keys(toSet);
-  if (!keys.length) return;
+/**
+ * The one place `User.settings` is written.
+ *
+ * `settings` is a single JSON column with many independent writers (content
+ * prefs, feature toggles, tour progress, notice dismissals, creator shop,
+ * gallery defaults). Every one of them used to read the blob into JS, compute a
+ * new object, and write that object back. Two such writers overlapping lose one
+ * of the two edits: the second writer's snapshot was taken before the first
+ * writer's commit, so writing it back restores the pre-edit value of every key
+ * it happens to carry — including keys it was never asked to change.
+ *
+ * The cure is structural rather than temporal: never send a value that was read
+ * in JS. Each op below compiles to an expression over the *current* column, so
+ * the read and the write are one statement and there is no JS-side window at
+ * all. Under READ COMMITTED, Postgres re-evaluates a SET expression against the
+ * updated row when a concurrent transaction has just written it, so two
+ * overlapping patches compose instead of clobbering.
+ *
+ * Ops (all optional, all applied in one statement, in this order):
+ *  - `set`           — replace these top-level keys outright. The patch WINS over
+ *                      the stored value; that is the whole point, so the operand
+ *                      order of the `||` below is load-bearing rather than stylistic.
+ *  - `mergeInto`     — merge one level INTO these top-level object keys, so a
+ *                      sibling sub-key another writer added survives.
+ *  - `deepMergeInto` — merge one level further: a sub-key of a top-level object is
+ *                      itself merged rather than replaced. `mergeInto` alone still
+ *                      loses a race between two writers of the SAME sub-key (e.g.
+ *                      two `tourSettings.welcome` writes), because it replaces
+ *                      `tourSettings.welcome` wholesale; this composes the two
+ *                      writers' fields instead. Only `tourSettings` uses this today.
+ *  - `remove`        — delete these top-level keys.
+ *
+ * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key, and neither
+ * does `deepMergeInto` with either of them. All three read `settings->key` — the
+ * STORED column — not the partially-built expression, so combining ops on one key
+ * makes the later op win over the earlier op's in-progress result rather than
+ * compose with it. No caller does this today; if one ever needs to, make the ops
+ * read from the accumulated expression instead of the column.
+ *
+ * Values are bound as parameters, never spliced into the statement text —
+ * `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding
+ * an apostrophe would otherwise close the literal early.
+ *
+ * Pass `tx` to run inside a caller's transaction; the caller then owns the
+ * cache bust, which must happen after commit (Redis I/O inside a transaction
+ * burns the transaction's wall-clock budget).
+ */
+export type UserSettingsPatch = {
+  set?: Record<string, unknown>;
+  mergeInto?: Record<string, Record<string, unknown>>;
+  /** One level deeper than `mergeInto`: top-level key -> sub-key -> patch. */
+  deepMergeInto?: Record<string, Record<string, Record<string, unknown>>>;
+  remove?: string[];
+  /** `userUpdateCounter` label, so consolidating the writers does not collapse the
+   *  per-call-site attribution the metric already carried. */
+  location?: string;
+};
 
-  // Parameterised: the payload is bound, not spliced into a string literal.
-  // `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding an
-  // apostrophe used to close the literal early and corrupt the statement.
-  await dbWrite.$executeRaw`
-      UPDATE "User"
-      SET settings = COALESCE(settings, '{}'::jsonb) || ${JSON.stringify(toSet)}::jsonb
-      WHERE id = ${userId}
-    `;
-  userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
+type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
 
-  const toRemove = Object.entries(settings)
-    .filter(([, value]) => value === undefined)
-    .map(([key]) => key);
-  if (toRemove.length) {
-    // `jsonb - text[]` drops every listed key in one go, so the key names bind as a
-    // single array. The previous form hand-quoted them into a chain of `- 'key'`
-    // and emitted a trailing `}`, which made the statement unparseable.
-    await dbWrite.$executeRaw`
-      UPDATE "User"
-      SET settings = settings - ${toRemove}::text[]
-      WHERE id = ${userId}
-    `;
-    userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
+/**
+ * The stored `settings` column as a jsonb OBJECT: the stored value when it is one, `{}`
+ * otherwise. Every writer of `User.settings` starts from this, never from the bare column.
+ *
+ * 🔴 `COALESCE(settings, '{}')` is NOT this. It replaces only SQL NULL, so a stored JSON
+ * `null` or an array passes straight through, and the two operations the writers build on
+ * both go wrong on it: `jsonb || jsonb` CONCATENATES instead of merging
+ * (`'null' || '{"a":1}'` is `[null, {"a": 1}]`, and every later write appends another
+ * element — unbounded growth, with every key permanently unreadable), and `jsonb_set`
+ * RAISES (`path element at position 1 is not an integer` on an array, `cannot set path in
+ * scalar` on a scalar), so the write fails outright for that user. Treating a non-object as
+ * `{}` makes the next write repair the row — the same self-healing property the nested-key
+ * guards in `patchUserSettings` restore one level down.
+ *
+ * The top level and every nested key share one builder, `asJsonbObject`, so a change to
+ * the guard cannot reach one level and miss the other.
+ */
+const SETTINGS_AS_OBJECT = asJsonbObject('settings');
+
+export async function patchUserSettings(
+  userId: number,
+  patch: UserSettingsPatch,
+  tx?: RawClient
+): Promise<UserSettingsSchema> {
+  const set = patch.set && Object.keys(patch.set).length ? patch.set : undefined;
+  const mergeInto = Object.entries(patch.mergeInto ?? {}).filter(
+    ([, value]) => value && Object.keys(value).length
+  );
+  const deepMergeInto = Object.entries(patch.deepMergeInto ?? {})
+    .map(
+      ([key, subPatch]) =>
+        [
+          key,
+          Object.entries(subPatch ?? {}).filter(([, value]) => value && Object.keys(value).length),
+        ] as const
+    )
+    .filter(([, subEntries]) => subEntries.length);
+  const remove = patch.remove?.length ? patch.remove : undefined;
+
+  const client = tx ?? dbWrite;
+
+  // Nothing to write, but the contract is still "the settings this user now has".
+  // Read the ROW, never the cache: `getUserSettings` is Redis-backed, and both `tx`
+  // callers reach this branch with an empty patch — `updateCreatorShopSettings` when
+  // every field of its all-optional input is omitted, and the gallery copy when the
+  // model already carries default gallery settings. A Redis round trip there would
+  // burn the caller's interactive-transaction budget (Prisma's default is 5s), and
+  // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
+  // see it. Reading the row also keeps the return value consistent with the write
+  // path below, which returns `RETURNING settings` rather than a cached blob.
+  if (!set && !mergeInto.length && !deepMergeInto.length && !remove) {
+    const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+      `SELECT settings FROM "User" WHERE id = $1`,
+      userId
+    );
+    if (!current.length) throw throwNotFoundError(`No user with id ${userId}`);
+    // Same shape rule as the write path, which can only ever RETURN an object.
+    const stored: unknown = current[0]?.settings;
+    return isPlainSettingsObject(stored) ? stored : {};
   }
 
+  const values: unknown[] = [];
+  // Returns the `$N` placeholder for a newly bound value.
+  const bind = (value: unknown) => `$${values.push(value)}`;
+
+  // The base is the guarded column, not `COALESCE(settings, …)`: the top level carries the
+  // same concatenate-instead-of-merge hazard as the nested keys below (see SETTINGS_AS_OBJECT).
+  let expr = SETTINGS_AS_OBJECT;
+  if (set) expr = `(${expr} || ${bind(JSON.stringify(set))}::jsonb)`;
+  for (const [key, value] of mergeInto) {
+    // `settings->$key` reads the CURRENT column inside the same statement — that is
+    // what makes the nested merge atomic rather than a read-modify-write.
+    //
+    // 🔴 The `jsonb_typeof` test is the same guard, and for the same reason, as the one
+    // in `setAlertDismissed` below. Nothing enforces a shape on a JSON column, and
+    // `jsonb || jsonb` does NOT raise on a non-object — it CONCATENATES, so a stored
+    // `{"chat": 7}` merges to `{"chat": [7, {...}]}` and every later write appends
+    // another element. That is unbounded growth in the column plus permanently
+    // undefined reads for that key, from a value no statement here would reject.
+    //
+    // The direction matters: a plain `COALESCE` would make this primitive SELF-WORSENING
+    // where the whole-key `set` it replaced was self-healing (a rewrite overwrote the bad
+    // value). Treating a non-object as absent restores that property — the next write
+    // repairs the row. This is hardening, not a live fix: sampled prod rows are 100%
+    // objects for every key written this way, but `mergeInto` is now the designated
+    // nested-write primitive for `chat`, `features`, `creatorShop` and `gallerySettings`
+    // (`tourSettings` uses `deepMergeInto`, below), so the gap would be inherited
+    // four times over.
+    const k = bind(key);
+    expr =
+      `(${expr} || jsonb_build_object(${k}::text, ` +
+      `${asJsonbObject(`settings->${k}::text`)} ` +
+      `|| ${bind(JSON.stringify(value))}::jsonb))`;
+  }
+  for (const [key, subEntries] of deepMergeInto) {
+    // Same guard as `mergeInto`, applied twice: once for the top-level key (so a
+    // malformed `tourSettings` doesn't concatenate) and once per sub-key (so a
+    // malformed `tourSettings.welcome` doesn't either). Both reads are of the STORED
+    // column, same reasoning as the `set`/`mergeInto` non-composition note above.
+    const k = bind(key);
+    let sub = asJsonbObject(`settings->${k}::text`);
+    for (const [subKey, value] of subEntries) {
+      const sk = bind(subKey);
+      sub =
+        `(${sub} || jsonb_build_object(${sk}::text, ` +
+        `${asJsonbObject(`settings->${k}::text->${sk}::text`)} ` +
+        `|| ${bind(JSON.stringify(value))}::jsonb))`;
+    }
+    expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
+  }
+  // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
+  if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;
+
+  const rows = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+    `UPDATE "User" SET settings = ${expr} WHERE id = ${bind(userId)} RETURNING settings`,
+    ...values
+  );
+  // A raw UPDATE matching no row is a silent no-op, where the `user.update` this
+  // replaced raised Prisma P2025. A moderator acting on a deleted user must not get
+  // a success back.
+  if (!rows.length) throw throwNotFoundError(`No user with id ${userId}`);
+  userUpdateCounter?.inc({ location: patch.location ?? 'user.service:patchUserSettings' });
+
+  if (!tx) await bustUserSettings(userId);
+  return rows[0]?.settings ?? {};
+}
+
+/** Drop every per-user cache that mirrors the settings blob. */
+export async function bustUserSettings(userId: number) {
   await userSettingsCache().bust([userId]);
   // Keep the read-time metric-privacy defaults cache consistent with a settings write
   // (the `hideModel*` flags live in `settings`); TTL backstops any other writer.
   await bustUserMetricPrivacyDefaultsCache(userId);
 }
 
-export async function setDismissedAlerts(userId: number, alertIds: string[]) {
-  await dbWrite.$executeRawUnsafe(
-    `UPDATE "User" SET settings = jsonb_set(COALESCE(settings, '{}'), '{dismissedAlerts}', $1::jsonb) WHERE id = $2`,
-    JSON.stringify(alertIds),
+/**
+ * Split a caller-supplied settings object into the keys to write and the keys to
+ * delete. An explicit `undefined` marks a key for removal — the tRPC transformer
+ * carries that over the wire and zod keeps the key, so `user.setSettings` really
+ * can ask for one. Single source of this rule: every settings write goes through
+ * it, so the two halves cannot drift apart at one call site.
+ */
+export function splitSettingsPatch(settings: UserSettingsInput): UserSettingsPatch {
+  return {
+    set: removeEmpty(settings),
+    remove: Object.entries(settings)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => key),
+  };
+}
+
+/**
+ * Shallow set/remove of top-level settings keys. A key whose value is
+ * `undefined` is deleted; everything else is written as given.
+ */
+export async function setUserSetting(userId: number, settings: UserSettingsInput) {
+  return patchUserSettings(userId, {
+    ...splitSettingsPatch(settings),
+    // Was two statements with two labels (`:set` and `:remove`); it is one statement now,
+    // so it reports one.
+    location: 'user.service:setUserSetting:set',
+  });
+}
+
+/**
+ * Add or drop one id in `settings.dismissedAlerts`, as a set operation on the
+ * stored array rather than a whole-array rewrite. Two dismissals of *different*
+ * notices can now overlap without either being lost — which the previous
+ * read-the-array-in-JS-and-write-it-back form could not survive.
+ */
+/**
+ * Set `meta.emailVerificationRequired` without reading `meta` into JS first.
+ *
+ * `User.meta` is shared: `banDetails`, `muteReason`/`mutedBy`, contest-ban state and more live on it,
+ * written by moderation paths that know nothing about this one. A read-modify-write would clobber
+ * whichever of them landed in the window — and the read would be off the replica, so the window is
+ * replica lag rather than milliseconds. `jsonb_set` merges in the database, touching one key.
+ */
+export async function setEmailVerificationRequired(userId: number, required: boolean) {
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{emailVerificationRequired}', to_jsonb(${required}::boolean))
+    WHERE id = ${userId}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEmailVerificationRequired' });
+}
+
+export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
+  // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
+  // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`
+  // over an empty set yields NULL, hence the COALESCE to an empty array.
+  //
+  // `WITH ORDINALITY` + `ORDER BY ord` makes the surviving elements' order explicit rather
+  // than incidental. Nothing DEPENDS on that order — `dismissedAlerts` is read as a set
+  // (membership tests only) — and no test pins it, so treat this as intent, not a
+  // guarantee: dropping the `ORDER BY` is very likely an equivalent mutant.
+  //
+  // The `jsonb_typeof` test is not paranoia about our own writers — nothing enforces a
+  // shape on a JSON column, and `jsonb_array_elements` raises on a non-array, which
+  // would turn one malformed row into a permanent 500 on every dismissal for that user.
+  // Treating a non-array as empty self-heals it on the next write, which is what the
+  // whole-array rewrite used to do implicitly. The same holds one level up: `jsonb_set`
+  // raises on a non-object `settings`, hence SETTINGS_AS_OBJECT rather than a COALESCE.
+  const current = `CASE WHEN jsonb_typeof(settings->'dismissedAlerts') = 'array'
+                        THEN settings->'dismissedAlerts' ELSE '[]'::jsonb END`;
+  const next = dismissed
+    ? `CASE WHEN ${current} @> to_jsonb($1::text) THEN ${current}
+            ELSE ${current} || jsonb_build_array($1::text) END`
+    : `COALESCE((
+         SELECT jsonb_agg(e ORDER BY ord)
+         FROM jsonb_array_elements(${current}) WITH ORDINALITY AS t(e, ord)
+         WHERE e <> to_jsonb($1::text)
+       ), '[]'::jsonb)`;
+
+  const rows = await dbWrite.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+    `UPDATE "User"
+     SET settings = jsonb_set(${SETTINGS_AS_OBJECT}, '{dismissedAlerts}', ${next})
+     WHERE id = $2
+     RETURNING settings`,
+    alertId,
     userId
   );
-  await userSettingsCache().bust([userId]);
+  userUpdateCounter?.inc({ location: 'user.service:setAlertDismissed' });
+  await bustUserSettings(userId);
+  return rows[0]?.settings?.dismissedAlerts ?? [];
 }
 // #endregion

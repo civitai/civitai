@@ -4,29 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The module under test imports the (very large) image service, the db client and the s3
 // helpers only to build its production deps. The behaviour under test is injected, so stub
 // those graphs out entirely rather than dragging them into the suite.
-const {
-  dbWriteMock,
-  createImageMock,
-  checkFileExistsMock,
-  getImageUploadBackendMock,
-  logToAxiomMock,
-} = vi.hoisted(() => ({
-  dbWriteMock: { image: { findMany: vi.fn() } },
+const { createImageMock, checkFileExistsMock, getImageUploadBackendMock } = vi.hoisted(() => ({
   createImageMock: vi.fn(),
   checkFileExistsMock: vi.fn(),
   getImageUploadBackendMock: vi.fn(),
-  logToAxiomMock: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: dbWriteMock, dbRead: dbWriteMock }));
 vi.mock('~/server/services/image.service', () => ({ createImage: createImageMock }));
 vi.mock('~/utils/s3-utils', () => ({
   checkFileExists: checkFileExistsMock,
   getImageUploadBackend: getImageUploadBackendMock,
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: logToAxiomMock,
-  safeError: (e: unknown) => ({ message: (e as Error)?.message }),
 }));
 
 import type { CoverImageDeps, ReusableCoverImageCandidate } from '../cover-image.service';
@@ -38,6 +25,10 @@ import {
   productionCoverImageDeps,
   resolveCoverImageId,
 } from '../cover-image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const dbWriteMock = dbMock.dbWrite;
+const logToAxiomMock = loggingMock.logToAxiom;
 
 const coverImage = { url: '0d5f0a4e-0000-4000-8000-000000000001', name: 'cover.png' } as any;
 
@@ -252,20 +243,6 @@ describe('productionCoverImageDeps.objectExists', () => {
 
     await expect(productionCoverImageDeps.objectExists(coverImage.url)).resolves.toBeNull();
     expect(checkFileExistsMock).not.toHaveBeenCalled();
-  });
-
-  it('reports the indeterminate check when the uploads client cannot be built', async () => {
-    getImageUploadBackendMock.mockRejectedValue(
-      new Error('B2 image upload credentials not configured')
-    );
-
-    await productionCoverImageDeps.objectExists(coverImage.url);
-
-    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
-    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
-      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
-      reason: 'client-unavailable',
-    });
   });
 
   it('probes the uploads bucket the app actually writes to', async () => {

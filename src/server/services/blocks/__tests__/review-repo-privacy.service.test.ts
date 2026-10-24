@@ -8,21 +8,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * changes nothing while still naming what it would touch.
  */
 
-const { mockList, mockSetPrivate, mockLogToAxiom } = vi.hoisted(() => ({
+const { mockList, mockSetPrivate,  } = vi.hoisted(() => ({
   mockList: vi.fn(),
   mockSetPrivate: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve(undefined)),
+  
 }));
 
 vi.mock('../forgejo.service', () => ({
   listReviewRepos: (...a: unknown[]) => mockList(...a),
   setReviewRepoPrivate: (...a: unknown[]) => mockSetPrivate(...a),
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
-}));
-
 import { backfillReviewRepoPrivacy } from '../review-repo-privacy.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 beforeEach(() => {
   mockList.mockReset();

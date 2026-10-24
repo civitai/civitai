@@ -35,19 +35,28 @@ const { mockDb } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The MANUAL-APPLY `source_repo_url` column is read through its OWN guarded
+      // `findUnique` (app-listing-source-repo.service) — never via
+      // `listingHydrateSelect`, which the public /apps GRID shares. Mocked here so the
+      // seam is exercised; `null` = "no source repo set", the default for these rows.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
     },
   },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
+vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
+  // 🔴 BOTH EXPORTS. `app-listing.service` now imports `bustCacheTag` as well as
+  // `queryCache` (it owns `bustAppListingCatalogCache`), and a one-key factory makes the
+  // WHOLE FILE fail to import with `No "bustCacheTag" export is defined on the … mock`.
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       mockDb.$queryRaw(sql),
+  bustCacheTag: vi.fn(async () => undefined),
 }));
 
 import { getListingDetail } from '../app-listing.service';
@@ -145,6 +154,10 @@ function offsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: OWNER, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     screenshots: [],
     status: 'approved',
     ...over,

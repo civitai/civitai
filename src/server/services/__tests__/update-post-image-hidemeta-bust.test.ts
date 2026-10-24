@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Wiring test for the image-delivery metadata cache bust in `updatePostImage`.
@@ -23,27 +24,15 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockFindUniqueOrThrow, mockImageUpdate, mockBustImageDeliveryMetadataCache } = vi.hoisted(
-  () => ({
-    mockFindUniqueOrThrow: vi.fn(),
-    mockImageUpdate: vi.fn(),
-    mockBustImageDeliveryMetadataCache: vi.fn(),
-  })
-);
+const { mockBustImageDeliveryMetadataCache } = vi.hoisted(() => ({
+  mockBustImageDeliveryMetadataCache: vi.fn(),
+}));
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
+// which supplies redis/sysRedis plus the REAL key tables. The local stub this replaces returned a
+// self-vivifying proxy for every REDIS_*_KEYS lookup, so any key the code composed came back as the
+// same placeholder — nothing here asserts a key, so the swap changes no assertion.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
@@ -57,12 +46,6 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-
-// dbWrite is the only DB surface updatePostImage touches (findUniqueOrThrow + update).
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { image: { findUniqueOrThrow: mockFindUniqueOrThrow, update: mockImageUpdate } },
-}));
 
 // Every cache post.service imports — each a stub whose methods are no-op vi.fns. (Named
 // exports must be statically present for ESM import binding; a Proxy has no own keys.)
@@ -89,6 +72,8 @@ vi.mock('~/server/redis/caches', () => {
 const { mockPurgeResizeCache } = vi.hoisted(() => ({
   mockPurgeResizeCache: vi.fn().mockResolvedValue(undefined),
 }));
+const mockFindUniqueOrThrow = dbMock.dbWrite.image.findUniqueOrThrow;
+const mockImageUpdate = dbMock.dbWrite.image.update;
 
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.
@@ -123,13 +108,16 @@ vi.mock('~/server/services/tag.service', () => ({
   findOrCreateTagsByName: vi.fn(),
   getVotableImageTags: vi.fn(),
 }));
-vi.mock('~/server/services/technique.service', () => ({ getTechniqueByName: vi.fn() }));
+vi.mock('~/server/services/technique.service', () => ({ getTechniqueForWorkflow: vi.fn() }));
 vi.mock('~/server/services/tool.service', () => ({
   getToolByAlias: vi.fn(),
   getToolByDomain: vi.fn(),
   getToolByName: vi.fn(),
 }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 
 // isValidAIGeneration is called before shouldIngest; keep it deterministic. shouldIngest is
 // forced false via currentImage.blockedFor below, so its value doesn't affect the bust path.

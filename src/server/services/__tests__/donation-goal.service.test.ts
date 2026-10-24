@@ -3,26 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `checkDonationGoalComplete` runs at the end of every donation (donateToGoal) and after an
  * early-access completion — the write paths that change a goal's total (or flip it inactive).
- * It must eagerly bust the public donation-goals cache so a donor sees the change before the
- * 60s TTL, keyed by the goal's modelVersionId (and only when the goal is tied to a version).
+ * It must eagerly refresh the public donation-goals cache, keyed by the goal's modelVersionId (and
+ * only when the goal is tied to a version), so a donor sees the change before the TTL lapses. Refresh,
+ * not bust: one primary read written straight to the cache, where a bust would leave the id uncached
+ * for its window.
  */
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findFirst: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { modelVersion: mk() },
-    mockDbWrite: { donationGoal: mk(), $queryRaw: vi.fn(), $executeRaw: vi.fn() },
-  };
-});
 const {
-  mockDonationGoalsBust,
-  mockLogToAxiom,
+  mockDonationGoalsRefresh,
   mockBustMvCache,
   mockDataForModelsRefresh,
   mockUpdateEaDeadline,
@@ -30,8 +18,7 @@ const {
   mockBustPaidAccess,
   mockEndPaidAccessNow,
 } = vi.hoisted(() => ({
-  mockDonationGoalsBust: vi.fn(),
-  mockLogToAxiom: vi.fn(),
+  mockDonationGoalsRefresh: vi.fn(),
   mockBustMvCache: vi.fn(),
   mockDataForModelsRefresh: vi.fn(),
   mockUpdateEaDeadline: vi.fn(),
@@ -40,10 +27,11 @@ const {
   mockEndPaidAccessNow: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: mockDataForModelsRefresh },
-  modelVersionPublicDonationGoalsCache: { bust: mockDonationGoalsBust },
+  // refresh only: a bust() call here would throw inside the fail-open guard and fail the
+  // toHaveBeenCalled assertions below.
+  modelVersionPublicDonationGoalsCache: { refresh: mockDonationGoalsRefresh },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: vi.fn(),
@@ -53,14 +41,20 @@ vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBus
 vi.mock('~/server/services/model.service', () => ({
   queueModelEarlyAccessReindex: mockUpdateEaDeadline,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   bustPaidAccessCache: mockBustPaidAccess,
   endPaidAccessNow: mockEndPaidAccessNow,
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const goal = (over: Record<string, unknown> = {}) => ({
   id: 10,
@@ -80,7 +74,7 @@ beforeEach(() => {
   mockUpdateEaDeadline.mockResolvedValue(undefined);
   mockBustMvCache.mockResolvedValue(undefined);
   mockDataForModelsRefresh.mockResolvedValue(undefined);
-  mockDonationGoalsBust.mockResolvedValue(undefined);
+  mockDonationGoalsRefresh.mockResolvedValue(undefined);
   mockBustPaidAccess.mockResolvedValue(undefined);
   mockEndPaidAccessNow.mockResolvedValue(undefined);
   mockGetPaidAccess.mockResolvedValue({});
@@ -108,20 +102,20 @@ const primeCompletionWithActiveGate = () => {
   mockDbRead.modelVersion.findUnique.mockResolvedValueOnce({ modelId: 2 });
 };
 
-describe('checkDonationGoalComplete — public cache bust', () => {
-  it('busts the public donation-goals cache (keyed by version id) after a donation', async () => {
+describe('checkDonationGoalComplete — public cache refresh', () => {
+  it('refreshes the public donation-goals cache (keyed by version id) after a donation', async () => {
     mockDbWrite.donationGoal.findFirst.mockResolvedValueOnce(goal());
     mockDbWrite.$queryRaw.mockResolvedValueOnce([{ donationGoalId: 10, total: 100 }]); // below goal → not met
 
     await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 });
 
-    expect(mockDonationGoalsBust).toHaveBeenCalledWith(5);
+    expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5);
     // Not met → no goal close and no gate change.
     expect(mockDbWrite.donationGoal.updateMany).not.toHaveBeenCalled();
     expect(mockEndPaidAccessNow).not.toHaveBeenCalled();
   });
 
-  it('routes the bust by entity type — no ModelVersion cache bust for other entities', async () => {
+  it('routes the refresh by entity type — no ModelVersion cache refresh for other entities', async () => {
     mockDbWrite.donationGoal.findFirst.mockResolvedValueOnce(
       goal({ entityType: 'ComicChapter', entityId: 5 })
     );
@@ -129,22 +123,22 @@ describe('checkDonationGoalComplete — public cache bust', () => {
 
     await checkDonationGoalComplete({ entityType: 'ComicChapter', entityId: 5 });
 
-    expect(mockDonationGoalsBust).not.toHaveBeenCalled();
+    expect(mockDonationGoalsRefresh).not.toHaveBeenCalled();
   });
 
-  it('is FAIL-OPEN: a rejecting bust does NOT reject (never poisons the donation/refund path)', async () => {
-    // A redis blip during the bust must not propagate — checkDonationGoalComplete runs inside
+  it('is FAIL-OPEN: a rejecting refresh does NOT reject (never poisons the donation/refund path)', async () => {
+    // A redis blip during the refresh must not propagate — checkDonationGoalComplete runs inside
     // donateToGoal's try after donation.create has committed; a throw there refunds the buzz and
     // tells the donor it failed → they retry → double donation.
     mockDbWrite.donationGoal.findFirst.mockResolvedValueOnce(goal());
     mockDbWrite.$queryRaw.mockResolvedValueOnce([{ donationGoalId: 10, total: 100 }]);
-    mockDonationGoalsBust.mockRejectedValueOnce(new Error('redis down'));
+    mockDonationGoalsRefresh.mockRejectedValueOnce(new Error('redis down'));
 
     const result = await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 });
 
     // Resolves normally with the goal (donation/total logic unaffected) and logs the failure.
     expect(result).toMatchObject({ id: 10, total: 100 });
-    expect(mockDonationGoalsBust).toHaveBeenCalledWith(5);
+    expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5);
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'donation-goal-cache-bust-failed' })
     );
@@ -165,7 +159,7 @@ describe('checkDonationGoalComplete — goal completion', () => {
     );
     expect(mockEndPaidAccessNow).toHaveBeenCalledWith('ModelVersion', 5); // PaidAccess.endsAt = NOW()
     expect(mockBustPaidAccess).toHaveBeenCalledWith('ModelVersion', [5]);
-    expect(mockDonationGoalsBust).toHaveBeenCalledWith(5);
+    expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5);
     // Early end queues a re-index + refreshes card/feed caches so the now-free model drops out of EA
     // filters/badge immediately, not at the original deadline.
     expect(mockUpdateEaDeadline).toHaveBeenCalledWith({ id: 2 });
@@ -185,7 +179,7 @@ describe('checkDonationGoalComplete — goal completion', () => {
     expect(mockDbWrite.donationGoal.updateMany).toHaveBeenCalled();
     expect(mockEndPaidAccessNow).not.toHaveBeenCalled();
     expect(mockBustPaidAccess).not.toHaveBeenCalled();
-    expect(mockDonationGoalsBust).toHaveBeenCalledWith(5); // public bust still runs
+    expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5); // public bust still runs
     // No gate ended → no early-end model sync.
     expect(mockUpdateEaDeadline).not.toHaveBeenCalled();
   });
@@ -215,7 +209,7 @@ describe('checkDonationGoalComplete — goal completion', () => {
       checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 })
     ).rejects.toThrow('db write failed');
     // The cache guard never runs — the DB error short-circuits before the side-effects.
-    expect(mockDonationGoalsBust).not.toHaveBeenCalled();
+    expect(mockDonationGoalsRefresh).not.toHaveBeenCalled();
   });
 
   it('PROPAGATES a gate-end DB failure (PaidAccess write is NOT fail-open)', async () => {
@@ -226,6 +220,6 @@ describe('checkDonationGoalComplete — goal completion', () => {
     await expect(
       checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 })
     ).rejects.toThrow('executeRaw failed');
-    expect(mockDonationGoalsBust).not.toHaveBeenCalled();
+    expect(mockDonationGoalsRefresh).not.toHaveBeenCalled();
   });
 });

@@ -22,9 +22,12 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -33,6 +36,8 @@ import { shuffle } from '~/utils/array-helpers';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -60,7 +65,7 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   );
 };
 
-const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -74,7 +79,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
-    return shuffle(collection.items);
+    return shuffle([...collection.items]);
   }, [collection?.items]);
 
   const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
@@ -87,10 +92,23 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useCappedItems(
-    filtered as { user?: { id: number } | null }[],
-    rows,
-    maxPerUser
+  // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
+  // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
+  // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
+  // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const items = useDedupedCappedItems(
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+      entity: type,
+    }) as {
+      id: number;
+      user?: { id: number } | null;
+    }[],
+    {
+      order: dedupeOrder(blockIndex),
+      entity: type,
+      rows,
+      maxPerUser,
+    }
   ) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
@@ -101,6 +119,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
+  const hasInfo = !!(metadata.description || metadata.selectionNote);
+
   const MetaDataTop = (
     <Stack gap="sm">
       <Group gap="xs" justify="space-between" className={classes.header}>
@@ -108,7 +128,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
-          {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
+          {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
@@ -143,6 +163,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                     </Anchor>
                   </Link>
                 )}
+                <SelectionNote note={metadata.selectionNote} />
               </Popover.Dropdown>
             </Popover>
           )}
@@ -235,27 +256,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         </div>
       ) : (
         <div className={classes.grid}>
-          <ImagesProvider
-            hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={type === 'image' ? (items as any) : undefined}
-          >
-            <ReactionSettingsProvider
-              settings={{
-                hideReactionCount: collection?.mode === CollectionMode.Contest,
-                hideReactions: collection && contestCollectionReactionsHidden(collection),
-              }}
+          <RemixFlyoutLayoutProvider layout="side">
+            <ImagesProvider
+              hideReactionCount={collection?.mode === CollectionMode.Contest}
+              images={type === 'image' ? (items as any) : undefined}
             >
-              {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-              {items.map((item) => (
-                <div key={item.id} className="p-2">
-                  {type === 'model' && <ModelCard data={item as any} forceInView />}
-                  {type === 'image' && <ImageCard data={item as any} />}
-                  {type === 'post' && <PostCard data={item as any} />}
-                  {type === 'article' && <ArticleCard data={item as any} />}
-                </div>
-              ))}
-            </ReactionSettingsProvider>
-          </ImagesProvider>
+              <ReactionSettingsProvider
+                settings={{
+                  hideReactionCount: collection?.mode === CollectionMode.Contest,
+                  hideReactions: collection && contestCollectionReactionsHidden(collection),
+                }}
+              >
+                {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+                {items.map((item) => (
+                  <div key={item.id} className="p-2">
+                    {type === 'model' && <ModelCard data={item as any} forceInView />}
+                    {type === 'image' && <ImageCard data={item as any} />}
+                    {type === 'post' && <PostCard data={item as any} />}
+                    {type === 'article' && <ArticleCard data={item as any} />}
+                  </div>
+                ))}
+              </ReactionSettingsProvider>
+            </ImagesProvider>
+          </RemixFlyoutLayoutProvider>
         </div>
       )}
 
@@ -272,4 +295,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 };
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
+type Props = {
+  homeBlockId: number;
+  metadata: HomeBlockMetaSchema;
+  showAds?: boolean;
+  blockIndex: number;
+};

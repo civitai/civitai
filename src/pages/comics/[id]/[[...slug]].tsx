@@ -67,6 +67,7 @@ import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-brow
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
 import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import { Page } from '~/components/AppLayout/Page';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -122,17 +123,23 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
+  // Above the loading gate on purpose: the project id is in the URL, so a project view never
+  // needed getPublicProjectForReader — and waiting on it put the threshold for a view at ~5-6s.
+  // Mounted ONCE, outside the branches: a remount resets TrackView's ref, so rendering it per
+  // branch would fire twice on slow connections and once on fast ones.
+  const trackProjectView = chapterDbPos == null && projectId > 0;
+
+  let body: React.ReactNode;
   if (isLoading) {
-    return (
+    body = (
       <div className={styles.loadingCenter} style={{ minHeight: '60vh' }}>
         <div className={styles.spinner} />
       </div>
     );
-  }
-
-  if (isError || !project) {
-    return (
+  } else if (isError || !project) {
+    body = (
       <div className={styles.notFound}>
+        <Meta title="Comic not found | Civitai" deIndex />
         <IconPhotoOff size={48} />
         <p>{isError ? 'Failed to load comic' : 'Comic not found'}</p>
         <Link href="/comics" className={styles.notFoundLink}>
@@ -141,27 +148,33 @@ function PublicComicReader() {
         </Link>
       </div>
     );
-  }
-
-  // Block NSFW comics on green domain.
-  // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-  if (
+  } else if (
+    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
+    // for ANY NSFW bits.
     features.isGreen &&
     project.nsfwLevel !== 0 &&
     Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
   ) {
-    return (
+    body = (
       <div className="absolute inset-0 flex items-center justify-center">
+        <Meta title="Comic not available | Civitai" deIndex />
         <Text>This content is not available on this site</Text>
       </div>
     );
+  } else if (chapterDbPos == null) {
+    body = <ComicOverview project={project} />;
+  } else {
+    body = <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
   }
 
-  if (chapterDbPos == null) {
-    return <ComicOverview project={project} />;
-  }
-
-  return <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
+  return (
+    <>
+      {trackProjectView && (
+        <TrackView entityId={projectId} entityType="ComicProject" type="ComicProjectView" />
+      )}
+      {body}
+    </>
+  );
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -217,7 +230,7 @@ function ChapterListItem({
         {thumbUrl ? (
           <>
             <img
-              src={getEdgeUrl(thumbUrl, { width: 120 })}
+              src={getEdgeUrl(thumbUrl, { width: 120, optimized: true })}
               alt={ch.name}
               className={isBlurred ? styles.chapterThumbBlurred : undefined}
             />
@@ -317,6 +330,7 @@ function ChapterListItem({
 
 function ComicOverview({ project }: { project: Project }) {
   const router = useRouter();
+
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === project.user.id;
   const projectMeta = project.meta as ComicProjectMeta | null;
@@ -408,7 +422,7 @@ function ComicOverview({ project }: { project: Project }) {
                 safe ? (
                   <>
                     <img
-                      src={getEdgeUrl(heroUrl, { width: 1200 })}
+                      src={getEdgeUrl(heroUrl, { width: 1200, optimized: true })}
                       alt={project.name}
                       className={styles.overviewHeroImage}
                       style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
@@ -419,7 +433,7 @@ function ComicOverview({ project }: { project: Project }) {
                   <>
                     <div className="absolute inset-0 overflow-hidden">
                       <img
-                        src={getEdgeUrl(heroUrl, { width: 1200 })}
+                        src={getEdgeUrl(heroUrl, { width: 1200, optimized: true })}
                         alt={project.name}
                         className={styles.overviewHeroImage}
                         style={{
@@ -545,13 +559,16 @@ function ComicOverview({ project }: { project: Project }) {
                 )}
                 {isMod && (
                   <Menu position="bottom-end" withinPortal>
-                    <Menu.Target>
-                      <Tooltip label="Moderator actions">
+                    {/* Tooltip WRAPS Menu.Target, not the other way round — the inner
+                        nesting silently stops the menu opening. See
+                        AppListingActionsMenu.tsx. */}
+                    <Tooltip label="Moderator actions">
+                      <Menu.Target>
                         <ActionIcon variant="subtle" color="yellow">
                           <IconBan size={18} />
                         </ActionIcon>
-                      </Tooltip>
-                    </Menu.Target>
+                      </Menu.Target>
+                    </Tooltip>
                     <Menu.Dropdown>
                       <Menu.Label>Moderator</Menu.Label>
                       <Menu.Item
@@ -792,6 +809,7 @@ type ReaderMode = 'scroll' | 'pages';
 
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
+
   const currentUser = useCurrentUser();
   const availableBuzzTypes = useAvailableBuzz();
   const chapters = project.chapters;
@@ -1001,7 +1019,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
     if (!panel.imageUrl) return null;
-    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200 });
+    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200, optimized: true });
 
     if (panel.image) {
       const image = panel.image;
@@ -1079,6 +1097,18 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
         title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`}
         deIndex={true}
       />
+      {/* Gated on canRead so this counts the same event ComicChapterRead does —
+          a paywalled chapter the viewer cannot open is not a read. */}
+      {activeChapter && canRead && (
+        <TrackView
+          entityId={activeChapter.id}
+          entityType="ComicChapter"
+          type="ComicChapterView"
+          // Not 0: chapter-to-chapter is a shallow replace over loaded data with no wait in
+          // front of it, and Prev/Next is on the arrow keys, so 0 counts held-key skimming.
+          delayMs={250}
+        />
+      )}
 
       <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}
@@ -1252,13 +1282,16 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     )}
                     {isMod && activeChapter?.status === ComicChapterStatus.Published && (
                       <Menu position="bottom-end" withinPortal>
-                        <Menu.Target>
-                          <Tooltip label="Moderator actions">
+                        {/* Tooltip WRAPS Menu.Target, not the other way round — the
+                            inner nesting silently stops the menu opening. See
+                            AppListingActionsMenu.tsx. */}
+                        <Tooltip label="Moderator actions">
+                          <Menu.Target>
                             <ActionIcon variant="subtle" color="yellow">
                               <IconBan size={18} />
                             </ActionIcon>
-                          </Tooltip>
-                        </Menu.Target>
+                          </Menu.Target>
+                        </Tooltip>
                         <Menu.Dropdown>
                           <Menu.Label>Moderator</Menu.Label>
                           <Menu.Item

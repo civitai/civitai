@@ -1,8 +1,16 @@
 import { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PLACEMENT_HOLD_KINDS } from '~/shared/utils/placement';
+// Mocked below; imported for the assertion that a swallowed reward failure is
+// still reported.
+import { logToAxiom } from '~/server/logging/client';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as Award from '~/server/events/points/award';
+import type * as StorylineService from '~/server/services/storyline.service';
+const dbWriteMock = dbMock.dbWrite;
 
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -13,7 +21,38 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction,
   createBuzzTransaction,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
+// Wholesale on purpose: the real module loads `base.reward`, which builds a
+// ClickHouse client, redis handles and prom collectors at import time. The
+// reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
+// what this suite owns is WHEN settlement hands it a placement.
+const applyAcceptReward = vi.fn();
+vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
+  stickerPlacementAcceptedReward: { apply: applyAcceptReward },
+}));
+
+// The remix reward, which this service must NEVER grant — it is granted from
+// `actOnRemixGallerySubmission`, the only path by which a remix submission is
+// approved. Mocked here so the exclusivity test below observes the real shared
+// chokepoint: this suite is the only place that exercises it, since the remix
+// suite mocks `settlePlacement` wholesale and cannot see what it fires.
+const applyRemixReward = vi.fn();
+vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
+  remixAcceptReward: { apply: applyRemixReward },
+}));
+
+// Event points: an approval is the moment a sticker or remix earns the placer points on a hatted
+// image. Only the engine's entry points are replaced; the hook in between is real.
+const awardEventPoints = vi.fn(async (..._a: unknown[]) => undefined);
+const hattedImages = new Set<number>();
+vi.mock('~/server/events/points/award', async (importOriginal) => ({
+  ...(await importOriginal<typeof Award>()),
+  awardEventPoints,
+  isHattedEntity: (entityType: string, entityId: number) =>
+    entityType === 'Image' && hattedImages.has(entityId),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    entityType === 'Image' && hattedImages.has(entityId),
+}));
 
 // A real mutex, not a pass-through: the lock is what stops two callers both
 // reaching the Buzz call after one has claimed the ledger row, so a double that
@@ -67,12 +106,8 @@ type LedgerQuery = {
 
 const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
-const dbWriteMock: Record<string, unknown> = {};
 const queryRaw = vi.fn(async () => [] as { id: number }[]);
 const txCommits: string[][] = [];
-vi.mock('~/server/db/client', () => ({
-  dbWrite: dbWriteMock,
-}));
 
 Object.assign(dbWriteMock, {
   // Interactive transaction: the callback gets the same client. Good enough to
@@ -90,8 +125,21 @@ Object.assign(dbWriteMock, {
   $queryRaw: queryRaw,
   ...{
     placement: {
+      // Projects `select` rather than handing back the whole row. A double that
+      // ignores it answers with columns the query never asked for, so narrowing
+      // a select in the code under test changes nothing here and the revert is
+      // invisible.
       findUnique: vi.fn(
-        async ({ where }: { where: { id: number } }) => db.placements.get(where.id) ?? null
+        async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) => {
+          const row = db.placements.get(where.id);
+          if (!row) return null;
+          if (!select) return row;
+          return Object.fromEntries(
+            Object.keys(select)
+              .filter((column) => select[column])
+              .map((column) => [column, row[column]])
+          );
+        }
       ),
       findMany: vi.fn(async ({ take }: { take?: number }) =>
         [...db.placements.values()]
@@ -249,7 +297,12 @@ Object.assign(dbWriteMock, {
 const configState = { rate: 0.3, shares: { seller: 0, platform: 0.3 } };
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
-    declineFeeRate: () => configState.rate,
+    // Refuses host-set surfaces, as the real accessor does.
+    declineFeeRate: (surface: string) => {
+      if (surface === 'galleryPromotion' || surface === 'modelPromotion')
+        throw new Error(`config asked for ${surface}'s decline rate`);
+      return configState.rate;
+    },
     expiryHours: () => 48,
     priceCapTiers: () => [],
     approvalShares: () => configState.shares,
@@ -260,6 +313,7 @@ const storedShares = (shares: { seller: number; platform: number }) =>
   (configState.shares = shares);
 
 const {
+  PAYOUT_KINDS,
   holdPlacementEscrow,
   settlePlacement,
   expirePlacements,
@@ -287,6 +341,14 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
     status: 'pending',
     removedBy: null,
     amount: 1000,
+    // Present and NULL, as the column is on a real row. Omitting it made the
+    // double answer `undefined` where Postgres answers NULL, which is a
+    // different thing to a `where: { spendType: null }` predicate.
+    spendType: null,
+    // Present and false, as the column is on a real row. Left off, `free` reads
+    // `undefined` here where Postgres answers false — falsy either way today, and
+    // a difference the moment anything compares it rather than tests it.
+    free: false,
     expiresAt: null,
     resolvedAt: null,
     resolvedById: null,
@@ -351,13 +413,30 @@ beforeEach(() => {
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
-  refundMultiAccountTransaction.mockResolvedValue({ externalTransactionIdPrefix: 'refund-tx' });
+  applyAcceptReward.mockResolvedValue(undefined);
+  applyRemixReward.mockResolvedValue(undefined);
+  // The real response carries the legs it reversed. The double used to return
+  // only the prefix, which let a refund that moved NOTHING look identical to one
+  // that moved everything — the exact discrepancy the service now refuses on.
+  refundMultiAccountTransaction.mockResolvedValue({
+    externalTransactionIdPrefix: 'refund-tx',
+    refundedTransactions: [
+      {
+        originalTransactionId: 'orig',
+        refundTransactionId: 'refund-tx',
+        accountType: 'User',
+        amount: 1,
+      },
+    ],
+    totalRefunded: 1,
+  });
 });
 
 describe('holding the escrow', () => {
   it('takes two holds so every release is a whole-hold operation', async () => {
     givenPlacement();
     const held = await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -374,6 +453,7 @@ describe('holding the escrow', () => {
   it('draws from paid Buzz only', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -381,15 +461,121 @@ describe('holding the escrow', () => {
     });
 
     for (const call of createMultiAccountBuzzTransaction.mock.calls) {
-      expect(call[0].fromAccountTypes).toEqual(PLACEMENT_SPEND_TYPES);
+      expect(call[0].fromAccountTypes).toEqual(['yellow']);
       expect(call[0].fromAccountTypes).not.toContain('blue');
       expect(call[0].toAccountId).toBe(0);
     }
   });
 
+  // The hold names its destination account. Leaving it unnamed let the buzz
+  // service apply its yellow default, which converted a green placement to
+  // yellow on the way INTO escrow — so by settlement there was no green left to
+  // pay the owner with, whatever the payout leg asked for.
+  it('holds green in green, rather than converting it at intake', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(2);
+    for (const call of createMultiAccountBuzzTransaction.mock.calls) {
+      expect(call[0].fromAccountTypes).toEqual(['green']);
+      expect(call[0].toAccountType).toBe('green');
+    }
+  });
+
+  // One currency per placement. Two would leave the settlement unable to pay
+  // back in kind: a placement funded 40 green and 60 yellow has no single
+  // account to release from.
+  it('draws from exactly one account, never the pair', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    for (const call of createMultiAccountBuzzTransaction.mock.calls)
+      expect(call[0].fromAccountTypes).toHaveLength(1);
+  });
+
+  it('refuses a currency the escrow cannot hold', async () => {
+    givenPlacement();
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'blue',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('not a placement spend type');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The currency write rides the `expiresAt: null` stamp, which a second run
+  // does not match — but this function is deliberately idempotent, so a row that
+  // already has a deadline must still end up carrying its currency. Otherwise
+  // the holds charge green against a row that settles yellow.
+  it('records the currency even when the deadline was already stamped', async () => {
+    const placement = givenPlacement({ expiresAt: new Date('2030-01-01') });
+
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+  });
+
+  // The one case that cannot be reconciled: the escrow can hold only one
+  // currency, so charging a second one against the same row would strand
+  // whichever the settlement does not pay.
+  it('refuses to charge a currency the row is not held in', async () => {
+    givenPlacement({ expiresAt: new Date('2030-01-01'), spendType: 'yellow' });
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'green',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('refusing to charge green');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('records the currency on the row, so a resumed settlement can read it', async () => {
+    const placement = givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+    // Written by the same statement as the deadline. A row that got one without
+    // the other would settle as legacy yellow over an escrow holding green.
+    expect(placement.expiresAt).toBeInstanceOf(Date);
+  });
+
   it('uses row-derived external ids, so a retry cannot mint a fresh one', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -405,6 +591,7 @@ describe('holding the escrow', () => {
   it('is a no-op when run twice', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -413,6 +600,7 @@ describe('holding the escrow', () => {
     createMultiAccountBuzzTransaction.mockClear();
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -426,15 +614,105 @@ describe('holding the escrow', () => {
   it('refuses an amount that is not a whole number of Buzz', async () => {
     givenPlacement();
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 10.5 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 10.5,
+      })
     ).rejects.toThrow(/non-negative integer/);
     expect(moneyMoved()).toBe(0);
   });
 });
 
+describe('a decline fee the host sets', () => {
+  const promotion = () =>
+    givenPlacement({ surface: 'galleryPromotion', targetType: 'model', targetId: 5 });
+  const holdPromotion = (declineFeeRate?: number) =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'galleryPromotion',
+      amount: 1000,
+      declineFeeRate,
+    });
+
+  it('sizes the fee hold from the host rate, not the operator rate', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    expect(legsFor(1)).toEqual({ holdFee: 200, holdPrincipal: 800 });
+  });
+
+  // The snapshot. The hold is taken at purchase, so a host who raises their fee
+  // (or an operator who retunes) afterwards cannot change what this decline pays.
+  it('pays a decline exactly what was held at purchase', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    storedRate(0.5);
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(legsFor(1)).toMatchObject({ feeToOwner: 200, principalToPlacer: 800 });
+  });
+
+  it('settles an approval without asking anyone for a decline rate', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
+  });
+
+  it('holds no fee at 0%, so a decline returns everything', async () => {
+    promotion();
+    await holdPromotion(0);
+    expect(legsFor(1)).toEqual({ holdPrincipal: 1000 });
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+    expect(legsFor(1)).not.toHaveProperty('feeToOwner');
+    expect(legsFor(1)).toMatchObject({ principalToPlacer: 1000 });
+  });
+
+  it.each([
+    ['no rate', undefined],
+    ['a rate above the host range', 0.31],
+    ['a negative rate', -0.1],
+  ])('refuses a promotion hold with %s, before touching the row', async (_label, rate) => {
+    const placement = promotion();
+    await expect(holdPromotion(rate)).rejects.toThrow("needs the host's decline fee");
+    expect(moneyMoved()).toBe(0);
+    expect(placement.expiresAt).toBeNull();
+  });
+
+  it.each(['sticker', 'remixGallery'] as const)(
+    'refuses a caller-supplied rate on %s, whose fee is fixed',
+    async (surface) => {
+      givenPlacement({ surface });
+      await expect(
+        holdPlacementEscrow({
+          spendType: 'yellow',
+          placementId: 1,
+          placerId: PLACER,
+          surface,
+          amount: 1000,
+          declineFeeRate: 0.3,
+        })
+      ).rejects.toThrow('is fixed');
+      expect(moneyMoved()).toBe(0);
+    }
+  );
+});
+
 describe('settling', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it('pays the owner and keeps the platform share on approval', async () => {
     givenPlacement();
@@ -446,6 +724,49 @@ describe('settling', () => {
     // Defaults: owner 70%, platform 30%, seller 0.
     expect(payouts).toEqual([[OWNER, 700]]);
     expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
+  });
+
+  // The whole point of the column. A green placement paid the owner yellow for
+  // ten months because this leg named no account and took the service default.
+  it('pays the owner in the currency the placer spent', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        toAccountType: 'green',
+        // Drawn from the escrow's green too: paying green out of the yellow
+        // balance would mint it, which is the mirror of the bug being fixed.
+        fromAccountType: 'green',
+      }),
+      expect.anything()
+    );
+  });
+
+  // Rows made before the column existed were HELD as yellow whatever was spent,
+  // so yellow is what the escrow has for them. Settling one as green would pay
+  // out Buzz the escrow never received — which is why nothing backfills this.
+  it('settles a placement with no recorded currency as yellow', async () => {
+    givenPlacement({ spendType: null });
+    await hold();
+    // Written by the hold above; cleared to stand in for a legacy row.
+    db.placements.get(1)!.spendType = null;
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountType: 'yellow', fromAccountType: 'yellow' }),
+      expect.anything()
+    );
   });
 
   it('pays the fee to the owner and returns the principal hold on decline', async () => {
@@ -514,7 +835,13 @@ describe('settling', () => {
 
 describe('running a release path twice', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it.each([
     'approve',
@@ -563,7 +890,13 @@ describe('running a release path twice', () => {
 
 describe('crashing between the legs', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The case the ledger exists for. A status column says the placement was
   // processed; only a receipt says the money moved.
@@ -627,6 +960,7 @@ describe('expiry sweep', () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     givenPlacement({ id: 2, expiresAt: new Date(Date.now() + 60_000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -643,6 +977,7 @@ describe('expiry sweep', () => {
   it('is a no-op on a second run', async () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -660,7 +995,13 @@ describe('expiry sweep', () => {
 
 describe('the amounts a resume replays', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The holds are sized by the config as it stood when the placement was made.
   // Recomputing the fee at decline time paid out more than was ever held — a
@@ -741,6 +1082,7 @@ describe('the seller share survives a resume', () => {
     givenPlacement({ sellerId: SELLER });
     storedShares({ seller: 0.3, platform: 0.3 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -777,6 +1119,7 @@ describe('two callers on one leg', () => {
     });
 
     const first = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -784,6 +1127,7 @@ describe('two callers on one leg', () => {
     });
     await Promise.resolve();
     const second = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -799,8 +1143,19 @@ describe('two callers on one leg', () => {
     expect(feeCalls).toHaveLength(1);
     // The loser fails rather than reporting an escrow it did not take — its
     // caller must not go on to create a placement backed by nothing.
-    expect(firstResult.status).toBe('fulfilled');
-    expect(secondResult.status).toBe('rejected');
+    //
+    // WHICH caller loses is not the property, and neither is "exactly one wins".
+    // Whoever reaches the row second spends an extra query reconciling the
+    // currency, so how the two interleave at the per-leg locks is an artefact of
+    // how many awaits precede them — they can end up holding one leg each, and
+    // then BOTH refuse. That is still safe: a refusal sends the caller into its
+    // compensating expire, which refunds the holds that were taken.
+    //
+    // What must never happen is a caller reporting success over an escrow it did
+    // not take. So: no more than one success, and only one Buzz call.
+    const fulfilled = [firstResult, secondResult].filter((r) => r.status === 'fulfilled');
+    expect(fulfilled.length).toBeLessThanOrEqual(1);
+    expect([firstResult.status, secondResult.status]).toContain('rejected');
   });
 });
 
@@ -810,6 +1165,7 @@ describe('the expiry deadline', () => {
   it('is set when the escrow is taken', async () => {
     givenPlacement({ expiresAt: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -828,6 +1184,7 @@ describe('when the lock cannot be acquired', () => {
   it('still records the claim, so the sweeper can finish it', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -857,7 +1214,13 @@ describe('when the lock cannot be acquired', () => {
     lockState.available = false;
 
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow(/nothing was charged/);
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -867,7 +1230,13 @@ describe('when the lock cannot be acquired', () => {
     givenPlacement();
     lockState.available = false;
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow();
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -875,6 +1244,7 @@ describe('when the lock cannot be acquired', () => {
 
     lockState.available = true;
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -894,6 +1264,7 @@ describe('the sweeper converges', () => {
   it('does not persist a leg that moves no money', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -907,6 +1278,7 @@ describe('the sweeper converges', () => {
   it('reports nothing stranded once a placement is fully paid', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -927,6 +1299,7 @@ describe('the sweeper converges', () => {
     for (const id of [1, 2, 3]) {
       givenPlacement({ id, sellerId: null });
       await holdPlacementEscrow({
+        spendType: 'yellow',
         placementId: id,
         placerId: PLACER,
         surface: 'sticker',
@@ -937,6 +1310,7 @@ describe('the sweeper converges', () => {
 
     givenPlacement({ id: 4, sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 4,
       placerId: PLACER,
       surface: 'sticker',
@@ -976,6 +1350,7 @@ describe('when two callers claim different amounts', () => {
     });
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -992,6 +1367,7 @@ describe('when two callers claim different amounts', () => {
   it('pays the payout amounts the ledger holds, not a freshly computed plan', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1027,6 +1403,7 @@ describe('a settlement always leaves a plan', () => {
   it('writes the payout plan in the same breath as the status', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1052,6 +1429,7 @@ describe('a settlement always leaves a plan', () => {
   it('does not let a later takedown forfeit what the owner had earned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1165,6 +1543,7 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
 
     givenPlacement({ id: 2 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 2,
       placerId: PLACER,
       surface: 'sticker',
@@ -1190,6 +1569,7 @@ describe('a leg that can never succeed', () => {
   const givenPermanentlyFailingLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1277,6 +1657,7 @@ describe('a settlement with no funded escrow behind it', () => {
   it('counts a genuinely resumable settlement as planned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1345,6 +1726,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('skips a leg attempted too recently', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1369,6 +1751,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('retries once the gap has passed', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1393,6 +1776,7 @@ describe('the exhausted-leg alert', () => {
   const exhaustLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1444,6 +1828,7 @@ describe('the Buzz call bound', () => {
   it('retries only failures that provably never reached the server', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1500,5 +1885,1269 @@ describe('the Buzz call bound', () => {
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+describe('a free placement never touches the money path', () => {
+  /**
+   * Escrow that a free row must not be able to release.
+   *
+   * Receipted, so `heldAmountsFor` counts it as real Buzz sitting in the escrow
+   * account. That state should be unreachable — the free path takes no holds and
+   * `holdPlacementEscrow` refuses a free row — and it is exactly the state the
+   * guard has to survive, because "unreachable" is a claim about today's callers
+   * and PRs 2 and 4 are the callers that do not exist yet.
+   *
+   * Without this fixture the free-row tests below are vacuous: with no holds,
+   * every branch of the payout already computes to zero and is filtered out, so
+   * deleting the guard would change nothing they observe.
+   */
+  const givenReceiptedHolds = () => {
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: 'placement-1-holdFee',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+    db.legs.set('1:holdPrincipal', {
+      placementId: 1,
+      kind: 'holdPrincipal',
+      amount: 700,
+      transactionId: 'placement-1-holdPrincipal',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+  };
+
+  it('plans nothing on approval, even with escrow sitting behind the row', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('takes no decline fee, so a decline costs the placer nothing', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(legsFor(1)).not.toHaveProperty('feeToOwner');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('refunds nothing on expiry, because nothing was ever taken', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'expire' });
+
+    expect(legsFor(1)).not.toHaveProperty('principalToPlacer');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('still settles the row, so the slot it holds is released', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    const { settled, placement } = await settlePlacement({ placementId: 1, action: 'decline' });
+
+    // The money is the part that does nothing. The status transition is the part
+    // that matters — it is what takes the placement out of
+    // `FREE_SLOT_HOLDING_STATUSES` and hands the slot to the next placer.
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('declined');
+  });
+
+  it('refuses to take escrow at all, rather than holding zero', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    clearMoneyMocks();
+
+    await expect(
+      holdPlacementEscrow({
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 100,
+        spendType: 'yellow',
+      })
+    ).rejects.toThrow(/free/);
+
+    expect(moneyMoved()).toBe(0);
+    expect(legsFor(1)).toEqual({});
+  });
+});
+
+/**
+ * A zero-priced continuation holds no escrow, so every outcome on it moves no Buzz and plans no leg
+ * (a zero leg could never get a receipt and would sit in the unpaid sweep forever), and still flips
+ * the status.
+ */
+describe('a zero-priced storyline continuation', () => {
+  const zero = () => givenPlacement({ surface: 'storyline', free: false, amount: 0 });
+
+  it.each([
+    ['approve', 'approved'],
+    ['decline', 'declined'],
+    ['declineByBlock', 'declined'],
+    ['expire', 'expired'],
+    ['removeByModerator', 'removed'],
+  ] as const)('%s moves nothing and plans no leg', async (action, status) => {
+    zero();
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action,
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe(status);
+    expect(legsFor(1)).toEqual({});
+    expect(moneyMoved()).toBe(0);
+  });
+});
+
+describe('the accept reward', () => {
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  it('pays the owner of the space, for the placement, crediting the placer', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyAcceptReward).toHaveBeenCalledWith({
+      placementId: 1,
+      ownerId: OWNER,
+      placerId: PLACER,
+    });
+  });
+
+  it('pays it for a free placement too', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  // The reason it hangs off `count > 0` and not off the callers. The ledger key
+  // never expires while the daily cap does, so a second presentation of the same
+  // placement on a later day spends a tenth of the owner's day and moves no Buzz.
+  it('pays nothing on a second approve of the same placement', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    applyAcceptReward.mockClear();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(false);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  it.each(['decline', 'expire', 'removeByOwner', 'removeByModerator'] as const)(
+    'pays nothing when the placement settles as %s',
+    async (action) => {
+      givenPlacement();
+      await hold();
+
+      const { settled } = await settlePlacement({ placementId: 1, action, actorId: OWNER });
+
+      // The settle has to have happened, or "the reward did not fire" is true of
+      // a call that did nothing at all and the assertion below proves nothing.
+      expect(settled).toBe(true);
+      expect(applyAcceptReward).not.toHaveBeenCalled();
+    }
+  );
+
+  /**
+   * 🔴 **Auto-accept pays, and that is designed** — but read what this asserts.
+   *
+   * This service has no notion of space mode. Both sticker approve paths — the
+   * owner acting through `actOnStickerPlacement`, and `createStickerPlacement`
+   * settling inline at placement time when `space.mode === 'auto'` — arrive here
+   * as the identical call, which is exactly why the reward hangs off the settle
+   * rather than off either caller. So this cannot tell them apart, and is not
+   * named as though it can: what it pins is that **any** approve pays.
+   *
+   * The auto half is pinned in two places that together need no inference:
+   * 'settles an auto space immediately' in sticker-placement.service.test.ts
+   * asserts that path issues exactly this settle, and this asserts that settle
+   * pays.
+   *
+   * Written out because the intent otherwise lives only in a Discord thread.
+   * Justin's decision, in the intent doc: creators switching from Review to Auto
+   * Accept to collect this is a fine outcome, not a leak. A reviewer reading the
+   * code alone has already once read auto-mode paying as an oversight and
+   * recommended removing it. If you are here to make auto stop paying, that is
+   * the conversation you are having, and it is Justin's to have.
+   */
+  it('pays on any approve, whichever of the two sticker paths issued it', async () => {
+    givenPlacement();
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 **Exactly one reward per surface, and this is the only place that can see
+   * it.** The tempting cleanup after both reward PRs land is to consolidate here
+   * — move the remix `apply` into `rewardAccepted` — and leave the call in
+   * `actOnRemixGallerySubmission` in place. That double-pays 20 Blue Buzz on
+   * every remix accept, and nothing else goes red: the remix suite mocks
+   * `settlePlacement` wholesale so it cannot observe this service firing
+   * anything, the two ledger keys differ by type, and the daily cap hash is
+   * keyed `userId:type` so both grants look legitimate to both caps.
+   *
+   * The consolidation is a recorded follow-up and is fine to do — but it must
+   * MOVE the remix call, not add one. This test is what tells you which you did.
+   *
+   * The remix half was inert while `remixAcceptReward` did not exist on this
+   * branch — a tripwire armed on merge rather than coverage. #4013 landed it, so
+   * both halves are live and the mocked path now resolves to a real module.
+   */
+  it('grants exactly one reward per surface, and never the other surface reward', async () => {
+    givenPlacement({ id: 1, surface: 'sticker' });
+    givenPlacement({ id: 2, surface: 'remixGallery' });
+
+    const sticker = await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    expect(sticker.settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+
+    applyAcceptReward.mockClear();
+
+    const remix = await settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER });
+    expect(remix.settled).toBe(true);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // 🔴 If you are here because you added a `remixGallery` branch to
+  // `rewardAccepted`: that reward is already granted from
+  // `actOnRemixGallerySubmission`, the only path by which a remix submission is
+  // approved. A branch here does not replace that grant, it doubles it — and no
+  // guard either reward owns can tell: the types differ, so the ledger keys
+  // differ, and the daily cap hash is keyed `userId:type`. This test is the only
+  // thing standing between that edit and paying every remix approval twice.
+  it('pays nothing on a remix approval, which is granted from its own surface', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    // Establishes the approval actually happened, so this is "approved and paid
+    // nothing" rather than a call that quietly did nothing at all.
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+    // The reward the comment above is about. Without this the test asserted only
+    // that the STICKER reward stayed out of a remix approval, so the exact edit
+    // it warns against — a `remixGallery` branch here — left it green.
+    expect(applyRemixReward).not.toHaveBeenCalled();
+  });
+
+  // The approval has already paid the owner out of escrow by this point. A
+  // throw here would 500 a request whose money has moved, and the caller would
+  // read that as the approval having failed.
+  it('does not fail the approval when the reward throws', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue(new Error('clickhouse is gone'));
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('approved');
+    expect(legsFor(1)).toMatchObject({ toOwner: 700 });
+  });
+
+  /**
+   * The log is the entire compensation for swallowing the throw. Without it a
+   * reward that never arrived leaves no trace at all on a money path — and
+   * `.catch(() => null)` is a plausible-looking edit that produces exactly that
+   * while every other assertion here stays green.
+   *
+   * Rejected with a non-`Error` on purpose: that is what tells `.message` apart
+   * from the `instanceof` narrowing, and a bare `.message` logs `undefined` —
+   * the failure reads as "the reward failed, cause unknown", which is the shape
+   * that makes an outage unreadable at 3am.
+   */
+  it('reports a swallowed reward failure, whatever was thrown', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue('clickhouse is gone');
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'placement-escrow',
+        message: 'accept reward failed',
+        placementId: 1,
+        error: 'clickhouse is gone',
+      })
+    );
+  });
+});
+
+/**
+ * The strings here are the whole of what a user sees for a placement in their
+ * Buzz history, so the leg name and the placement id — both internal, both
+ * meaningless to the reader — must not survive into one.
+ *
+ * The sweep at the end is what guards a leg added later: a per-string assertion
+ * only covers the legs someone remembered to list.
+ */
+describe('what a placement says in the Buzz ledger', () => {
+  const hold = (surface: 'sticker' | 'remixGallery' = 'sticker') =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface,
+      amount: 1000,
+    });
+
+  // Not `String(...)`: coercing turns a missing description into the literal
+  // 'undefined', which carries no leg name and no digit and so satisfies every
+  // assertion below.
+  const descriptionsWritten = (): unknown[] =>
+    [
+      ...createMultiAccountBuzzTransaction.mock.calls,
+      ...createBuzzTransaction.mock.calls,
+      ...refundMultiAccountTransaction.mock.calls,
+    ].map((call) => call[0].description);
+
+  it('names the two holds in words the placer can read, and links both to the image', async () => {
+    givenPlacement();
+    await hold();
+
+    expect(descriptionsWritten()).toEqual([
+      'Sticker placement fee, held while the creator decides',
+      'Sticker placement, held while the creator decides',
+    ]);
+    // Asserted positively on the hold legs, not only negatively in the
+    // non-image case below: these are the rows whose link depends on the
+    // widened `select`, and the fake honours `select`, so dropping a column
+    // from it lands here.
+    for (const call of createMultiAccountBuzzTransaction.mock.calls)
+      expect(call[0].details).toEqual({ entityType: 'Image', entityId: 99 });
+  });
+
+  it('tells the owner what landed on their image, and links the row to it', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        description: 'Someone placed a sticker on your image',
+        // `/user/transactions` builds its "View Image" link from these two.
+        details: { entityType: 'Image', entityId: 99 },
+      }),
+      expect.anything()
+    );
+  });
+
+  it('describes a refund without claiming a reason it cannot know', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: 'placement-1-holdPrincipal',
+        description: 'Refund: your sticker placement',
+        details: { entityType: 'Image', entityId: 99 },
+      }),
+      expect.anything()
+    );
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        description: 'Fee kept from a sticker you declined',
+      }),
+      expect.anything()
+    );
+  });
+
+  it('calls a remix a remix rather than a sticker', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold('remixGallery');
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Someone added a remix to your gallery' }),
+      expect.anything()
+    );
+    expect(descriptionsWritten().join(' ')).not.toContain('ticker');
+  });
+
+  // The link is built from the target, so a target that is not an image must
+  // produce no link at all rather than one pointing at /images/<some other id>.
+  it('omits the link when the placement is not on an image', async () => {
+    givenPlacement({ targetType: 'video' });
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    for (const call of [
+      ...createMultiAccountBuzzTransaction.mock.calls,
+      ...createBuzzTransaction.mock.calls,
+    ])
+      expect(call[0].details).toBeUndefined();
+  });
+
+  // Each case pins the exact number of rows its action writes. `toBeGreaterThan`
+  // was satisfied by the two holds alone — before the settle ran — so a settle
+  // that paid nothing swept two known-clean strings and passed.
+  const settlements = [
+    {
+      name: 'an approval',
+      arrange: () => givenPlacement(),
+      // Two holds and toOwner. toPlatform keeps the money in escrow and writes
+      // no Buzz row.
+      writes: 3,
+      settle: () => settlePlacement({ placementId: 1, action: 'approve' as const, actorId: OWNER }),
+    },
+    {
+      // The only path that reaches toSeller, and therefore the only one that
+      // sweeps its copy.
+      name: 'an approval paying a seller',
+      arrange: () => {
+        givenPlacement({ sellerId: SELLER });
+        storedShares({ seller: 0.2, platform: 0.1 });
+      },
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'approve' as const, actorId: OWNER }),
+    },
+    {
+      name: 'a decline',
+      arrange: () => givenPlacement(),
+      // Two holds, the owner's fee, and the placer's principal refund.
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'decline' as const, actorId: OWNER }),
+    },
+    {
+      name: 'an expiry',
+      arrange: () => givenPlacement(),
+      // Two holds and both refunds.
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'expire' as const }),
+    },
+  ];
+
+  it.each(settlements)('leaks no leg name or placement id through $name', async (settlement) => {
+    settlement.arrange();
+    await hold();
+
+    await settlement.settle();
+
+    const written = descriptionsWritten();
+    expect(written).toHaveLength(settlement.writes);
+
+    for (const description of written) {
+      expect(description).toBeTypeOf('string');
+
+      // The lists the code pays from, so a leg added later is swept without
+      // anyone remembering to add it here.
+      for (const kind of [...PLACEMENT_HOLD_KINDS, ...PAYOUT_KINDS])
+        expect(description).not.toContain(kind);
+
+      expect(description).not.toMatch(/placement \d/i);
+      expect(String(description).length).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+describe('event points on approval', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  beforeEach(() => {
+    awardEventPoints.mockReset();
+    awardEventPoints.mockResolvedValue(undefined);
+    hattedImages.clear();
+    hattedImages.add(99);
+  });
+
+  it('awards the placer a sticker on the approved image', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'sticker',
+        actorId: PLACER,
+        entityType: 'Image',
+        entityId: 99,
+        time: expect.any(Date),
+        sourceId: `Placement:sticker:99:${PLACER}`,
+      },
+    ]);
+  });
+
+  it('awards the submitter a remix when the owner accepts it into their remix gallery', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'remixGallery',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'remix',
+        actorId: PLACER,
+        entityType: 'Image',
+        entityId: 99,
+        time: expect.any(Date),
+        sourceId: `Placement:remix:99:${PLACER}`,
+      },
+    ]);
+  });
+
+  it('awards on the approval, before the payout runs', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    // A payout that throws is resumed by a sweeper that never awards, so the award cannot wait on it.
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(createBuzzTransaction).toHaveBeenCalled();
+    expect(awardEventPoints.mock.invocationCallOrder[0]).toBeLessThan(
+      createBuzzTransaction.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('awards nothing on a decline', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('awards nothing to the loser of a racing second approval', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles while the points call is still pending', async () => {
+    givenPlacement();
+    await hold();
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    const outcome = await Promise.race([
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER }).then(() => 'done'),
+      settle()
+        .then(() => settle())
+        .then(() => 'pending'),
+    ]);
+    expect(outcome).toBe('done');
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not failed by a failing points call', async () => {
+    givenPlacement();
+    await hold();
+    awardEventPoints.mockRejectedValueOnce(new Error('redis down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).resolves.toMatchObject({ settled: true });
+    await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+});
+
+// Only `writeChapterEdgeForPlacement` is replaced: what is under test is WHEN settlement writes the
+// edge, not the edge rules (storyline.service.test.ts's).
+const writeChapterEdgeForPlacement = vi.fn(async (..._args: unknown[]) => ({
+  chapterId: 500,
+  created: true,
+}));
+vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineService>()),
+  writeChapterEdgeForPlacement,
+}));
+
+const { settleStorylineContinuation, actOnStorylineContinuation } = await import(
+  '~/server/services/storyline-placement.service'
+);
+
+describe('a write inside the settlement transaction', () => {
+  const CHAPTER_POST = 77;
+  const CONTINUATION_POST = 88;
+
+  const SCANNED = {
+    ingestion: 'Scanned',
+    tosViolation: false,
+    minor: false,
+    poi: false,
+    needsReview: null as string | null,
+  };
+  const READY_POST = {
+    userId: PLACER,
+    publishedAt: new Date('2026-01-01'),
+    nsfwLevel: 1,
+    tosViolation: false,
+    storylineChapter: null,
+    images: [SCANNED],
+  };
+
+  const givenContinuation = (overrides: Record<string, unknown> = {}) =>
+    givenPlacement({
+      surface: 'storyline',
+      targetType: 'post',
+      targetId: CHAPTER_POST,
+      amount: 0,
+      data: { postId: CONTINUATION_POST },
+      ...overrides,
+    });
+
+  const holdStoryline = (amount: number) =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'storyline',
+      amount,
+    });
+
+  /**
+   * The suite's `$transaction` double does not roll back; here it does (both tables restored to
+   * BEGIN when the callback throws), and the callback gets its own client so a write through the
+   * global `dbWrite` is told apart.
+   */
+  const realTransaction = dbWriteMock.$transaction;
+  const txClients: unknown[] = [];
+  /**
+   * On the transaction's client only: the global `dbWrite` answers with someone else's storyline,
+   * so an owner check read through it refuses every approval.
+   */
+  const storylineOwner = vi.fn();
+  /**
+   * On the transaction's client only: the global client answers that the post is gone, so a
+   * readiness check read outside the settlement refuses every approval.
+   */
+  const txPostFind = vi.fn();
+  const globalChapterFind = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
+    typeof vi.fn
+  >;
+  beforeEach(() => {
+    writeChapterEdgeForPlacement.mockReset();
+    writeChapterEdgeForPlacement.mockResolvedValue({ chapterId: 500, created: true });
+    storylineOwner.mockReset();
+    storylineOwner.mockResolvedValue({ storyline: { userId: OWNER } });
+    globalChapterFind.mockResolvedValue({ storyline: { userId: OWNER + 99 } });
+    txClients.length = 0;
+    txPostFind.mockReset();
+    txPostFind.mockResolvedValue(READY_POST);
+    dbWriteMock.post.findUnique.mockResolvedValue(null);
+    Object.assign(dbWriteMock, {
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+        const placements = new Map(
+          [...db.placements].map(([id, row]) => [id, structuredClone(row)])
+        );
+        const legs = new Map([...db.legs].map(([key, row]) => [key, structuredClone(row)]));
+        const tx = Object.create(dbWriteMock);
+        // Defined, not assigned: `dbWrite` is a proxy whose set trap would take
+        // a plain assignment through the prototype and give it to the global client.
+        Object.defineProperty(tx, 'storylineChapter', {
+          value: { findUnique: storylineOwner },
+        });
+        Object.defineProperty(tx, 'post', { value: { findUnique: txPostFind } });
+        txClients.push(tx);
+        try {
+          return await realTransaction(() => fn(tx));
+        } catch (error) {
+          db.placements.clear();
+          for (const [id, row] of placements) db.placements.set(id, row);
+          db.legs.clear();
+          for (const [key, row] of legs) db.legs.set(key, row);
+          throw error;
+        }
+      },
+    });
+  });
+  afterEach(() => {
+    Object.assign(dbWriteMock, { $transaction: realTransaction });
+    globalChapterFind.mockReset();
+  });
+
+  describe('settlePlacement', () => {
+    it('runs the hook inside the transaction, with the placement, before commit', async () => {
+      givenPlacement({ amount: 1000 });
+      await holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      });
+      const seen: {
+        client: unknown;
+        id: unknown;
+        placerId: unknown;
+        commitsBefore: number;
+        status: unknown;
+        planned: string[];
+      }[] = [];
+
+      await settlePlacement({
+        placementId: 1,
+        action: 'approve',
+        actorId: OWNER,
+        inTransaction: async (client, pending) => {
+          seen.push({
+            client,
+            id: pending.id,
+            placerId: pending.placerId,
+            commitsBefore: txCommits.length,
+            // After the flip and the plan, so a hook that throws takes both back.
+            status: db.placements.get(1)!.status,
+            planned: Object.keys(legsFor(1)).sort(),
+          });
+        },
+      });
+
+      const settleTx = txClients.at(-1);
+      expect(settleTx).not.toBe(dbWriteMock);
+      expect(seen).toEqual([
+        {
+          client: settleTx,
+          id: 1,
+          placerId: PLACER,
+          commitsBefore: 0,
+          status: 'approved',
+          planned: ['holdFee', 'holdPrincipal', 'toOwner', 'toPlatform'],
+        },
+      ]);
+      expect(txCommits).toHaveLength(1);
+    });
+
+    it('does not run the hook on a replay that loses the status flip', async () => {
+      givenPlacement();
+      const hook = vi.fn(async () => undefined);
+
+      const first = await settlePlacement({
+        placementId: 1,
+        action: 'approve',
+        inTransaction: hook,
+      });
+      const replay = await settlePlacement({
+        placementId: 1,
+        action: 'approve',
+        inTransaction: hook,
+      });
+
+      expect([first.settled, replay.settled]).toEqual([true, false]);
+      expect(hook).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls the status flip and the payout plan back when the hook throws', async () => {
+      givenPlacement();
+      await holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      });
+      clearMoneyMocks();
+
+      await expect(
+        settlePlacement({
+          placementId: 1,
+          action: 'approve',
+          inTransaction: async () => {
+            throw new Error('edge refused');
+          },
+        })
+      ).rejects.toThrow('edge refused');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(Object.keys(legsFor(1)).sort()).toEqual(['holdFee', 'holdPrincipal']);
+      expect(moneyMoved()).toBe(0);
+    });
+  });
+
+  describe('a storyline continuation', () => {
+    it('writes exactly one chapter edge on approval, from the row, in the transaction', async () => {
+      givenContinuation();
+
+      const result = await settleStorylineContinuation({
+        placementId: 1,
+        action: 'approve',
+        actorId: OWNER,
+      });
+
+      expect(result.settled).toBe(true);
+      expect(db.placements.get(1)!.status).toBe('approved');
+      expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+      const [args, client] = writeChapterEdgeForPlacement.mock.calls[0];
+      expect(args).toEqual({
+        placementId: 1,
+        parentPostId: CHAPTER_POST,
+        postId: CONTINUATION_POST,
+        placerId: PLACER,
+      });
+      // The settle transaction's client: through `dbWrite` the edge would land
+      // on another connection, outside the approval it belongs to.
+      expect(client).toBe(txClients.at(-1));
+      expect(client).not.toBe(dbWriteMock);
+    });
+
+    it('writes no second edge when the approval is replayed', async () => {
+      givenContinuation();
+
+      await settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER });
+      const replay = await settleStorylineContinuation({
+        placementId: 1,
+        action: 'approve',
+        actorId: OWNER,
+      });
+
+      expect(replay.settled).toBe(false);
+      expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays pending, unpaid, when the edge is refused at approval', async () => {
+      givenContinuation({ amount: 1000 });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+      writeChapterEdgeForPlacement.mockRejectedValueOnce(new Error('rated above the storyline'));
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('rated above the storyline');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(moneyMoved()).toBe(0);
+      expect(Object.keys(legsFor(1)).sort()).toEqual(['holdFee', 'holdPrincipal']);
+    });
+
+    // The owner can see a priced row before its holds land; settling then would
+    // plan from a partial escrow and strand the hold that lands afterwards.
+    it.each([
+      ['approve', 'no hold yet', []],
+      ['approve', 'only the fee hold', ['holdFee']],
+      ['decline', 'no hold yet', []],
+      ['decline', 'only the fee hold', ['holdFee']],
+    ] as const)(
+      'refuses to %s a priced one whose escrow has %s, and moves nothing',
+      async (action, _, receipted) => {
+        givenContinuation({ amount: 1000 });
+        for (const kind of receipted)
+          db.legs.set(`1:${kind}`, {
+            placementId: 1,
+            kind,
+            amount: 300,
+            transactionId: 'tx',
+            attempts: 1,
+            createdAt: new Date(0),
+          });
+
+        await expect(
+          settleStorylineContinuation({ placementId: 1, action, actorId: OWNER })
+        ).rejects.toThrow('still processing');
+
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(moneyMoved()).toBe(0);
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+        expect(Object.keys(legsFor(1))).toEqual([...receipted]);
+      }
+    );
+
+    it('refuses an approval whose owner is not the storyline owner, and leaves it pending', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue({ storyline: { userId: OWNER + 1 } });
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow("is not owned by its storyline's owner");
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      expect(storylineOwner).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { postId: CHAPTER_POST } })
+      );
+    });
+
+    it('refuses a decline whose owner is not the storyline owner, and moves nothing', async () => {
+      givenContinuation({ amount: 1000 });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+      storylineOwner.mockResolvedValue({ storyline: { userId: OWNER + 1 } });
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER })
+      ).rejects.toThrow("is not owned by its storyline's owner");
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(moneyMoved()).toBe(0);
+    });
+
+    it('refuses an approval whose parent post is no longer a chapter', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue(null);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('not a chapter of an open storyline');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    // Hidden from the queue is not refused: an owner can name a row by id, and an
+    // image can be flagged after the row was admitted. Both approvals refuse.
+    it.each([
+      [
+        'still awaiting readiness',
+        { data: { postId: CONTINUATION_POST, awaitingReadiness: true } },
+        null,
+        'storyline: that post is not ready yet',
+      ],
+      [
+        'with an image in review',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, needsReview: 'poi' }] },
+        'storyline: that post is not ready yet',
+      ],
+      [
+        'with an image still scanning',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, ingestion: 'Pending' }] },
+        'storyline: that post is not ready yet',
+      ],
+      [
+        'with a minor image',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, minor: true }] },
+        'storyline: that post cannot be submitted',
+      ],
+    ])(
+      'refuses to approve a continuation %s, and writes no edge',
+      async (_, row, post, message) => {
+        givenContinuation({ amount: 1000, ...row });
+        await holdStoryline(1000);
+        clearMoneyMocks();
+        if (post) txPostFind.mockResolvedValue(post);
+
+        await expect(
+          settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+        ).rejects.toThrow(new RegExp(`^${message}$`));
+        expect(txPostFind).toHaveBeenCalledTimes(post ? 1 : 0);
+
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+        expect(moneyMoved()).toBe(0);
+      }
+    );
+
+    it('refuses to approve a continuation whose post was deleted', async () => {
+      givenContinuation();
+      txPostFind.mockResolvedValue(null);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('storyline: that post cannot be submitted');
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    // Declining must fail: an orphaned continuation is refunded in full by the
+    // orphaned-continuation job or at its deadline, not declined with the fee kept.
+    it('refuses to decline when the parent post is no longer a chapter, and leaves it pending', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue(null);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER })
+      ).rejects.toThrow('not a chapter of an open storyline');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+    });
+
+    // The approval notification names the owner only when `resolvedById` is set
+    // (storyline.notifications.ts).
+    it('records the owner as resolver on their approval, and nobody on an auto-approval', async () => {
+      givenContinuation();
+      await actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' });
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
+
+      givenContinuation();
+      await settleStorylineContinuation({ placementId: 1, action: 'approve' });
+      expect(db.placements.get(1)!.resolvedById).toBeNull();
+    });
+
+    it('writes no edge on decline', async () => {
+      givenContinuation();
+
+      await settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER });
+
+      expect(db.placements.get(1)!.status).toBe('declined');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it('writes no edge on expiry', async () => {
+      givenContinuation({ expiresAt: new Date(Date.now() - 1000) });
+
+      await expirePlacements();
+
+      expect(db.placements.get(1)!.status).toBe('expired');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it.each(['approve', 'decline'] as const)(
+      'moves no money when zero-priced: %s',
+      async (action) => {
+        givenContinuation();
+
+        await settleStorylineContinuation({ placementId: 1, action, actorId: OWNER });
+
+        expect(moneyMoved()).toBe(0);
+        expect(legsFor(1)).toEqual({});
+      }
+    );
+
+    it('moves no money when a zero-priced continuation expires', async () => {
+      givenContinuation({ expiresAt: new Date(Date.now() - 1000) });
+
+      await expirePlacements();
+
+      expect(moneyMoved()).toBe(0);
+      expect(legsFor(1)).toEqual({});
+    });
+
+    // Product rule, from the surface config: a declined PRICED continuation keeps the surface's
+    // default decline fee, as remix galleries do. Changing it is `defaultDeclineFeeRate`, and this
+    // test with it.
+    it('keeps the decline fee for the owner and refunds the rest when a priced one is declined', async () => {
+      givenContinuation({ amount: 1000 });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+
+      await settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER });
+
+      expect(legsFor(1)).toMatchObject({ feeToOwner: 300, principalToPlacer: 700 });
+      expect(createBuzzTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ toAccountId: OWNER, amount: 300 }),
+        expect.anything()
+      );
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it('refunds both holds in full when a priced one expires', async () => {
+      givenContinuation({ amount: 1000, expiresAt: new Date(Date.now() - 1000) });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+
+      await expirePlacements();
+
+      expect(
+        refundMultiAccountTransaction.mock.calls.map((c) => c[0].externalTransactionIdPrefix)
+      ).toEqual(['placement-1-holdPrincipal', 'placement-1-holdFee']);
+      expect(createBuzzTransaction).not.toHaveBeenCalled();
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it('pays the owner from the hold when a priced one is approved', async () => {
+      givenContinuation({ amount: 1000 });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+
+      await settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER });
+
+      expect(createBuzzTransaction.mock.calls.map((c) => [c[0].toAccountId, c[0].amount])).toEqual([
+        [OWNER, 700],
+      ]);
+      expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['no post', { data: {} }],
+      ['a string post id', { data: { postId: '88' } }],
+      ['post id 0', { data: { postId: 0 } }],
+      ['a negative post id', { data: { postId: -3 } }],
+      ['a fractional post id', { data: { postId: 1.5 } }],
+      ['an array payload', { data: [88] }],
+      ['a null payload', { data: null }],
+      ['an image target', { targetType: 'image' }],
+      ['no target id', { targetId: null }],
+    ])('refuses to approve a row with %s, and leaves it pending', async (_, overrides) => {
+      givenContinuation(overrides);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('does not name a chapter and a post');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it('refuses a placement on any other surface, without settling it', async () => {
+      givenPlacement({ surface: 'sticker' });
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('is not a storyline continuation');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+    });
+
+    // The leak control: the other surfaces' approvals pass no hook, so no edge
+    // is written for them. Goes red if the edge write moves into settlePlacement.
+    it.each(['sticker', 'remixGallery', 'galleryPromotion', 'modelPromotion'])(
+      'writes no edge when a %s placement is approved',
+      async (surface) => {
+        givenPlacement({ surface, amount: 0 });
+
+        await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+        expect(db.placements.get(1)!.status).toBe('approved');
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      }
+    );
+
+    // The edge is the storyline handler's to write, through the hook. Goes red
+    // if settlePlacement starts writing it itself for the storyline surface.
+    it('writes no edge when settlePlacement approves a storyline row with no hook', async () => {
+      givenContinuation();
+
+      await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+      expect(db.placements.get(1)!.status).toBe('approved');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the owner answering', () => {
+    it('lets the owner approve, and writes the edge', async () => {
+      givenContinuation();
+
+      await expect(
+        actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' })
+      ).resolves.toEqual({ settled: true, status: 'approved' });
+      expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
+    });
+
+    it('lets the owner decline, and writes no edge', async () => {
+      givenContinuation();
+
+      await expect(
+        actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'decline' })
+      ).resolves.toEqual({ settled: true, status: 'declined' });
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
+    });
+
+    it.each(['approve', 'decline'] as const)(
+      'refuses anyone but the owner, and settles nothing: %s',
+      async (action) => {
+        givenContinuation();
+
+        await expect(
+          actOnStorylineContinuation({ placementId: 1, ownerId: PLACER, action })
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses one already answered', async () => {
+      givenContinuation({ status: 'declined' });
+
+      await expect(
+        actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' })
+      ).rejects.toThrow('already been answered');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    it('treats a placement on another surface as not found', async () => {
+      givenPlacement({ surface: 'remixGallery' });
+
+      await expect(
+        actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' })
+      ).rejects.toThrow('Continuation not found');
+      expect(db.placements.get(1)!.status).toBe('pending');
+    });
   });
 });

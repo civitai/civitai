@@ -21,14 +21,12 @@ and it predates most of the standard.
 - **Built lazily, never at module load.** `vite build` evaluates modules, so anything reading
   `REDIS_*`/connecting at import time breaks the build. Construct on first use.
 
-## Known-failing typecheck
+## Typecheck is clean — keep it that way
 
-Two errors predate this file and are on `main`; they are not yours if you see them:
-
-- `src/lib/server/auth/providers.ts` — `Parameter 'p' implicitly has an 'any' type` (the `mapProfile`
-  stub)
-- `src/lib/server/auth/__tests__/establish-session.test.ts` — `Property '_store' does not exist on type
-  'never'`
+`pnpm run typecheck` is **0 errors, 1 warning** — `state_referenced_locally` in
+`src/routes/login/+page.svelte`. The two errors this section used to list as known-failing (a `mapProfile`
+implicit `any` in `providers.ts`, `_store` on `never` in `establish-session.test.ts`) are fixed, so any
+error you see is yours.
 
 ## Non-negotiables
 
@@ -38,7 +36,7 @@ standard is one link away**. Each of these has cost real time when broken. Full 
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** The single most repeated bug
   in these apps — it gives a stuck spinner, a re-run loop, or a stale response landing on a newer
-  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : new Promise(() => {}))`, then `{#await x}`. The server half is a promise that never settles, **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel just never
   fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
@@ -49,6 +47,12 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   and never undone makes the operator's own record wrong — and the item they skip is the one that failed.
 - **Treat 0 affected rows as a failure, not a success.** Reporting success on zero writes an audit row
   for something that did not happen.
+- **A `$bindable` prop passed one-way can latch.** shadcn wrappers declare `checked`/`value`/`open` as
+  `$bindable` and the primitive writes to them on click. Passed as a plain prop, that write is a
+  child-local override Svelte discards only when the parent expression yields a *different* value than it
+  last pushed — so any click whose new state leaves that prop unchanged (tri-state `off`→`mixed` is the
+  classic) leaves the control showing the opposite of your data, through a re-render and a reset. Use
+  function bindings — `bind:checked={() => expr, (v) => handler(v)}` — whenever the parent owns the state.
 - **Gate an action on the page's own path, never a parent group node.** A group's grant is the union of
   its children, so gating on the parent silently widens who can act.
 - **`typecheck`, never `check` — and `build` is not a check.** Both run `svelte-kit sync`, which fights

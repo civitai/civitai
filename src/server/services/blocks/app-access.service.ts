@@ -1,6 +1,23 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+// Static, not a lazy `import()`: `listing-problems` (imported below) already pulls this
+// module into the graph, so naming it here adds no weight — and the batched scan read is
+// on the hot path of every `/apps/mine` render, where a dynamic import would cost a
+// microtask hop per call for nothing.
+import { loadListingAssetScansBatch } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  isOwnerUnpublishAction,
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+  OWNER_UNPUBLISH_EVENT,
+  readLastModerationAction,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
+import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { readListingForkable } from '~/server/services/blocks/app-fork.service';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import type {
   AppRole,
   ListingCapability,
@@ -8,11 +25,16 @@ import type {
 } from '~/shared/constants/app-capabilities.constants';
 import {
   AUTHORABLE_LISTING_STATUSES,
+  canOpenListingAuthoringPage,
   CAPABILITIES_BY_KIND,
   capabilitiesForKind,
   isAuthorableListingStatus,
+  isPublishableListingStatus,
+  LISTING_AUTHORING_ROUTE_STATUSES,
   listingKindSupports,
+  PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
+import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Listing COLLABORATORS — THE consolidated app-access predicate.
@@ -110,6 +132,12 @@ import {
 export type { AppRole, ListingKind, ListingCapability };
 export { CAPABILITIES_BY_KIND, capabilitiesForKind, listingKindSupports };
 export { AUTHORABLE_LISTING_STATUSES, isAuthorableListingStatus };
+export {
+  LISTING_AUTHORING_ROUTE_STATUSES,
+  canOpenListingAuthoringPage,
+  PUBLISHABLE_LISTING_STATUSES,
+  isPublishableListingStatus,
+};
 
 export type AppAccess = {
   appBlockId: string;
@@ -134,6 +162,17 @@ export type ListingAccess = {
    * seat is ever read or written under.
    */
   seatListingId: string;
+  /**
+   * The SEAT (parent) listing's slug.
+   *
+   * 🔴 CARRIED BECAUSE IT IS THE ONLY JOIN LEFT WHEN A BLOCK FK IS NULL.
+   * `app_block_publish_requests.app_block_id` is NULL until approve, so an app's first
+   * pending/rejected/withdrawn version cannot be found by block id at all — `slug` is what
+   * carries identity across that lifecycle. Taken from the PARENT for the same reason
+   * `kind` and `appBlockId` are: a shadow revision has a synthetic `rev-<ulid>` slug.
+   * Read by {@link blockRequestWhereForListing}.
+   */
+  slug: string;
   /**
    * 🔴 THE CANONICAL OWNER, resolved KIND-AWARE — **not** `AppListing.userId`.
    *
@@ -318,8 +357,16 @@ export function canonicalOwnerWhereBranches(userId: number): Array<Record<string
  * message branch requires the missing object to be named as a RELATION or TABLE, and
  * refuses anything that mentions a column at all. `app-access.service.test.ts` pins both
  * directions, including the "broadened back to `does not exist` / `not found`" mutants.
+ *
+ * 🔴 EXPORTED BECAUSE IT IS THE MEASURED SPELLING, AND A SECOND COPY WAS NARROWER.
+ * The digital-goods rail (`isMissingGoodsTableError` in `buzz-attribution.service.ts`)
+ * open-coded a code-only version of this check. On a path where Prisma leaves the
+ * SQLSTATE in the MESSAGE — the very case the sentence above records as measured — that
+ * copy returned false, the goods `.catch` rethrew, and `Promise.all` took BOTH owner
+ * revenue pages down, including the card figures that were readable. One spelling, one
+ * place: new callers delegate here rather than re-deriving the condition.
  */
-function isMissingTableError(err: unknown): boolean {
+export function isMissingTableError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   if (code === 'P2021' || code === '42P01') return true;
   // Prisma wraps the driver error; the SQLSTATE is only in the message on some paths.
@@ -395,12 +442,38 @@ async function hasAcceptedSeat(
  * `appListingId: null` and therefore only ever `owner`/`null` — correct, because there
  * is nothing to seat anyone on. The hop costs one query and is paid ONLY on the
  * non-owner path.
+ *
+ * 🔴 `db` IS LOAD-BEARING FOR THE SAME REASON IT IS ON `resolveListingAccess`, AND
+ * FOR ONE MORE. Read that function's note first: an EDITOR never takes the owner
+ * short-circuit, so the seat lookup is the one path that always reaches the
+ * database, and resolving it off a lagging replica turns replication lag into a
+ * spurious "you are not a collaborator". The additional reason here is that this
+ * resolver is BLOCK-keyed, so its FIRST read is the `AppBlock` row itself: a caller
+ * that must not miss a recently-written block or listing needs that read on the
+ * primary too, not only the seat lookup. The token mint reads `dbWrite` throughout
+ * for the same reason ("so a freshly-suspended block can't be installed through a
+ * replication-lag window").
+ *
+ * ⚠️ TO BE PRECISE ABOUT WHAT THIS BUYS — an earlier draft of this paragraph said
+ * "freshness of STATUS", and that overstated it. The override affects only whether
+ * these two rows are found and how fresh they are. It does NOT make this function
+ * status-aware: the select below reads `id`, `app.userId` and `appListing.id`, and
+ * the role returned is `owner` / `editor` / `null`. A caller that needs a block's
+ * status must read it itself.
+ *
+ * Threaded all the way down to the seat lookup, not just to the block lookup —
+ * `hasAcceptedSeat` already accepts the override, and passing it to only one of the
+ * two queries would leave the editor path reading the replica while the block path
+ * read the primary, which is the worst of both.
+ *
+ * DEFAULTS TO `dbRead`, so every existing caller is byte-identical. Additive only.
  */
 export async function resolveAppAccess(
   appBlockId: string,
-  userId: number | null | undefined
+  userId: number | null | undefined,
+  db: AccessDb = dbRead
 ): Promise<AppAccess | null> {
-  const block = await dbRead.appBlock.findUnique({
+  const block = await db.appBlock.findUnique({
     where: { id: appBlockId },
     select: { id: true, app: { select: { userId: true } }, appListing: { select: { id: true } } },
   });
@@ -411,7 +484,7 @@ export async function resolveAppAccess(
   if (typeof userId !== 'number') return { ...base, role: null };
   if (ownerUserId === userId) return { ...base, role: 'owner' };
   if (!appListingId) return { ...base, role: null };
-  const editor = await hasAcceptedSeat(appListingId, userId);
+  const editor = await hasAcceptedSeat(appListingId, userId, db);
   return { ...base, role: editor ? 'editor' : null };
 }
 
@@ -449,6 +522,7 @@ export async function resolveListingAccess(
     select: {
       id: true,
       userId: true,
+      slug: true,
       kind: true,
       appBlockId: true,
       revisionOfId: true,
@@ -459,6 +533,9 @@ export async function resolveListingAccess(
       revisionOf: {
         select: {
           id: true,
+          // The PUBLIC slug. A shadow's own slug is the synthetic `rev-<ulid>`, which
+          // matches no publish request, so the parent's is the one that can join.
+          slug: true,
           // 🔴 THE PARENT'S OWNER COLUMN, and it is NOT redundant with the shadow's own.
           // The shadow froze a copy of it at clone time; for an OFF-SITE listing that
           // column IS the owner, so reading the frozen one keeps naming whoever owned the
@@ -508,6 +585,9 @@ export async function resolveListingAccess(
     ownerUserId,
     kind,
     appBlockId,
+    // 🔴 THE PARENT'S slug, on the same `?? listing.slug` fallback as `kind`/`appBlockId`
+    // above — a shadow carries the synthetic `rev-<ulid>`, which joins to nothing.
+    slug: ((listing.revisionOfId ? parent?.slug : listing.slug) ?? listing.slug) as string,
   };
   if (typeof userId !== 'number') return { ...base, role: null };
   if (ownerUserId === userId) return { ...base, role: 'owner' };
@@ -567,6 +647,49 @@ export async function assertAppEditAccess(args: {
   });
   const seated = listing ? await hasAcceptedSeat(listing.id, args.userId) : false;
   if (!seated) deny();
+}
+
+/**
+ * The listing half of "this seat reaches an AppBlock" (why both conditions:
+ * {@link resolveAccessibleAppBlockIds}). Shared with {@link listApprovedAppBlockSeatHolders} so
+ * panel access and the ingest's team stay one set; `app-block-team.seam.test.ts` pins that.
+ */
+export const APP_BLOCK_SEAT_LISTING_WHERE = {
+  kind: 'onsite',
+  appBlockId: { not: null },
+} as const;
+
+/**
+ * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs, under
+ * the same seat conditions as {@link resolveAccessibleAppBlockIds}. The owner is not included.
+ * Degrades to empty only when the table is missing; any other failure propagates.
+ */
+export async function listApprovedAppBlockSeatHolders(): Promise<
+  Array<{ appBlockId: string; userId: number }>
+> {
+  const listings = (await dbRead.appListing.findMany({
+    where: { ...APP_BLOCK_SEAT_LISTING_WHERE, appBlock: { status: 'approved' } },
+    select: { id: true, appBlockId: true },
+  })) as Array<{ id: string; appBlockId: string | null }>;
+  const blockByListing = new Map<string, string>();
+  for (const listing of listings) {
+    if (listing.appBlockId) blockByListing.set(listing.id, listing.appBlockId);
+  }
+  if (blockByListing.size === 0) return [];
+  const seats = await safeCollaboratorQuery(
+    () =>
+      dbRead.appCollaborator.findMany({
+        where: { appListingId: { in: [...blockByListing.keys()] }, status: ACCEPTED },
+        select: { appListingId: true, userId: true },
+      }),
+    [] as Array<{ appListingId: string; userId: number }>
+  );
+  const pairs: Array<{ appBlockId: string; userId: number }> = [];
+  for (const seat of seats) {
+    const appBlockId = blockByListing.get(seat.appListingId);
+    if (appBlockId) pairs.push({ appBlockId, userId: seat.userId });
+  }
+  return pairs;
 }
 
 export type AccessibleAppBlocks = {
@@ -630,6 +753,8 @@ export type AccessibleAppBlocks = {
  * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
+  // `status: ACCEPTED` is repeated in `listApprovedAppBlockSeatHolders`: change both
+  // (`app-block-team.seam.test.ts`).
   const [owned, seats] = await Promise.all([
     dbRead.appBlock.findMany({ where: { app: { userId } }, select: { id: true } }),
     safeCollaboratorQuery(
@@ -651,7 +776,7 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
   const seatListingIds = seats.map((s: { appListingId: string }) => s.appListingId);
   const seatBlocks = seatListingIds.length
     ? await dbRead.appListing.findMany({
-        where: { id: { in: seatListingIds }, kind: 'onsite', appBlockId: { not: null } },
+        where: { id: { in: seatListingIds }, ...APP_BLOCK_SEAT_LISTING_WHERE },
         select: { appBlockId: true },
       })
     : [];
@@ -787,7 +912,195 @@ export type MyAppListing = {
    * rendering a guaranteed 403.
    */
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * The listing's ICON as a CDN URL, or `null` when it has none.
+   *
+   * 🔴 CARRIED BECAUSE THE CONSUMER IS THE ROW ITSELF, which is the bar the
+   * `connectClientId` note below sets. `/apps/mine` is now the one author-facing table for
+   * every listing, on-site and off-site, and a table of apps that cannot show the apps is
+   * not the surface. It is a MEDIA URL derived from `Image.url` — the same string the
+   * PUBLIC store card already serves for an approved listing — so it discloses nothing to
+   * a seated editor that the store does not, and for a `draft` it discloses that editor's
+   * own collaborators' work, which the seat is exactly consent for.
+   *
+   * `null` is a REAL STATE, not an error: measured on production 2026-08-19, all 11
+   * `removed` listings have `cover_id IS NULL`, so the placeholder path is the main render
+   * path for the Inactive table rather than an edge case.
+   */
+  iconUrl: string | null;
+  /**
+   * The listing's COVER as a CDN URL, or `null`.
+   *
+   * 🔴 NO SCREENSHOT FALLBACK HERE, unlike the public store card — see
+   * {@link listingCoverUrl}. A missing cover is the fact its author needs to see.
+   */
+  coverUrl: string | null;
+  /**
+   * Last write to the listing row. Drives the table's default "recently updated first"
+   * order, computed client-side so the server's `serialId` keyset (which is what makes
+   * `take: limit` deterministic) is untouched.
+   */
+  updatedAt: Date;
+  /**
+   * The listing-completeness ADVISORY — missing icon / cover / screenshots / description
+   * / tagline / category, from {@link computeListingProblems}.
+   *
+   * 🔴 CARRIED BECAUSE `/apps/mine` IS NOW ITS ONLY POSSIBLE HOME. The advisory rendered
+   * on the two `/apps/my-submissions` tables; that page merged into this one, so without
+   * this field the warning has no surface at all and an author simply stops being told
+   * their listing is incomplete. It is also what makes {@link listingCoverUrl}'s "no
+   * screenshot fallback, the author must see the gap" argument true rather than merely
+   * asserted — that rationale cites this warning by name.
+   *
+   * Empty array = nothing to flag. Never `undefined`.
+   */
+  problems: ListingProblem[];
+  /**
+   * The listing's MOST-RECENT moderation-event action, or `null`.
+   *
+   * 🔴 CARRIED BECAUSE `removed` ALONE CANNOT TELL THE AUTHOR APART FROM A MODERATOR, and
+   * that distinction is what decides whether the row may offer **Republish**.
+   * `app_listings.status = 'removed'` is written by BOTH an owner self-unpublish and a mod
+   * takedown; only the last event separates them (`owner-unpublish` ⇒ the owner may restore
+   * it, anything else ⇒ `republishOwnListing` 403s and a moderator `relistListing` is the
+   * only way back). Without this field `/apps/mine` cannot render either affordance
+   * correctly — it would either hide Republish from an author who is entitled to it, or
+   * offer a guaranteed-403 button on a moderator takedown.
+   *
+   * Populated ONLY for a `removed` listing (the sole state that reads it); `null`
+   * everywhere else — including on a removed listing with no recorded event, which
+   * {@link ownerListingState} treats as a mod removal, the SAFE direction.
+   *
+   * 🔴 NORMALISED, NOT RAW — see {@link normalizeLastModerationAction} and the note at its
+   * call site. This read is reachable by a seated EDITOR, so it carries the one bit the UI
+   * branches on and never the moderator's actual verb.
+   */
+  lastModerationAction: NormalizedModerationAction | null;
 };
+
+/**
+ * The SINGLE-LISTING authoring read's row — {@link MyAppListing} plus the one extra fact
+ * the authoring page needs. Returned by {@link getAppListingAuthoringContext}.
+ *
+ * 🔴 A SEPARATE TYPE RATHER THAN A WIDER `MyAppListing`, and the distinction is a
+ * disclosure boundary rather than tidiness. `connectClientId` was first added to
+ * `MyAppListing` itself, which silently widened `listMine` — a LIST read over every
+ * listing the caller can touch — for no consumer at all. Both reads are reachable by an
+ * accepted EDITOR, not just the owner, so that would have handed a seated collaborator the
+ * client_id of every listing they hold a seat on, including `draft` ones the public read
+ * does not expose yet. Harmless in itself (it is the public client_id, never the secret)
+ * and bought nothing, which is precisely why it should not be paid.
+ *
+ * So the field is carried ONLY on the read that has a consumer. If a list surface ever
+ * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it. (That
+ * is precisely what happened for `iconUrl`/`coverUrl`/`updatedAt`: the merged `/apps/mine`
+ * table is the consumer, and `app-access.my-app-listings-media.test.ts` pins them.)
+ *
+ * 🔴 AND THE SAME RULE RUNS THE OTHER WAY, which is why this is an `Omit` and not a bare
+ * `&`. The authoring page has no consumer for the LIST-only media/advisory fields, and
+ * inheriting them would oblige `getAppListingAuthoringContext` to join `Image` twice per
+ * page load to populate columns nobody renders. Narrowing here keeps each read carrying
+ * exactly what its own surface uses.
+ *
+ * 🔴 `lastModerationAction` IS NO LONGER OMITTED, and it is here under exactly the rule
+ * above: it now has a consumer. The Publishing tab has to tell an owner-unpublished
+ * listing (Republish, which the server permits) from a moderator takedown (no way back
+ * that the owner can walk) — `status` reads `removed` for both, so it is the ONLY bit that
+ * separates them. It arrives NORMALISED (`owner-unpublish` | `other` | `null`) via the
+ * same {@link normalizeLastModerationAction} the list read uses, so a seated editor never
+ * receives the moderator's actual verb.
+ */
+export type AppListingAuthoringContext = Omit<
+  MyAppListing,
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
+> & {
+  /**
+   * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
+   * column the public listing-detail read already exposes (`ListingDetailKindData`).
+   *
+   * 🔴 CARRIED SO THE AUTHORING SURFACE CAN REACH THE TRANSFER VERDICT UP FRONT. A
+   * connect-linked off-site listing can never be transferred
+   * ({@link refusesTransferForConnectClient}), and without this field the Collaborators
+   * tab could not know that until the mutation came back refused — so it rendered an
+   * enabled recipient picker and the owner only found out after choosing someone.
+   * A field is not a guard, though: the branch that reads it lives in
+   * `AppCollaboratorsPanelView`, and the server gate is unchanged and still authoritative.
+   */
+  connectClientId: string | null;
+  /**
+   * The listing's per-listing VISIBILITY LEVEL, or `null` for "the owner has expressed no
+   * choice". Read through the guarded raw-SQL reader, never a Prisma `select` — the column
+   * is `// @no-type` and does not exist on the generated delegate.
+   *
+   * 🔴 `null` IS NOT THE `private` LEVEL, and collapsing the pair is the documented way
+   * this goes wrong (see `app-listing-visibility.service.ts`'s "THREE STATES, NOT TWO").
+   * An unset level resolves to the pre-feature rule for the row's status; `private` is a
+   * deliberate choice that hides an approved listing. A client rendering a selector must
+   * show "no choice" as its own state, not preselect `private`.
+   */
+  visibility: AppListingVisibility | null;
+  /**
+   * False ⇒ the manual-apply migration is not applied in THIS environment, `visibility`
+   * above is a placeholder, and no write may name the column.
+   *
+   * 🔴 CARRIED SO THE CONTROL CAN DISABLE ITSELF INSTEAD OF OFFERING A WRITE THAT 500s.
+   * The owner write path (`setListingVisibilityAsOwner`) is raw SQL with NO missing-column
+   * degradation — by design, because a silently-swallowed write is worse than an error —
+   * so on an un-migrated environment the only correct UI is a disabled control saying so.
+   * A field is not a guard: the server still refuses via `assertVisibilityWritable`, and
+   * that refusal remains authoritative.
+   */
+  visibilityAvailable: boolean;
+  /** The author's fork opt-in ("Let others fork this app's source"), off the PARENT listing. */
+  forkable: boolean;
+  /** `false` ⇒ the fork migration is not applied here; the setting must not be offered. */
+  forkableAvailable: boolean;
+  /**
+   * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
+   *
+   * It carried `maxVisibilityForStatus(row.status)` and was read by NOTHING but a test
+   * assertion: the client computes the ceiling by importing that same shared function. Its
+   * own docblock argued the opposite — *"the client must NOT re-derive the ceiling"* — while
+   * the client in the same change re-derived it, so the field shipped as a second spelling
+   * of a value nobody consumed. A field that exists in a DTO is not a guard; only a branch
+   * on it is, and there was no branch.
+   *
+   * 🔴 THE D6 REQUIREMENT IS ALREADY MET WITHOUT IT, which is the part to understand before
+   * re-adding it: `maxVisibilityForStatus` lives in `~/shared/utils` and BOTH sides import
+   * the SAME function, so there is one implementation of the ceiling, not two. D6 forbids a
+   * second DERIVATION, not a client-side CALL of the shared one. If a future surface needs
+   * the ceiling without the status — a paged list, say — add it then AND make a branch read
+   * it; do not re-add it as documentation.
+   */
+};
+
+/**
+ * The one moderation-event action `/apps/mine` is allowed to name, and the bucket for
+ * everything else.
+ *
+ * 🔴 THE VALUE SPACE IS THE POINT. `owner-unpublish` is the only action the client may act
+ * on (it is what `republishOwnListing`'s last-event guard permits), so every other verb
+ * collapses to `other` before it leaves the server. Widening this back to the raw string
+ * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
+ *
+ * 🔴 THE VALUE IS IMPORTED FROM `app-listing-owner-unpublish`, NOT REDECLARED. That module
+ * owns the server-side predicate the SERVER branches on (`republishOwnListing`'s go-live
+ * guard and the author edit paths); this is the same fact reaching the CLIENT. Two literals
+ * spelling one action is how they drift apart.
+ *
+ * It is deliberately NOT re-exported from here. A re-export with no consumer reads as a
+ * second public home for the constant and invites the next caller to import the action name
+ * from a service that does not own it; `app-listing-owner-unpublish` is the one place to
+ * import it from. (`app-listing-owner-unpublish.test.ts` pins the client's own copy,
+ * `OWNER_UNPUBLISH_ACTION` in `~/components/Apps/offsiteOwnerControls`, against it.)
+ */
+export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
+
+/** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
+function normalizeLastModerationAction(action: string | null): NormalizedModerationAction | null {
+  if (action == null) return null;
+  return isOwnerUnpublishAction(action) ? OWNER_UNPUBLISH_EVENT : 'other';
+}
 
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
 async function hydrateMyAppListings(
@@ -797,10 +1110,120 @@ async function hydrateMyAppListings(
   if (ids.allIds.length === 0) return [];
   const rows = await dbRead.appListing.findMany({
     where: { id: { in: ids.allIds } },
-    select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
+    // 🔴 NO `connectClientId` HERE, deliberately — see {@link AppListingAuthoringContext}.
+    // This is a LIST read reachable by an accepted editor; only the single-listing
+    // authoring read has a consumer for that column.
+    //
+    // 🔴 `icon`/`cover` ARE NESTED RELATION SELECTS ON THE SAME `findMany`, not a second
+    // query. `app_listings.icon_id`/`cover_id` are integer FKs to `Image`, so the URL is
+    // one join away; doing it here keeps this read at ONE hydrate query, which
+    // `app-access.accessible-listings.test.ts` pins by call count.
+    //
+    // 🔴 `iconId`/`coverId`/`description`/`tagline`/`category` + the FILTERED screenshot
+    // COUNT are the exact inputs of {@link computeListingProblems} — the listing-
+    // completeness advisory. They are selected HERE rather than fetched by a second
+    // surface because `/apps/mine` is now the ONLY place that advisory can render: it used
+    // to hang off the two `/apps/my-submissions` tables, and those lost their importer
+    // when that page merged into this one. Deriving "the cover is missing" from
+    // `coverUrl == null` would cover one of six problems and silently drop the other five.
+    //
+    // The screenshot count is `_count` with the SAME `imageId: { not: null }` filter the
+    // authoritative asset gate uses (`buildAssetStatus`) — a screenshot whose Image was
+    // deleted has nothing to display, so counting it would make `no-screenshots` a
+    // false negative.
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      status: true,
+      kind: true,
+      appBlockId: true,
+      updatedAt: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      contentRating: true,
+      appBlock: { select: { contentRating: true } },
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    },
     orderBy: { serialId: 'desc' },
     take: limit,
   });
+  /**
+   * For every REMOVED listing, its MOST-RECENT moderation-event action.
+   *
+   * 🔴 ONE batched query, and ONLY over the removed subset — the same shape
+   * `blocks.router::listMyPublishRequests` and the off-site `listMySubmissions` already use,
+   * so the three author surfaces derive owner-hidden-vs-mod-removed from one query pattern
+   * rather than three. `distinct` + `orderBy desc` is the latest-per-listing keyset.
+   *
+   * The `.length` guard is not micro-optimisation: the overwhelmingly common case is an
+   * author with no removed listings, and skipping the round-trip keeps this read at the ONE
+   * hydrate query `app-access.accessible-listings.test.ts` pins by call count.
+   */
+  const removedListingIds = rows
+    .filter((r: { status: string }) => r.status === 'removed')
+    .map((r: { id: string }) => r.id);
+  /**
+   * THE SCAN DIMENSION OF THE COMPLETENESS ADVISORY — `blocked-media` / `scanning-media`.
+   *
+   * 🔴 THIS USED TO BE UNWIRED, AND THE CONSEQUENCE WAS NOT "a weaker advisory" BUT "two
+   * of the eight codes could never fire ANYWHERE the author can reach". `/apps/mine` is
+   * the only surface the advisory renders on, so `computeListingProblems` was being
+   * called without `assetScans` at the one call site that matters — including for the
+   * BLOCKING one. An author whose icon came back `Blocked` saw a listing reported as
+   * complete, and then a publish refused by `assertAssetsScanClean` with no advisory
+   * having said why.
+   *
+   * 🔴 IT IS BATCHED, NOT A PER-ROW FAN-OUT, and that is the whole reason it is wireable
+   * now. The original note here refused the input because "it needs each asset's
+   * `ingestion` state, which is a per-listing fan-out this LIST read deliberately does not
+   * do" — correct about `getListingAssets` (2 queries per listing), wrong to conclude the
+   * data was unreachable. {@link loadListingAssetScansBatch} takes the WHOLE PAGE and
+   * returns 2 queries total: one screenshot read across every listing id, one Image read
+   * across every collected asset id. So the cost is +2 fixed round trips per `listMine`
+   * call, independent of page size — not +2N.
+   *
+   * 🔴 RUN CONCURRENTLY WITH THE MODERATION-EVENT READ so the added SERIAL depth is one
+   * hop, not two. The two are independent (different tables, different keys).
+   */
+  const [lastEvents, scansByListingId] = await Promise.all([
+    removedListingIds.length
+      ? dbRead.appListingModerationEvent.findMany({
+          // 🔴 FILTERED TO STATUS-CHANGING ACTIONS, exactly like
+          // `readLastModerationAction`, and from the SAME constant. This read decides
+          // whether `/apps/mine` offers **Republish**; the server-side gate
+          // (`republishOwnListing`, and now the three author edit paths) decides whether
+          // it works. An UNFILTERED read here and a filtered one there disagree the
+          // moment a moderator sends the owner a `message-owner` — the button vanishes
+          // from a listing the server would happily republish. Same query shape, one
+          // spelling of the set.
+          where: {
+            appListingId: { in: removedListingIds },
+            action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : Promise.resolve([] as { appListingId: string | null; action: string }[]),
+    loadListingAssetScansBatch(
+      rows.map((r: { id: string; iconId?: number | null; coverId?: number | null }) => ({
+        id: r.id,
+        iconId: r.iconId ?? null,
+        coverId: r.coverId ?? null,
+      }))
+    ),
+  ]);
+  const lastActionByListingId = new Map<string, string>(
+    (lastEvents as Array<{ appListingId: string | null; action: string }>)
+      .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+      .map((e) => [e.appListingId, e.action])
+  );
   const ownedSet = new Set(ids.ownedIds);
   return rows.map(
     (r: {
@@ -810,6 +1233,17 @@ async function hydrateMyAppListings(
       status: string;
       kind: string;
       appBlockId: string | null;
+      updatedAt?: Date | null;
+      icon?: { url: string | null } | null;
+      cover?: { url: string | null } | null;
+      iconId?: number | null;
+      coverId?: number | null;
+      description?: string | null;
+      tagline?: string | null;
+      category?: string | null;
+      contentRating?: string | null;
+      appBlock?: { contentRating: string | null } | null;
+      _count?: { screenshots: number } | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -821,6 +1255,55 @@ async function hydrateMyAppListings(
         appBlockId: r.appBlockId,
         role: (ownedSet.has(r.id) ? 'owner' : 'editor') as AppRole,
         capabilities: capabilitiesForKind(kind),
+        iconUrl: listingIconUrl(r.icon),
+        // 🔴 `null`, NOT a screenshot — see {@link listingCoverUrl}. The author must be
+        // able to see that their own cover is missing. That is only true as long as the
+        // advisory below actually renders somewhere; `problems` is what makes it true.
+        coverUrl: listingCoverUrl(r.cover, null),
+        // A narrow test fake that ignores `select` yields `undefined` here; the epoch
+        // keeps the row sortable rather than producing an `Invalid Date` that poisons
+        // every comparison it takes part in.
+        updatedAt: r.updatedAt ?? new Date(0),
+        // `assetScans` comes from the ONE batched read above — see its note. Absent from
+        // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
+        // i.e. the pre-scan-dimension behaviour, never to an invented problem.
+        problems: computeListingProblems({
+          // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
+          // three empty-text problems give different (opposite) advice per kind. This is
+          // the same `kind` the row already reports, so the advisory and the capabilities
+          // can never disagree about what sort of listing this is.
+          kind,
+          iconId: r.iconId ?? null,
+          coverId: r.coverId ?? null,
+          screenshotCount: r._count?.screenshots ?? 0,
+          description: r.description ?? null,
+          tagline: r.tagline ?? null,
+          category: r.category ?? null,
+          assetScans: scansByListingId.get(r.id) ?? [],
+          status: r.status,
+          contentRating: r.contentRating ?? null,
+          declaredContentRating: declaredListingRating({
+            kind,
+            appRating: r.appBlock?.contentRating,
+            listingRating: r.contentRating,
+          }),
+        }).problems,
+        // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
+        // returning an action would let a stale event re-open Republish on a live listing.
+        //
+        // 🔴 NORMALISED TO THE DISTINCTION, NOT THE VERB, AND THAT IS A DISCLOSURE BOUNDARY.
+        // `listMine` is reachable by an accepted EDITOR, and the only other route to a
+        // listing's moderation actions (`listMyListingModerationEvents`) is owner-scoped —
+        // so shipping the raw action would hand a seated collaborator facts they have no
+        // route to today, and specific ones: `claim` says a moderator seized the app from
+        // an impersonating owner, `purge`/`report-resolve`/`report-dismiss` each narrate a
+        // different enforcement history. The consumer needs exactly one bit — may the owner
+        // press Republish — so that is all this carries. Same bar {@link MyAppListing}
+        // already sets for `iconUrl` ("discloses nothing to a seated editor that the store
+        // does not"); the raw verb neither met it nor argued for an exception.
+        lastModerationAction: normalizeLastModerationAction(
+          r.status === 'removed' ? lastActionByListingId.get(r.id) ?? null : null
+        ),
       };
     }
   );
@@ -975,7 +1458,7 @@ export async function listMyAppListings(opts: {
 export async function getAppListingAuthoringContext(opts: {
   appListingId: string;
   userId: number;
-}): Promise<MyAppListing> {
+}): Promise<AppListingAuthoringContext> {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
@@ -985,32 +1468,133 @@ export async function getAppListingAuthoringContext(opts: {
   }
   const row = await dbRead.appListing.findUnique({
     where: { id: access.seatListingId },
-    select: { id: true, slug: true, name: true, status: true },
+    // 🔴 `connectClientId` IS READ FROM THE SEAT (PARENT) ROW, which is the same row
+    // `app-ownership-transfer::loadOwnedListing` reads — so the tab's up-front verdict and
+    // the server's refusal are looking at one column on one row. Reading it off a SHADOW
+    // would be the `kind`/`appBlockId` trap below in a new place.
+    select: { id: true, slug: true, name: true, status: true, connectClientId: true },
   });
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
   }
-  // 🔴 STATUS GATE — see {@link AUTHORABLE_LISTING_STATUSES}. A moderator-removed listing
-  // must not open the authoring page at all; leaving it open left a live Collaborators tab
-  // on a delisted app, where accepting an invite still mints repo write.
-  if (!isAuthorableListingStatus(row.status)) {
+  /**
+   * 🔴 STATUS GATE — NOW A KNOWN-STATUS GATE, NOT THE AUTHORABLE ONE, and the difference
+   * is deliberate rather than a relaxation.
+   *
+   * The old gate refused every non-authorable status outright. Its stated reason was that
+   * leaving the page open on a delisted app left a LIVE Collaborators tab, where accepting
+   * an invite still mints repo write — and that reason is untouched and still correct. But
+   * refusing the whole page also put an owner's own Republish out of reach, because an
+   * owner Unpublish writes the SAME `status='removed'` a moderator takedown does. That made
+   * an owner unpublish a one-way door only a moderator could reopen — the exact defect
+   * civitai/civitai#4218 exists to prevent.
+   *
+   * So the page opens and the TABS narrow instead: `editorTabsFor` withholds `details`,
+   * `media`, `manifest`, `earnings` AND `collaborators` on any non-authorable status,
+   * leaving at most Publishing (owner) + History. The Collaborators hazard is additionally
+   * closed at its own enforcement point — `inviteCollaborator` / `respondToInvite` refuse a
+   * non-authorable listing — because a tab set is a UI narrowing and never a gate.
+   *
+   * An UNKNOWN status still refuses here: {@link canOpenListingAuthoringPage} fails closed.
+   */
+  if (!canOpenListingAuthoringPage(row.status)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This listing can no longer be edited',
     });
   }
+  /**
+   * The listing's most-recent moderation-event action, for the Publishing tab's
+   * owner-hidden-vs-mod-removed split.
+   *
+   * 🔴 ONLY QUERIED FOR A `removed` LISTING, which is the only status the value means
+   * anything on — every other status keeps this read at the two round trips it already
+   * did. Same keyset (`orderBy desc` + `take 1`) the batched list read uses, and the same
+   * NORMALISATION on the way out.
+   *
+   * 🔴 THE REPLICA IS STILL CORRECT HERE, BUT NOT FOR THE REASON THIS COMMENT USED TO GIVE.
+   * It said the value "only decides which BUTTON the Publishing tab renders". That stopped
+   * being true in civitai/civitai#4431: the field is now also an input to `editorTabsFor`,
+   * so it decides the TAB SET — whether the owner-repair branch opens `details` and `media`
+   * on a `removed` listing at all. It is a wider blast radius than one button, and anyone
+   * re-deriving the replica-vs-primary choice from the old sentence would be reasoning from
+   * a premise that no longer holds.
+   *
+   * 🔴 THE CHOICE SURVIVES THAT WIDENING BECAUSE THE DIRECTION IS SAFE, WHICH IS A CLAIM
+   * ABOUT THE LAG'S SIGN, NOT ABOUT ITS SIZE. The only value this read can be stale in
+   * FAVOUR of is an older event — concretely, a lagging replica can still show the owner's
+   * own `owner-unpublish` after a moderator has just written a `delist`. That is the
+   * PERMISSIVE direction, and it is the one that matters, so spell out why it is still not
+   * an escalation:
+   *
+   *   - The wide tab set is a UI narrowing, never a gate — the standing rule for this
+   *     function. A stale-wide `details`/`media` offers surfaces whose procs
+   *     (`getMyListingForEdit`, `updateListing`, `getMyListingForApp`, and the owner asset
+   *     procs) each re-read the last moderation action on the PRIMARY inside their own
+   *     gate. So the tab opens and the panel behind it refuses. One wasted click, not a
+   *     write.
+   *   - `publishing` does not widen at all here: it is gated on `isPublishableListingStatus`
+   *     + `role`, neither of which reads this value, and `republishOwnListing` re-checks on
+   *     the primary in its own transaction.
+   *   - The reverse staleness (a fresh `delist` visible, an older `owner-unpublish` hidden)
+   *     is the RESTRICTIVE direction and costs the owner nothing but a refresh.
+   *
+   * The gates in `offsite-listing.service` pass `dbWrite` precisely because there the same
+   * permissive staleness would GRANT rather than merely OFFER. That asymmetry — offer here,
+   * grant there — is the whole reason the two callers read different pools, and it is what
+   * must be re-checked if this value ever gains a THIRD consumer that acts on it directly.
+   */
+  const lastAction =
+    row.status === 'removed' ? await readLastModerationAction(dbRead, access.seatListingId) : null;
+  /**
+   * The per-listing visibility level, for the Publishing tab's level control.
+   *
+   * 🔴 KEYED ON `access.seatListingId` — THE PARENT — NEVER ON `opts.appListingId`. The
+   * caller may have arrived with a SHADOW revision id, and a shadow is a draft copy: the
+   * level governs the LIVE listing's discoverability, so reading it off a shadow would
+   * report the wrong row's level (in practice `null`, since nothing writes a shadow's) and
+   * an owner editing an approved app would see their deliberate `private` as "no choice".
+   * This is the same parent-not-shadow rule the `kind`/`appBlockId` comment below gives,
+   * in the column that decides who can see the app.
+   *
+   * 🔴 `dbRead` IS CORRECT HERE AND THE DIRECTION IS WHY. This value does not GRANT
+   * anything — it only decides which option a selector shows preselected; the write
+   * re-reads on the primary inside `setListingVisibilityAsOwner`'s own gate and CAS. A
+   * lagging replica can therefore only render a stale SELECTION, which costs a refresh,
+   * never a wrong audience. (Same offer-here/grant-there asymmetry as `lastAction` above.)
+   *
+   * 🔴 IT DEGRADES RATHER THAN THROWING, so an un-migrated environment still renders the
+   * whole authoring page. `readListingVisibility` returns `available: false` on 42703/P2022
+   * ONLY; a connection failure or a missing table still propagates, because degrading on
+   * those would turn an outage into a silently wrong audience.
+   */
+  const visibilityRead = await readListingVisibility(access.seatListingId, dbRead);
+  /**
+   * The fork opt-in, for the Details tab's "Let others fork this app's source" setting. Keyed on
+   * the PARENT for the same reason the level is: the opt-in lives on the live listing only. Same
+   * offer-here/grant-there split — this only decides whether the box shows ticked, and whether it
+   * shows at all (`forkableAvailable: false` ⇒ the migration is not applied here, and the panel
+   * says so instead of offering a write the server would refuse). The write re-checks everything.
+   */
+  const forkRead = await readListingForkable(access.seatListingId, dbRead);
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
     name: row.name,
     status: row.status,
+    lastModerationAction: normalizeLastModerationAction(lastAction),
     // 🔴 KIND AND BLOCK COME FROM `access` (the PARENT), never from the row asked for —
     // a shadow carries `appBlockId: null` by construction, so reading them off it would
     // make an in-flight revision look off-site and silently strip the block-only tabs.
     kind: access.kind,
     appBlockId: access.appBlockId,
+    connectClientId: row.connectClientId,
     role: access.role,
     capabilities: capabilitiesForKind(access.kind),
+    visibility: visibilityRead.visibility,
+    visibilityAvailable: visibilityRead.available,
+    forkable: forkRead.forkable,
+    forkableAvailable: forkRead.available,
   };
 }
 
@@ -1048,13 +1632,20 @@ export async function listDisplayedCollaboratorUserIds(appListingId: string): Pr
  * The user ids that must be treated as "the app's own people" for ANTI-ABUSE
  * purposes — the owner plus every ACCEPTED collaborator, REGARDLESS of `displayed`.
  *
- * Keyed on the APP BLOCK because its only caller is the `AppBlockReview` self-review
- * gate, which is block-scoped; the seats are reached via the block's listing.
+ * Keyed on the APP BLOCK, which is how its original caller — the removed
+ * `AppBlockReview` self-review gate — was scoped; the seats are reached via the block's
+ * listing.
+ *
+ * ⚠️ NO PRODUCTION CALLER TODAY. The 5-star review system that used it was removed;
+ * this is kept because the question it answers ("who is on the inside of this app, for
+ * anti-abuse purposes") is the one any future self-review / self-vote gate needs, and
+ * because the `displayed` asymmetry below is a decision worth keeping written down and
+ * under test. Delete it if that stops being true — do not quietly repurpose it.
  *
  * 🔴 `displayed` is deliberately NOT filtered here, and the asymmetry with
  * {@link listDisplayedCollaboratorUserIds} is the whole point: `displayed` is a
  * PUBLIC-CREDIT preference, not a capability. An editor who opted out of the byline is
- * still an insider, so they still must not be able to 5-star the app they can edit.
+ * still an insider, so they still must not be able to review the app they can edit.
  * Filtering on `displayed` here would make "hide my name" a self-review bypass.
  */
 export async function listAppInsiderUserIds(appBlockId: string): Promise<number[]> {
@@ -1066,7 +1657,30 @@ export async function listAppInsiderUserIds(appBlockId: string): Promise<number[
   const ids = new Set<number>([block.app.userId]);
   const appListingId = block.appListing?.id;
   if (!appListingId) return [...ids];
-  const seats = await safeCollaboratorQuery(
+  for (const userId of await listAcceptedCollaboratorUserIds(appListingId)) ids.add(userId);
+  return [...ids];
+}
+
+/**
+ * Every ACCEPTED collaborator on `appListingId`, REGARDLESS of `displayed` — i.e. the
+ * people who can actually EDIT this listing, minus the owner.
+ *
+ * 🔴 THE ONE SPELLING OF `{ status: ACCEPTED }`-without-`displayed`, extracted because
+ * it has two callers and the pair must not drift. {@link listAppInsiderUserIds} (the
+ * anti-abuse insider set) and the moderator-message fan-out ask the SAME question —
+ * "who, other than the owner, is on the inside of this app" — and an answer that
+ * diverged between them would mean an editor who cannot review the app they co-author
+ * silently stops receiving the moderation notice telling them what to fix, or the
+ * reverse. The predicate that must never be added here is `displayed`, for the reason
+ * {@link listDisplayedCollaboratorUserIds}'s header gives: it is PUBLIC-CREDIT
+ * preference, not capability.
+ *
+ * 🔴 `appListingId` MUST be a PARENT listing id — a shadow revision holds no seats
+ * (nothing may create one), so a shadow id returns an empty set rather than an error.
+ * Callers reach the parent via `resolveListingAccess`'s `seatListingId`.
+ */
+export async function listAcceptedCollaboratorUserIds(appListingId: string): Promise<number[]> {
+  const rows = await safeCollaboratorQuery(
     () =>
       dbRead.appCollaborator.findMany({
         where: { appListingId, status: ACCEPTED },
@@ -1074,6 +1688,5 @@ export async function listAppInsiderUserIds(appBlockId: string): Promise<number[
       }),
     [] as { userId: number }[]
   );
-  for (const s of seats) ids.add(s.userId);
-  return [...ids];
+  return rows.map((r: { userId: number }) => r.userId);
 }

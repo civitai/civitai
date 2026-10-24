@@ -7,6 +7,8 @@ description: Interact with ClickUp tasks and documents - get task details, view 
 
 Interact with ClickUp tasks and documents via the API. Get task information, view comments, create tasks, manage assignments, post updates, and create/edit documents.
 
+**Before creating a task, read [`docs/dev/filing-follow-ups.md`](../../../docs/dev/filing-follow-ups.md):** every task needs a closing condition, and agent-generated follow-ups go in `Agent Follow-ups`, not `Synced Team`.
+
 ## Setup
 
 **Install dependencies first — one time, per checkout:**
@@ -62,7 +64,7 @@ Set `defaultListId` in your account to enable creating tasks without specifying 
 
 ### Multi-Account
 
-Support multiple named accounts (e.g., "bot" for automation, "justin" for personal use):
+Support multiple named accounts (e.g., "bot" for automation, "jane" for personal use):
 
 ```json
 {
@@ -74,10 +76,10 @@ Support multiple named accounts (e.g., "bot" for automation, "justin" for person
       "userId": "75386805",
       "defaultListId": "901111220963"
     },
-    "justin": {
+    "jane": {
       "apiToken": "pk_...",
       "teamId": "8459928",
-      "userId": "10620972"
+      "userId": "12345678"
     }
   }
 }
@@ -88,7 +90,7 @@ Only `apiToken` is required per account. Other fields are auto-detected and cach
 Use `--account <name>` with any command to target a specific account:
 
 ```bash
-node query.mjs me --account justin
+node query.mjs me --account jane
 node query.mjs my-tasks --account bot
 ```
 
@@ -96,8 +98,8 @@ Account management commands:
 
 ```bash
 node query.mjs accounts                          # List all accounts
-node query.mjs switch-account justin             # Change default
-node query.mjs add-account justin --token pk_... # Add account
+node query.mjs switch-account jane               # Change default
+node query.mjs add-account jane --token pk_...   # Add account
 node query.mjs remove-account old-account        # Remove account
 ```
 
@@ -127,6 +129,8 @@ node query.mjs <command> [options]
 | `due <task> "date"` | Set due date (e.g., "tomorrow", "friday", "+3d") |
 | `priority <task> <level>` | Set priority (urgent, high, normal, low, none) |
 | `subtask <task> "title"` | Create a subtask |
+| `parent <task> <parent_task>` | Make an EXISTING task a subtask of another task |
+| `milestone <task> <on\|off>` | Turn a task into a milestone, or back into a normal task |
 | `move <task> <list_id>` | Move task to a different list |
 | `link <task> <url> ["desc"]` | Add external link reference (as comment) |
 | `checklist <task> "item"` | Add checklist item to task |
@@ -246,7 +250,7 @@ node query.mjs search --me --status "in progress"
 node query.mjs search "oauth" --folder 90111122009
 
 # Filter by assignee + text
-node query.mjs search "migration" --assignee justin
+node query.mjs search "migration" --assignee jane
 
 # Multiple statuses (comma-separated)
 node query.mjs search --me --status "in progress,review"
@@ -288,7 +292,7 @@ node query.mjs status 86a1b2c3d "complete"
 
 ```bash
 # Assign by username
-node query.mjs assign 86a1b2c3d justin
+node query.mjs assign 86a1b2c3d jane
 
 # Assign by email
 node query.mjs assign 86a1b2c3d jane@example.com
@@ -317,6 +321,41 @@ node query.mjs priority 86a1b2c3d none  # Clear priority
 node query.mjs subtask 86a1b2c3d "Write unit tests"
 node query.mjs subtask 86a1b2c3d "Update documentation"
 ```
+
+### Reparent an Existing Task
+
+`subtask` creates a new task. `parent` takes one that already exists and files it
+under another:
+
+```bash
+node query.mjs parent 86a1b2c3d 86a9z8y7x   # 86a1b2c3d becomes a subtask of 86a9z8y7x
+```
+
+It refuses to make a task its own parent, refuses a move that would put a task
+under one of its own descendants, and reports the parent it reads back from the
+server afterwards rather than the one you asked for.
+
+Two things to know before using it:
+
+- **There is no detach.** ClickUp's UpdateTask docs: "You cannot convert a subtask
+  to a task by setting `parent` to `null`." Undoing a reparent needs the ClickUp UI.
+- **A cross-list reparent relocates the task into the parent's list.** Moving a task
+  from "Agent Follow-ups" under a parent in "Synced Team" moves it to "Synced Team";
+  the command prints `List moved: ... -> ...` when this happens.
+
+### Milestones
+
+```bash
+node query.mjs milestone 86a1b2c3d on    # mark as milestone
+node query.mjs milestone 86a1b2c3d off   # back to an ordinary task
+```
+
+A milestone is a task *type*, not a status. The type id is per-workspace, so it is
+resolved by name rather than hardcoded. Unlike reparenting, this is reversible.
+
+The mode is required. `milestone <task>` with no `on`/`off` is an error rather than
+a default, because the default would be a write on a command whose name reads like
+a question.
 
 ### Move Tasks
 
@@ -390,28 +429,28 @@ Bare mentions are a **fallback** so mentions work even if agents forget the brac
 
 ```bash
 # Explicit bracket syntax (preferred)
-node query.mjs comment 86a1b2c3d "Hey @[justin], can you review this?"
+node query.mjs comment 86a1b2c3d "Hey @[jane], can you review this?"
 
 # Bare mention (auto-detected against workspace members)
-node query.mjs comment 86a1b2c3d "Hey @Justin Maier, can you review this?"
+node query.mjs comment 86a1b2c3d "Hey @Jane Doe, can you review this?"
 
 # Both work the same — these are equivalent:
-node query.mjs comment 86a1b2c3d "@[justin] please review"
-node query.mjs comment 86a1b2c3d "@Justin please review"
+node query.mjs comment 86a1b2c3d "@[jane] please review"
+node query.mjs comment 86a1b2c3d "@Jane please review"
 
 # Mention by numeric user ID (bracket syntax only)
-node query.mjs comment 86a1b2c3d "@[10620972] please take a look"
+node query.mjs comment 86a1b2c3d "@[12345678] please take a look"
 
 # Mention by email (bracket syntax only)
 node query.mjs comment 86a1b2c3d "Assigned to @[jane@example.com]"
 
 # Multiple mentions in one comment
-node query.mjs comment 86a1b2c3d "@[justin] and @[koen] - need your input on this"
+node query.mjs comment 86a1b2c3d "@[jane] and @[john] - need your input on this"
 
 
-**Bracket syntax**: Fuzzy matches partial names, emails, or numeric IDs. `@[justin]` matches "Justin Maier". Unknown users throw an error.
+**Bracket syntax**: Fuzzy matches partial names, emails, or numeric IDs. `@[jane]` matches "Jane Doe". Unknown users throw an error.
 
-**Bare syntax**: Matches `@Name` against workspace member usernames (case-insensitive). Tries full name first (`@Justin Maier`), then first name (`@Justin`). Unmatched bare mentions are left as plain text (no error).
+**Bare syntax**: Matches `@Name` against workspace member usernames (case-insensitive). Tries full name first (`@Jane Doe`), then first name (`@Jane`). Unmatched bare mentions are left as plain text (no error).
 
 ### Show Current User
 
@@ -430,10 +469,10 @@ node query.mjs delete-comment 90110200841741
 
 ```bash
 # Add user as watcher on a task
-node query.mjs watch 86a1b2c3d koen
+node query.mjs watch 86a1b2c3d john
 
 # Remove watcher
-node query.mjs unwatch 86a1b2c3d koen
+node query.mjs unwatch 86a1b2c3d john
 ```
 
 ### Add Tags
@@ -608,7 +647,7 @@ node query.mjs comment 86a1b2c3d "Design review assets" --attach ./mockup.png --
 Comments containing images or file attachments display them inline in plain-text output:
 
 ```
-[Feb 11, 2026, 04:55 PM] Justin Maier (id: 90110209630450):
+[Feb 11, 2026, 04:55 PM] Jane Doe (id: 90110200000001):
   [Attachment: image.png](https://t8459928.p.clickup-attachments.com/...)
   If you look at the component, you'll see that...
 ```

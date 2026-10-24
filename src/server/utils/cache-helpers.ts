@@ -10,6 +10,7 @@ import {
   cacheFailOpenDegradedCounter,
   cacheFailOpenOriginFetchCounter,
   cacheHitCounter,
+  cacheMissWouldJoinCounter,
   cacheMissCounter,
   cacheRevalidateCounter,
 } from '~/server/prom/client';
@@ -189,6 +190,7 @@ const { createCachedArray, createCachedObject } = createCacheBuilders({
     failOpenDegraded: (cache_name) => cacheFailOpenDegradedCounter.inc({ cache_name }),
     failOpenOriginFetch: (cache_name, count) =>
       cacheFailOpenOriginFetchCounter.inc({ cache_name }, count),
+    missWouldJoin: (cache_name, count) => cacheMissWouldJoinCounter.inc({ cache_name }, count),
   },
   logFailOpen: (kind, message, error, meta) => logSysRedisFailOpen(kind, message, error, meta),
   logRefreshError: ({ cacheKey, ids, error }) =>
@@ -254,6 +256,11 @@ type FetchThroughCacheOptions = {
   // fetchThroughCache always stores the `{ data, cachedAt }` wrapper object (never a
   // bare scalar) — see the SENTINEL SAFETY note in redis/client.ts.
   compress?: boolean;
+  // Metrics-only: the `cache_name` label put on the codec duration histogram for this key's
+  // compress/decompress calls. Pass the cache PREFIX, never the full per-id key — `key` here is
+  // routinely `${prefix}:${id}`, so using it directly would be unbounded label cardinality.
+  // Ignored entirely unless `compress` is on (nothing else records codec time).
+  cacheName?: string;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -304,6 +311,7 @@ export async function fetchThroughCache<T>(
   const lockTTL = options.lockTTL ?? 10;
   const retryCount = options.retryCount ?? 3;
   const compress = options.compress ?? false;
+  const cacheName = options.cacheName;
   const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
   // --- Redis READ (cache lookup) -------------------------------------------------
@@ -318,7 +326,7 @@ export async function fetchThroughCache<T>(
     // Thread `compress` to the READ so it's symmetric with the compressed write below:
     // only a compressed caller's get attempts brotli-decompress, and only that path
     // carries the sentinel invariant. Non-compress callers read via the general path.
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress });
+    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName });
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
     return fetchThroughCacheFailOpen(key, fetchFn);
@@ -359,12 +367,19 @@ export async function fetchThroughCache<T>(
 
       // Wait for the fetcher to do their thing...
       await sleep((lockTTL * 1000) / 2);
-      return fetchThroughCache(key, fetchFn, {
-        ttl,
-        lockTTL,
-        retryCount: retryCount - 1,
-        compress,
-      });
+      // 🔴 SPREAD `options`, never re-spell the fields. Every option the caller gave has to
+      // survive the recursion, and this used to list all five by hand — which is correct only
+      // until a sixth is added, and the omission is invisible: the retry silently falls back to
+      // that option's default while the first attempt still looked right. (`cacheName` was the
+      // worst of them — a missed one just moves the retry's codec samples to the 'unknown'
+      // label.) Spreading makes the whole class impossible rather than pinning it with a comment.
+      //
+      // Behaviour-identical to the hand-listed version: every default above is a CONSTANT
+      // (`CacheTTL.sm`, 10, 3, false, undefined), applied with `??`, so passing an option through
+      // as `undefined` re-derives exactly the same value the resolved local held. `retryCount` is
+      // the one field that must NOT be passed through, hence the explicit override after the
+      // spread — order matters here.
+      return fetchThroughCache(key, fetchFn, { ...options, retryCount: retryCount - 1 });
     }
   } else if (cachedData) return cachedData.data;
 
@@ -375,12 +390,7 @@ export async function fetchThroughCache<T>(
   // turns a successful origin fetch into a 500.
   try {
     const data = await fetchFn();
-    const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
-    try {
-      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress });
-    } catch (err) {
-      logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
-    }
+    await writeFetchThroughEntry(key, data, { ttl, compress, cacheName }, 'fetchThroughCache');
     return data;
   } finally {
     // Best-effort lock release; a failure here just leaves the lock to expire via its
@@ -393,6 +403,50 @@ export async function fetchThroughCache<T>(
       });
     }
   }
+}
+
+/**
+ * The one writer of a fresh `fetchThroughCache` entry: the refill after an origin fetch, and
+ * `setFetchThroughCache`. Best-effort: a Redis stall on the write never fails the caller.
+ */
+async function writeFetchThroughEntry<T>(
+  key: RedisKeyTemplateCache,
+  data: T,
+  { ttl, compress, cacheName }: { ttl: number; compress: boolean; cacheName?: string },
+  caller: string
+) {
+  const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
+  try {
+    await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', `${caller} set (cache cluster)`, err, { key });
+  }
+}
+
+/**
+ * Writes a fresh `fetchThroughCache` entry, as a refill after an origin fetch would. For a write
+ * that knows the new value: marking the entry stale instead (`bustFetchThroughCache`) leaves the
+ * old value to any read that loses the refill lock, so a reader can be shown the count from
+ * before their own write.
+ *
+ * `ttl`, `compress` and `cacheName` MUST match what the key's `fetchThroughCache()` passes: an
+ * entry written with a different `compress` is evicted by the read that cannot decode it.
+ */
+export async function setFetchThroughCache<T>(
+  key: RedisKeyTemplateCache,
+  data: T,
+  options: Pick<FetchThroughCacheOptions, 'ttl' | 'compress' | 'cacheName'> = {}
+) {
+  await writeFetchThroughEntry(
+    key,
+    data,
+    {
+      ttl: options.ttl ?? CacheTTL.sm,
+      compress: options.compress ?? false,
+      cacheName: options.cacheName,
+    },
+    'setFetchThroughCache'
+  );
 }
 
 export async function bustFetchThroughCache(

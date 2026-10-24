@@ -1,44 +1,50 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
-import os from 'os';
 import path from 'path';
 
-// Vitest defaults to `cpus - 1` workers, so two concurrent suites saturate a 32-core dev box.
-// Measured here on the unit suite: 31 workers 235.9s, 8 workers 410.2s — 1.74x slower, for a
-// machine that stays usable while several agents run suites at once.
+import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
+import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+
+// Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
+// run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
-// The cap must only ever REDUCE. Vitest's default depends on the resolved mode (`cpus - 1` in run,
-// `floor(cpus / 2)` in watch) and that mode is NOT knowable from this file: `vitest run --watch` is
-// explicitly supported and resolves to watch while `process.argv` still says "run", so sniffing argv
-// raises the count on exactly the small machines this is meant to protect.
+// The flat cap of 8 that lived here (#3900) existed because several agents each running a full
+// suite at once saturated the box. The dev-server test queue now serialises `test:unit:run` at
+// concurrency 1 (#3947), so the unit suite no longer competes with a second copy of itself.
 //
-// So don't try to know the mode. Take the watch-mode default as the ceiling — it is the smaller of
-// the two at every core count — and apply nothing at all below 10 cores. That is mode-blind and
-// provably never exceeds either default, while leaving small boxes and CI (4 vCPU) untouched.
+// Set `VITEST_MAX_WORKERS=<n>` to size a run. Vitest reads that name itself, in `resolveConfig`,
+// per project and AFTER this file — so the value here can only ever agree with it, never clamp it.
+// In particular it does NOT respect the browser pool's `min(12, cpus - 1)` default: `getThreadsCount`
+// returns `project.config.maxWorkers` unclamped, so a number above 12 raises the Chromium instance
+// count past what upstream considers safe rather than lowering it.
 //
-// `VITEST_MAX_WORKERS` still overrides everything below, per run.
+// A run routed through the dev-server queue does not see the caller's environment at all — the
+// daemon spawns it with its own — so cap those with the CLI flag instead, which is forwarded:
+// `pnpm run test:unit:run --max-workers=8`.
+//
+// `undefined` is genuinely identical to omitting the key — every consumer is a truthiness / `??`
+// check, and `configDefaults` has no `maxWorkers`.
 // (Unrelated but adjacent: `test.poolOptions` was removed in Vitest 4, so `poolOptions.forks.maxForks`
 // does nothing apart from logging a deprecation.)
-const WORKER_CAP = 8;
-// Below this the run-mode default (`cpus - 1`) is already <= WORKER_CAP, so there is nothing to cap.
-const CAP_ABOVE_CORES = WORKER_CAP + 1;
-const cpuCount = os.availableParallelism?.() ?? os.cpus().length;
-const capped = (ceiling: number) => Math.max(1, Math.min(WORKER_CAP, Math.floor(ceiling / 2)));
+// Read here as well as natively so the knob survives Vitest dropping its own read; today the two
+// always resolve to the same number, so this cannot disagree with it.
+const envMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? '', 10);
+const maxWorkers = Number.isFinite(envMaxWorkers) && envMaxWorkers > 0 ? envMaxWorkers : undefined;
+const componentMaxWorkers = maxWorkers;
 
-// `undefined` leaves Vitest's own resolution completely alone.
-const maxWorkers = cpuCount > CAP_ABOVE_CORES ? capped(cpuCount) : undefined;
-
-// The browser pool sizes itself separately — `min(12, cpus - 1)`, because its main thread chokes
-// past ~12 — and `getThreadsCount` reads ONLY the project's own `maxWorkers`, never the root. So
-// the browser project has to be capped individually or it is not capped at all. Scope, stated
-// honestly: this equals the browser watch-mode default at every core count, so it bites only in
-// run mode (12 -> 6 at >= 13 cores) and is a deliberate no-op in watch.
-const componentMaxWorkers =
-  cpuCount > CAP_ABOVE_CORES ? capped(Math.min(12, cpuCount - 1)) : undefined;
-
-// `component` resolves to a different worker count than the other projects, so it needs its own
-// group or `groupSpecs` throws — and that throw reports as `Test Files: no tests`, i.e. a run that
-// reads as having found nothing rather than as having failed.
+// `component` runs in its own group. The throw this used to dodge — `groupSpecs` refusing two
+// projects that share a group but resolve to different worker counts, reported as
+// `Test Files: no tests` rather than as a failure — can no longer happen now that nothing here
+// sets a per-project `maxWorkers` the others don't also get. What the group still buys is that a
+// bare `vitest run` serialises the browser project against the node one instead of interleaving
+// them; keep it for that, not for the throw.
+//
+// 🔴 `unit` and `unit-native` deliberately set NO per-project `maxWorkers`, and that is a trade
+// rather than an omission. Per-project `maxWorkers` does apply at runtime — measured, not inferred
+// from the types — but two projects with different counts must sit in different `sequence.groupOrder`
+// values, and different groups run SERIALLY. So giving either project its own worker count costs the
+// concurrency between them, which for a 1059/6 split is a bad exchange: the six-file project would
+// gate the other 1059 rather than filling spare capacity beside it.
 //
 // Declared statically below AND re-asserted here, deliberately. Static alone is not enough: a CLI
 // `--sequence.*` flag REPLACES `test.sequence` wholesale (cliOverrides is a spread, not a merge)
@@ -53,6 +59,38 @@ const componentGroupOrderPlugin = {
   name: 'civitai:component-group-order',
   configureVitest({ project }: { project: any }) {
     project.config.sequence.groupOrder = COMPONENT_GROUP_ORDER;
+  },
+};
+
+// Same both-belts reasoning one project down, for the setting whose failure is a SIGSEGV rather than
+// an empty run. `unit-native`'s static `pool: 'forks'` loses to a CLI `--pool=threads`, which is the
+// one flag someone experimenting on `unit` will reach for — and the sharp files would follow it
+// onto a thread pool and crash AFTER printing a green summary. `configureVitest` runs after
+// `resolveProjects(cliOptions)`, and `getFilePoolName` reads `project.config.pool` when each
+// specification is created, so re-asserting here outranks the flag.
+const NATIVE_POOL = 'forks' as const;
+const nativePoolPlugin = {
+  name: 'civitai:unit-native-pool',
+  configureVitest({ project }: { project: any }) {
+    project.config.pool = NATIVE_POOL;
+  },
+};
+
+// 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
+// optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
+// `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/orchestration-client` until the cache was deleted.
+const optimizerCacheKeyPlugin = {
+  name: 'civitai:fs-cache-optimizer-key',
+  configureVitest({
+    experimental_defineCacheKeyGenerator,
+  }: {
+    experimental_defineCacheKeyGenerator: any;
+  }) {
+    experimental_defineCacheKeyGenerator(({ environment }: { environment: any }) => {
+      const metadata = environment.depsOptimizer?.metadata;
+      return metadata ? `${metadata.hash}:${metadata.browserHash}` : undefined;
+    });
   },
 };
 
@@ -83,6 +121,12 @@ const civitaiWorkspacePkgs = [
   // Same story as notifications: not symlinked into root node_modules, so without
   // this alias every suite touching the buzz chain fails to collect.
   'buzz',
+  // `@civitai/post-planner` (packages/civitai-post-planner) is imported by the planner REST route
+  // and its service; resolved through tsconfig paths in the app build, not symlinked into root.
+  'post-planner',
+  // `@civitai/app-assistant` (packages/civitai-app-assistant): App Assistant's gate, prompt and
+  // sandbox client, shared by the page and apps/assistant-runner. Not symlinked into root either.
+  'app-assistant',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
@@ -109,19 +153,410 @@ const componentAlias = [
   ...alias,
 ];
 
-// Two Vitest projects sharing one config/runner:
-//  - `unit`      = the existing node-env suite, unchanged.
-//  - `component` = browser-mode (real Chromium via Playwright) for React
+// `sharp` 0.32.6's native addon is not context-aware, so a `worker_threads` worker that has run a
+// libvips operation segfaults when the thread is torn down — AFTER the tests pass and the summary
+// prints, which is why it surfaces as an exit code with no failing test. That takes the whole run
+// down, so it is what keeps the unit suite on the slow `forks` pool.
+//
+// It is a RACE, not a threshold. Measured on these six files alone, three repeats per width:
+// vmThreads crashed 3/3 at 1 worker, 2/3 at 2, 1/3 at 3, 0/3 at 4; the `threads` pool crashed at
+// every width tried. So a clean run proves nothing about the next one, and CI's 4 vCPU (~3 workers)
+// sits squarely in the band that failed 1-in-3. Do not read a green run here as safety.
+//
+// IMPORTING sharp is harmless — only executing an operation arms it. 100 test files carry sharp in
+// their static closure; exactly these six call it. That set was measured by aliasing sharp to a
+// recording proxy and running all 100 under `forks`
+// (`scripts/test-perf/sharp-probe-config.mts`), not by grepping and not by a crash-scan — with a
+// race, "ran alone and didn't crash" builds the list out of the files that got lucky.
+//
+// Regenerate after touching any sharp call site:
+//   node node_modules/vitest/vitest.mjs run --config scripts/test-perf/sharp-probe-config.mts \
+//     --project unit --pool=forks $(cat .test-perf/sharp-candidates.txt)
+//
+// The upstream fix is sharp >= 0.33, which makes the addon context-aware. That is a native-dep bump
+// on a repo where a playwright bump cost 59 CI specs, so it is deliberately not bundled with this.
+//
+// 🔴 The split exists; `unit` stays on `forks` anyway. Two reasons, and the second is the blocker:
+// `threads` measured 1.04x at 4 workers and 0.94x at 16 on the 90-file yardstick — no win at either
+// width. And it segfaults MID-RUN on the full suite at roughly 1 in 4, after completing hundreds of
+// files cleanly, with no `unit-native` file having run — so a second crasher exists that is not
+// sharp and is not diagnosed. Unconfirmed hypothesis: `threads` puts every worker in ONE process,
+// so 31 registries of ~1,320 modules share one address space where `forks` gives each its own.
+// Unconfirmed because the reporter records no heap figures for these runs.
+//
+// So switching `unit` to `threads` buys nothing and costs an undiagnosed intermittent SIGSEGV.
+// What the split does buy: the sharp crash is deterministic and gone, and anyone who wants to
+// EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
+const sharpExecutingTestFiles = [
+  'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
+  'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',
+  'src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts',
+  'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
+  'src/server/utils/__tests__/listing-asset-exif-fixture.test.ts',
+  'src/server/utils/__tests__/stored-image-probe.test.ts',
+  'src/server/utils/__tests__/service-deal-preview.test.ts',
+  'src/server/utils/__tests__/og-image-helpers.test.ts',
+  'src/tests/api/og.milestone.test.ts',
+];
+
+// 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
+// sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
+// contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
+// mock factories keep working (see the `default` note on `deps.optimizer`).
+const mantineFamily = [
+  '@mantine/core',
+  '@mantine/hooks',
+  '@mantine/dates',
+  '@mantine/dropzone',
+  '@mantine/modals',
+  '@mantine/notifications',
+  '@mantine/nprogress',
+  '@mantine/tiptap',
+  'mantine-react-table',
+];
+
+// Packages pre-bundled for the unit projects' node environment. The hazards to check before adding
+// one are on `deps.optimizer` inside `unitTestConfig`.
+const prebundledDeps = [
+  'lodash-es',
+  'googleapis',
+  '@tiptap/html',
+  '@axiomhq/axiom-node',
+  '@aws-sdk/s3-request-presigner',
+  // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
+  // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
+  // subpath import still resolves through the module runner to the original files and the
+  // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
+  // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
+  // is the shape that breaks, e.g. `error instanceof z.ZodError` in
+  // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
+  // package whose identity is compared with `instanceof`.
+  'zod',
+  // 'react' is NOT here on purpose. Vitest hardcodes
+  // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
+  // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
+  // react-dom.js but no react.js. Listing it would read as a delivered win that never
+  // happened.
+  'react-dom',
+  'zustand',
+  'immer',
+  'clsx',
+  'uuid',
+  'prom-client',
+  '@tanstack/react-query',
+  '@paddle/paddle-node-sdk',
+  // Resolvable from the root only because it is a root devDependency; otherwise the
+  // optimizer logs "Failed to resolve dependency" and the package stays native.
+  'kysely',
+  'kysely/helpers/postgres',
+  'remark-gfm',
+  'remark-parse',
+  'remark-rehype',
+  'rehype-stringify',
+  'unified',
+  'stripe',
+  'jose',
+  'pg',
+  'form-graph',
+  'form-graph/react',
+  'sanitize-html',
+  '@openrouter/sdk',
+  '@openrouter/sdk/models',
+  '@openrouter/sdk/models/errors',
+  'nodemailer',
+  'obscenity',
+  'superjson',
+  'htmlparser2',
+  '@discordjs/rest',
+  'redis',
+  '@aws-sdk/client-s3',
+  '@aws-sdk/lib-storage',
+  // Subpath: not covered by the bare entry above.
+  '@tiptap/html/server',
+  // Both forms are imported by `utils/metadata`; a subpath left out is a separate native copy.
+  '@civitai/generation-metadata',
+  '@civitai/generation-metadata/civitai',
+  // CommonJS and mocked: its factory must keep `default`.
+  'cloudflare',
+  ...mantineFamily,
+];
+
+// The `client` optimizer's list: only browser-safe ESM packages. A server CommonJS package bundled
+// for the browser target loses its Node built-ins (`redis` died on `util.inherits is not a
+// function`, and every happy-dom file that reached it collected zero tests), and a package that is
+// also reached through a native copy splits in two (`@tanstack/react-query`, via `@trpc/*`, failed
+// with "No QueryClient set").
+const clientPrebundledDeps = ['lodash-es', ...mantineFamily];
+
+// Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
+// Every other setting has to stay identical or the split changes behaviour as well as scheduling.
+const unitTestConfig = {
+  globals: true,
+  environment: 'node' as const,
+  exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
+  // The fs tracker records which files each test reads, for the result cache. It is loaded only
+  // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
+  // Tracker FIRST, so reads made while the main setup file loads are recorded too.
+  setupFiles: [
+    ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/setup.ts',
+  ],
+  // Several unit tests cold-`await import(...)` a large Next API-page / service
+  // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
+  // worker pool saturated, that legitimate cold transform races for CPU and
+  // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
+  // 60s absorbs that contention while still bounding a genuine hang (these are
+  // mocked-I/O tests; nothing should legitimately approach a minute).
+  //
+  // 🔴 But do NOT treat this ceiling as the place to solve that cost. A cold
+  // `await import(...)` reached from a TEST BODY is charged to that ONE test's
+  // budget, so the file's whole transform lands inside a single 60s clock:
+  // get-models-raw.transient-503 spent 99.9% of its runtime in one test that
+  // way (2726ms of a 2730ms file under a 4-CPU quota) and went red purely on
+  // ambient runner speed. Hoist the import to MODULE SCOPE instead — `vi.mock`
+  // is hoisted above imports, so the mocks still apply, and the transform then
+  // lands in Vitest's COLLECTION phase, which no timeout bounds (Vitest has
+  // only testTimeout / hookTimeout / teardownTimeout). Where a module genuinely
+  // must load per-suite, a `beforeAll` with an explicit long timeout is the
+  // fallback (see prisma-inconsistent-orphan-relations). Raising this number
+  // only moves the cliff.
+  testTimeout: 60000,
+  // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
+  // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
+  // hookTimeout is 10s — too tight for that transform on a saturated CI box — so
+  // match testTimeout. Without this a hoisted import flakes the hook instead.
+  hookTimeout: 60000,
+  deps: {
+    inline: [/@civitai\/client/],
+    // Every test file gets a fresh module registry — under `forks` with `isolate: true` it is
+    // literally a fresh child process per file (measured: N files at maxWorkers=1 give N distinct
+    // pids), so Node's module cache dies with it and each externalised package is imported cold
+    // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
+    // load into one chunk, paid once for the run.
+    //
+    // 🔴 A MOCKED CommonJS package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps it as a CJS-interop chunk (`export default require_x()`), so a `vi.mock`
+    // factory that returns only named exports stops satisfying its consumers, and the file collects
+    // zero tests (an ESM package such as Mantine bundles to named exports and is not affected):
+    //   Error: [vitest] No "default" export is defined on the "redis" mock.
+    // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
+    // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
+    // below are mocked this way.
+    //
+    // Before adding a package, find its `vi.mock('<pkg>'` callers across `src`, `scripts` and
+    // `test` — a subpath form (`vi.mock('pg/lib/x')`) counts. `packages/*` and `apps/*` run under
+    // their own configs, so their mocks (e.g. `pg` in packages/civitai-db) do not see this list.
+    //
+    // 🔴 A zero-mocker package can still be unsafe, for a SECOND reason: a package that loads a
+    // non-JS SIDECAR at runtime breaks when it is relocated. `@electric-sql/pglite` passes the
+    // mock check and was still reverted out of this list — pre-bundling moves the module into
+    // `node_modules/.vite/vitest/<hash>/deps_ssr/` while its WASM payload stays behind, so every
+    // PGlite-backed suite dies on
+    //   ENOENT: open '…/deps_ssr/pglite.data'
+    // Measured: 7 `*.behavior.test.ts` files went from 87 passing to 0, reported as SKIPPED rather
+    // than failed, so the suite total stayed at 22,636 while 87 fewer tests actually executed.
+    // Compare the PASSED count, never the total, when changing this list.
+    // Two more fail in ways neither check above catches: `msgpackr`'s bundle does not load
+    // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
+    // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
+    // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
+    // `@tabler/icons-react` and `next` are not listed: their `vi.mock` callers have not been checked
+    // against pre-bundling.
+    optimizer: {
+      ssr: { enabled: true, include: prebundledDeps },
+      // `@vitest-environment happy-dom`/`jsdom` files run in Vite's client environment, which has its
+      // own optimizer; `ssr` alone leaves them loading these natively.
+      client: { enabled: true, include: clientPrebundledDeps },
+    },
+  },
+  // A transform cache on disk, keyed per module and shared between separate `vitest run`
+  // invocations — where `node_modules/.vite` only collapses the optimizer's work, this survives the
+  // process boundary that `pool: 'forks'` + `isolate: true` creates for every single test file.
+  //
+  // Scoped to `unit`/`unit-native` rather than set at the root `test` block on purpose. A root-level
+  // value is inherited by EVERY project (vitest resolves it into each project's config even without
+  // `extends: true`), which would silently opt in the browser `component` project and the
+  // `packages/*` + `apps/*` suites — none of which are covered by the run that verified this.
+  // Widening it is a follow-up with its own verification, not a freebie.
+  //
+  // Staleness is self-correcting rather than something to remember: the cache carries a format
+  // version, `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
+  // when it moves, and `optimizerCacheKeyPlugin` keys entries on the optimizer's output. It writes to
+  // `node_modules/.experimental-vitest-cache`, so it is gitignored with the rest of `node_modules`.
+  experimental: { fsModuleCache: true },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED BY BOTH BROWSER PROJECTS (`component` and `geometry`).
+//
+// 🔴 ONE COPY, DELIBERATELY. The two differ in exactly two settings — their glob
+// and their setup file — and every other browser setting has to stay identical or
+// the split changes behaviour as well as which cascade is loaded. A duplicated
+// `optimizeDeps.include` in particular would regenerate the cold-cache reload
+// failure documented on it the first time one copy is updated and the other is not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// dedupe React so a transitive dep can't pull a second copy — a second
+// React makes `useContext` read a null context and crashes some Mantine
+// components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
+// optimizeDeps cache (fresh CI runs). Canonical fix; protects every
+// browser test from this class of dual-React crash.
+const browserResolve = { alias: componentAlias, dedupe: ['react', 'react-dom'] };
+
+// Pre-bundle deps the browser setups mock/import so Vitest doesn't
+// discover them mid-run and trigger a "Vite unexpectedly reloaded a
+// test" warning (a flake vector).
+//
+// On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
+// discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
+// `test/component-setup.tsx` first imported them — mid-run — and reloading.
+// The reload tears down the module context while the setup is still
+// importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
+// vitest runner → "Vitest failed to find the runner" → "Failed to import test
+// file test/component-setup.tsx" → EVERY browser test fails to load. (Warm
+// cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
+// the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
+const browserOptimizeDeps = {
+  include: [
+    'next/router',
+    'vitest-browser-react',
+    'react/jsx-dev-runtime',
+    'react/jsx-runtime',
+    // `react-dom/server` — used by the SSR→hydrate tests
+    // (`*.ssrHydration.browser.test.tsx`) to produce real server HTML and
+    // hydrate it. WITHOUT this entry Vite discovers it mid-run and emits a
+    // SEPARATE optimized chunk that carries its OWN copy of `react`, so
+    // `ReactCurrentDispatcher.current` is null inside it and every hook call
+    // during `renderToString` throws
+    // `Cannot read properties of null (reading 'useState')` — the dual-React
+    // failure the `dedupe` above exists to prevent, arriving through the
+    // optimizer rather than through a transitive dependency. Listing it here
+    // pre-bundles it in the same pass as `react`/`react-dom`, so all three
+    // share one instance.
+    'react-dom/server',
+    // `motion/react` + `motion/react-m` — the SAME failure as `react-dom/server`
+    // above, arriving the same way, and MEASURED rather than anticipated.
+    // `AgentOnboardingCard` is the first component with a browser test that actually
+    // RENDERS a `LazyMotion`/`m` subtree (the `src/components/Chat/*` importers have
+    // none), and without these two entries Vite discovered them mid-run into a
+    // separate optimized chunk carrying its own `react`, so every test that mounted
+    // the animated tree died with
+    // `Cannot read properties of null (reading 'useContext')` — 14 failures across
+    // three files, while the static/reduced-motion arms of the same components passed,
+    // because those render no `m` component at all. The `dedupe` above cannot help:
+    // the second copy comes through the optimizer, not through a transitive dep.
+    // BOTH subpaths are needed — they are separate entry points and either one
+    // discovered alone reopens the split.
+    'motion/react',
+    'motion/react-m',
+  ],
+  // `@vitest/browser` seeds optimizeDeps.entries from EVERY browser test file
+  // (globTestFiles), not just the one you ran. The review app-listing browser tests
+  // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
+  // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
+  // `appRouter` -> app-listing-assets.service.ts's
+  // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
+  // never evaluated at runtime — but esbuild's static scan follows the import anyway and
+  // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
+  // file), failing the whole browser project with "No loader is configured for '.node'
+  // files" regardless of which test you targeted. Exclude it; no browser test needs it.
+  exclude: ['sharp'],
+};
+
+// 🔴 A FACTORY, NOT A SHARED OBJECT — and the difference is observable.
+// Vitest STAMPS each browser instance with a name derived from the project that
+// owns it (`<project> (chromium)`). Handing two projects the SAME `instances`
+// array therefore lets the first project's label survive onto the second's
+// output: with a shared object the `geometry` project's failures printed under
+// `|component (chromium)|`, which is a run report naming the wrong tier — the
+// most expensive kind of wrong, because it points every reader at the wrong
+// setup file. Each project gets its own object.
+const isFirefoxRun = process.env.GEOMETRY_BROWSER === 'firefox';
+const browserModeOptions = () => ({
+  enabled: true as const,
+  // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
+  // Chromium as root inside the Tekton CI container (node:20 pod runs
+  // as UID 0; without --no-sandbox Chromium refuses to start, and the
+  // container's small /dev/shm crashes it without --disable-dev-shm-usage).
+  // Harmless locally.
+  // CI installs Playwright's own Chromium into the image (env unset),
+  // so it resolves by revision as normal. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+  // is the escape hatch for a host whose browser bundle does not carry the
+  // revision this playwright release pins (the NixOS
+  // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
+  // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
+  // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
+  // rather than moving the pin; see docs/dev/worktrees.md "Browser/component
+  // tests on NixOS". A mismatch does not say "no browser" — it collects every file
+  // and executes none, which reads as a broken suite.
+  provider: playwright({
+    // Opt-in, local only: `GEOMETRY_DPR=2.25` runs at a fractional device pixel ratio (CI is DPR 1).
+    ...(process.env.GEOMETRY_DPR
+      ? { contextOptions: { deviceScaleFactor: Number(process.env.GEOMETRY_DPR) } }
+      : {}),
+    launchOptions: {
+      args: isFirefoxRun ? [] : ['--no-sandbox', '--disable-dev-shm-usage'],
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    },
+  }),
+  headless: true as const,
+  // Opt-in, local only: `GEOMETRY_BROWSER=firefox` runs the browser projects in Firefox. CI stays
+  // on Chromium (no Firefox in the runner image). A Firefox run needs
+  // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pointed at the Firefox binary if the bundle isn't installed.
+  instances: [{ browser: isFirefoxRun ? ('firefox' as const) : ('chromium' as const) }],
+});
+
+/** Everything a browser project needs outside its own `test` block. */
+const browserProjectShell = () => ({
+  resolve: { ...browserResolve },
+  plugins: [componentGroupOrderPlugin],
+  optimizeDeps: { ...browserOptimizeDeps },
+});
+
+/**
+ * Everything both browser projects put INSIDE `test`, minus `name`, `include` and
+ * `setupFiles`.
+ *
+ * 🔴 BOTH PROJECTS TAKE THE SAME `maxWorkers` AND THE SAME `groupOrder`, AND THAT
+ * PAIRING IS REQUIRED, NOT COSMETIC. `groupSpecs` refuses two projects that share a
+ * `sequence.groupOrder` but resolve to different worker counts, and it reports that
+ * refusal as `Test Files: no tests` rather than as a failure — the reassuring-zero
+ * shape. Sharing one object is what makes them impossible to drift apart.
+ */
+const browserTestShell = () => ({
+  maxWorkers: componentMaxWorkers,
+  // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
+  // which serialises the browser projects against the node ones instead of interleaving
+  // them; CI and every script select one project at a time.
+  sequence: { groupOrder: COMPONENT_GROUP_ORDER },
+  globals: true as const,
+  browser: browserModeOptions(),
+});
+
+// Four Vitest projects sharing one config/runner:
+//  - `unit`        = the node-env suite, minus the sharp-executing files.
+//  - `unit-native` = those files, on `forks`, for the reason above.
+//  - `component`   = browser-mode (real Chromium via Playwright) for React
 //                  components/widgets. Distinct `.browser.test.tsx` glob so the
 //                  unit project never boots a browser (its include is `.test.ts`
 //                  only, so `.tsx` is already excluded — the glob is explicit
 //                  belt-and-suspenders). See `test/component-setup.tsx`.
+//  - `geometry`    = browser-mode with the REAL app cascade loaded and an EXPLICIT
+//                  viewport, for tests that assert PIXELS. Distinct
+//                  `.geometry.test.tsx` glob, disjoint from both of the above. See
+//                  `test/geometry-setup.tsx` for why it is a second project rather
+//                  than a change to the shared one.
 export default defineConfig({
   resolve: { alias },
   test: {
     maxWorkers,
+    // Root-level because vitest builds ONE sequencer for the whole run. It only ever skips files in
+    // the unit projects, and only when the cache is on.
+    ...(testCacheMode() !== 'off' ? { sequence: { sequencer: TestCacheSequencer } } : {}),
     projects: [
-      // The nine `packages/*` suites, referenced by their OWN config files rather than
+      // The `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
       // project's `include` is root-relative (`src/**`, `scripts/**`), and CI runs
       // `vitest run --project unit`, so ~330 tests across nine workspace packages ran only
@@ -129,7 +564,7 @@ export default defineConfig({
       // schema-drift detector (#3591) shipped with 81 tests CI never executed.
       //
       // Globbed on the CONFIG FILE, not the directory. A bare `packages/*` glob would also
-      // adopt the six packages that have no vitest config, and Vitest would give each a
+      // adopt the packages that have no vitest config, and Vitest would give each a
       // default config whose `include` (`**/*.{test,spec}.?(c|m)[jt]s?(x)`) is not the
       // include those packages were written against.
       //
@@ -143,10 +578,9 @@ export default defineConfig({
       'packages/*/vitest.config.mts',
       // The `apps/*` suites, on exactly the same footing and for exactly the same reason:
       // nothing in CI invoked them either. Same CONFIG-FILE glob, same rationale — a bare
-      // `apps/*` glob would adopt `event-engine` and `moderator`, which have no vitest
-      // config, and hand them a default `include` they were never written against.
-      // (`apps/event-engine` does own one test file, but it is a `node:test` suite by
-      // deliberate choice — see its header — so Vitest is the wrong runner for it.)
+      // `apps/*` glob would adopt any app that has no vitest config and hand it a default
+      // `include` it was never written against. Every app carries one today, but the glob
+      // stays keyed on the config file so the next app added is opted in deliberately.
       //
       // Unlike the packages, these set `test.name` themselves (`app:auth`,
       // `app:notifications`, ...) rather than inheriting their `package.json` name. That is
@@ -161,139 +595,65 @@ export default defineConfig({
       'apps/*/vitest.config.mts',
       {
         resolve: { alias },
+        plugins: [optimizerCacheKeyPlugin],
         test: {
+          ...unitTestConfig,
           name: 'unit',
-          globals: true,
-          environment: 'node',
           // `scripts/` is included so the typecheck wrapper's outcome
           // classifier (scripts/typecheck.mjs) is covered — it is the thing that
           // decides whether a run counts as a pass, so it needs a suite of its
           // own rather than a one-off manual check.
           include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
-          exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
-          setupFiles: ['src/__tests__/setup.ts'],
-          // Several unit tests cold-`await import(...)` a large Next API-page / service
-          // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
-          // worker pool saturated, that legitimate cold transform races for CPU and
-          // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
-          // 60s absorbs that contention while still bounding a genuine hang (these are
-          // mocked-I/O tests; nothing should legitimately approach a minute).
-          //
-          // 🔴 But do NOT treat this ceiling as the place to solve that cost. A cold
-          // `await import(...)` reached from a TEST BODY is charged to that ONE test's
-          // budget, so the file's whole transform lands inside a single 60s clock:
-          // get-models-raw.transient-503 spent 99.9% of its runtime in one test that
-          // way (2726ms of a 2730ms file under a 4-CPU quota) and went red purely on
-          // ambient runner speed. Hoist the import to MODULE SCOPE instead — `vi.mock`
-          // is hoisted above imports, so the mocks still apply, and the transform then
-          // lands in Vitest's COLLECTION phase, which no timeout bounds (Vitest has
-          // only testTimeout / hookTimeout / teardownTimeout). Where a module genuinely
-          // must load per-suite, a `beforeAll` with an explicit long timeout is the
-          // fallback (see prisma-inconsistent-orphan-relations). Raising this number
-          // only moves the cliff.
-          testTimeout: 60000,
-          // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
-          // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
-          // hookTimeout is 10s — too tight for that transform on a saturated CI box — so
-          // match testTimeout. Without this a hoisted import flakes the hook instead.
-          hookTimeout: 60000,
-          deps: {
-            inline: [/@civitai\/client/],
-          },
+          // The sharp files are excluded rather than merely routed elsewhere, so that
+          // `--project unit <a sharp file>` reports "No test files found" instead of running it
+          // on `threads` and segfaulting. A legible empty run beats an exit code with no failing
+          // test — which is what the crash looks like from the outside.
+          exclude: [...unitTestConfig.exclude, ...sharpExecutingTestFiles],
         },
       },
       {
-        // dedupe React so a transitive dep can't pull a second copy — a second
-        // React makes `useContext` read a null context and crashes some Mantine
-        // components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
-        // optimizeDeps cache (fresh CI runs). Canonical fix; protects every
-        // component test from this class of dual-React crash.
-        resolve: { alias: componentAlias, dedupe: ['react', 'react-dom'] },
-        plugins: [componentGroupOrderPlugin],
-        // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
-        // discover them mid-run and trigger a "Vite unexpectedly reloaded a
-        // test" warning (a flake vector).
-        //
-        // On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
-        // discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
-        // `test/component-setup.tsx` first imported them — mid-run — and reloading.
-        // The reload tears down the module context while component-setup is still
-        // importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
-        // vitest runner → "Vitest failed to find the runner" → "Failed to import test
-        // file test/component-setup.tsx" → EVERY component test fails to load. (Warm
-        // cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
-        // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
-        optimizeDeps: {
-          include: [
-            'next/router',
-            'vitest-browser-react',
-            'react/jsx-dev-runtime',
-            'react/jsx-runtime',
-            // `react-dom/server` — used by the SSR→hydrate tests
-            // (`*.ssrHydration.browser.test.tsx`) to produce real server HTML and
-            // hydrate it. WITHOUT this entry Vite discovers it mid-run and emits a
-            // SEPARATE optimized chunk that carries its OWN copy of `react`, so
-            // `ReactCurrentDispatcher.current` is null inside it and every hook call
-            // during `renderToString` throws
-            // `Cannot read properties of null (reading 'useState')` — the dual-React
-            // failure the `dedupe` above exists to prevent, arriving through the
-            // optimizer rather than through a transitive dependency. Listing it here
-            // pre-bundles it in the same pass as `react`/`react-dom`, so all three
-            // share one instance.
-            'react-dom/server',
-          ],
-          // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
-          // (globTestFiles), not just the one you ran. The review app-listing browser tests
-          // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
-          // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
-          // `appRouter` -> app-listing-assets.service.ts's
-          // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
-          // never evaluated at runtime — but esbuild's static scan follows the import anyway and
-          // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
-          // file), failing the whole component project with "No loader is configured for '.node'
-          // files" regardless of which test you targeted. Exclude it; no component test needs it.
-          exclude: ['sharp'],
-        },
+        resolve: { alias },
+        plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
+          ...unitTestConfig,
+          name: 'unit-native',
+          include: sharpExecutingTestFiles,
+          // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these
+          // files must not follow it there. Every process-based pool survives the sharp teardown
+          // (`forks` and `vmForks` both measured clean); every thread-based one races and loses.
+          // Declared here AND re-asserted by `nativePoolPlugin`, for the reason given at its
+          // definition: a static value alone loses to a CLI `--pool`, and a plugin alone is
+          // unchecked by anything (this file is outside tsconfig's `include`).
+          pool: NATIVE_POOL,
+        },
+      },
+      {
+        ...browserProjectShell(),
+        test: {
+          ...browserTestShell(),
           name: 'component',
-          maxWorkers: componentMaxWorkers,
-          // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
-          // which serialises the two projects instead of interleaving them; CI and every script
-          // select one project at a time.
-          sequence: { groupOrder: COMPONENT_GROUP_ORDER },
-          globals: true,
           include: ['src/**/*.browser.test.tsx'],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-          browser: {
-            enabled: true,
-            // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
-            // Chromium as root inside the Tekton CI container (node:20 pod runs
-            // as UID 0; without --no-sandbox Chromium refuses to start, and the
-            // container's small /dev/shm crashes it without --disable-dev-shm-usage).
-            // Harmless locally.
-            // CI installs Playwright's own Chromium into the image (env unset),
-            // so it resolves by revision as normal. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
-            // is the escape hatch for a host whose browser bundle does not carry the
-            // revision this playwright release pins (the NixOS
-            // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
-            // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
-            // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
-            // rather than moving the pin; see CLAUDE.md "Browser/component tests on
-            // NixOS". A mismatch does not say "no browser" — it collects every file
-            // and executes none, which reads as a broken suite.
-            provider: playwright({
-              launchOptions: {
-                args: ['--no-sandbox', '--disable-dev-shm-usage'],
-                ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-                  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
-                  : {}),
-              },
-            }),
-            headless: true,
-            instances: [{ browser: 'chromium' }],
-          },
+        },
+      },
+      {
+        // The GEOMETRY tier. Same browser, same shell, different cascade.
+        //
+        // 🔴 THE GLOB IS DISJOINT FROM EVERY OTHER PROJECT'S, ON PURPOSE.
+        // `component` claims `src/**/*.browser.test.tsx` and `unit` claims
+        // `src/**/*.test.ts` — `.ts`, so `.tsx` is already outside it. Nothing
+        // that runs today changes project and no file is collected twice; a
+        // `.geometry.browser.test.tsx` spelling would have been claimed by BOTH
+        // browser projects and run under two different cascades, which is the one
+        // outcome that would make a red here uninterpretable.
+        ...browserProjectShell(),
+        test: {
+          ...browserTestShell(),
+          name: 'geometry',
+          include: ['src/**/*.geometry.test.tsx'],
+          setupFiles: ['test/browser-process-shim.ts', 'test/geometry-setup.tsx'],
         },
       },
     ],

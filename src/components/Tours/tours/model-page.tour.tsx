@@ -1,3 +1,4 @@
+import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -42,11 +43,6 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     title: 'Join the Discussion',
     content: 'Engage in discussions related to this resource.',
-    // Hack to prevent solid gray box from appearing
-    styles: {
-      overlay: { backgroundColor: 'rgba(0, 0, 0, 0.4)' },
-      spotlight: { backgroundColor: 'rgba(255, 255, 255, 0.2)' },
-    },
   },
   {
     target: '[data-tour="model:gallery"]',
@@ -55,6 +51,9 @@ export const modelPageTour: StepWithData[] = [
     content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
     data: {
       onNext: async () => {
+        // Reading this step scrolls the carousel out of view, and its slides
+        // only mount while they are in it.
+        document.querySelector('[data-tour="model:start"]')?.scrollIntoView({ block: 'start' });
         await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
       },
     },
@@ -62,8 +61,12 @@ export const modelPageTour: StepWithData[] = [
   {
     target: '[data-tour="model:remix"]',
     title: 'Remix This Image',
-    content: 'Click this button to remix an image and create something new',
+    content:
+      'Click this button to see what you can make from an image — edit it with a prompt, animate it, or reuse its prompt and resources.',
+    // Below the button is where the remix menu opens; a tooltip there covers it.
+    placement: 'top',
     disableBeacon: true,
+    hideFooter: true,
     spotlightClicks: true,
     disableOverlayClose: true,
     spotlightPadding: 10,
@@ -73,6 +76,7 @@ export const modelPageTour: StepWithData[] = [
       },
     },
   },
+  remixMenuStep('model:remix-menu'),
 ];
 
 export const welcomeTour: StepWithData[] = [
@@ -94,7 +98,10 @@ export const welcomeTour: StepWithData[] = [
   {
     target: '[data-tour="model:remix"]',
     title: 'Create with this Resource',
-    content: 'Click here to generate content using this resource!',
+    content:
+      'Click here to make something from this image — edit it with a prompt, animate it, or reuse its prompt and resources. Pick any one to carry on.',
+    // Below the button is where the remix menu opens; a tooltip there covers it.
+    placement: 'top',
     disableBeacon: true,
     showProgress: false,
     hideFooter: true,
@@ -107,4 +114,5 @@ export const welcomeTour: StepWithData[] = [
       },
     },
   },
+  remixMenuStep('model:remix-menu'),
 ];

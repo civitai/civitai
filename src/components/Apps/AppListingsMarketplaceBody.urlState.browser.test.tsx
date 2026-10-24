@@ -4,6 +4,7 @@ import { useEffect, useReducer } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -44,11 +45,14 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     tagline: 'tag',
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -57,7 +61,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
             hasPage: false,
             liveUrl: `https://slug-${id}.civit.ai`,
           }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -68,28 +72,47 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
@@ -195,7 +218,7 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     // router would make the racing test pass for the wrong reason.
     renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'offsite' }));
     // …and the component re-renders FROM the URL.
     await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' }));
@@ -248,12 +271,71 @@ describe('(a) the search box tracks an EXTERNAL query change', () => {
   });
 });
 
+/**
+ * (d) WHITESPACE IS NOT A DISAGREEMENT. The echo into the URL compares TRIMMED values ('Alpha '
+ * and 'Alpha' are the same search), so it skips a write when only whitespace changed. The adopt
+ * effect compared RAW values, so it read that skipped write as `router.query` having moved and
+ * reset the box to the URL: a space typed after a pause vanished, and a space deleted came back.
+ * Every one of these waits out the 300ms debounce, because that is when it happened.
+ */
+describe('(d) a space in the search box survives the URL round-trip', () => {
+  const PAST_DEBOUNCE_MS = 700;
+
+  test('🔴 a trailing space typed after a pause stays in the box', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    await search.fill('Alpha ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha ');
+  });
+
+  test('🔴 a trailing space deleted after a pause stays deleted', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha ');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha ' }));
+
+    await search.fill('Alpha');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha');
+  });
+
+  test('a leading space typed into an empty box stays', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill(' ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe(' ');
+  });
+
+  test('a Back to a genuinely different term is still adopted', async () => {
+    // The control that keeps the fix honest: ignoring whitespace must not make the box deaf to
+    // an external change.
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toHaveValue('Alpha');
+
+    navigateTo({ query: 'Bravo' });
+    await vi.waitFor(() => expect((search.element() as HTMLInputElement).value).toBe('Bravo'));
+  });
+});
+
 describe('(b) two fast filter clicks must not drop one', () => {
   test('🔴 kind then category, both inside the in-flight window, both survive', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
 
-    await userEvent.click(page.getByRole('button', { name: 'On-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
     await userEvent.click(page.getByRole('button', { name: 'Generation' }));
 
     await vi.waitFor(() => {
@@ -262,7 +344,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     // …and the panel, which now renders FROM the url, shows both as pressed
     // rather than visibly reverting the first one.
     await expect
-      .element(page.getByRole('button', { name: 'On-site' }))
+      .element(page.getByRole('button', { name: 'Embedded' }))
       .toHaveAttribute('aria-pressed', 'true');
     await expect
       .element(page.getByRole('button', { name: 'Generation' }))
@@ -272,7 +354,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
   test('a sort change racing a kind change keeps both', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
     await userEvent.click(page.getByLabelText('Sort').first());
     await userEvent.click(page.getByRole('option', { name: 'Newest' }));

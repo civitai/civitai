@@ -1,0 +1,104 @@
+/**
+ * Setup file: records every path a test file touches through `fs`, so a test whose inputs are
+ * files — a fixture, or a whole source tree read as text by a convention guard — can be keyed on
+ * them. Without it those 224 files (5.9% of modelled worker time) would have to run every time.
+ *
+ * Patching the CommonJS `fs` object and then calling `syncBuiltinESMExports` is what makes this
+ * reach `import { readFileSync } from 'node:fs'` too — measured on a fixture: the ESM named import
+ * went through the wrapper. Loaded only when the cache is on; it is inert otherwise.
+ *
+ * The paths leave the worker as the file task's `meta`, which vitest serialises to the main process
+ * where the reporter reads it. A per-file Set is correct because the unit projects isolate every
+ * file in its own process; were that ever turned off, reads would pool across files, which only
+ * makes keys stricter.
+ */
+
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { afterAll } from 'vitest';
+
+import { mode } from './core.mjs';
+
+if (mode() !== 'off') {
+  const require = createRequire(import.meta.url);
+  const fs = require('node:fs');
+  const reads = new Set();
+
+  const note = (p) => {
+    if (typeof p === 'string') reads.add(p);
+    else if (p instanceof URL) reads.add(p.href);
+    else if (Buffer.isBuffer(p)) reads.add(p.toString());
+  };
+
+  const wrap = (obj, name) => {
+    const orig = obj[name];
+    if (typeof orig !== 'function') return;
+    const wrapper = function (p, ...rest) {
+      note(p);
+      return orig.call(this, p, ...rest);
+    };
+    // Carry the original's own properties: `fs.realpathSync.native` lives on the function, and
+    // next's lib/realpath.js calls it off-Windows. Dropping it broke that path with the cache on.
+    Object.assign(wrapper, orig);
+    if (typeof orig.native === 'function') {
+      const native = orig.native;
+      wrapper.native = function (p, ...rest) {
+        note(p);
+        return native.call(this, p, ...rest);
+      };
+    }
+    obj[name] = wrapper;
+  };
+
+  for (const name of [
+    'readFileSync',
+    'readFile',
+    'readdirSync',
+    'readdir',
+    'statSync',
+    'lstatSync',
+    'stat',
+    'lstat',
+    'existsSync',
+    'opendirSync',
+    'opendir',
+    'createReadStream',
+    'accessSync',
+    'access',
+    'openSync',
+    'open',
+    'realpathSync',
+    'realpath',
+    'readlinkSync',
+    'readlink',
+  ]) {
+    wrap(fs, name);
+  }
+  for (const name of ['readFile', 'readdir', 'stat', 'lstat', 'opendir', 'open', 'access', 'realpath', 'readlink']) {
+    wrap(fs.promises, name);
+  }
+  syncBuiltinESMExports();
+
+  // The first argument must be an object pattern — vitest 4 parses hook signatures as fixtures and
+  // rejects anything else — and the file's suite arrives second.
+  // eslint-disable-next-line no-empty-pattern
+  afterAll(({}, suite) => {
+    suite.meta.testCacheReads = [...reads];
+    // Every module this file's runner loaded. A module a `vi.mock` factory replaced is in the map
+    // too, but never ran: no `evaluated`, no `promise`, no `imports`. `vi.resetModules()` clears
+    // the first two on everything it touches but keeps `imports`, so a module that ran and then was
+    // reset still counts; re-registering an automock or spy with `vi.doMock` clears `imports` too,
+    // and its dependencies would drop out. Automock and `{ spy: true }` run the real module under a
+    // `mock:` id. node_modules is left out: the reporter walks it regardless. Absent on a vitest
+    // without this internal, and the reporter then walks the whole graph.
+    const map = globalThis.__vitest_worker__?.evaluatedModules?.idToModuleMap;
+    if (map instanceof Map) {
+      const loaded = new Set();
+      for (const [id, node] of map) {
+        if (!(node?.evaluated || node?.promise || node?.imports?.size)) continue;
+        const real = id.startsWith('mock:') ? id.slice('mock:'.length) : id;
+        if (!real.includes('/node_modules/')) loaded.add(real);
+      }
+      suite.meta.testCacheLoaded = [...loaded];
+    }
+  });
+}

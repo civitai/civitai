@@ -28,6 +28,8 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { getEffectiveGalleryHiddenUserIds } from '~/components/Image/AsPosts/gallery-hidden-users';
+import { mergePostPages } from '~/components/Image/AsPosts/gallery-posts';
 import {
   useGallerySettings,
   useModel3DGallerySettings,
@@ -37,7 +39,6 @@ import {
   ImagesAsPostsInfiniteProvider,
   type ImagesAsPostsSource,
 } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -53,6 +54,7 @@ import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.const
 import { Flags } from '~/shared/utils/flags';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trpc } from '~/utils/trpc';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -148,7 +150,7 @@ export function ImagesAsPostsInfinite({
       : true);
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters, limit, browsingLevel: intersection },
+      { ...filters, limit, browsingLevel: intersection, preCapBrowsingLevel: browsingLevel },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
@@ -158,12 +160,16 @@ export function ImagesAsPostsInfinite({
       }
     );
 
+  const activeGallerySettings =
+    source.kind === 'model3d' ? model3dGallerySettings : gallerySettings;
   const hiddenUsers = useMemo(
     () =>
-      source.kind === 'model3d'
-        ? model3dGallerySettings?.hiddenUsers.map((x) => x.id)
-        : gallerySettings?.hiddenUsers.map((x) => x.id),
-    [source.kind, gallerySettings?.hiddenUsers, model3dGallerySettings?.hiddenUsers]
+      getEffectiveGalleryHiddenUserIds({
+        modelHiddenUserIds: activeGallerySettings?.hiddenUsers.map((x) => x.id),
+        creatorHiddenUserIds: activeGallerySettings?.creatorHiddenUserIds,
+        viewerId: currentUser?.id,
+      }),
+    [activeGallerySettings, currentUser?.id]
   );
   const hiddenTags = useMemo(
     () =>
@@ -183,15 +189,36 @@ export function ImagesAsPostsInfinite({
       : [];
   }, [source.kind, selectedVersionId, gallerySettings, model3dGallerySettings]);
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items } = useApplyHiddenPreferences({
+  const flatData = useMemo(
+    () => (data ? mergePostPages(data.pages.map((x) => x?.items)) : undefined),
+    [data]
+  );
+  // A sponsored post was checked against this gallery's settings when the host
+  // accepted it, and a host cannot end an accepted run, so only the viewer's own
+  // preferences apply to it here.
+  const organicData = useMemo(() => flatData?.filter((post) => !post.sponsored), [flatData]);
+  const sponsoredData = useMemo(() => flatData?.filter((post) => post.sponsored), [flatData]);
+  const { items: sponsoredItems } = useApplyHiddenPreferences({
     type: 'posts',
-    data: flatData,
+    data: sponsoredData,
+    // The server already held it to the cap frozen at accept, not today's cap.
+    browsingLevel,
+  });
+  const { items: organicItems } = useApplyHiddenPreferences({
+    type: 'posts',
+    data: organicData,
     hiddenImages: !showHidden ? hiddenImageIds : undefined,
     hiddenUsers: !showHidden ? hiddenUsers : undefined,
     hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
   });
+
+  const items = useMemo(() => {
+    if (!sponsoredItems.length) return organicItems;
+    const pinnedCount = organicItems.filter((post) => post.pinned).length;
+    const at = sponsoredSlotIndex(pinnedCount, organicItems.length);
+    return [...organicItems.slice(0, at), ...sponsoredItems, ...organicItems.slice(at)];
+  }, [organicItems, sponsoredItems]);
 
   const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
     const queryString = QS.stringify(
@@ -216,11 +243,9 @@ export function ImagesAsPostsInfinite({
   const hasModerationPreferences =
     source.kind === 'model3d'
       ? !!hiddenImageIds.length ||
-        !!model3dGallerySettings?.hiddenUsers.length ||
+        !!hiddenUsers.length ||
         !!model3dGallerySettings?.hiddenTags.length
-      : !!hiddenImageIds.length ||
-        !!gallerySettings?.hiddenUsers.length ||
-        !!gallerySettings?.hiddenTags.length;
+      : !!hiddenImageIds.length || !!hiddenUsers.length || !!gallerySettings?.hiddenTags.length;
 
   const providerValue = useMemo(
     () => ({
@@ -262,9 +287,7 @@ export function ImagesAsPostsInfinite({
         <MasonryContainer>
           <Stack gap="md">
             <Group gap="xs">
-              <Title order={2} data-tour="model:gallery">
-                Gallery
-              </Title>
+              <Title order={2}>Gallery</Title>
               {!isMuted && (
                 <Group>
                   <LoginRedirect reason="post-images">
@@ -321,7 +344,10 @@ export function ImagesAsPostsInfinite({
                             onClick={() =>
                               dialogStore.trigger({
                                 component: GalleryModerationModal,
-                                props: { modelId: source.model.id },
+                                props: {
+                                  modelId: source.model.id,
+                                  isOwner: currentUser?.id === source.model.user.id,
+                                },
                               })
                             }
                           >
@@ -358,7 +384,6 @@ export function ImagesAsPostsInfinite({
                 .
               </Text>
             ) : null}
-            <ImageCategories />
             {enabled && isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>
                 <LoadingOverlay visible zIndex={10} />

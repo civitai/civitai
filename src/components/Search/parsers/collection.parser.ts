@@ -1,5 +1,9 @@
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import * as z from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -19,12 +23,8 @@ const collectionSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('collections'),
     sortBy: z.enum(CollectionsSearchIndexSortBy),
-    users: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    type: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    users: stringArrayParamSchema,
+    type: stringArrayParamSchema,
   })
   .partial();
 
@@ -32,11 +32,10 @@ export type CollectionSearchParams = z.output<typeof collectionSearchParamsSchem
 
 export const collectionsInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const collectionSearchIndexResult = collectionSearchParamsSchema.safeParse(
+    const collectionSearchIndexData = parseSearchParams(
+      collectionSearchParamsSchema,
       QS.parse(location.search)
     );
-    const collectionSearchIndexData: CollectionSearchParams | Record<string, string[]> =
-      collectionSearchIndexResult.success ? collectionSearchIndexResult.data : {};
 
     return { [COLLECTIONS_SEARCH_INDEX]: removeEmpty(collectionSearchIndexData) };
   },

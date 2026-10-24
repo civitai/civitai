@@ -1,8 +1,10 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Apps home / Installed apps / My submissions / Review). "Review" is gated on
+// (Marketplace / App activity / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -18,35 +20,22 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => holder.user,
 }));
 
-vi.mock('~/utils/trpc', () => ({
+/**
+ * 🔴 A PROXY, NOT A LITERAL — the whole `blocks` namespace here was inert fixture anyway.
+ *
+ * Phase 3 first patched this by hand (`useUtils` + `revokeScopes`) after `ScopeConsentList`'s
+ * `useScopeRevoke` made the drawer body throw `TypeError: trpc.useUtils is not a function`, which
+ * failed the one arm below on `Cannot find element with locator:
+ * getByTestId('app-permissions-activity-drawer')` — a message that reads as "the menu item is
+ * broken" and names nothing. Converted because this file asserts on NO tRPC spy at all: every
+ * procedure it named existed solely to stop the drawer's subtree crashing, which is exactly what
+ * the shared proxy does for every procedure, including the ones the next change adds. See
+ * `test/trpcProxyStub.ts` for the four-time history behind it.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
-  trpc: {
-    blocks: {
-      listMyScopeGrants: { useQuery: () => ({ data: [], isLoading: false }) },
-      listMyAppActivity: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-      listMyScopeInvocations: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-    },
-    // W13 — AppActivityPanel (mounted by the drawer) resolves rich-detail ids via
-    // these batch lookups. Stub them (empty fixtures → inert).
-    modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
-    useQueries: () => [],
-  },
+  trpc: makeTrpcProxy(),
 }));
 
 // eslint-disable-next-line import/first
@@ -54,14 +43,27 @@ import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
-beforeEach(() => {
+/**
+ * 🔴 A DESKTOP VIEWPORT, PINNED — every render below is `slotId="app.page"`, and F3
+ * gives that surface a different chrome below the `sm` breakpoint (768): no separate
+ * platform-nav trigger at all, because the nav folds into the ⋮ bottom sheet.
+ *
+ * This file pinned no viewport before F3 and therefore inherited Vitest's default of
+ * **414×896**, which is below `sm` — so without this line every test here would be
+ * asserting the desktop dropdown against the mobile shell. The claims are about the
+ * dropdown, so the viewport that produces a dropdown is now named. The folded-nav
+ * behaviour has its own coverage in `AppBlockChromeMobileShell.browser.test.tsx`.
+ */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
   holder.user = null;
+  await page.viewport(...DESKTOP);
 });
 
 async function openPlatformNav() {
   await page.getByRole('button', { name: 'Apps menu' }).click();
-  // "Apps home" is present for every viewer — wait on it so the dropdown mounted.
-  await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+  // "Marketplace" is present for every viewer — wait on it so the dropdown mounted.
+  await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
 }
 
 describe('AppBlockChrome platform-nav menu (Part A)', () => {
@@ -72,14 +74,20 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     );
     await openPlatformNav();
 
-    const home = page.getByRole('menuitem', { name: 'Apps home' }).element();
+    const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
     expect(home.getAttribute('href')).toBe('/apps');
 
-    const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();
-    expect(installed.getAttribute('href')).toBe('/apps/installed');
+    const installed = page.getByRole('menuitem', { name: 'App activity' }).element();
+    expect(installed.getAttribute('href')).toBe('/apps/activity');
 
-    const submissions = page.getByRole('menuitem', { name: 'My submissions' }).element();
-    expect(submissions.getAttribute('href')).toBe('/apps/my-submissions');
+    // Was "My submissions" → `/apps/my-submissions`, then `/apps/mine`; that table is now
+    // state C of the consolidated `/apps/build`, and this item was REPOINTED rather than
+    // removed (removing it would delete a door out of a running app for the app's own
+    // owner; leaving the old href would make every press a 301 hop). The LABEL is
+    // deliberately still "My apps" — it names what an owner arrives at.
+    // and 301s there, so the in-app link points at the surviving route directly.
+    const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
+    expect(mine.getAttribute('href')).toBe('/apps/build');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

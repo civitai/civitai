@@ -1,9 +1,10 @@
-import { Anchor, Badge, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Group, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { RevenuePanel } from '~/components/AppBlocks/RevenuePanel';
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -65,7 +66,7 @@ export default function AppRevenuePage() {
   return (
     <>
       <Meta title={`Revenue — ${thisApp?.appName ?? appBlockId}`} deIndex />
-      <Container size={APPS_PAGE_WIDTHS['/apps/[appBlockId]/revenue']} py="xl">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/[appBlockId]/revenue']}>
         <Stack gap="lg">
           <div>
             <Group gap="xs" align="baseline">
@@ -98,7 +99,7 @@ export default function AppRevenuePage() {
           */}
           <RevenuePanel appBlockId={appBlockId} />
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

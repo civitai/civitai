@@ -1,0 +1,219 @@
+---
+name: official-model-admin
+description: Create a Draft CivitaiOfficial model and version through the API, work out whether the version is API-only or needs hosted model files (and either import those from Hugging Face or walk the user through uploading them), update an existing model's description, or transfer a model to CivitaiOfficial. Every description write requires the user's approval of the exact text, enforced by an approval hash. Use when setting up an official model or version for review before publishing, or when an official model's description needs to change. Called by onboard-generator-model; usable on its own.
+---
+
+# Official Model Admin
+
+Creates and edits models and versions on the site through the API. **It never publishes.** Everything it creates stays `Draft` until a human publishes it.
+
+```bash
+node .claude/skills/official-model-admin/model.mjs <command> [flags]
+node .claude/skills/official-model-admin/model.mjs whoami     # API target, your user id, moderator check
+```
+
+## Setup
+
+- It uses `CIVITAI_API_KEY` from `.claude/skills/mod-actions/.env`.
+- The key must belong to a moderator, and its scopes must cover model writes (or it must be a full-access key).
+- `CIVITAI_API_URL` defaults to `https://civitai.com`.
+- `evidence` reads the database through `postgres-query`.
+
+Every write is a dry run unless you pass `--writable`. **Ask the user before each `--writable` call.** They write to production.
+
+## Descriptions: the user approves the exact text first
+
+This applies to `create-model` and `update-description`.
+
+1. Draft the HTML, usually with the `write-model-description` skill, and save it to a scratchpad file.
+2. Run the command **without** `--writable`:
+   - `create-model` prints the full HTML. Show the user the description itself, rendered as readable text, not a summary of it.
+   - `update-description` prints a diff against the live description. Show the user that diff, and the full new text if the diff is large.
+3. The dry run ends with an **approval hash**. Ask the user to approve the text **exactly as shown**. If they ask for edits, change the file and run the dry run again, which produces a new hash, then ask again.
+4. Once they've approved, re-run with `--writable --approved <hash>`.
+
+The script refuses a hash that doesn't match the current file. For an update, it also refuses if the live description has changed since the dry run. So nothing gets written that the user didn't see.
+
+## Versions: API-only or hosted weights
+
+Every version is one of two kinds, and **the kind has to be settled before `create-version`**:
+
+| Kind | Who runs the model | Files | `usageControl` | Examples |
+| --- | --- | --- | --- | --- |
+| `api-only` | the provider, behind its API | none; the upload wizard skips the files step | `ExternalGeneration` | Seedance, Qwen 3, Muse Image, ChatGPT Images, the MiniMax H3 API version |
+| `hosted-weights` | our cluster, from files on the version | required | `Download`, or `Generation` if downloads shouldn't be offered | Ideogram 4.0, LTXV 2.5, Mage Flow, the MiniMax H3 hosted version |
+
+### 1. Gather evidence
+
+```bash
+node .claude/skills/official-model-admin/model.mjs evidence --ecosystem <EcosystemRecord.key> --base-model "<BaseModelRecord.name>"
+```
+
+It reports two things:
+- **The ecosystem's handler engines.**
+  - `comfy` or `*-comfy` means hosted weights.
+  - Closed-provider engines (`openai`, `google`, `seedance`, `kling`, `fal`, and so on) mean API-only.
+  - Model-family engines (`wan`, `ltx2`, `flux2`, `qwen`) run either way, so they settle nothing.
+- **How existing CivitaiOfficial versions of that base model are set up.**
+
+Neither is decisive on its own. The base model doesn't settle it, because MiniMax H3 has one version of each kind. Files don't settle it either, because some older `ExternalGeneration` versions have files attached that are never used.
+
+For a **new ecosystem** there is no handler yet. In that case, check `@civitai/orchestration-client`:
+- a `Comfy*` input type means hosted weights;
+- a provider-specific input with a provider engine means API-only.
+
+### 2. Decide with the user
+
+Show the user the evidence and your recommendation, then ask the deciding question:
+
+> Does the provider publish weights that we download and run (e.g. on Hugging Face), or is the model only reachable through the provider's own API?
+
+**Never pick the kind silently**, and never pick it from the engine name alone. For hosted weights, also ask whether downloads should be offered. If not, pass `--no-download`, which gives `Generation`.
+
+### 3. Create the version
+
+```bash
+node .claude/skills/official-model-admin/model.mjs create-version --model-id <id> --name "<Version name>" \
+  --base-model "<BaseModelRecord.name>" --kind <api-only|hosted-weights> [--no-download] --writable
+```
+
+- `--base-model` is the base model's **name** (`BaseModelRecord.name`, which is what `ModelVersion.baseModel` stores), not the ecosystem key.
+- `Unknown base model: <name>` means the constants that add the base model aren't deployed on the server the API is running on. Deploy them first.
+
+### 4. Hosted weights only: get the files uploaded
+
+Two routes. When the weights live on Hugging Face, our servers can fetch them and you attach the
+result yourself; otherwise the user uploads through the wizard.
+
+#### From Hugging Face
+
+Ask the user to queue the repo at **`/moderator/huggingface-import`** — paste the model URL, check the
+**Group name** (prefilled from the repo; it is what the batch is filed under, and nothing renames it
+after Import), tick the files, Import. The transfer runs server-side on a cron, so it takes as long as it takes; nothing
+downloads to anyone's machine. Then:
+
+```bash
+node .claude/skills/official-model-admin/model.mjs hf-imports --repo <owner/name>
+node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --fp bf16 --writable
+```
+
+`hf-imports` lists each transferred file with its size, state, group and a suggested type;
+`attach-import` creates the model file on your version, and scanning and hashing follow on their own.
+
+🔴 **Attach only once the version's base model is DEPLOYED, or every scan fails.** The scan AIR's
+ecosystem segment comes from `getAirEcosystem(baseModel)`, which falls back to the raw string
+lowercased when `getRootEcosystem` cannot resolve it — so a base model the running build does not know
+puts its **display name, spaces and all**, into the URN. The orchestrator rejects it with a 400 naming
+a resource nobody recognises, which reads like a scanner or storage fault rather than a missing
+deploy. Classified `transient`, so files are retried rather than tombstoned and everything heals on
+the next attempt after the deploy — but until then nothing scans and nothing can publish.
+
+⚠ **Scanning is not fast, and slow is not stuck.** Observed on a 10-file, 143 GB set: most files
+finished 20-30 minutes after submission, with no clean relationship to size (an 18 GB file beat a
+6 GB one), while several took **14-17 hours**. Read `virusScanResult` and `scannedAt` before
+concluding anything, and note that the fallback job only re-picks a file whose `scanRequestedAt` is
+older than **one day** — so forcing a retry means setting that column to `NULL`, which puts the file
+at the front of the next 5-minute tick. Don't spend a duplicate scan on a large file until it has had
+a day.
+
+**`--fp` names the precision**, one of `constants.modelFileFp`, and `--optional` marks a file the
+version does not need (`metadata.isRequired: false`). The attach itself writes only `format`, so
+without `--fp` a repo that ships several quantizations lists them all as untyped precision and the
+download picker cannot tell them apart. It is **not** inferable from the filename — `w4a8` is
+`int4` — so read the publisher's own naming. A repackaged Comfy-Org repo is the common case; see
+Qwen Image 2.1 (version 3352534) for a worked set: `bf16` / `int8` diffusion models, one `bf16` VAE,
+and text encoders at `bf16` / `int8` / `int4`.
+
+Both filters run on the server. `--repo` is an **exact** match against the repo id Hugging Face
+returned rather than what was pasted, so its casing must be HF's; `--group` is a case-insensitive
+substring of the group name and is the forgiving one to reach for.
+
+🔴 **You choose `--type`, and it decides whether the version can load at all.** The suggested type is
+advisory and deliberately never names the primary weights — a mislabelled weight file passes every
+check and produces a version nothing can load. Read the filename:
+`ae.safetensors` is a `VAE`, anything under `text_encoder/` is a `Text Encoder`, and the large
+`.safetensors` at the repo root is the weight file (`Model`, or `Diffusion Model` / `UNet` when the
+repo splits them). If the repo's layout does not make a file's role obvious, ask the user rather than
+guessing — a mislabelled weight file passes every check here and produces a version nothing can load.
+
+#### Shared components: ALSO publish them as their own model
+
+A repo that ships text encoders or a VAE beside the checkpoint gives you a choice, and the two halves
+are not exclusive — do both.
+
+Attach every component to the checkpoint's version, so it works on its own. Then, when a component is
+one a **community finetune of the same base model would need**, publish it a second time as its own
+`TextEncoder` / `VAE` model. The reason is mechanical: `RecommendedResource.resourceId` is a foreign
+key to `ModelVersion`, so a creator can point their upload at a *version* and never at a file inside
+one. Leave an encoder only inside our checkpoint and the closest thing they can recommend is the
+checkpoint itself — a competing model, not the component. Type also drives search filters, so a
+bundled encoder is invisible to anyone browsing for one.
+
+Precedent for both shapes: Qwen Image 2.1 (2954443) bundles its encoders **and** ships `Qwen3`
+(2742977) standalone. `T5` (2740996) and `Flux.1-AE` (2740928) are the same pattern. Where a
+component's variants differ by checkpoint rather than by precision — e.g. a base and a
+layer-decomposition checkpoint with their own encoders — make them two **versions** of one component
+model.
+
+**The second copy costs no storage, and `attach-import` cannot make it.** `reuseStoredFile` keys on
+`repo` + `revision` + `filename`, so for a path already imported it returns the existing file instead
+of minting another. Create the row directly with `modelFile.create`, passing the **same `url`** (the
+controller derives backend and s3Path from it). Two `ModelFile` rows over one object is supported:
+`deleteModelFileObject` skips the S3 delete while any live row still references that URL.
+
+#### Community copies of the same weights: do nothing
+
+A mirrored model's weights are usually already on the site, uploaded by creators who mirrored the
+same upstream release — often before us. Attribution sorts itself out: `get_image_resources` and
+`prefersHashMatch` rank an **official** version above any other holding the same hash, so an image
+whose metadata carries those bytes credits our page whoever uploaded first. That depends on
+`isOfficial`, which `create-model` guarantees.
+
+Three things not to reach for:
+
+- **Archiving the community model does nothing.** `Archived` is `Model.mode`; the attribution
+  function only ever filters on `Model.status` being `Deleted`, `Unpublished` or
+  `UnpublishedViolation`. This looks like the obvious lever and moves no credit at all.
+- **`excludeFromAutoDetection` is the wrong tool now.** It is version-scoped, so on a finetune that
+  merely bundles one of our component files it strips credit for the creator's own weights too.
+- **Nothing needs doing per model.** Before the tie-break carried `isOfficial`, each mirror took hand
+  written SQL plus a reconcile pass; two rounds of that removed 331 attributions and reassigned none,
+  because the flag suppressed the slot instead of passing it on.
+
+What DOES need a decision is whether to publish the repo's shared components separately — see above.
+
+#### Uploaded by hand
+
+`create-version` prints the upload link, `/models/<modelId>/model-versions/<versionId>/wizard?step=2`.
+
+**Give the user that link and ask them to upload the model files there.** They can also use the model page: the version menu → **Manage files**. Tell them what the files need:
+
+- **At least one weight file** with type `Model`, `Pruned Model`, `Diffusion Model`, `UNet`, `Negative` or `VAE`. Supporting files such as text encoders can also be uploaded.
+- **`SafeTensor` format** for a checkpoint.
+
+Then wait. When the files are attached or the user says the upload is done, run:
+
+```bash
+node .claude/skills/official-model-admin/model.mjs files --version <id>
+```
+
+This lists each file with its type, format and scan state. It ends with one of:
+- **READY**
+- **NOT READY**, with the reason: no files, no weight-type file, still scanning, or no SafeTensor.
+
+If it isn't ready, tell the user what to fix, or when to check again for scanning, and run it again. **Don't move on to coverage until it says READY.** A covered version with no loadable weights fails for mods at generation time, and looks like a code bug.
+
+### 5. Next
+
+A new version can't be generated until it has coverage. Add that with the `generation-coverage` skill.
+
+## Other commands
+
+- **`create-model --name <n> --description-file <html> [--type Checkpoint]`** creates a `Draft` model owned by you, because `model.upsert` always makes the caller the owner. It then transfers it to CivitaiOfficial (`--owner-id` overrides the target). If the transfer fails, the model still exists under your account, and the script prints a `transfer` command to retry with.
+  - It sets the **`base model` category tag** and, for a `Checkpoint`, **checkpoint type `Trained`**, which is what every CivitaiOfficial mirror carries. A mirror is someone else's trained weights, never a merge, so there is no flag to pick `Merge` here.
+  - It then checks **`isOfficial`** and sets it if the transfer didn't. The transfer sets it server-side (`transferModelOwnership`), but the flag gates the official-models cache, the picker's official ordering and the resource-attribution tie-break, and none of that is visible on the model page — so it is asserted rather than assumed. It was a manual `model.setOfficial` call until 2026-09-28 and was missed on 14 consecutive releases.
+- **`update-description --model-id <id> --description-file <html>`** sends the model's current `name`, `type`, `uploadType` and `status` together with the new description.
+  - On an update, `model.upsert` ignores `status` and leaves every optional field it isn't sent untouched, so tags, licensing and NSFW settings survive.
+  - It reads the description back afterwards, and warns if the server's sanitizing or blurb expansion changed it.
+  - A description identical to the live one is a no-op.
+- **`transfer --model-id <id>`** transfers the model to CivitaiOfficial. It's the retry path for a failed `create-model`.

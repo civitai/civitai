@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 // file into a version, authorize the referenced file's owner, dedupe per file, and
 // optionally remove the redundant local file to reclaim its bytes.
 
-const { mockDbRead, mockDbWrite, mockMarkReplaced, mockPreventLag } = vi.hoisted(() => {
+const { mockMarkReplaced, mockPreventLag } = vi.hoisted(() => {
   const mk = () => ({
     findFirst: vi.fn(),
     findUnique: vi.fn(),
@@ -14,14 +14,11 @@ const { mockDbRead, mockDbWrite, mockMarkReplaced, mockPreventLag } = vi.hoisted
     update: vi.fn(),
   });
   return {
-    mockDbRead: { modelFile: mk() },
-    mockDbWrite: { recommendedResource: mk(), modelVersion: mk() },
     mockMarkReplaced: vi.fn(),
     mockPreventLag: vi.fn(),
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventModelVersionLag: mockPreventLag,
   getDbWithoutLag: vi.fn(),
@@ -33,11 +30,14 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 });
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/redis/caches', () => ({}));
-vi.mock('~/server/redis/client', () => ({ REDIS_KEYS: {} }));
+
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/buzz.service', () => ({}));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/donation-goal.service', () => ({ checkDonationGoalComplete: vi.fn() }));
@@ -49,7 +49,6 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -65,10 +64,14 @@ vi.mock('~/server/services/paid-access.service', () => ({
   paidAccessInputFromLegacyConfig: vi.fn(() => null),
   earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
   earlyAccessConfigFromPaidAccess: vi.fn(),
+  bustModelSaleCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { addLinkedComponent } from '~/server/services/model-version.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const CALLER = 100;
 
@@ -264,4 +267,3 @@ describe('addLinkedComponent auto-pick (no targetFileId — public path unchange
     expect(result.fileId).toBe(9);
   });
 });
-

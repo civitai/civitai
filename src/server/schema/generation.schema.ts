@@ -1,15 +1,20 @@
 import * as z from 'zod';
+import { rangeSchema } from '~/shared/zod/range.schema';
 import type { Sampler } from '~/server/common/constants';
-import { constants, generation } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionTermsSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
-import { generationSamplers } from '~/shared/constants/generation.constants';
+import {
+  MAX_SEED,
+  DEFAULT_STRENGTH_RANGE,
+  generationSamplers,
+} from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 
-// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+// All valid samplers: UI samplers + the ZImageBase and Flux2Klein sampler names
 const allValidSamplers = [
   ...generationSamplers,
   ...zImageSampleMethods,
@@ -17,32 +22,13 @@ const allValidSamplers = [
 ] as const;
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.enum(ModelType),
 //   name: z.string(),
 // });
-
-/**
- * Operator-controlled generator config, persisted to Redis (hash field
- * `generation:ecosystem-config`). All GATING now lives in the gate-rules model
- * (`generation:gate-rules`); the only field left here is `experimentalEcosystems`
- * — an alert flag, not a gate (it shows the "experimental build" banner in the
- * generator UI). Read/written by `get/setGenerationEcosystemConfig`.
- */
-export const generationEcosystemConfigSchema = z.object({
-  experimentalEcosystems: z.array(z.string()).default([]),
-});
-export type GenerationEcosystemConfig = z.infer<typeof generationEcosystemConfigSchema>;
-export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig =
-  generationEcosystemConfigSchema.parse({});
-
-/** Runtime config: the Redis list + the per-user `generation-testing` Flipt result. */
-export type GenerationEcosystemContext = GenerationEcosystemConfig & {
-  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
-  hasTestingAccess: boolean;
-};
 
 export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
 export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
@@ -56,7 +42,7 @@ export const getGenerationRequestsSchema = z.object({
 
 const generationResourceSchemaBase = z.object({
   id: z.number(),
-  strength: z.number().default(1),
+  strength: z.number().optional(),
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
@@ -64,8 +50,17 @@ const generationResourceSchemaBase = z.object({
     .object({ endsAt: z.coerce.date().nullable(), terms: modelVersionTermsSchema })
     .nullish(),
   canGenerate: z.boolean(),
-  minStrength: z.number().default(-1),
-  maxStrength: z.number().default(2),
+  settings: z
+    .object({
+      strength: rangeSchema,
+      clipSkip: z.number().optional(),
+      turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
+    })
+    .default({ strength: DEFAULT_STRENGTH_RANGE }),
+  turbo: z.boolean().optional(),
+  recommendedSettings: z
+    .object({ steps: rangeSchema.optional(), cfgScale: rangeSchema.optional() })
+    .optional(),
   image: imageSchema
     .pick({ url: true, type: true })
     .extend({ url: z.url().or(z.string().uuid()) })
@@ -157,7 +152,7 @@ const sharedGenerationParamsSchema = z.object({
   sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
-  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
+  seed: z.coerce.number().min(-1).max(MAX_SEED).default(-1),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
@@ -381,3 +376,11 @@ export const resolveWildcardPackSchema = z.object({
    *  fetches + unzips it client-side, as the logged-in user). */
   modelVersionId: z.number().int().positive(),
 });
+
+export const setEvictableSchema = getByIdSchema.extend({ evictable: z.boolean() });
+export type SetEvictableInput = z.infer<typeof setEvictableSchema>;
+
+export const setAdditionalResourceFeeWaivedSchema = getByIdSchema.extend({ waived: z.boolean() });
+export type SetAdditionalResourceFeeWaivedInput = z.infer<
+  typeof setAdditionalResourceFeeWaivedSchema
+>;

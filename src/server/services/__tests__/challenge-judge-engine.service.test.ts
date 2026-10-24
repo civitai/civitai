@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const findUnique = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: { challengeJudge: { findUnique: (...args: unknown[]) => findUnique(...args) } },
-}));
-
+const findUnique = dbMock.dbRead.challengeJudge.findUnique;
 import {
   challengeJudgingEngineForCreate,
   resolveJudgingEngineForJudge,
 } from '~/server/services/challenge-judge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => findUnique.mockReset());
 

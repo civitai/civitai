@@ -1,12 +1,9 @@
 import { Button, Center, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { IconMessageCancel } from '@tabler/icons-react';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
-import HiddenCommentsModal from '~/components/CommentsV2/HiddenCommentsModal';
 import { ReturnToRootThread } from '~/components/CommentsV2/ReturnToRootThread';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import type { ThreadSort } from '~/server/common/enums';
 
@@ -55,7 +52,6 @@ export function AppListingComments({
         isFetchingNextPage,
         isLocked,
         showMore,
-        hiddenCount,
         toggleShowMore,
         sort,
         setSort,
@@ -67,28 +63,13 @@ export function AppListingComments({
             <Stack gap={0}>
               <Group justify="space-between">
                 <Group gap="md">
-                  <Title order={4}>Discussion</Title>
-                  {hiddenCount > 0 && !isLoading && (
-                    <Button
-                      variant="subtle"
-                      onClick={() =>
-                        dialogStore.trigger({
-                          component: HiddenCommentsModal,
-                          props: { entityId: serialId, entityType: 'appListing', userId: ownerUserId ?? undefined },
-                        })
-                      }
-                      size="compact-xs"
-                    >
-                      <Group gap={4} justify="center">
-                        <IconMessageCancel size={16} />
-                        <Text inherit inline>
-                          {`See ${hiddenCount} more hidden ${
-                            hiddenCount > 1 ? 'comments' : 'comment'
-                          }`}
-                        </Text>
-                      </Group>
-                    </Button>
-                  )}
+                  {/* 🔴 `order={2}`, matching `ModelDiscussion`'s heading on the model
+                      detail page — the surface the listing detail's layout is ported
+                      from. The model page pairs it with an inline outline "Add Comment"
+                      button because its composer is behind a routed dialog; this thread
+                      renders `<CreateComment />` INLINE a few lines below, so a button
+                      here would be a second affordance for a form already on screen. */}
+                  <Title order={2}>Discussion</Title>
                 </Group>
                 <SortFilter
                   type="threads"
@@ -120,7 +101,11 @@ export function AppListingComments({
                   <CreateComment />
                   <Stack className="relative" gap="xl">
                     {data?.map((comment) => (
-                      <Comment key={comment.id} comment={comment} resourceOwnerId={ownerUserId ?? undefined} />
+                      <Comment
+                        key={comment.id}
+                        comment={comment}
+                        resourceOwnerId={ownerUserId ?? undefined}
+                      />
                     ))}
                   </Stack>
                   {showMore && (
@@ -136,7 +121,11 @@ export function AppListingComments({
                     </Center>
                   )}
                   {created.map((comment) => (
-                    <Comment key={comment.id} comment={comment} resourceOwnerId={ownerUserId ?? undefined} />
+                    <Comment
+                      key={comment.id}
+                      comment={comment}
+                      resourceOwnerId={ownerUserId ?? undefined}
+                    />
                   ))}
                 </Stack>
               </>

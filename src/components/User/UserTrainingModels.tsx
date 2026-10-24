@@ -47,6 +47,7 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { SwitchToTrainingStudioAlert } from '~/components/Training/TrainingStudioSwitch';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { TrainStatusMessage } from '~/components/Training/Wizard/TrainWizard';
 import {
@@ -60,9 +61,11 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
+import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
+import { isAir, splitUppercase } from '~/utils/string-helpers';
+import { getAirModelLink } from '~/shared/utils/air';
 import { trainingModelInfo } from '~/utils/training';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
@@ -113,7 +116,16 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
 const DEFAULT_PAGE_SIZE = 10;
 
 // Helper to extract dates and other derived info from training data
-function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
+export function sumBuzzByAccount(
+  transactions: { amount: number; accountType?: string | null }[],
+  accountType: 'yellow' | 'blue' | 'green'
+): number | undefined {
+  const matching = transactions.filter((tx) => tx.accountType === accountType);
+  if (matching.length === 0) return undefined;
+  return matching.reduce((sum, tx) => sum + tx.amount, 0);
+}
+
+export function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
   return items.map((mv) => {
     const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
     const thisFile = pickBestTrainingFile(mv.files);
@@ -147,13 +159,10 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const costTxs = trainingResults.transactionData.filter((tx) => tx.type === 'debit');
       if (costTxs.length > 0) {
-        const yellowTx = costTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = costTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = costTxs.find((tx) => tx.accountType === 'green');
         costInfo = {
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(costTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(costTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(costTxs, 'green'),
         };
       }
     }
@@ -163,14 +172,11 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const refundTxs = trainingResults.transactionData.filter((tx) => tx.type === 'credit');
       if (refundTxs.length > 0) {
-        const yellowTx = refundTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = refundTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = refundTxs.find((tx) => tx.accountType === 'green');
         refundInfo = {
           isRefunded: true,
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(refundTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(refundTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(refundTxs, 'green'),
         };
       } else if (mv.trainingStatus === TrainingStatus.Failed) {
         // Failed but no refund transaction yet
@@ -282,10 +288,16 @@ export default function UserTrainingModels() {
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete version', error: new Error(error.message) });
+    },
   });
   const deleteModelMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete model', error: new Error(error.message) });
     },
   });
   const recheckTrainingStatusMutation = trpc.modelVersion.recheckTrainingStatus.useMutation({
@@ -432,10 +444,7 @@ export default function UserTrainingModels() {
             trainingParams?.engine === 'ai-toolkit'
               ? trainingParams?.epochs ?? 0
               : trainingParams?.maxTrainEpochs ?? 0;
-          const epochsDone =
-            (thisFileMetadata?.trainingResults?.version === 2
-              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
-              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           if (!mv.trainingStatus) return <Badge color="gray">N/A</Badge>;
@@ -520,10 +529,14 @@ export default function UserTrainingModels() {
                       <Text size="sm">
                         Training success can vary based on system conditions and configuration.
                         Check for service updates at the top of the page or on the{' '}
-                        <Anchor href="/changelog" target="_blank">
-                          Updates page
+                        <Anchor href="/issues" target="_blank">
+                          Known Issues
                         </Anchor>{' '}
-                        for any relevant LoRA training notices before retrying.
+                        or{' '}
+                        <Anchor href="/changelog" target="_blank">
+                          Updates
+                        </Anchor>{' '}
+                        pages for any relevant LoRA training notices before retrying.
                       </Text>
                     </HoverCard.Dropdown>
                   </HoverCard>
@@ -709,12 +722,14 @@ export default function UserTrainingModels() {
           const isPaused = mv.trainingStatus === TrainingStatus.Paused;
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const isRunning = isSubmitted || isProcessing;
-          const isNotDeletable = isRunning || isPaused;
+          // A denied version stays on record, but a model's only version goes with the (soft-deleted) model.
+          const deletesVersion = mv.model._count.modelVersions > 1;
+          const isNotDeletable =
+            isRunning ||
+            isPaused ||
+            (deletesVersion && mv.trainingStatus === TrainingStatus.Denied);
 
-          const epochsDone =
-            (thisFileMetadata?.trainingResults?.version === 2
-              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
-              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           return (
@@ -814,6 +829,16 @@ export default function UserTrainingModels() {
           <CustomMarkdown>{announcement.message}</CustomMarkdown>
         </AlertWithIcon>
       )}
+
+      {/* Runs made in the Training Studio live on the orchestrator, not in this table — without
+          this pointer, anyone who switched back loses sight of those runs entirely. */}
+      <SwitchToTrainingStudioAlert destination="/training-studio">
+        <b>Training Studio</b> is our new training experience. Runs made there (or on{' '}
+        <Anchor href="https://training.civitai.com" target="_blank" rel="noreferrer">
+          training.civitai.com
+        </Anchor>
+        ) don&rsquo;t appear in this list.
+      </SwitchToTrainingStudioAlert>
 
       {/* Filter Bar */}
       <Group gap="sm" wrap="wrap">

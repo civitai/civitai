@@ -24,7 +24,14 @@ const setMock = vi.fn().mockResolvedValue(undefined);
 const setNxMock = vi.fn().mockResolvedValue(true);
 const delMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. The
+// hand-typed copies here read TAG as 'caches:tag' and FILES_FOR_MODEL_VERSION as
+// 'caches:files-for-model-version' while production uses 'tag' and
+// 'packed:caches:files-for-model-version-2'. model-file.service dereferences the latter at
+// MODULE scope to build filesForModelVersionCache, so the H2b block below was driving a
+// cache keyed on a name Redis never sees. Client stays overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   redis: {
     packed: {
       mGet: (...args: unknown[]) => mGetMock(...args),
@@ -34,13 +41,6 @@ vi.mock('~/server/redis/client', () => ({
     del: (...args: unknown[]) => delMock(...args),
   },
   sysRedis: {},
-  REDIS_KEYS: {
-    CACHE_LOCKS: 'caches:lock',
-    TAG: 'caches:tag',
-    // model-file.service dereferences this at MODULE scope to build
-    // filesForModelVersionCache; the H2b block below drives that real cache.
-    CACHES: { FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version' },
-  },
 }));
 
 // --- H2b support: import the REAL model-file.service accessor -----------------------------------
@@ -103,8 +103,9 @@ afterEach(() => {
 describe('createCachedArray.fetch — CLUSTER read fail-open', () => {
   it('returns the ORIGIN (lookupFn) result instead of throwing when the redis read rejects', async () => {
     mGetMock.mockRejectedValue(REDIS_TIMEOUT());
-    const lookupFn = vi.fn(async (ids: number[]) =>
-      Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
     );
 
     const cache = createCachedArray<Row>({ key: 'test:read' as never, idKey: 'id', lookupFn });
@@ -143,7 +144,12 @@ describe('createCachedArray.fetch — CLUSTER read fail-open', () => {
     const appendFn = vi.fn(async (rows: Set<Row>) => {
       for (const r of rows) r.name = `decorated-${r.id}`;
     });
-    const cache = createCachedArray<Row>({ key: 'test:append' as never, idKey: 'id', lookupFn, appendFn });
+    const cache = createCachedArray<Row>({
+      key: 'test:append' as never,
+      idKey: 'id',
+      lookupFn,
+      appendFn,
+    });
 
     const result = await cache.fetch([7, 8]);
     expect(appendFn).toHaveBeenCalledTimes(1);
@@ -172,7 +178,10 @@ describe('createCachedArray.fetch — per-id single-flight (DB stampede bound)',
     const lookupFn = vi.fn(async (ids: number[]) => {
       lookupCalls.push([...ids]);
       await gate;
-      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>;
+      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<
+        string,
+        Row
+      >;
     });
 
     const cache = createCachedArray<Row>({ key: 'test:sf' as never, idKey: 'id', lookupFn });
@@ -202,8 +211,9 @@ describe('createCachedArray.fetch — per-id single-flight (DB stampede bound)',
 
   it('does NOT leak in-flight entries: a fetch after settle re-issues the origin lookup', async () => {
     mGetMock.mockRejectedValue(REDIS_TIMEOUT());
-    const lookupFn = vi.fn(async (ids: number[]) =>
-      Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
     );
     const cache = createCachedArray<Row>({ key: 'test:leak' as never, idKey: 'id', lookupFn });
 
@@ -231,8 +241,9 @@ describe('createCachedArray.fetch — HEALTHY path (regression guard)', () => {
   it('serves cache hits without an origin fetch, fetches+caches only the misses', async () => {
     // id 1 is a fresh cache hit; id 2 is a miss. mGet returns one slot per key.
     mGetMock.mockResolvedValue([{ id: 1, name: 'cached-1', cachedAt: new Date() }, null]);
-    const lookupFn = vi.fn(async (ids: number[]) =>
-      Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
     );
     const cache = createCachedArray<Row>({ key: 'test:healthy' as never, idKey: 'id', lookupFn });
 
@@ -255,13 +266,21 @@ describe('createCachedArray.fetch — degraded shared-object isolation (H2)', ()
     const gate = new Promise<void>((r) => (release = r));
     const lookupFn = vi.fn(async (ids: number[]) => {
       await gate;
-      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>;
+      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<
+        string,
+        Row
+      >;
     });
     // appendFn mutates the record in place (mirrors cosmeticCache/modelTagCache).
     const appendFn = async (rows: Set<Row>) => {
       for (const r of rows) r.name = `${r.name}-appended`;
     };
-    const cache = createCachedArray<Row>({ key: 'test:share' as never, idKey: 'id', lookupFn, appendFn });
+    const cache = createCachedArray<Row>({
+      key: 'test:share' as never,
+      idKey: 'id',
+      lookupFn,
+      appendFn,
+    });
 
     const p1 = cache.fetch([1, 2]);
     await flush();

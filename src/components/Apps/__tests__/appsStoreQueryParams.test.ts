@@ -13,8 +13,7 @@ import {
  *
  * The browser-mode suite covers the wiring (does the dropdown write the param,
  * does a seeded mount drive the query); this covers the DECISIONS — what an
- * invalid param does, what reaches the URL, and what the badge counts. CI does
- * not run the browser project, so these are the ones that actually gate a PR.
+ * invalid param does, what reaches the URL, and what the badge counts.
  */
 
 describe('parseAppsStoreFilters — a bare /apps', () => {
