@@ -118,9 +118,9 @@ export async function pingSandbox(
 }
 
 /**
- * What counts as the user working in the pane itself (outside the app's frame). Not `pointermove`: it
- * can fire with nobody moving the pointer (the pane appearing under a resting one is the likely case),
- * and the phone-layout workspace test saw a ping before any press while it was listened to.
+ * What counts as the user working in the pane itself (outside the app's frame): deliberate input only.
+ * `pointermove` is left out by choice, not because of a measured defect: over the pane it sees only
+ * the pointer crossing the pane's own header, never work in the app.
  */
 const PANE_EVENTS = ['pointerdown', 'keydown', 'wheel', 'focusin'] as const;
 

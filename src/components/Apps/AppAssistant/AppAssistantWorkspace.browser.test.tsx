@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
@@ -2260,16 +2260,21 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
   });
 
   test('NEGATIVE CONTROL: on a phone with the Chat tab shown, a press in the hidden preview sends nothing', async () => {
+    // The suite loads no Tailwind utilities, so the pane's `hidden` class would not hide it here as
+    // it does in production (CI showed the pane still laid out, 0 px tall, and pinging). Give this
+    // test that one rule; at this width no `md:` rule applies.
+    const tailwindHidden = document.createElement('style');
+    tailwindHidden.textContent = '.hidden { display: none; }';
+    document.head.appendChild(tailwindHidden);
+    onTestFinished(() => tailwindHidden.remove());
     await page.viewport(375, 900);
     renderWithProviders(<Workspace />);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await openFirst();
     await startPreview('my-app');
     await settle();
-    console.info(`[keepalive-diag] pings after the preview started: ${pings().length}`);
     await page.getByRole('radio', { name: 'Chat' }).click();
     await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
-    console.info(`[keepalive-diag] pings after Chat was shown: ${pings().length}`);
     const before = pings().length;
     // Past the one-minute interval, so a ping before this point cannot be what hides one now.
     vi.useFakeTimers({ toFake: ['Date'] });
