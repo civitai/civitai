@@ -139,6 +139,19 @@ describe('services minimum from KeyValue', () => {
     expect(await liveUnlockMin()).toBe(LOWERED);
   });
 
+  // The row is written by hand under this exact name; renaming the constant would orphan it.
+  it('reads the row under the name it is written by hand', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { key: string };
+    }) =>
+      where.key === 'creator-services-min-creator-score'
+        ? { key: where.key, value: LOWERED }
+        : null) as never);
+    expect(await sellMin()).toBe(LOWERED);
+  });
+
   it('accepts the number written as a string', async () => {
     withRow(String(LOWERED));
     expect(await sellMin()).toBe(LOWERED);
