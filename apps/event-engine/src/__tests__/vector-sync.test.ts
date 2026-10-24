@@ -8,7 +8,12 @@ import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
 import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
 import type { QdrantClient } from '@qdrant/js-client-rest';
 import { buildEmbedInput, chunkInputs, Embedder, MixedStampError } from '@/vector-sync/embedder';
-import { eligibleSql, isEligible, type ImageRow } from '@/vector-sync/eligibility';
+import {
+  eligibleSql,
+  IMAGE_ROW_COLUMNS,
+  isEligible,
+  type ImageRow,
+} from '@/vector-sync/eligibility';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
 import type { ImagePayload } from '@/vector-sync/source';
 import { reconcile } from '@/vector-sync/reconcile';
@@ -1144,6 +1149,16 @@ describe('follow-ups 13 and 14', () => {
     expect(video(4097, 1080)).toEqual({ skip: 'video-too-large-dimensions' });
     expect(video(1080, 5000)).toEqual({ skip: 'video-too-large-dimensions' });
     expect(video(4096, 4096)).toHaveProperty('input');
+  });
+
+  // Decision: metadata is free-form, so every number read from it is range-guarded before its
+  // cast. An unguarded ::int or ::float8 overflows on a value like 1e10 and fails the whole row
+  // query, which wedges live sync on that id. Verified against a real Postgres in PR #6732.
+  test('metadata numbers are read through the overflow-safe guard', () => {
+    expect(
+      IMAGE_ROW_COLUMNS.match(/LEAST\(\(i\.metadata->>'(width|height|duration)'\)::numeric/g)
+    ).toHaveLength(3);
+    expect(IMAGE_ROW_COLUMNS).not.toMatch(/->>'[a-z]+'\)::(int|float)/);
   });
 
   test('the window is UTC and may wrap midnight', () => {
