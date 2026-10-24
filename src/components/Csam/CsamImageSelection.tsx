@@ -16,11 +16,11 @@ import {
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCallback, useEffect, useMemo } from 'react';
+import { CsamHeldMedia, useHeldGridReport } from '~/components/Csam/CsamHeldMedia';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { splitLinkedImages } from '~/components/Csam/csam-linked-image-ids';
@@ -58,6 +58,8 @@ export function CsamImageSelection({
     const store = useCsamImageSelectStore.getState();
     for (const image of linkedImages) store.seedSelected(userId, image.id);
   }, [linkedImages, userId]);
+
+  useHeldGridReport(userId, images?.length ?? 0);
 
   const hasSelected = useCsamImageSelectStore(
     useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
@@ -237,16 +239,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     >
       {inView && (
         <>
-          <EdgeMedia
-            src={image.url}
-            name={image.name ?? image.id.toString()}
-            alt={image.name ?? undefined}
-            type={image.type}
-            width={450}
-            placeholder="empty"
-            style={{ width: '100%' }}
-            onClick={toggleSelected}
-          />
+          <CsamHeldMedia image={image} onClick={toggleSelected} />
           <Checkbox
             checked={checked}
             onChange={toggleSelected}

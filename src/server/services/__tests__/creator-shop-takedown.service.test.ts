@@ -441,7 +441,10 @@ describe('takedownCosmeticShopItem', () => {
     vi.mocked(labels.recordShopTakedownLabel).mockImplementationOnce(
       actual.recordShopTakedownLabel
     );
-    dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('label transaction timed out'));
+    // The first transaction archives the item under its row lock; the label's is the second.
+    dbMock.dbWrite.$transaction
+      .mockImplementationOnce(async (fn: (tx: unknown) => unknown) => fn(dbMock.dbWrite))
+      .mockRejectedValueOnce(new Error('label transaction timed out'));
 
     const result = await takedownCosmeticShopItem({
       id: 42,
@@ -482,6 +485,35 @@ describe('takedownCosmeticShopItem', () => {
       expect.objectContaining({ at: entry.at, note: entry.note })
     );
     expect(entry.note).toBe('Retried: IP infringement');
+  });
+
+  // The archive builds meta from the row read under its lock; any earlier read may predate an
+  // edit or a refund run's history entry, which writing that copy back would erase.
+  it('keeps a history entry committed after the item was first read', async () => {
+    const refunded = { at: '2026-08-03T00:00:00.000Z', userId: 999, kind: 'refunded' };
+    let locked = false;
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        $queryRaw: async (strings: TemplateStringsArray) => {
+          if (strings.join('?').includes('FOR NO KEY UPDATE')) locked = true;
+          return [];
+        },
+        cosmeticShopItem: {
+          findUnique: async () => {
+            if (!locked) throw new Error('read the row before locking it');
+            return { ...shopItemRow, meta: { ...shopItemRow.meta, history: [refunded] } };
+          },
+          update: dbMock.dbWrite.cosmeticShopItem.update,
+        },
+      })
+    );
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    const { meta } = mocks.shopItemUpdate.mock.calls[0][0].data as {
+      meta: CosmeticShopItemMeta;
+    };
+    expect(meta.history?.map((e) => e.kind)).toEqual(['refunded', 'takedown']);
   });
 
   it('never refunds the creator submission fee', async () => {

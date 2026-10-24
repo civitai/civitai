@@ -2,6 +2,7 @@ import {
   addOwnerChapterSchema,
   createStorylineSchema,
   getStorylinesInfiniteSchema,
+  insertStorylineChapterSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
   linkStorylineChapterSchema,
@@ -38,6 +39,7 @@ import {
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
+  insertStorylineChapter,
   joinStorylineEarlyAccess,
   linkStorylineChapter,
   moderateStorylineTitle,
@@ -243,6 +245,12 @@ export const storylineRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+
+  insertChapter: storylineWriteProcedure
+    .input(insertStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      insertStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   linkChapter: storylineWriteProcedure
     .input(linkStorylineChapterSchema)

@@ -463,7 +463,7 @@ export const deliverMonthlyCosmetics = async ({
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
         -- Buzz memberships get the monthly badge only: a Badge with both ends of its window
         -- set, as upsertProductBadge creates them. Anything else (the undated Supporter
-        -- Nameplate, open-ended items) would never be revoked: Buzz rows have no cancelAt.
+        -- Nameplate, open-ended items) would outlive a lapse before the revoke cutoff.
         AND (
           NOT p."buzzPurchase"
           OR (c.type = 'Badge' AND c."availableStart" IS NOT NULL AND c."availableEnd" IS NOT NULL)

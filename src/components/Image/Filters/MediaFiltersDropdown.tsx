@@ -4,7 +4,6 @@ import {
   Divider,
   Drawer,
   Indicator,
-  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
@@ -27,9 +26,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
@@ -438,14 +436,9 @@ export function MediaFiltersDropdown({
         {shows('baseModels') && (
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
-            <MultiSelect
-              data={baseModelSelectData}
+            <BaseModelFilterSelect
               value={mergedFilters.baseModels ?? []}
-              onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
-              placeholder="All Base Models"
-              searchable={!isMobileDevice()}
-              clearable
-              comboboxProps={{ withinPortal: false }}
+              onChange={(baseModels) => handleChange({ baseModels })}
             />
           </>
         )}

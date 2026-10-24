@@ -97,6 +97,14 @@ describe('authorize — client_credentials-only scopes', () => {
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
+  it('refuses WorkerRegister before storing any consent or issuing a code', async () => {
+    const res = await approve(TokenScope.UserRead | TokenScope.WorkerRegister);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
   it('stores the consent for an ordinary scope (positive control)', async () => {
     h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
     await Promise.resolve(approve(TokenScope.UserRead)).catch(() => undefined);
