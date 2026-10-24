@@ -113,25 +113,55 @@ async function toCard(
 }
 
 /**
- * The item a card's token stands for, for the moderator it was minted for: through their claim, or
- * once the claim is gone, through the vote they cast with it, so a repeat is told it already landed.
- * Null for anyone else's token.
+ * What a card's token stands for, for the moderator it was minted for: their claim (with its lease
+ * expiry), or once the claim is gone, the vote they cast with it (no expiry). Null for anyone else's
+ * token. The one owner check: the vote and the card's media both resolve through it.
  */
-export async function itemForToken(token: string, userId: number): Promise<number | null> {
+async function resolveToken(
+  token: string,
+  userId: number
+): Promise<{ itemId: number; claimExpiresAt: Date | null } | null> {
   const claim = await dbWrite
     .selectFrom('ScanLabelClaim')
-    .select('itemId')
+    .select(['itemId', 'expiresAt'])
     .where('token', '=', token)
     .where('userId', '=', userId)
     .executeTakeFirst();
-  if (claim) return claim.itemId;
+  if (claim) return { itemId: claim.itemId, claimExpiresAt: claim.expiresAt };
   const vote = await dbWrite
     .selectFrom('ScanLabelVote')
     .select('itemId')
     .where('claimToken', '=', token)
     .where('userId', '=', userId)
     .executeTakeFirst();
-  return vote?.itemId ?? null;
+  return vote ? { itemId: vote.itemId, claimExpiresAt: null } : null;
+}
+
+/** The item a card's token stands for, so a repeat vote from a second tab is told it already landed. */
+export async function itemForToken(token: string, userId: number): Promise<number | null> {
+  return (await resolveToken(token, userId))?.itemId ?? null;
+}
+
+export type CardMedia = { url: string; type: string; name: string | null };
+
+/**
+ * The media of a card the moderator still holds: only through their own unexpired claim. A voted,
+ * expired, unknown or another moderator's token has none.
+ */
+export async function mediaForToken(
+  token: string,
+  userId: number,
+  now = new Date()
+): Promise<CardMedia | null> {
+  const owner = await resolveToken(token, userId);
+  if (!owner?.claimExpiresAt || owner.claimExpiresAt <= now) return null;
+  const row = await dbWrite
+    .selectFrom('ScanLabelItem as i')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .select(['img.url', 'img.type', 'img.name'])
+    .where('i.id', '=', owner.itemId)
+    .executeTakeFirst();
+  return row ? { url: row.url, type: String(row.type), name: row.name } : null;
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;

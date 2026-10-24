@@ -38,6 +38,7 @@ const {
   getVotedItemOwner,
   isControlFlaggerVersion,
   itemForToken,
+  mediaForToken,
   sourceOrder,
 } = await import('../scan-label.service');
 
@@ -457,6 +458,44 @@ describe('claim tokens', () => {
     expect(await itemForToken(token, 1)).toBe(it1);
     expect(await itemForToken(token, 2)).toBeNull();
     expect(await cast()).toEqual({ ok: false, reason: 'already-voted' });
+  });
+});
+
+describe('card media', () => {
+  it('serves the media of a live claim to its holder only', async () => {
+    await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await mediaForToken(token, 1, NOW)).toEqual({ url: 'key-1', type: 'image', name: null });
+    expect(await mediaForToken(token, 2, NOW)).toBeNull();
+    expect(await mediaForToken('00000000-0000-4000-8000-000000000000', 1, NOW)).toBeNull();
+  });
+
+  it('serves nothing once the lease has run out, or once the card is voted', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await mediaForToken(token, 1, later(LEASE_MS + 1))).toBeNull();
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token }, NOW);
+    expect(await mediaForToken(token, 1, NOW)).toBeNull();
+  });
+
+  it('never serves media for a token the vote would not resolve', async () => {
+    await seedItem(1);
+    await seedItem(2);
+    const mine = (await claimNext(1, {}, NOW))!.token;
+    const theirs = (await claimNext(2, {}, NOW))!.token;
+    const cases = [
+      [mine, 1],
+      [mine, 2],
+      [theirs, 1],
+      [theirs, 2],
+      ['00000000-0000-4000-8000-000000000000', 1],
+    ] as const;
+    for (const [token, userId] of cases) {
+      const resolved = await itemForToken(token, userId);
+      const media = await mediaForToken(token, userId, NOW);
+      if (resolved === null) expect(media).toBeNull();
+      else expect(media).not.toBeNull();
+    }
   });
 });
 
