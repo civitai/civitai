@@ -3378,6 +3378,24 @@ export type Image = {
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
 };
+export type ImageAudioScan = {
+  imageId: number;
+  workflowId: string;
+  /**
+   * Pending | Succeeded | Failed
+   */
+  status: Generated<string>;
+  /**
+   * null when the video has no audio or the scan failed: unknown, never "clean"
+   */
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: unknown | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Generated<Timestamp>;
+  completedAt: Timestamp | null;
+};
 export type ImageCaption = {
   imageId: number;
   /**
@@ -6335,6 +6353,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageAudioScan: ImageAudioScan;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
