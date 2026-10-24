@@ -159,6 +159,17 @@ process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
 process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
 process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
 
+// The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
+// removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
+// suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
+// clear this.
+process.env.FLIPT_LOCAL_OVERRIDES = [
+  process.env.FLIPT_LOCAL_OVERRIDES,
+  'app-blocks-legacy-stores-removed=off',
+]
+  .filter(Boolean)
+  .join(',');
+
 // One `env` object for the worker, reads layered defaults-then-per-file-overrides. A test
 // declares what it needs with `setEnv({ … })` instead of replacing the whole module — which
 // is what made 109 files each re-enumerate the defaults and drop the ones they forgot.
