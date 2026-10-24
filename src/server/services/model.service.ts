@@ -172,11 +172,7 @@ import type { holdModelForLiteralRules } from '~/server/services/text-scan/actio
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import {
-  scanEntitiesInBackground,
-  scanModelAndRules,
-  scanModelRules,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -409,6 +405,13 @@ export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
   `;
   return rows.map((r) => Number(r.modelId));
 }
+
+/**
+ * A flagged model, unless a Model rules takedown flagged it: that is ruled on in the model rule matches queue.
+ * A JSON-null `modelRules` is no takedown, so it stays listed, as it does in the Prisma `AnyNull` filter.
+ */
+export const MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL = Prisma.sql`(m."meta"->>'needsReview' = 'true'
+          AND (m."meta"->'modelRules' IS NULL OR m."meta"->'modelRules' = 'null'::jsonb))`;
 
 export const getModelsRaw = async ({
   input,
@@ -690,7 +693,7 @@ export const getModelsRaw = async ({
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
       (
-        m."meta"->>'needsReview' = 'true'
+        ${MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL}
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv
@@ -1540,7 +1543,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (needsReview && sessionUser?.isModerator) {
     AND.push({
       OR: [
-        { meta: { path: ['needsReview'], equals: true } },
+        {
+          // A Model rules takedown is ruled on in the model rule matches queue, not here.
+          AND: [
+            { meta: { path: ['needsReview'], equals: true } },
+            { meta: { path: ['modelRules'], equals: Prisma.AnyNull } },
+          ],
+        },
         { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
       ],
     });
@@ -3947,8 +3956,7 @@ const publishedModelSelect = {
   status: true,
 } satisfies Prisma.ModelSelect;
 
-// Fails open like the check: a model that cannot be held is published, and the post-publish
-// ModelRules scan is the backstop.
+// Fails open like the check: a model that cannot be held is published.
 async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
   try {
     // Dynamic: the action imports model-version.service, which imports this module.
@@ -6258,7 +6266,6 @@ export const publishPrivateModel = async (
       `;
     }
   });
-  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

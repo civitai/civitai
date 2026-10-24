@@ -13,7 +13,11 @@ const {
   getModelAppealState,
   resolveMinorFlagAppeal,
   resolveMinorFlagAppealPerLabel,
+  confirmPoiFlag,
+  revertPoiFlag,
 } = vi.hoisted(() => ({
+  confirmPoiFlag: vi.fn(),
+  revertPoiFlag: vi.fn(),
   getModelAppealState: vi.fn(),
   resolveMinorFlagAppeal: vi.fn(),
   resolveMinorFlagAppealPerLabel: vi.fn(),
@@ -41,6 +45,8 @@ vi.mock('$lib/server/minor-flag.service', () => ({
   revertMinorFlag,
   ruleTextScanFlag,
   setModelMinorFlag: vi.fn(),
+  confirmPoiFlag,
+  revertPoiFlag,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -75,6 +81,8 @@ beforeEach(() => {
   ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'kept', label: 'minor', modelId: 42 });
   confirmMinorFlag.mockResolvedValue({ ok: true });
   revertMinorFlag.mockResolvedValue({ ok: true });
+  confirmPoiFlag.mockResolvedValue({ ok: true });
+  revertPoiFlag.mockResolvedValue({ ok: true });
   getFlaggedModels.mockResolvedValue({ items: [], hasMore: false });
   getFlaggedSourceCounts.mockResolvedValue({ all: 3, hash: 2, 'text-scan': 2 });
   getModelAppealState.mockResolvedValue(appealState({ pendingAppeal: false }));
@@ -100,15 +108,19 @@ describe('hash flag actions', () => {
     expect(resolveRedetection).not.toHaveBeenCalled();
   });
 
-  it.each(['keepFlag', 'liftFlag'])('%s refuses a poi label on a hash flag', async (action) => {
-    const result = await run(action, { ...hash, label: 'poi', ...kept });
-    expect(result).toMatchObject({
-      status: 400,
-      data: { error: 'A hash flag can only be ruled as minor.', modelId: 42 },
-    });
-    expect(confirmMinorFlag).not.toHaveBeenCalled();
-    expect(revertMinorFlag).not.toHaveBeenCalled();
-  });
+  it.each(['keepFlag', 'liftFlag'])(
+    '%s refuses a real-person hash flag: only decideFlags routes it past an open appeal',
+    async (action) => {
+      expect(await run(action, { ...hash, label: 'poi' })).toMatchObject({
+        status: 400,
+        data: { error: 'A hash flag can only be ruled as minor here.', modelId: 42 },
+      });
+      expect(confirmPoiFlag).not.toHaveBeenCalled();
+      expect(revertPoiFlag).not.toHaveBeenCalled();
+      expect(confirmMinorFlag).not.toHaveBeenCalled();
+      expect(revertMinorFlag).not.toHaveBeenCalled();
+    }
+  );
 
   it('rules a hash flag as minor even when no label is posted', async () => {
     expect(await run('keepFlag', { modelId: '42', source: 'hash', ...kept })).toMatchObject({
@@ -261,6 +273,15 @@ describe('one decision over every flag on the model', () => {
     });
   });
 
+  it('splits a model hash-flagged on both labels: each through its own endpoint', async () => {
+    const poiHash = { label: 'poi', source: 'hash', textHash: null };
+    expect(await decide([minorHash, poiHash], 'poi:hash')).toMatchObject({ success: true });
+    expect(confirmPoiFlag).toHaveBeenCalledWith(42);
+    expect(revertMinorFlag).toHaveBeenCalledWith(42);
+    expect(confirmMinorFlag).not.toHaveBeenCalled();
+    expect(revertPoiFlag).not.toHaveBeenCalled();
+  });
+
   it('reverts both with a reason that fits both labels', async () => {
     ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'lifted' });
     await decide([minorText, poiText], '', { resolvedReason: 'terms-misread' });
@@ -360,10 +381,6 @@ describe('one decision over every flag on the model', () => {
       { modelId: '42', flags: JSON.stringify([minorText]), keep: 'poi:text-scan', ...kept },
     ],
     ['no keep field', { modelId: '42', flags: JSON.stringify([minorText]), ...kept }],
-    [
-      'a poi hash flag',
-      { modelId: '42', flags: JSON.stringify([{ ...minorHash, label: 'poi' }]), keep: '' },
-    ],
     [
       'a text-scan flag with no hash',
       {
@@ -518,6 +535,21 @@ describe('one decision over a row whose model has a pending appeal', () => {
       status: 400,
       data: { error: 'No longer flagged.', modelId: 42, subject: 'Model #42' },
     });
+  });
+
+  it('reverting a real-person hash flag overturns the appeal on that label', async () => {
+    getModelAppealState.mockResolvedValue(appealState({ minor: false, poi: true }));
+    const poiHash = { label: 'poi', source: 'hash', textHash: null };
+    expect(await decide([poiHash], '', { resolvedReason: 'not-a-real-person' })).toMatchObject({
+      success: true,
+      resolved: 'dismissed',
+    });
+    expect(resolveMinorFlagAppeal).toHaveBeenCalledWith(42, false, {
+      resolvedReason: 'not-a-real-person',
+      internalNotes: undefined,
+    });
+    expect(revertPoiFlag).not.toHaveBeenCalled();
+    noPerFlagRuling();
   });
 
   it('rules each flag as before when no appeal is pending', async () => {

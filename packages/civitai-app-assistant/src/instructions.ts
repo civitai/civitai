@@ -49,6 +49,9 @@ const RULES_AFTER_SETUP = [
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
+  // A model left to guess required status 'succeeded' and read every priced estimate as unpriced.
+  // Spelled out as well as named, so it holds on an @civitai/sdk without the helper.
+  "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
 ];
 

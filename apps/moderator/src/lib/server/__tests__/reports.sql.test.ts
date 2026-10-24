@@ -135,6 +135,34 @@ describe('the queries that fan out over every entity at once', () => {
     for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
   });
 
+  it('getReportLastActioned names every report table and keeps the index predicate literal', async () => {
+    await service.getReportLastActioned();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // Report_human_statusSetAt_idx is partial on exactly this; a bound parameter cannot match it.
+    expect(sql).toContain(`"statusSetBy" <> -1`);
+    // Only a review outcome counts; a move to Processing must not freshen the badge.
+    expect(sql).toMatch(/"status" in \('Actioned', 'Unactioned'\)/);
+  });
+
+  it('getReportOldestOpen names every report table and ages the same set the badge counts', async () => {
+    await service.getReportOldestOpen();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // An oldest-waiting age over a different set from the count beside it describes other reports.
+    await service.getReportCounts();
+    const counts = h.queries.at(-1)!.sql;
+    // The CTE's whole predicate: up to the paren that closes it, just before the first branch.
+    const where = (s: string) =>
+      s.match(/\bwhere\s([\s\S]*?)\)\s*select\b/i)?.[1].replace(/\s+/g, ' ');
+    expect(where(sql)).toMatch(/"status" in .* and "reason" in /);
+    expect(where(sql)).toBe(where(counts));
+  });
+
   it('getMostReported keeps every entity subselect parenthesised', async () => {
     await service.getMostReported({ limit: 10 });
 

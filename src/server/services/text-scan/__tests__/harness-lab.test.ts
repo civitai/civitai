@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
-import type * as ModelProfileModule from '~/server/services/text-scan/profiles/model.profile';
 import type * as ModelRulesModule from '~/server/services/text-scan/model-rules';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -21,29 +20,19 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/text-scan/model-rules', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelRulesModule>()),
-  getModelRulesForPrompt: vi.fn(),
-}));
-vi.mock('~/server/services/text-scan/profiles/model.profile', async (importOriginal) => ({
-  ...(await importOriginal<typeof ModelProfileModule>()),
-  loadModelScanSubjects: vi.fn(),
+  getEnabledModelRules: vi.fn(),
 }));
 
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );
-await import('~/server/services/text-scan/profiles/model-rules.profile');
-const { registerTextScanProfile, getTextScanProfile } = await import(
-  '~/server/services/text-scan/profiles'
-);
+const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt } = await import(
   '~/server/services/text-scan/prompt'
 );
-const { applyModelRuleOverrides, getModelRulesForPrompt } = await import(
+const { applyModelRuleOverrides, getEnabledModelRules } = await import(
   '~/server/services/text-scan/model-rules'
-);
-const { loadModelScanSubjects } = await import(
-  '~/server/services/text-scan/profiles/model.profile'
 );
 
 registerTextScanProfile({
@@ -54,7 +43,6 @@ registerTextScanProfile({
 
 const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE PROMPT' },
-  'label:modelRules': { id: 5, key: 'label:modelRules', content: 'RULES DEF' },
   'label:scam': { id: 6, key: 'label:scam', content: 'SCAM DEF' },
 };
 const CONFIG = { model: 'air:test', maxInputChars: 1000, thinking: false };
@@ -90,10 +78,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getActiveTextScanPrompts).mockResolvedValue(PROMPTS);
   vi.mocked(getTextScanConfig).mockResolvedValue(CONFIG);
-  vi.mocked(getModelRulesForPrompt).mockResolvedValue(LIVE);
-  vi.mocked(submitWorkflow).mockResolvedValue(
-    workflow({ modelRules: { matched: [{ ruleId: -1, reason: 'named' }] } }) as never
-  );
+  vi.mocked(getEnabledModelRules).mockResolvedValue(LIVE);
 });
 
 describe('applyModelRuleOverrides', () => {
@@ -122,44 +107,74 @@ describe('applyModelRuleOverrides', () => {
   });
 });
 
-describe('scanTexts with rule overrides', () => {
-  const texts = [{ key: 'a', fields: [{ heading: 'Name', text: 'a model by Brand new' }] }];
+describe('literalModelRules', () => {
+  const texts = [
+    { key: 'a', fields: [{ heading: 'Name', text: 'a model by Brand new' }] },
+    { key: 'b', fields: [{ heading: 'Name', text: 'nothing to see' }] },
+  ];
 
-  it('lists the merged rules once per request, with literal hits per text', async () => {
+  it('lists the rules in force once and the matches per text, with where they sit', async () => {
     const { body } = (await run({
-      action: 'scanTexts',
-      entityType: 'ModelRules',
+      action: 'literalModelRules',
       texts,
       ruleOverrides: [
         override(3, 'Example edited'),
         override(8, 'Other', false),
         override(-1, 'Brand new'),
       ],
-    })) as { body: Record<string, unknown> & { results: Record<string, unknown>[] } };
+    })) as { body: Record<string, any> };
 
     expect(body.rules).toEqual([
       { id: 3, subject: 'Example edited' },
       { id: -1, subject: 'Brand new' },
     ]);
-    expect(body.system).toContain('[3] Example edited');
-    expect(body.system).toContain('[-1] Brand new');
-    expect(body.system).not.toContain('Other');
-    expect(body.results[0]).toMatchObject({ key: 'a', ok: true, literalRuleIds: [-1] });
-    expect(body.results[0]).not.toHaveProperty('system');
-    expect(body.results[0]).not.toHaveProperty('rules');
-  });
-
-  it('lists the live rules without overrides', async () => {
-    const { body } = (await run({ action: 'scanTexts', entityType: 'ModelRules', texts })) as {
-      body: { rules: unknown };
-    };
-    expect(body.rules).toEqual([
-      { id: 3, subject: 'Example' },
-      { id: 8, subject: 'Other' },
+    expect(body.results).toEqual([
+      {
+        key: 'a',
+        matches: [
+          { ruleId: -1, term: 'Brand new', field: 'Name', fieldIndex: 0, start: 11, end: 20 },
+        ],
+      },
+      { key: 'b', matches: [] },
     ]);
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('returns a system prompt and no rule list for a profile without modelRules', async () => {
+  it('judges against the saved rules without overrides', async () => {
+    vi.mocked(getEnabledModelRules).mockResolvedValue([
+      { id: 3, subject: 'Other', description: '', aliases: ['Brand new'], updatedAt: 1 },
+    ]);
+    const { body } = (await run({ action: 'literalModelRules', texts })) as {
+      body: Record<string, any>;
+    };
+    expect(body.results[0].matches).toMatchObject([{ ruleId: 3, term: 'Brand new' }]);
+  });
+
+  it('drops ruleOverrides from every other action instead of acting on them', () => {
+    const parsed = textScanHarnessSchema.parse({
+      action: 'scanTexts',
+      entityType: 'CommentV2',
+      texts,
+      ruleOverrides: [override(-1, 'Brand new')],
+    });
+    expect(parsed).not.toHaveProperty('ruleOverrides');
+  });
+
+  it('refuses duplicate rule ids, id 0 and more than 500 overrides', () => {
+    for (const ruleOverrides of [
+      [override(-1, 'A'), override(-1, 'B')],
+      [override(0, 'Zero')],
+      Array.from({ length: 501 }, (_, i) => override(-(i + 1), `R${i}`)),
+    ])
+      expect(
+        textScanHarnessSchema.safeParse({ action: 'literalModelRules', texts, ruleOverrides })
+          .success
+      ).toBe(false);
+  });
+});
+
+describe('scanTexts', () => {
+  it('sends the system prompt once and leaves it off each result', async () => {
     vi.mocked(submitWorkflow).mockResolvedValue(
       workflow({ scam: { detected: false, reason: '' } }) as never
     );
@@ -167,101 +182,20 @@ describe('scanTexts with rule overrides', () => {
       action: 'scanTexts',
       entityType: 'CommentV2',
       texts: [{ key: 'c', fields: [{ heading: 'Comment', text: 'hello there' }] }],
-    })) as { body: { system: string; rules: unknown; results: Record<string, unknown>[] } };
+    })) as { body: { system: string; results: Record<string, unknown>[] } };
     expect(body.system).toContain('BASE PROMPT');
     expect(body.system).toContain('SCAM DEF');
-    expect(body.rules).toBeNull();
-    expect(body.results[0]).not.toHaveProperty('literalRuleIds');
+    expect(body.results[0]).not.toHaveProperty('system');
   });
 
-  it('refuses duplicate rule ids and id 0', () => {
-    for (const ruleOverrides of [[override(-1, 'A'), override(-1, 'B')], [override(0, 'Zero')]])
-      expect(
-        textScanHarnessSchema.safeParse({
-          action: 'scanTexts',
-          entityType: 'ModelRules',
-          texts,
-          ruleOverrides,
-        }).success
-      ).toBe(false);
-  });
-
-  it('refuses more than 500 overrides', () => {
-    const ruleOverrides = Array.from({ length: 501 }, (_, i) => override(-(i + 1), `R${i}`));
-    expect(
-      textScanHarnessSchema.safeParse({
+  it('no longer scans the retired ModelRules type', async () => {
+    await expect(
+      run({
         action: 'scanTexts',
         entityType: 'ModelRules',
-        texts,
-        ruleOverrides,
-      }).success
-    ).toBe(false);
-  });
-});
-
-describe('model visibility', () => {
-  beforeEach(() => {
-    vi.mocked(loadModelScanSubjects).mockResolvedValue(
-      new Map([[7, { fields: [{ heading: 'Name', text: 'Some model' }], declared: {} }]])
-    );
-  });
-
-  it('composeEntities for ModelRules reads the model whatever its visibility', async () => {
-    await run({ action: 'composeEntities', entityType: 'ModelRules', entityIds: [7] });
-    expect(vi.mocked(loadModelScanSubjects).mock.calls).toEqual([[[7]]]);
-  });
-
-  it('the production ModelRules profile still loads public text only', async () => {
-    await getTextScanProfile('ModelRules')!.load([7]);
-    expect(loadModelScanSubjects).toHaveBeenCalledWith([7], { publicOnly: true });
-  });
-
-  it('scanEntity carries the system prompt, rule list and literal hits on its result', async () => {
-    const { body } = (await run({
-      action: 'scanEntity',
-      entityType: 'ModelRules',
-      entityId: 7,
-    })) as {
-      body: Record<string, unknown>;
-    };
-    expect(body).toMatchObject({
-      entityId: 7,
-      ok: true,
-      rules: [
-        { id: 3, subject: 'Example' },
-        { id: 8, subject: 'Other' },
-      ],
-      literalRuleIds: [],
-    });
-    expect(body.system).toContain('RULES DEF');
-  });
-});
-
-describe('batchEntities', () => {
-  it('sends the system prompt and rule list once, with literal hits per entity', async () => {
-    vi.mocked(loadModelScanSubjects).mockImplementation(
-      async (ids: number[]) =>
-        new Map(
-          ids.map((id) => [id, { fields: [{ heading: 'Name', text: 'Some model' }], declared: {} }])
-        )
-    );
-    const { body } = (await run({
-      action: 'batchEntities',
-      entityType: 'ModelRules',
-      entityIds: [7, 9],
-    })) as { body: Record<string, unknown> & { results: Record<string, unknown>[] } };
-
-    expect(body.system).toContain('RULES DEF');
-    expect(body.rules).toEqual([
-      { id: 3, subject: 'Example' },
-      { id: 8, subject: 'Other' },
-    ]);
-    expect(body.results).toHaveLength(2);
-    for (const result of body.results) {
-      expect(result).not.toHaveProperty('system');
-      expect(result).not.toHaveProperty('rules');
-      expect(result).toHaveProperty('literalRuleIds');
-    }
+        texts: [{ key: 'c', fields: [{ heading: 'Name', text: 'hello there' }] }],
+      })
+    ).rejects.toThrow(/no profile registered/);
   });
 });
 
