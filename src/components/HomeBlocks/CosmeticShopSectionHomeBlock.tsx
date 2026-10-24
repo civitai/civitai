@@ -7,7 +7,11 @@ import { ShopItem } from '~/components/Shop/ShopItem';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { shopBlockMaxItems, visibleShopBlockItems } from '~/shared/utils/cosmetic-shop-rotation';
+import {
+  SHOP_BLOCK_ROWS,
+  shopBlockMaxItems,
+  visibleShopBlockItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
@@ -50,7 +54,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
       style={
         {
           '--count': items.length ?? 0,
-          '--rows': 2,
+          '--rows': SHOP_BLOCK_ROWS,
         } as React.CSSProperties
       }
     >
