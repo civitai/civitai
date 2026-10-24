@@ -1649,8 +1649,8 @@ export const updateModelVersionById = async ({
   enforceTakedown,
 }: GetByIdInput & {
   data: Prisma.ModelVersionUpdateInput;
-  /** Refuse a version, or a version of a model, a moderator took down: everyone but moderators. */
-  enforceTakedown?: boolean;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
 }) => {
   // Check if trying to publish a model version when model is marked as cannotPublish
   if (data.status === ModelStatus.Published) {
@@ -1870,8 +1870,8 @@ export const publishModelVersionById = async ({
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
   republishing?: boolean;
-  /** Refuse a version, or a version of a model, a moderator took down: everyone but moderators. */
-  enforceTakedown?: boolean;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
 }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;

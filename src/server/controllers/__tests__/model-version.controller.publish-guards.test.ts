@@ -174,9 +174,6 @@ describe('publishPrivateModelVersionHandler — the same publishable state', () 
     }
   );
 
-  // Negative control. This handler does a great deal after the guard, so rather than mocking all of
-  // it, the assertion is that the call gets PAST the guard — it reads the version's files, and
-  // whatever it fails on afterwards is not an authorization refusal.
   it('has the version write re-check under a lock for an owner, not for a moderator', async () => {
     dbMock.dbWrite.modelFile.findMany.mockResolvedValue([
       { id: 1, metadata: { selectedEpochUrl: 'https://example.com/epoch' } },
@@ -191,6 +188,9 @@ describe('publishPrivateModelVersionHandler — the same publishable state', () 
     ).toEqual([true, false]);
   });
 
+  // Negative control. This handler does a great deal after the guard, so rather than mocking all of
+  // it, the assertion is that the call gets PAST the guard — it reads the version's files, and
+  // whatever it fails on afterwards is not an authorization refusal.
   it('lets an ordinary publish through the guard', async () => {
     dbMock.dbWrite.modelFile.findMany.mockResolvedValue([]);
 

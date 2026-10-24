@@ -112,7 +112,7 @@ beforeEach(() => {
 
 describe('Model.lastVersionAt across a version publish lifecycle', () => {
   it('fully recomputes on a first publish', async () => {
-    await publishModelVersionById({ id: VERSION_ID, republishing: false });
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: false });
 
     expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({
       id: MODEL_ID,
@@ -128,13 +128,17 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
     dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
 
-    await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
+    await unpublishModelVersionById({
+      id: VERSION_ID,
+      enforceTakedown: false,
+      user: { id: OWNER_ID } as never,
+    });
 
     expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({ id: MODEL_ID });
   });
 
   it('only moves it forward on a republish', async () => {
-    await publishModelVersionById({ id: VERSION_ID, republishing: true });
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
     expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({
       id: MODEL_ID,
@@ -143,7 +147,7 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
   });
 
   it('keeps the anti-bump guard on the version publishedAt a republish writes', async () => {
-    await publishModelVersionById({ id: VERSION_ID, republishing: true });
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
     const publishedAtWrite = dbMock.dbWrite.$executeRaw.mock.calls
       .map(([strings]) => (strings as TemplateStringsArray).join('?'))

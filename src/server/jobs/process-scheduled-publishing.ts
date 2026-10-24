@@ -234,6 +234,16 @@ export const processScheduledPublishing = createJob(
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
+          // Lock the posts' versions first. A moderator's version takedown locks the version, then
+          // unpublishes its owner's live posts, which these are not yet: unlocked, a takedown in
+          // flight is unseen by the UPDATE below and its cascade misses the posts it publishes.
+          await tx.$queryRaw`
+            SELECT mv.id FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+            FOR NO KEY UPDATE OF mv
+          `;
+
           await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
           -- Respect prevPublishedAt metadata to preserve original date on republish

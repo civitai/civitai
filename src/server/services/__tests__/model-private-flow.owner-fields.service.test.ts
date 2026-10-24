@@ -496,10 +496,30 @@ describe('publishPrivateModel', () => {
     mockPrivateModel({});
 
     await publish(false);
-    const republish = mockDbWrite.$executeRaw.mock.calls
-      .map(([strings]) => (strings as string[]).join('?'))
-      .find((sql) => sql.includes('UPDATE "Post"'));
-    expect(republish).toMatch(/"userId" = \?/);
+    const republish = mockDbWrite.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('?').includes('UPDATE "Post"')
+    );
+    expect(republish).toBeDefined();
+    expect((republish![0] as string[]).join('?')).toMatch(/"userId" = \?/);
+    expect(republish!.slice(1)).toContain(OWNER_ID);
+  });
+
+  it('refuses when one of several versions was taken down after it was read', async () => {
+    mockPrivateModel({});
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    mockDbWrite.post.findMany.mockResolvedValue([{ modelVersionId: 1 }, { modelVersionId: 2 }]);
+    takenDownMeanwhile({ versions: [{ id: 1 }] });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('reads the versions from the primary, never the replica', async () => {
+    mockPrivateModel({});
+
+    await publish(false);
+    expect(mockDbRead.modelVersion.findMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalled();
   });
 
   it('reads the stored row from the primary, never the replica', async () => {

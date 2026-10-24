@@ -416,6 +416,37 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
       expect.objectContaining({ modelVersionIds: [101] })
     );
   });
+
+  // A version takedown locks the version before unpublishing its live posts, so the scheduled posts
+  // publish only after the job holds their versions; the post UPDATE then sees a takedown in flight.
+  it("locks the posts' versions before publishing the posts", async () => {
+    const txQueryRaw = vi.fn().mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
+    );
+    stubReads({ scheduled: [{ id: 7, userId: 10 }] });
+
+    await runJob();
+
+    const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
+    const lock = sql.findIndex((q) => q.includes('FOR NO KEY UPDATE OF mv'));
+    const publish = sql.findIndex((q) => q.includes('UPDATE "Post" p'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(publish).toBeGreaterThan(lock);
+  });
+
+  it('publishes no early access when the UPDATE published none of them', async () => {
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: vi.fn(), $queryRaw: vi.fn().mockResolvedValue([]) })
+    );
+    stubReads({
+      versions: [{ id: 102, userId: 10, extras: { modelId: 12, hasEarlyAccess: true } }] as never,
+    });
+
+    await runJob();
+
+    expect(publishModelVersionsWithEarlyAccess).not.toHaveBeenCalled();
+  });
 });
 
 describe('processScheduledPublishing :: model version cache busts', () => {
