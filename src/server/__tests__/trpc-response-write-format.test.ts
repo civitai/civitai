@@ -3,8 +3,9 @@ import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { parse as devalueParse, stringify as devalueStringify } from 'devalue';
 import superjson from 'superjson';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The tRPC HTTP response WRITE format is chosen per request
@@ -28,6 +29,14 @@ const PAYLOAD = {
   tags: new Map([['a', 1]]),
 };
 
+/** Plain objects, arrays, Dates and undefined only: the shape the fast superjson walk handles. */
+const PLAIN = {
+  id: 43,
+  at: new Date('2026-03-04T05:06:07.000Z'),
+  gone: undefined,
+  items: [{ name: 'a', when: new Date(0), next: null }],
+};
+
 /** Not a POJO: devalue refuses it, which is what drives the fail-open fallback. */
 class NotAPojo {
   constructor(public readonly id: number) {}
@@ -49,6 +58,19 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
     return h.writeDevalue;
   },
 }));
+/**
+ * The `trpc-fast-superjson-write` Flipt flag, read per access. `null` is what `isFliptSync`
+ * returns for an unknown key or an uninitialized client, the state before the key exists.
+ */
+const flag = vi.hoisted(() => ({ fastSuperjson: null as boolean | null }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
+      key === 'trpc-fast-superjson-write' ? flag.fastSuperjson : actual.isFliptSync(key, ...rest),
+  };
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/createContext', () => ({
   createContext: ({ req, res }: { req: NextApiRequest; res: NextApiResponse }) => ({
@@ -70,6 +92,7 @@ vi.mock('~/server/routers', async () => {
   return {
     appRouter: router({
       payload: publicProcedure.query(() => PAYLOAD),
+      plain: publicProcedure.query(() => PLAIN),
       notAPojo: publicProcedure.query(() => new NotAPojo(7)),
       // A block-token query path (BLOCK_TOKEN_QUERY_PROCEDURES): always answered `no-store`.
       blocks: router({ listMyWorkflows: publicProcedure.query(() => PAYLOAD) }),
@@ -249,5 +272,55 @@ describe('TRPC_WRITE_DEVALUE=false — superjson always', () => {
     const served = await get('payload', CAPABLE_WEB);
     expect(singleData(served)).toEqual(asSuperjson(PAYLOAD));
     expect(served.headers.get('cache-control')).toBeNull();
+  });
+});
+
+describe('trpc-fast-superjson-write — the superjson write without superjson.serialize', () => {
+  // Expected bodies are computed before any spy is installed.
+  const plainSuperjson = asSuperjson(PLAIN);
+  const plainDevalue = asDevalue(PLAIN);
+  const payloadSuperjson = asSuperjson(PAYLOAD);
+
+  beforeEach(() => {
+    h.writeDevalue = true;
+    flag.fastSuperjson = true;
+  });
+  afterEach(() => {
+    flag.fastSuperjson = null;
+    vi.restoreAllMocks();
+  });
+
+  it('writes the identical superjson body for an edge-cacheable response, without superjson.serialize', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    const served = await get('plain', { ...CAPABLE_WEB, 'x-test-cacheable': '1' });
+    expect(served.headers.get('cache-control')).toContain('s-maxage=60');
+    expect(singleData(served)).toEqual(plainSuperjson);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('writes the identical superjson body to a request with no client headers, without superjson.serialize', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('plain'))).toEqual(plainSuperjson);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('still uses superjson.serialize for a payload outside the fast walk (a Map)', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('payload'))).toEqual(payloadSuperjson);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a devalue response devalue', async () => {
+    expect(singleData(await get('plain', CAPABLE_WEB))).toEqual(plainDevalue);
+  });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])('uses superjson.serialize when the flag is %s', async (_label, value) => {
+    flag.fastSuperjson = value;
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('plain'))).toEqual(plainSuperjson);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
