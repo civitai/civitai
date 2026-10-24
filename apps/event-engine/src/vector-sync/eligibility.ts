@@ -18,6 +18,8 @@ export type ImageRow = {
   minor: boolean;
   poi: boolean;
   sizeKB: number | null;
+  width: number | null;
+  height: number | null;
   duration: number | null;
 };
 
@@ -54,5 +56,5 @@ export function eligibleSql(alias = 'i'): string {
 }
 
 export const IMAGE_ROW_COLUMNS = `i.id, i.url, i.type, i."nsfwLevel", i."userId", i."postId", i."sortAt",
-  i.ingestion, i."tosViolation", i."blockedFor", i."needsReview", i.minor, i.poi, i."sizeKB",
+  i.ingestion, i."tosViolation", i."blockedFor", i."needsReview", i.minor, i.poi, i."sizeKB", i.width, i.height,
   CASE WHEN jsonb_typeof(i.metadata->'duration') = 'number' THEN (i.metadata->>'duration')::float END AS duration`;

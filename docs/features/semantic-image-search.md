@@ -52,8 +52,9 @@ Inputs are built per media type (`buildEmbedInput`):
 
 - **image**: the image CDN's 512px-wide variant (the model's profile is 512x512 pixels), never
   the original.
-- **video**: the original clip, at most 60 s and 100 MiB, at most 8 per batch, one vector per
-  clip. Off until `VECTOR_EMBED_VIDEO=true`. Until then videos are counted as skipped.
+- **video**: the original clip, at most 60 s, 100 MiB and 4096 px per side, at most 8 per
+  batch, one vector per clip. Off until `VECTOR_EMBED_VIDEO=true`. Until then videos are
+  counted as skipped.
 - Rows whose `url` is an absolute URL (not a key on our CDN) are skipped.
 
 ## Embedding
@@ -177,6 +178,10 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
   paying for every page twice. A run that loses its lease stops and no longer writes the cursor.
 - It re-checks the connector every 5 minutes; while it does not stream Image, no new page
   starts.
+- `--max-rate <writes/s>` paces pages so Qdrant writes (points embedded, rewritten or deleted)
+  average at most that rate; `--window HH:MM-HH:MM` (UTC, may wrap midnight) starts new pages
+  only inside the window. The disk Qdrant writes to may be shared, so set both for a full run.
+  The throughput log reports `writesPerSec`, `maxRate` and `window`.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
   so that live sync is already removing blocked images. Kafka Connect must also confirm the
   connector streams Image and is running. `--without-image-cdc` lifts the Image conditions for
