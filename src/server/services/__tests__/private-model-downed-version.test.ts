@@ -14,8 +14,13 @@ vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
 }));
 // Stands in for the real post path: publishing onto a taken-down version is refused there, except for
 // a moderator.
-// FAILS is a version whose post fails, which sends the flow down its rollback.
-const { postedTo, FAILS } = vi.hoisted(() => ({ postedTo: [] as number[], FAILS: 99 }));
+// FAILS is a version whose post fails, which sends the flow down its rollback. onPost runs as each
+// post is made, to land a take-down mid-flow.
+const { postedTo, FAILS, onPost } = vi.hoisted(() => ({
+  postedTo: [] as number[],
+  FAILS: 99,
+  onPost: { run: () => undefined as void },
+}));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
   createModelVersionPostFromTraining: async ({
@@ -26,6 +31,7 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
     user: { isModerator: boolean };
   }) => {
     postedTo.push(modelVersionId);
+    onPost.run();
     if (modelVersionId === FAILS) throw new Error('post failed');
     if (modelVersionId !== 10 && !user.isModerator) throw new Error('refused: taken down');
   },
@@ -37,9 +43,14 @@ const { privateModelFromTraining } = await import('~/server/services/model.servi
 const MODEL = 1;
 type Version = { id: number; modelId: number; status: string; availability: string };
 let versions: Version[];
+let modelStatus: string;
+type ModelWhere = { id: number; status?: { notIn: string[] } };
+const modelMatches = (where: ModelWhere) => !where.status?.notIn.includes(modelStatus);
 
 beforeEach(() => {
   postedTo.length = 0;
+  onPost.run = () => undefined;
+  modelStatus = 'Published';
   versions = [
     { id: 10, modelId: MODEL, status: 'Published', availability: 'Public' },
     { id: 11, modelId: MODEL, status: 'UnpublishedViolation', availability: 'Public' },
@@ -53,10 +64,29 @@ beforeEach(() => {
     availability: 'Public',
   } as never);
   dbMock.dbRead.model.count.mockResolvedValue(0 as never);
-  dbMock.dbWrite.model.update.mockResolvedValue({
-    id: MODEL,
-    modelVersions: versions.map(({ id, status }) => ({ id, status })),
-  } as never);
+  // Both model writes apply the status filter they are given, as the database would.
+  dbMock.dbWrite.model.update.mockImplementation((async ({
+    where,
+    data,
+  }: {
+    where: ModelWhere;
+    data: { status?: string };
+  }) => {
+    if (!modelMatches(where)) throw Object.assign(new Error('No record'), { code: 'P2025' });
+    if (data.status) modelStatus = data.status;
+    return { id: MODEL, modelVersions: versions.map(({ id, status }) => ({ id, status })) };
+  }) as never);
+  dbMock.dbWrite.model.updateMany.mockImplementation((async ({
+    where,
+    data,
+  }: {
+    where: ModelWhere;
+    data: { status?: string };
+  }) => {
+    if (!modelMatches(where)) return { count: 0 };
+    if (data.status) modelStatus = data.status;
+    return { count: 1 };
+  }) as never);
   // Applies the filter it is given, so a publish that forgets the status condition reaches row 11.
   dbMock.dbWrite.modelVersion.updateMany.mockImplementation((async ({
     where,
@@ -126,5 +156,50 @@ describe('making a model with a taken-down version private', () => {
     expect(statusOf(10)).toBe('Published');
     expect(statusOf(11)).toBe('UnpublishedViolation');
     expect(statusOf(12)).toBe('Deleted');
+  });
+});
+
+// Ruled by the Moderation Lead (hq:ky1cf68gw8ec): the model itself stays down too, whoever runs the flow.
+describe('making a model a moderator took down private', () => {
+  it('refuses a moderator too, and writes nothing', async () => {
+    dbMock.dbWrite.model.update.mockClear();
+    modelStatus = 'UnpublishedViolation';
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      userId: 5,
+      lockedProperties: [],
+      meta: {},
+      status: 'UnpublishedViolation',
+      availability: 'Public',
+    } as never);
+    await makePrivate(true);
+
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    expect(modelStatus).toBe('UnpublishedViolation');
+  });
+
+  it('stays down when the take-down lands after the check, and rolls nothing back', async () => {
+    // The flow read the model live; the take-down committed before the flow's write.
+    modelStatus = 'UnpublishedViolation';
+    await makePrivate();
+
+    expect(modelStatus).toBe('UnpublishedViolation');
+    expect(statusOf(10)).toBe('Published');
+  });
+
+  it('keeps a take-down that lands mid-flow when the flow then fails', async () => {
+    onPost.run = () => void (modelStatus = 'UnpublishedViolation');
+    dbMock.dbWrite.model.update.mockImplementationOnce((async () => {
+      modelStatus = 'Published';
+      return {
+        id: MODEL,
+        modelVersions: [
+          { id: 10, status: 'Published' },
+          { id: FAILS, status: 'Published' },
+        ],
+      };
+    }) as never);
+    await makePrivate();
+
+    expect(modelStatus).toBe('UnpublishedViolation');
   });
 });

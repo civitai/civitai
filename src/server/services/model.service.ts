@@ -5990,6 +5990,10 @@ export const privateModelFromTraining = async ({
     meta: model.meta,
     isModerator: user.isModerator,
   });
+  // A model a moderator took down stays down when a moderator runs this flow too: restoring it is
+  // its own moderator action.
+  if (constants.modPublishOnlyStatuses.includes(model.status))
+    throw throwAuthorizationError('You are not authorized to publish this model');
 
   const storedMeta = model.meta as ModelMeta | null;
   // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
@@ -6028,57 +6032,67 @@ export const privateModelFromTraining = async ({
   const keepDowned = { status: { notIn: constants.modPublishOnlyStatuses } };
   const isPublishable = (v: { status: ModelStatus }) =>
     !constants.modPublishOnlyStatuses.includes(v.status);
+  // Set when a take-down reached the model first: nothing was written, so there is nothing to roll back.
+  let takenDown = false;
 
   try {
-    const result = await dbWrite.model.update({
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        nsfwLevel: true,
-        poi: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        status: true,
-        meta: true,
-        modelVersions: {
-          where: modelVersionIds
-            ? {
-                id: {
-                  in: modelVersionIds,
-                },
-              }
-            : undefined,
-          select: {
-            id: true,
-            status: true,
+    const result = await dbWrite.model
+      .update({
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          nsfwLevel: true,
+          poi: true,
+          minor: true,
+          sfwOnly: true,
+          nsfw: true,
+          gallerySettings: true,
+          status: true,
+          meta: true,
+          modelVersions: {
+            where: modelVersionIds
+              ? {
+                  id: {
+                    in: modelVersionIds,
+                  },
+                }
+              : undefined,
+            select: {
+              id: true,
+              status: true,
+            },
           },
         },
-      },
-      where: { id },
-      data: {
-        ...data,
-        meta: {
-          // This write replaces meta wholesale. A moderator's form never holds the hidden
-          // moderation-owned keys, so they are carried under the moderator's input.
-          ...(user.isModerator
-            ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
-            : {}),
-          ...(stripServerOwnedMeta(stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)) ??
-            {}),
-          ...pickServerOwnedMeta(storedMeta),
-          ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
-          // Makes it so these models cannot go into auctions or be promoted
-          cannotPromote: true,
-          ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+        // Re-checked by the write itself, so a model take-down that lands after the check above wins.
+        where: { id, ...keepDowned },
+        data: {
+          ...data,
+          meta: {
+            // This write replaces meta wholesale. A moderator's form never holds the hidden
+            // moderation-owned keys, so they are carried under the moderator's input.
+            ...(user.isModerator
+              ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+              : {}),
+            ...(stripServerOwnedMeta(
+              stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
+            ) ?? {}),
+            ...pickServerOwnedMeta(storedMeta),
+            ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+            // Makes it so these models cannot go into auctions or be promoted
+            cannotPromote: true,
+            ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+          },
+          availability: Availability.Private,
+          status: ModelStatus.Published,
+          sfwOnly: true, // Private models only allow sfw generation
         },
-        availability: Availability.Private,
-        status: ModelStatus.Published,
-        sfwOnly: true, // Private models only allow sfw generation
-      },
-    });
+      })
+      .catch((error) => {
+        if (error?.code !== 'P2025') throw error;
+        takenDown = true;
+        throw throwAuthorizationError('You are not authorized to publish this model');
+      });
 
     if (result.modelVersions.length > 0) {
       const now = new Date();
@@ -6123,8 +6137,10 @@ export const privateModelFromTraining = async ({
 
     return withoutMinorHashMeta(result);
   } catch (error) {
-    await dbWrite.model.update({
-      where: { id },
+    if (takenDown) throw error;
+    // Never a Draft over a take-down that landed during the flow.
+    await dbWrite.model.updateMany({
+      where: { id, ...keepDowned },
       data: { status: ModelStatus.Draft, availability: Availability.Public },
     });
 

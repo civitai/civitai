@@ -59,7 +59,7 @@ let pg: PGlite;
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL, "userId" int NOT NULL DEFAULT ${OWNER});
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int,
@@ -85,14 +85,6 @@ beforeEach(async () => {
   dbMock.dbWrite.post.update.mockImplementation((async ({ where }: { where: { id: number } }) => {
     const { rows } = await pg.query(`SELECT * FROM "Post" WHERE id = $1`, [where.id]);
     return rows[0];
-  }) as never);
-  dbMock.dbWrite.post.findUnique.mockImplementation((async ({
-    where,
-  }: {
-    where: { id: number };
-  }) => {
-    const { rows } = await pg.query(`SELECT * FROM "Post" WHERE id = $1`, [where.id]);
-    return rows[0] ?? null;
   }) as never);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
 });
@@ -124,6 +116,17 @@ describe('publishing a post on a version a moderator took down', () => {
     await draftOn(version);
 
     await expect(publish()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await isPublished()).toBe(false);
+  });
+
+  it("refuses another user's post on it too, without the owner's lock", async () => {
+    await pg.query(`INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (1, 6, $1)`, [
+      DOWNED,
+    ]);
+
+    await expect(
+      updatePost({ id: 1, publishedAt: new Date(), user: { id: 6, isModerator: false } } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(await isPublished()).toBe(false);
   });
 
@@ -160,7 +163,7 @@ describe('creating a post already published', () => {
   beforeEach(() => {
     canView.value = true;
     dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
-      model: { availability: 'Public' },
+      model: { availability: 'Public', userId: OWNER },
     } as never);
     dbMock.dbWrite.post.create.mockRejectedValue(new Error(PASSED_GUARD) as never);
   });
