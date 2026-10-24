@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
-  import { navCount, navHref } from '$lib/nav-links';
+  import { navCount, navHref, navPartial } from '$lib/nav-links';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
@@ -283,6 +283,7 @@
       informational: link.informational,
       count: link.tabs ? navCount(link, countFor) : countFor(link.countKey),
       countKey: link.countKey,
+      partial: navPartial(link, (key) => counts.unavailable.includes(key)),
     });
     return data.nav.flatMap((link) =>
       link.children

@@ -571,15 +571,36 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
     return { armed: false as const, reason: 'slot-occupied' };
   }
 
-  const holderTier = (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
-  const billedMonthly = isBilledMonthly(subscription);
+  // Our row can still name the plan before a change (webhook order is not guaranteed); the live
+  // subscription is the plan this month will be billed on.
+  const livePrice = stripeSub.items.data[0]?.price;
+  const liveProduct =
+    livePrice &&
+    (await dbWrite.product.findUnique({
+      where: { id: livePrice.product as string },
+      select: { metadata: true },
+    }));
+  if (!livePrice || !liveProduct) {
+    await log({
+      type: 'warning',
+      stage: 'arm',
+      giftId: gift.id,
+      userId,
+      message: `subscription ${stripeSub.id} bills a product we have no row for; not arming`,
+    });
+    return { armed: false as const, reason: 'unknown-product' };
+  }
+  const holderTier = (liveProduct.metadata as SubscriptionProductMetadata).tier ?? 'free';
+  const billedMonthly = isBilledMonthly({
+    price: { interval: livePrice.recurring?.interval ?? null },
+  });
   let months = 1;
   if (!billedMonthly) {
     const { pricesByCurrency } = await getTierMonthlyPrice(gift.tier);
     const monthlyValue = pricesByCurrency[stripeSub.currency];
     if (monthlyValue)
       months = monthsCoveredByRenewal({
-        renewalAmount: stripeSub.items.data[0]?.price.unit_amount ?? 0,
+        renewalAmount: livePrice.unit_amount ?? 0,
         monthlyValue,
         monthsRemaining: gift.monthsRemaining,
       });
