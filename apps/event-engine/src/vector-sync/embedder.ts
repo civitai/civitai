@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
 import type { ImageRow } from './eligibility';
@@ -175,11 +174,24 @@ const MAX_SPLIT_DEPTH = 4;
  * than one workflow can run (30 min), since another process may hold the account's quota.
  */
 const RATE_LIMITED_FOR_MS = 2 * 60 * 60_000;
+/** Longer than a workflow's steps usually take, so a re-send finds them cached. */
+const DEFAULT_RESUBMIT_DELAY_MS = 2 * 60_000;
 /** Retries of a poll after a network error or 5xx; the workflow keeps running meanwhile. */
 const POLL_RETRIES = 8;
 
 /** An ephemeral workflow finished between two polls and is gone, with its result. */
 class LostResultError extends RetryableError {}
+
+/**
+ * A submit that failed after its body may have been sent (a network error, a 5xx, or a 2xx
+ * whose body could not be read). It may be running anyway, and ephemeral workflows are not deduplicated (externalId is ignored
+ * without Mongo), so it is sent again only once its steps should have finished, when identical
+ * inputs come back from the orchestrator's cache instead of a second GPU run.
+ */
+class AmbiguousSubmitError extends RetryableError {}
+
+/** Polls kept failing; the workflow may still be running. */
+class PollGaveUpError extends Error {}
 
 export type EmbedderOptions = {
   endpoint: string;
@@ -194,6 +206,8 @@ export type EmbedderOptions = {
   now?: () => number;
   /** Wait passed to the orchestrator on submit and poll, seconds. */
   waitSeconds?: number;
+  /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
+  resubmitDelayMs?: number;
 };
 
 type EmbedCall = {
@@ -265,6 +279,7 @@ export class Embedder {
       maxInFlight: embedMaxInFlight,
       maxRetries: embedMaxRetries,
       batchSize: config.vectorSync.embedBatchSize,
+      resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
       priority,
     });
   }
@@ -394,11 +409,6 @@ export class Embedder {
   }
 
   private async runWithRetry(batch: EmbedInput[]): Promise<Workflow> {
-    // One key per submit attempt, reused when a submit itself fails (a network error or 5xx on
-    // the POST), in case it was accepted server-side. A lost result gets a new key: the old one
-    // could only return the workflow that is already gone. Not derived from the inputs: the
-    // orchestrator returns a failed workflow for its key too.
-    let externalId = `vs-${randomUUID()}`;
     let errors = 0;
     let rateLimited = 0;
     const rateLimitedSince = this.now();
@@ -406,34 +416,41 @@ export class Embedder {
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
-        return await this.run(batch, externalId);
+        return await this.run(batch);
       } catch (err) {
-        if (!(err instanceof RetryableError)) throw err;
-        if (err instanceof LostResultError) externalId = `vs-${randomUUID()}`;
+        // Giving up on a workflow that may still be running: the caller's retry (a backfill page,
+        // the next consumer flush) re-sends it within seconds, so wait for it to finish first.
+        const resubmitDelay = this.opts.resubmitDelayMs ?? DEFAULT_RESUBMIT_DELAY_MS;
+        if (!(err instanceof RetryableError)) {
+          if (err instanceof PollGaveUpError) await this.sleep(resubmitDelay);
+          throw err;
+        }
         const attempt = err.rateLimited ? rateLimited++ : errors++;
         const exhausted = err.rateLimited
           ? this.now() - rateLimitedSince >= RATE_LIMITED_FOR_MS
           : attempt >= this.opts.maxRetries;
         if (exhausted) {
+          if (err instanceof AmbiguousSubmitError) await this.sleep(resubmitDelay);
           throw new Error(`embedding gave up after ${attempt + 1} attempts: ${err.message}`);
         }
         // A 429's Retry-After is already the embedder-wide hold the loop waits out above.
         if (err.rateLimited && err.retryAfterMs !== undefined) continue;
         // Retry-After is followed exactly; without it, exponential backoff with jitter.
-        const delay =
+        let delay =
           err.retryAfterMs ?? Math.min(60_000, 1000 * 2 ** attempt) * (0.5 + Math.random() / 2);
+        if (err instanceof AmbiguousSubmitError) delay = Math.max(delay, resubmitDelay);
         logger.warn({ attempt, delay, err: err.message }, 'vector-sync: embedding backoff');
         await this.sleep(delay);
       }
     }
   }
 
-  private async run(batch: EmbedInput[], externalId: string): Promise<Workflow> {
+  private async run(batch: EmbedInput[]): Promise<Workflow> {
     const wait = this.opts.waitSeconds ?? 60;
     // Ephemeral: the orchestrator keeps no document for it. It disappears once terminal, so the
     // result comes back on the submit or a long poll; one that finishes between polls is gone,
     // and the whole workflow is sent again (identical inputs come back from its cache).
-    let workflow = await this.request<Workflow>('POST', `/v2/consumer/workflows?wait=${wait}`, {
+    let workflow = await this.submit(wait, {
       steps: batch.map((input) => ({
         $type: 'multimodalEmbedding',
         name: stepName(input.id),
@@ -450,11 +467,10 @@ export class Embedder {
       tier: 'paid',
       allowMatureContent: true,
       ephemeral: true,
-      externalId,
       tags: ['vector-sync'],
     });
     // A poll that fails is retried as a poll: re-POSTing a workflow that is still running would
-    // run (and pay for) its steps twice.
+    // run its steps twice. If polls give up, runWithRetry waits before the caller can re-send.
     let pollErrors = 0;
     while (!TERMINAL.has(workflow.status)) {
       try {
@@ -466,11 +482,22 @@ export class Embedder {
         );
       } catch (err) {
         if (!(err instanceof RetryableError) || err instanceof LostResultError) throw err;
-        if (++pollErrors > POLL_RETRIES) throw new Error(`poll gave up: ${err.message}`);
+        if (++pollErrors > POLL_RETRIES) throw new PollGaveUpError(`poll gave up: ${err.message}`);
         await this.sleep(err.retryAfterMs ?? Math.min(60_000, 1000 * 2 ** pollErrors));
       }
     }
     return workflow;
+  }
+
+  private async submit(wait: number, body: unknown): Promise<Workflow> {
+    try {
+      return await this.request<Workflow>('POST', `/v2/consumer/workflows?wait=${wait}`, body);
+    } catch (err) {
+      if (err instanceof RetryableError && !err.rateLimited) {
+        throw new AmbiguousSubmitError(err.message, err.retryAfterMs);
+      }
+      throw err;
+    }
   }
 
   /** Applies the account quota as the cap, and logs the limits once, from the first response. */
@@ -512,7 +539,14 @@ export class Embedder {
       throw new RetryableError(`network: ${(err as Error).message}`);
     }
     this.observeLimits(res.headers);
-    if (res.ok) return (await res.json()) as T;
+    if (res.ok) {
+      try {
+        return (await res.json()) as T;
+      } catch (err) {
+        // A 2xx that can't be read: a POST was accepted (retried as ambiguous), a GET is re-polled.
+        throw new RetryableError(`unreadable response: ${(err as Error).message}`);
+      }
+    }
 
     const text = await res.text().catch(() => '');
     let retryAfterMs = parseRetryAfter(res.headers.get('retry-after'), this.now());

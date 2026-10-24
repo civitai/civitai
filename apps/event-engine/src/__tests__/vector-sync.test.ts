@@ -389,11 +389,9 @@ describe('embedder', () => {
     return { e, sleeps };
   }
 
-  test('backs off on 429, honouring Retry-After, then succeeds with the same idempotency key', async () => {
-    const keys: string[] = [];
+  test('backs off on 429, honouring Retry-After, then succeeds', async () => {
     let calls = 0;
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      keys.push(JSON.parse(String(init?.body)).externalId);
       if (++calls <= 2)
         return new Response('queue full', { status: 429, headers: { 'retry-after': '7' } });
       return ok(idsOf(init));
@@ -403,7 +401,7 @@ describe('embedder', () => {
     expect(result.vectors.get(1)).toEqual(vec(0));
     expect(sleeps).toHaveLength(2);
     expect(Math.min(...sleeps)).toBeGreaterThanOrEqual(7000);
-    expect(new Set(keys).size).toBe(1);
+    expect(Math.max(...sleeps)).toBeLessThan(120_000);
   });
 
   test('gives up after maxRetries rather than retrying forever', async () => {
@@ -411,7 +409,8 @@ describe('embedder', () => {
     const { e, sleeps } = embedder(fetchImpl, 2);
     const result = await e.embed([{ id: '1', imageUrl: 'u' }]);
     expect(String(result.error)).toMatch(/gave up after 3 attempts/);
-    expect(sleeps).toHaveLength(2);
+    // Two retries, then the wait that keeps the caller from re-sending a submit still running.
+    expect(sleeps).toHaveLength(3);
   });
 
   test('a rejected batch is split until the bad input is isolated; the rest still embed', async () => {
@@ -1550,19 +1549,81 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(result.vectors.size).toBe(2);
   });
 
-  test('a lost result is sent again under a new key', async () => {
-    const keys: string[] = [];
+  test('a lost result is sent again without the ambiguous-submit wait', async () => {
+    const posts: number[] = [];
+    let now = () => 0;
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'GET') return new Response('', { status: 404 });
-      keys.push(JSON.parse(String(init?.body)).externalId);
-      if (keys.length === 1)
+      posts.push(now());
+      if (posts.length === 1)
         return new Response(JSON.stringify({ id: 'wf1', status: 'processing' }), { status: 202 });
       return ok(init, 50);
     }) as unknown as typeof fetch;
-    const { e } = clocked(fetchImpl);
-    await e.embed(inputs(1));
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+    const run = clocked(fetchImpl);
+    now = run.now;
+    const result = await run.e.embed(inputs(1));
+    expect(result.vectors.size).toBe(1);
+    expect(posts).toHaveLength(2);
+    expect(posts[1] - posts[0]).toBeLessThan(120_000);
+  });
+
+  // Ephemeral workflows ignore externalId, so a submit that may have been accepted is only sent
+  // again once its steps should be done and cached. Re-sending at once doubles the GPU work.
+  test.each([
+    ['a network error', () => Promise.reject(new TypeError('socket hang up'))],
+    ['a 502', async () => new Response('bad gateway', { status: 502 })],
+  ])('an ambiguous submit (%s) is not re-sent before the resubmit delay', async (_, fail) => {
+    const posts: number[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    let now = () => 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts.push(now());
+      bodies.push(JSON.parse(String(init?.body)));
+      if (posts.length === 1) return fail();
+      return ok(init, 50);
+    }) as unknown as typeof fetch;
+    const run = clocked(fetchImpl);
+    now = run.now;
+    const result = await run.e.embed(inputs(1));
+    expect(result.vectors.size).toBe(1);
+    expect(posts).toHaveLength(2);
+    expect(posts[1] - posts[0]).toBeGreaterThanOrEqual(120_000);
+    expect(bodies[1]).not.toHaveProperty('externalId');
+  });
+
+  test('a 2xx submit whose body is cut off is re-sent only after the resubmit delay', async () => {
+    const posts: number[] = [];
+    let now = () => 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts.push(now());
+      if (posts.length === 1) return new Response('{"id":"wf1","sta', { status: 200 });
+      return ok(init, 50);
+    }) as unknown as typeof fetch;
+    const run = clocked(fetchImpl);
+    now = run.now;
+    const result = await run.e.embed(inputs(1));
+    expect(result.vectors.size).toBe(1);
+    expect(posts[1] - posts[0]).toBeGreaterThanOrEqual(120_000);
+  });
+
+  // The caller (a backfill page, the next consumer flush) retries a failed embed within seconds,
+  // so giving up on a workflow that may still be running has to wait out the resubmit delay first.
+  test.each([
+    ['submits', (init?: RequestInit) => init?.method === 'POST'],
+    ['polls', (init?: RequestInit) => init?.method === 'GET'],
+  ])('giving up on ambiguous %s waits before returning to the caller', async (_, fails) => {
+    let last = 0;
+    let now = () => 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      last = now();
+      if (fails(init)) return new Response('', { status: 503 });
+      return new Response(JSON.stringify({ id: 'wf1', status: 'processing' }), { status: 202 });
+    }) as unknown as typeof fetch;
+    const run = clocked(fetchImpl);
+    now = run.now;
+    const result = await run.e.embed(inputs(1));
+    expect(String(result.error)).toMatch(/gave up/);
+    expect(run.now() - last).toBeGreaterThanOrEqual(120_000);
   });
 
   test('Retry-After: 0 still waits, so a 429 is never a tight loop', async () => {

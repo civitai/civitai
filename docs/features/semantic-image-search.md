@@ -78,10 +78,18 @@ locally until the orchestration client ships it.
   are budgeted by time (2 h), not count, since another process can hold the account's quota
   for a whole workflow. There is no other client-side throttling.
 - **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
-  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a workflow has
-  one `externalId`, reused across its retries, so a submit that succeeded server-side is not
-  paid for twice. It is random rather than derived from the inputs, because the orchestrator
-  would also return a _failed_ workflow for its key.
+  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Ephemeral workflows are not
+  deduplicated (the orchestrator ignores `externalId` for them, so none is sent), and a submit
+  that failed with a 5xx, a network error or a cut-off response may still be running. It is sent
+  again only after `VECTOR_EMBED_RESUBMIT_DELAY_SECONDS` (default 120, at most 3600, 0 turns it off), so that
+  identical inputs usually come back from the cache instead of running twice. Under a backed-up
+  queue the first run can take longer, and then the re-send runs again. A failed poll is retried
+  as a poll. When the embedder gives up on a workflow that may still be running (retries or polls
+  exhausted), it waits the same delay before returning the error, because the caller's retry (a
+  backfill page, the next consumer flush) follows within seconds. A batch whose submits keep
+  failing can therefore hold its share of the in-flight budget for at least
+  (`VECTOR_EMBED_MAX_RETRIES` + 1) × the delay (18 min by default), plus the time each submit
+  takes to fail.
 - **Failures are per step:** a step that fails (or returns a vector of the wrong size or
   precision, or without a model revision or profile) fails only its image, counted as
   `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four

@@ -2,6 +2,12 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+/** An unset, malformed or out-of-range value is the fallback; 0 is kept. */
+function nonNegativeInt(value: string | undefined, fallback: number, max: number) {
+  const n = value?.trim() ? Number(value) : fallback;
+  return Number.isInteger(n) && n >= 0 && n <= max ? n : fallback;
+}
+
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
@@ -151,6 +157,8 @@ export const config = {
     // orchestrator's per-account quota (its RateLimit headers) usually lowers it.
     embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '500', 10) || 500),
     embedMaxRetries: parseInt(process.env.VECTOR_EMBED_MAX_RETRIES ?? '8', 10),
+    // Wait before re-sending a submit that may have been accepted (ephemeral workflows don't dedupe).
+    embedResubmitDelaySeconds: nonNegativeInt(process.env.VECTOR_EMBED_RESUBMIT_DELAY_SECONDS, 120, 3600),
     // Inputs per workflow, 1 to 128.
     embedBatchSize: Math.min(128, Math.max(1, parseInt(process.env.VECTOR_EMBED_BATCH_SIZE ?? '128', 10) || 128)),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
