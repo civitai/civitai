@@ -51,10 +51,10 @@
   // column flow on it.
   &.gridRow {
     grid-auto-flow: row;
+  }
 
-    &::after {
-      display: none;
-    }
+  &.gridRow::after {
+    display: none;
   }
 
   @container (max-width: theme('screens.md')) {
