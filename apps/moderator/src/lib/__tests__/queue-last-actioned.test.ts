@@ -106,6 +106,19 @@ describe('needsAttention', () => {
     );
     expect(labels(rows)).toEqual([]);
   });
+
+  it('keeps a queue that could not be fully counted, so it never reads as clear', () => {
+    const rows = needsAttention(
+      [
+        // Nothing it sums answered, and a tabs group at 0 with one tab unreadable.
+        item('unread', 'report:image', null, { partial: true }),
+        item('floor', 'modelFlagsNeedsReview', 0, { partial: true }),
+        item('empty', 'report:comment', 0),
+      ],
+      null
+    );
+    expect(labels(rows).sort()).toEqual(['floor', 'unread']);
+  });
 });
 
 describe('navWorstRank', () => {

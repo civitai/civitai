@@ -1238,6 +1238,62 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
   }, 25_000);
 });
 
+describe('PageBlockHost onFallbackChange (App Assistant offers Restart preview on it)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  test('reports token_error when the token fails, as the fallback shows', async () => {
+    const onFallbackChange = vi.fn();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    // Called with it (the host may then retry by itself, which reports null again).
+    await vi.waitFor(() => expect(onFallbackChange).toHaveBeenCalledWith('token_error'));
+  });
+
+  test('reports timeout when the app never says it is ready', async () => {
+    const onFallbackChange = vi.fn();
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(onFallbackChange.mock.calls.filter(([reason]) => reason !== null)).toEqual([]);
+
+    await advancePastWindow(11_000);
+    await vi.waitFor(() => expect(onFallbackChange).toHaveBeenCalledWith('timeout'), {
+      timeout: 5_000,
+      interval: 100,
+    });
+  }, 20_000);
+
+  test('CONTROL: an app that becomes ready reports no reason at all', async () => {
+    const onFallbackChange = vi.fn();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await driveToReady();
+    expect(onFallbackChange).toHaveBeenCalled();
+    expect(onFallbackChange.mock.calls.filter(([reason]) => reason !== null)).toEqual([]);
+  });
+});
+
 describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();

@@ -17,6 +17,8 @@ import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
+import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -246,6 +248,10 @@ export async function createImageIngestionRequest({
 
   const serverTiming = response?.headers.get('Server-Timing') ?? null;
 
+  // Not awaited: the shadow audio scan must not slow or fail the visual submit.
+  if (data && type === 'video' && callbackUrl)
+    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, priority });
+
   if (!data) {
     logToAxiom({
       type: 'error',
@@ -267,7 +273,14 @@ export async function createImageIngestionRequest({
     });
   }
 
-  return { data, body, error, status: response?.status, useImageScanning };
+  return {
+    data,
+    body,
+    error,
+    status: response?.status,
+    retryAfter: getRetryAfterSeconds(response),
+    useImageScanning,
+  };
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
@@ -709,7 +722,9 @@ export class ModelFileScanSubmissionError extends Error {
     message: string,
     public readonly code: 'not-found' | 'transient',
     public readonly status?: number,
-    public readonly orchestratorMessages?: string[]
+    public readonly orchestratorMessages?: string[],
+    /** Seconds from a 429's Retry-After. */
+    public readonly retryAfter?: number
   ) {
     super(message);
     this.name = 'ModelFileScanSubmissionError';
@@ -916,7 +931,9 @@ export async function createModelFileScanRequest({
       `Failed to submit model file scan workflow for file ${fileId}` +
         (response?.status ? ` (status ${response.status})` : ''),
       'transient',
-      response?.status
+      response?.status,
+      undefined,
+      getRetryAfterSeconds(response)
     );
   }
 

@@ -3,6 +3,7 @@ import {
   dealButtons,
   dealEscrowState,
   dealPageState,
+  dealQueryError,
   escrowCopy,
   disputeNotice,
   groupEventsByRound,
@@ -115,8 +116,29 @@ describe('deal page access', () => {
     expect(dealPageState({ isLoading: false, hasDeal: true })).toEqual({ kind: 'deal' });
   });
 
-  it('is NotFound when the query returns nothing (a non-party, or no such deal)', () => {
-    expect(dealPageState({ isLoading: false, hasDeal: false })).toEqual({ kind: 'notFound' });
+  it('is NotFound when the server refuses the deal (a non-party, or no such deal)', () => {
+    for (const code of ['NOT_FOUND', 'FORBIDDEN', 'UNAUTHORIZED'])
+      expect(dealPageState({ isLoading: false, hasDeal: false, error: { code } })).toEqual({
+        kind: 'notFound',
+      });
+  });
+
+  it('reads the code a tRPC failure carries, and none from a failure without one', () => {
+    expect(dealQueryError({ data: { code: 'NOT_FOUND' } })).toEqual({ code: 'NOT_FOUND' });
+    expect(dealQueryError({ data: null })).toEqual({ code: undefined });
+    expect(dealQueryError(null)).toBeNull();
+    // A server refusal read through it still shows NotFound; a dropped connection does not.
+    const state = (error: Parameters<typeof dealQueryError>[0]) =>
+      dealPageState({ isLoading: false, hasDeal: false, error: dealQueryError(error) }).kind;
+    expect(state({ data: { code: 'NOT_FOUND' } })).toBe('notFound');
+    expect(state({ data: null })).toBe('error');
+  });
+
+  it('is an error, never NotFound, when the query fails any other way', () => {
+    for (const error of [{ code: 'INTERNAL_SERVER_ERROR' }, { code: 'TIMEOUT' }, {}])
+      expect(dealPageState({ isLoading: false, hasDeal: false, error })).toEqual({
+        kind: 'error',
+      });
   });
 });
 

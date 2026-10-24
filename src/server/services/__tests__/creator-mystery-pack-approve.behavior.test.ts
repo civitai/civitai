@@ -1092,7 +1092,7 @@ describe("a moderator's verdict", () => {
       `SELECT id FROM "CosmeticShopItem" WHERE "itemDefinitionId" = $1`,
       [boxId]
     );
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
       id: listingId,
       cosmeticId: null,
       unitAmount: 500,
