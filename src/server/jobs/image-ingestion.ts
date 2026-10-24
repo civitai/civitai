@@ -916,6 +916,11 @@ export const removeBlockedImages = createJob(
     if (takedowns.length > 0) {
       const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
       deleted.push(...rows.map((x) => x.id));
+      // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
+      // and the retention window outlasts anything cached before the deny, so no CDN purge here.
+      // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
+      const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
+      await persistDeletedTakedowns(rows);
     }
     if (deletedWithoutRetraction.length > 0) {
       const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });

@@ -30,9 +30,10 @@ vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
   purgeCache: mocks.purgeCache,
 }));
 
-const { getHiddenMetaPurgeUrls, invalidateHiddenImageMetadata } = await import(
+const { invalidateHiddenImageMetadata } = await import(
   '~/server/services/hidden-meta-invalidation.service'
 );
+const { getImageEdgePurgeUrls } = await import('~/server/services/image-edge-purge');
 
 const ID = 4242;
 const KEY = '0b7f5e7c-1d1a-4c3e-9f55-2a4d1c0e9b11';
@@ -101,7 +102,7 @@ describe('invalidateHiddenImageMetadata — order', () => {
 
     purge.resolve();
     await vi.waitFor(() =>
-      expect(mocks.purgeCache).toHaveBeenCalledWith({ urls: getHiddenMetaPurgeUrls(IMAGE) })
+      expect(mocks.purgeCache).toHaveBeenCalledWith({ urls: getImageEdgePurgeUrls(IMAGE) })
     );
   });
 
@@ -126,8 +127,8 @@ describe('invalidateHiddenImageMetadata — order', () => {
   });
 });
 
-describe('getHiddenMetaPurgeUrls', () => {
-  const urls = getHiddenMetaPurgeUrls(IMAGE);
+describe('getImageEdgePurgeUrls', () => {
+  const urls = getImageEdgePurgeUrls(IMAGE);
 
   // Literals, as the image detail page and the image cards request them.
   it.each([
@@ -145,7 +146,7 @@ describe('getHiddenMetaPurgeUrls', () => {
   });
 
   it('percent-encodes a non-ASCII name the way a browser requests it', () => {
-    expect(getHiddenMetaPurgeUrls({ id: ID, url: KEY, name: 'café 夜.png' })).toContain(
+    expect(getImageEdgePurgeUrls({ id: ID, url: KEY, name: 'café 夜.png' })).toContain(
       `${LOC}/${KEY}/original=true/caf%C3%A9%20%E5%A4%9C.jpeg`
     );
   });
@@ -155,8 +156,18 @@ describe('getHiddenMetaPurgeUrls', () => {
     expect(new Set(urls).size).toBe(urls.length);
   });
 
+  it('purges the id-named urls the cards and detail page request', () => {
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        `${LOC}/${KEY}/original=true/${ID}.jpeg`,
+        `${LOC}/${KEY}/anim=false,original=true/${ID}.jpeg`,
+        `${LOC}/${KEY}/width=450/${ID}.jpeg`,
+      ])
+    );
+  });
+
   it('covers the id and key names when the image has no name', () => {
-    const unnamed = getHiddenMetaPurgeUrls({ id: ID, url: KEY, name: null });
+    const unnamed = getImageEdgePurgeUrls({ id: ID, url: KEY, name: null });
     expect(unnamed).toContain(`${LOC}/${KEY}/original=true/${ID}.jpeg`);
     expect(unnamed).toContain(`${LOC}/${KEY}/original=true/${KEY}.jpeg`);
     expect(unnamed.length).toBeLessThan(urls.length);

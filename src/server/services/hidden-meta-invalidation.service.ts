@@ -1,8 +1,8 @@
-import { COMMON_IMAGE_WIDTHS, getEdgeUrl, resolveOptimized } from '~/client-utils/edge-url';
 import { purgeCache } from '~/server/cloudflare/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
 type HiddenMetaImage = {
   id: number;
@@ -12,39 +12,6 @@ type HiddenMetaImage = {
 };
 
 const CACHER_WAIT_MS = 70_000;
-
-/** As a browser sends it: spaces and non-ASCII percent-encoded. That is the CDN's cache key. */
-function asRequested(url: string) {
-  try {
-    return new URL(url).href;
-  } catch {
-    return encodeURI(url);
-  }
-}
-
-/**
- * The CDN urls a client can have requested for this image: the original and every width on the
- * ladder, under each name it is served as (its own name, its id as the cards and detail page fall
- * back to, and its key), as `getEdgeUrl` spells them.
- */
-export function getHiddenMetaPurgeUrls({ id, url, name, type }: HiddenMetaImage): string[] {
-  const types = [...new Set([type ?? MediaType.image, MediaType.image])];
-  const names = [...new Set([name ?? undefined, String(id), undefined])];
-  const urls = new Set<string>();
-  for (const t of types) {
-    for (const n of names) {
-      for (const anim of [undefined, false]) {
-        urls.add(getEdgeUrl(url, { name: n, type: t, anim, original: true }));
-        for (const width of COMMON_IMAGE_WIDTHS) {
-          const optimized = resolveOptimized({ width }) ? true : undefined;
-          urls.add(getEdgeUrl(url, { name: n, type: t, width, anim }));
-          urls.add(getEdgeUrl(url, { name: n, type: t, width, anim, optimized }));
-        }
-      }
-    }
-  }
-  return [...urls].map(asRequested);
-}
 
 /**
  * Clear an image's cached copies after its owner hides its metadata, so they re-derive under the
@@ -70,7 +37,7 @@ async function purgeCachedCopies(image: HiddenMetaImage) {
       scope: 'hidden-meta-orphans',
       waitForInvalidationMs: CACHER_WAIT_MS,
     });
-    await purgeCache({ urls: getHiddenMetaPurgeUrls(image) });
+    await purgeCache({ urls: getImageEdgePurgeUrls(image) });
   } catch (error) {
     await logToAxiom({
       type: 'warning',
