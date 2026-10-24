@@ -15,6 +15,7 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
 const query = z.object({
   conversationId: z.string().min(1).max(200),
   idempotencyKey: z.string().min(1).max(200),
+  purpose: z.literal('preview').optional(),
 });
 
 /**
@@ -29,7 +30,12 @@ const query = z.object({
  * says whether the viewer may start subagents (`appAssistantSubagents`), so the runner takes that from
  * civitai rather than from the page.
  *
- *   GET ?conversationId=&idempotencyKey= → `{ grant, expiresAt }`, or 403 `consent_required` / `runner_off`
+ * With `purpose=preview` it signs a preview grant instead (about 2 minutes, no subagents), which the
+ * runner takes only for the page's Restart preview (`POST /api/assistant-runner/apps/<app>/preview`);
+ * the page names `conversationId=preview:<app>`, which the runner checks against the app.
+ *
+ *   GET ?conversationId=&idempotencyKey=[&purpose=preview] → `{ grant, expiresAt }`, or 403
+ *   `consent_required` / `runner_off`
  */
 export default AuthedEndpoint(async (req, res, user) => {
   if (!requireFullScopeSession(req, res)) return;
@@ -52,10 +58,13 @@ export default AuthedEndpoint(async (req, res, user) => {
       return res
         .status(403)
         .json({ error: 'Turn on App Assistant to continue', code: 'consent_required' });
+    const { purpose, ...fields } = parsed.data;
     const { token, expiresAt } = await signRunGrant({
       userId: user.id,
-      ...parsed.data,
-      subagents: !!features.appAssistantSubagents,
+      ...fields,
+      ...(purpose === 'preview'
+        ? { use: 'preview' as const }
+        : { subagents: !!features.appAssistantSubagents }),
     });
     return res.json({ grant: token, expiresAt });
   } catch (err) {

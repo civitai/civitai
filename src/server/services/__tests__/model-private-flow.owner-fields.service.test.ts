@@ -311,12 +311,24 @@ describe('privateModelFromTraining — publish gates', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  it('lets a moderator through both gates', async () => {
-    mockStored({ status: 'UnpublishedViolation', meta: { cannotPublish: true } });
+  it('lets a moderator through the cannotPublish gate', async () => {
+    mockStored({ meta: { cannotPublish: true } });
 
     await expect(privateFromTraining({ user: moderator })).resolves.toBeTruthy();
     expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
   });
+
+  // Ruled by the Moderation Lead (hq:ky1cf68gw8ec): this flow does not restore a taken-down model,
+  // whoever runs it. Restoring one is its own moderator action.
+  it.each(['UnpublishedViolation', 'Deleted'])(
+    'refuses a moderator too when the stored status is %s',
+    async (status) => {
+      mockStored({ status });
+
+      await expect(privateFromTraining({ user: moderator })).rejects.toThrow();
+      expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(['Draft', 'Unpublished'])('still lets an owner through from %s', async (status) => {
     mockStored({ status });

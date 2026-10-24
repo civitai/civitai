@@ -2823,6 +2823,7 @@ enum ApiKeyType {
   User
   Access
   Refresh
+  Worker
 }
 
 model ApiKey {
@@ -2839,8 +2840,12 @@ model ApiKey {
   clientId   String?
   client     OauthClient? @relation(fields: [clientId], references: [id], onDelete: Cascade)
   buzzLimit  Json?        // { daily?: number, weekly?: number, monthly?: number }
+  /// Set on `Worker` tokens only: the device the token was issued to.
+  workerDeviceId Int?
+  workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([workerDeviceId])
 }
 
 model OauthClient {
@@ -2871,8 +2876,45 @@ model OauthClient {
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
   goodPurchases BlockGoodPurchase[] @relation("BlockGoodPurchaseApp")
   connectListings          AppListing[]
+  workerClient             WorkerClient?
+  workerDevices            WorkerDevice[]
 
   @@index([userId])
+}
+
+/// A workload OAuth client: a pool of workers that trade a device credential for a short-lived
+/// `Worker` token at the auth hub's token-exchange grant. One row per provider pool.
+model WorkerClient {
+  clientId               String      @id
+  client                 OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// The orchestrator provider this pool's workers register as.
+  provider               String
+  /// The `subject_token_type` URNs this client may exchange.
+  subjectTokenTypes      String[]    @default([])
+  /// Salad container groups whose IMDS tokens this client accepts.
+  saladContainerGroupIds String[]    @default([])
+  createdAt              DateTime    @default(now())
+}
+
+/// A worker machine seen at the token-exchange grant, keyed by who vouched for it (`issuer`) and its id
+/// there (`subject`). Blocking one refuses its exchanges and ends its live tokens.
+model WorkerDevice {
+  id            Int         @id @default(autoincrement())
+  clientId      String
+  client        OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+  issuer        String
+  subject       String
+  /// `active` or `blocked`.
+  status        String      @default("active")
+  firstSeenAt   DateTime    @default(now())
+  lastSeenAt    DateTime    @default(now())
+  lastIp        String?
+  blockedAt     DateTime?
+  blockedReason String?
+  tokens        ApiKey[]
+
+  @@unique([clientId, issuer, subject])
 }
 
 /// Generic per-user role grants (e.g. "tester"). Read directly by the auth hub — the OAuth /authorize gate
@@ -7184,6 +7226,7 @@ enum JobQueueType {
   ReplacedImageDelete
   ImageStorageDelete
   CdnAccessSync
+  ImageCdnPersistRetry
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -7593,6 +7636,25 @@ model ScanLabelFlag {
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([itemId])
+}
+
+/// Shadow audio scan of a video, from a workflow separate from the visual ingestion scan.
+/// Nothing reads it to filter, rate or hide media.
+model ImageAudioScan {
+  imageId       Int       @id
+  workflowId    String    @unique
+  /// Pending | Succeeded | Failed
+  status        String    @default("Pending")
+  /// null when the video has no audio or the scan failed: unknown, never "clean"
+  flagged       Boolean?
+  hasAudio      Boolean?
+  result        Json?
+  resultVersion Int?
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([flagged, createdAt])
 }
 
 model ScanLabelVote {
