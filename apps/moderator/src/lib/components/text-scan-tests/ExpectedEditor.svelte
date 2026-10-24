@@ -1,14 +1,7 @@
 <script lang="ts">
-  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
-  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LABEL_NAMES, RATING_NAMES } from '$lib/text-scan-lab/labels';
-  import {
-    NSFW_LEVEL_NAMES,
-    type LabLabel,
-    type LabRule,
-    type NsfwLevelName,
-  } from '$lib/text-scan-lab/types';
+  import { NSFW_LEVEL_NAMES, type LabLabel, type NsfwLevelName } from '$lib/text-scan-lab/types';
   import {
     FLAG_LABELS,
     levelRank,
@@ -19,12 +12,10 @@
   let {
     labels,
     expected = $bindable(),
-    ruleChoices,
     idPrefix,
   }: {
     labels: readonly LabLabel[];
     expected: Expected;
-    ruleChoices: readonly LabRule[];
     idPrefix: string;
   } = $props();
 
@@ -56,21 +47,6 @@
   function setFlag(label: FlagLabel, v: string) {
     const { [label]: _, ...rest } = expected;
     expected = v === UNSCORED ? rest : { ...rest, [label]: v === 'yes' };
-  }
-
-  function setRulesScored(scored: boolean) {
-    if (scored) expected = { ...expected, modelRules: { ruleIds: [] } };
-    else {
-      const { modelRules: _, ...rest } = expected;
-      expected = rest;
-    }
-  }
-
-  function toggleRule(id: number, on: boolean) {
-    const ids = new Set(expected.modelRules?.ruleIds ?? []);
-    if (on) ids.add(id);
-    else ids.delete(id);
-    expected = { ...expected, modelRules: { ruleIds: [...ids].sort((a, b) => a - b) } };
   }
 </script>
 
@@ -130,39 +106,4 @@
       </Select.Root>
     </div>
   {/each}
-
-  {#if labels.includes('modelRules')}
-    <div class="space-y-2">
-      <div class="flex items-center gap-2">
-        <Checkbox
-          id="{idPrefix}-rules"
-          bind:checked={() => expected.modelRules !== undefined, setRulesScored}
-        />
-        <Label for="{idPrefix}-rules" class="text-xs text-dark-2">
-          Score {LABEL_NAMES.modelRules} (the rules that should match)
-        </Label>
-      </div>
-      {#if expected.modelRules}
-        {#if ruleChoices.length}
-          <ul class="space-y-1 pl-6">
-            {#each ruleChoices as rule (rule.id)}
-              <li class="flex items-center gap-2">
-                <Checkbox
-                  id="{idPrefix}-rule-{rule.id}"
-                  bind:checked={
-                    () => expected.modelRules?.ruleIds.includes(rule.id) ?? false,
-                    (on) => toggleRule(rule.id, on)
-                  }
-                />
-                <Label for="{idPrefix}-rule-{rule.id}" class="text-sm text-dark-0">{rule.subject}</Label>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        {#if !expected.modelRules.ruleIds.length}
-          <p class="pl-6 text-xs text-dark-2">No rule ticked: the case expects no match.</p>
-        {/if}
-      {/if}
-    </div>
-  {/if}
 </div>

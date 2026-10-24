@@ -921,3 +921,41 @@ describe('a chat window verdict in csam review', () => {
     );
   });
 });
+
+describe('a callback for the retired ModelRules LLM scan', () => {
+  const retired = (mode: 'active' | 'shadow') => ({
+    ...metadata,
+    entityType: 'ModelRules',
+    entityId: 9,
+    emEntityType: mode === 'shadow' ? 'ModelRules:shadow' : 'ModelRules',
+    mode,
+    labels: ['modelRules'],
+  });
+
+  it.each([
+    ['active', 'succeeded'],
+    ['shadow', 'succeeded'],
+    ['active', 'failed'],
+    ['shadow', 'expired'],
+  ] as const)('drops a %s %s workflow without recording or acting', async (mode, status) => {
+    const body = { modelRules: { matches: [], reason: 'No match.' } };
+    vi.mocked(getWorkflow).mockResolvedValue(
+      (status === 'succeeded'
+        ? workflow(body, undefined, retired(mode))
+        : failed(retired(mode))) as any
+    );
+
+    await expect(handleTextScanCallback({ workflowId: 'wf-old', status })).resolves.toBeUndefined();
+
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        message: 'callback for the retired ModelRules scan dropped',
+        workflowId: 'wf-old',
+      })
+    );
+  });
+});
