@@ -65,29 +65,65 @@ export function backfillSql(entity) {
   };
 }
 
-// The total the metric job will read once the daily views catch up: entityMetricDailyAgg_v2 for
-// sealed days, plus the raw events since yesterday, deduped and filtered the way the today view
-// is. Reading the view alone would miss events it has not refreshed yet, including this run's own.
-// The today view's definition lives in ClickHouse, not here: the dry run prints both for samples.
-export function chTotalsSql(eventsTable) {
-  return `SELECT entityId, sum(v) AS total FROM (
-      SELECT entityId, total AS v FROM default.entityMetricDailyAgg_v2
+// The total the metric job will read once the daily views catch up is history + recent:
+//   history: entityMetricDailyAgg_history_v2 (written by entityMetricDailySeal_v2_mv), the latest
+//     sealed value per day, for days before yesterday. Read from the table, as
+//     sql/entity-metric-current-totals.sql does, not through the view: a `day` filter on the view
+//     returned nothing for history.
+//   recent: the raw events since yesterday, deduped and filtered exactly as
+//     entityMetricDaily_today_v2_mv does, so events the view has not refreshed in yet, including
+//     this run's own, are counted.
+export const HISTORY_TOTALS_SQL = `SELECT entityId, sum(t) AS total FROM (
+    SELECT entityId, day, argMax(total, sealedAt) AS t FROM default.entityMetricDailyAgg_history_v2
+    WHERE entityType = {entityType:String} AND metricType = {metricType:String}
+      AND entityId IN {ids:Array(Int64)} AND day < today() - 1
+    GROUP BY entityId, day
+  ) GROUP BY entityId`;
+
+export function recentTotalsSql(eventsTable) {
+  return `SELECT entityId, sum(latestValue) AS total FROM (
+      SELECT entityId, argMax(metricValue, version) AS latestValue FROM default.${eventsTable}
       WHERE entityType = {entityType:String} AND metricType = {metricType:String}
-        AND entityId IN {ids:Array(Int64)} AND day < today() - 1
-      UNION ALL
-      SELECT entityId, argMax(metricValue, version) AS v FROM default.${eventsTable}
-      WHERE entityType = {entityType:String} AND metricType = {metricType:String}
-        AND entityId IN {ids:Array(Int64)} AND createdAt >= toDateTime(today() - 1)
+        AND entityId IN {ids:Array(Int64)} AND createdAt >= today() - 1
         AND userId NOT IN (SELECT userId FROM default.metricExcludedUsers FINAL WHERE active = 1)
       GROUP BY entityId, userId, createdAt
     ) GROUP BY entityId`;
 }
 
-// What the metric job reads today, for comparing against chTotalsSql on samples.
+// What the metric job reads right now (entityMetricDailyAgg_v2).
 export const VIEW_TOTALS_SQL = `SELECT entityId, sum(total) AS total FROM default.entityMetricDailyAgg_v2
   WHERE entityType = {entityType:String} AND metricType = {metricType:String}
     AND entityId IN {ids:Array(Int64)}
   GROUP BY entityId`;
+
+export function addTotals(history, recent) {
+  const out = new Map(history);
+  for (const [id, n] of recent) out.set(id, (out.get(id) ?? 0) + n);
+  return out;
+}
+
+// `have` may run ahead of the view only by events it has not refreshed in yet: a handful per
+// entity, and a sliver of the whole. Anything more means `have` is not reading what the view
+// reads, and a delta written from it would land on top of the real total. A false alarm only
+// stops the run.
+export const VIEW_DRIFT_LIMIT = { perEntity: 20, share: 0.001, floor: 200 };
+
+export function viewDrift(ids, have, view) {
+  let total = 0;
+  let viewSum = 0;
+  let worst = { entityId: null, have: 0, view: 0, drift: 0 };
+  for (const entityId of ids) {
+    const h = have.get(entityId) ?? 0;
+    const v = view.get(entityId) ?? 0;
+    const drift = Math.abs(h - v);
+    total += drift;
+    viewSum += Math.abs(v);
+    if (drift > worst.drift) worst = { entityId, have: h, view: v, drift };
+  }
+  const limit = Math.max(VIEW_DRIFT_LIMIT.floor, viewSum * VIEW_DRIFT_LIMIT.share);
+  const ok = worst.drift <= VIEW_DRIFT_LIMIT.perEntity && total <= limit;
+  return { ok, total, limit, worst };
+}
 
 // The reconcile events carry no user: they correct a total, not anyone's action. -1 is what the
 // November 2025 seed used, so the views are known to count it.

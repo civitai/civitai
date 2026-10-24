@@ -6,6 +6,8 @@ import {
   backfillSql,
   clickhouseConfig,
   tableNamePattern,
+  addTotals,
+  viewDrift,
   deltaSummary,
   landedState,
   nextStampMs,
@@ -314,6 +316,51 @@ describe('deltaSummary', () => {
         '> 1000': 1,
       },
     });
+  });
+});
+
+describe('have', () => {
+  // The dry run at the first reconcile head read history through the view with a day filter, got
+  // nothing, and planned the whole truth on top of the real total (3160: have 1, view 2730).
+  const ids = [3160, 5150, 6621];
+  const view = new Map([
+    [3160, 2730],
+    [5150, 1959],
+    [6621, 2633],
+  ]);
+  const history = new Map([
+    [3160, 2728],
+    [5150, 1959],
+    [6621, 2631],
+  ]);
+  const recent = new Map([
+    [3160, 3],
+    [6621, 2],
+  ]);
+
+  it('is history plus recent, and agrees with the view up to unrefreshed events', () => {
+    const have = addTotals(history, recent);
+    expect(have).toEqual(
+      new Map([
+        [3160, 2731],
+        [5150, 1959],
+        [6621, 2633],
+      ])
+    );
+    expect(viewDrift(ids, have, view)).toMatchObject({ ok: true, total: 1 });
+  });
+
+  it('stops the run when history is missing from it', () => {
+    const drift = viewDrift(ids, addTotals(new Map(), recent), view);
+    expect(drift.ok).toBe(false);
+    expect(drift.worst).toEqual({ entityId: 3160, have: 3, view: 2730, drift: 2727 });
+  });
+
+  it('stops the run on many small drifts that add up', () => {
+    const many = Array.from({ length: 100 }, (_, i) => i);
+    const v = new Map(many.map((i) => [i, 10]));
+    const h = new Map(many.map((i) => [i, 13]));
+    expect(viewDrift(many, h, v)).toMatchObject({ ok: false, total: 300, limit: 200 });
   });
 });
 

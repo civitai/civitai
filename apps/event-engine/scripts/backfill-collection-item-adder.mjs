@@ -58,8 +58,9 @@
  *   --entity <type>    Article (default), Model or Post: which bookmarked rows this run repairs.
  *                      A ledger belongs to one entity; the run refuses a ledger from another.
  *   --sample <ids>     Dry run: print want / have / delta for these entity ids (comma-separated),
- *                      and the view's current total beside `have`; they differ only by events
- *                      the today view has not refreshed in yet.
+ *                      and the view's current total beside `have`. Every run, dry or not, also
+ *                      checks `have` against the view for every entity and stops if they differ by
+ *                      more than unrefreshed events could explain (VIEW_DRIFT_LIMIT).
  *   --events-table <t> Raw events table (default entityMetricEvents_month). The run refuses a
  *                      table the daily views (entityMetricDaily_today_v2_mv and
  *                      entityMetricDailySeal_v2_mv) do not read.
@@ -72,8 +73,11 @@ import {
   METRIC_PAIRS,
   backfillSql,
   DAILY_VIEWS,
+  HISTORY_TOTALS_SQL,
   VIEW_TOTALS_SQL,
-  chTotalsSql,
+  addTotals,
+  recentTotalsSql,
+  viewDrift,
   clickhouseConfig,
   deltaSummary,
   landedState,
@@ -201,18 +205,31 @@ async function main() {
       rows.push(...(await query(sql, { entityType, metricType, ids: part })));
     return toMap(rows, 'entityId', 'total');
   };
+  // history + recent, checked against the view the metric job reads before anything uses it.
+  const have = async (entityType, metricType, ids) => {
+    const total = addTotals(
+      await chSums(HISTORY_TOTALS_SQL, entityType, metricType, ids),
+      await chSums(recentTotalsSql(EVENTS_TABLE), entityType, metricType, ids)
+    );
+    const view = await chSums(VIEW_TOTALS_SQL, entityType, metricType, ids);
+    const drift = viewDrift(ids, total, view);
+    console.log(`${entityType} ${metricType} have vs view: ${JSON.stringify(drift)}`);
+    if (!drift.ok)
+      fail(
+        `Error: ${entityType} ${metricType} ClickHouse total does not match entityMetricDailyAgg_v2` +
+          ` (worst ${JSON.stringify(drift.worst)}, total drift ${drift.total}). Nothing written.`
+      );
+    return { total, view };
+  };
   // Postgres, then ClickHouse straight after, for both metrics. The entity count is one full
   // scan (minutes); a bookmark made or removed during it can leave its entity off by one.
   const plan = async ({ entityIds, collectionIds }, prevStampMs) => {
     const entityTruth = await pgCounts(SQL.entityTruth, entityIds, false);
     const collectionTruth = await pgCounts(SQL.collectionTruth, collectionIds, true);
-    const entityCh = await chSums(chTotalsSql(EVENTS_TABLE), ENTITY, 'collectedCount', entityIds);
-    const collectionCh = await chSums(
-      chTotalsSql(EVENTS_TABLE),
-      'Collection',
-      'itemCount',
-      collectionIds
-    );
+    const entityHave = await have(ENTITY, 'collectedCount', entityIds);
+    const collectionHave = await have('Collection', 'itemCount', collectionIds);
+    const entityCh = entityHave.total;
+    const collectionCh = collectionHave.total;
     // Stamped after the reads: the metric jobs only look back a few minutes for affected entities.
     const stampMs = nextStampMs(prevStampMs, Date.now());
     const createdAt = stampMs / 1000;
@@ -232,7 +249,13 @@ async function main() {
       ch: collectionCh,
       createdAt,
     });
-    return { stampMs, entity, collection, events: [...entity.events, ...collection.events] };
+    return {
+      stampMs,
+      entity,
+      collection,
+      entityView: entityHave.view,
+      events: [...entity.events, ...collection.events],
+    };
   };
   const report = async (result) => {
     for (const [label, part] of [
@@ -241,13 +264,7 @@ async function main() {
     ])
       console.log(`${label}: ${JSON.stringify(deltaSummary(part.rows))}`);
     const samples = result.entity.rows.filter((r) => SAMPLE.has(r.entityId));
-    if (!samples.length) return;
-    const view = await chSums(
-      VIEW_TOTALS_SQL,
-      ENTITY,
-      'collectedCount',
-      samples.map((r) => r.entityId)
-    );
+    const view = result.entityView;
     for (const r of samples)
       console.log(
         `  sample ${ENTITY} ${r.entityId}: want ${r.want} have ${r.have} (view now ${
