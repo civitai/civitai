@@ -151,6 +151,8 @@ beforeAll(async () => {
     CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer, "nsfwLevel" integer NOT NULL DEFAULT 0,
       "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Report" ("id" integer PRIMARY KEY);
+    CREATE TABLE "Placement" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
+      "targetType" text NOT NULL, "targetId" integer NOT NULL, "status" text NOT NULL);
   `);
   for (const name of [
     '20261023120000_storylines',
@@ -160,6 +162,7 @@ beforeAll(async () => {
     '20261024150000_storyline_moderator_takedown',
     '20261024160000_storyline_minor_by_scan',
     '20261106120000_storyline_rejoin',
+    '20261122120000_storyline_pending_chapter',
   ])
     await db.pg.exec(migration(name));
   await db.pg.exec(`INSERT INTO "User" (id) VALUES (1), (2), (3), (4);`);
@@ -172,6 +175,9 @@ afterAll(async () => {
 beforeEach(async () => {
   edgeSecond = 10;
   await db.pg.exec(`
+    DELETE FROM "Placement";
+    DELETE FROM "StorylinePendingChapter";
+    DELETE FROM "Post";
     DELETE FROM "StorylineBranchChoice";
     DELETE FROM "StorylineChapterEdge";
     DELETE FROM "StorylineChapter";
@@ -317,13 +323,14 @@ describe('moveStorylineChapter within the run', () => {
   });
 });
 
+const refuses = async (attempt: () => Promise<unknown>, expected: Record<string, unknown>) => {
+  const before = [await edges(), await depths()];
+  await expect(attempt()).rejects.toMatchObject(expected);
+  expect([await edges(), await depths()]).toEqual(before);
+};
+const badRequest = (message: string) => ({ code: 'BAD_REQUEST', message });
+
 describe('moveStorylineChapter refusals', () => {
-  const refuses = async (attempt: () => Promise<unknown>, expected: Record<string, unknown>) => {
-    const before = [await edges(), await depths()];
-    await expect(attempt()).rejects.toMatchObject(expected);
-    expect([await edges(), await depths()]).toEqual(before);
-  };
-  const badRequest = (message: string) => ({ code: 'BAD_REQUEST', message });
   const notInOneLine = badRequest('Only your own chapters in a single line can be moved');
 
   it("refuses a contributor's chapter in the span", async () => {
@@ -377,5 +384,61 @@ describe('moveStorylineChapter refusals', () => {
 
   it('refuses a chapter of another storyline', async () => {
     await refuses(() => move(5, 999), { code: 'NOT_FOUND' });
+  });
+});
+
+describe('moveStorylineChapter with a continuation waiting', () => {
+  // Moving 5 after 2 changes what follows 4 (its old parent), 5 and 2.
+  const waiting = badRequest('This chapter has a continuation waiting for review; answer it first');
+  const postOf = async (chapterId: number) => {
+    const postId = 500 + chapterId;
+    await db.pg.query(`INSERT INTO "Post" (id, "userId") VALUES ($1, $2)`, [postId, OWNER]);
+    await db.pg.query(`UPDATE "StorylineChapter" SET "postId" = $1 WHERE id = $2`, [
+      postId,
+      chapterId,
+    ]);
+    return postId;
+  };
+  const placementOn = async (chapterId: number, status = 'pending') =>
+    db.pg.query(
+      `INSERT INTO "Placement" (surface, "targetType", "targetId", status)
+       VALUES ('storyline', 'post', $1, $2)`,
+      [await postOf(chapterId), status]
+    );
+  const draftAfter = async (chapterId: number) => {
+    const draftPostId = 900 + chapterId;
+    await db.pg.query(`INSERT INTO "Post" (id, "userId") VALUES ($1, $2)`, [draftPostId, OWNER]);
+    await db.pg.query(
+      `INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "parentChapterId", "userId")
+       VALUES ($1, 1, $2, $3)`,
+      [draftPostId, chapterId, OWNER]
+    );
+  };
+
+  for (const [role, chapterId] of [
+    ['the moved chapter', 5],
+    ['its old parent', 4],
+    ['the chapter it moves after', 2],
+  ] as const) {
+    it(`refuses while a paid continuation of ${role} is pending`, async () => {
+      await placementOn(chapterId);
+      await refuses(() => move(5, 2), waiting);
+    });
+
+    it(`refuses while a draft continuing ${role} is pending`, async () => {
+      await draftAfter(chapterId);
+      await refuses(() => move(5, 2), waiting);
+    });
+  }
+
+  it('moves when the waiting continuation is of a chapter whose next one stays', async () => {
+    await placementOn(3);
+    await draftAfter(6);
+    expect(await move(5, 2)).toEqual({ chapterIds: [1, 2, 5, 3, 4, 6] });
+  });
+
+  it('moves when the continuation was already answered', async () => {
+    await placementOn(5, 'declined');
+    expect(await move(5, 2)).toEqual({ chapterIds: [1, 2, 5, 3, 4, 6] });
   });
 });

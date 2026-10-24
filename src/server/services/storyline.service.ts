@@ -1526,6 +1526,27 @@ export async function moveStorylineChapter({
       SELECT "chapterId", "parentChapterId", canon, "createdAt" FROM "StorylineChapterEdge"
       WHERE "parentChapterId" = ANY(${rewired}::int[])
     `;
+    // A continuation waiting on one of these was written to follow it where it stood: approved
+    // after the move, it would land somewhere its author never saw (a paid "next chapter" at the
+    // end becoming a fork early in the story).
+    const [waiting] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT c.id FROM "StorylineChapter" c
+      WHERE c.id = ANY(${rewired}::int[])
+        AND (
+          EXISTS (
+            SELECT 1 FROM "Placement" pl
+            WHERE pl.surface = 'storyline' AND pl."targetType" = 'post'
+              AND pl."targetId" = c."postId" AND pl.status = 'pending'
+          )
+          OR EXISTS (SELECT 1 FROM "StorylinePendingChapter" d WHERE d."parentChapterId" = c.id)
+        )
+      LIMIT 1
+    `;
+    if (waiting)
+      throw throwBadRequestError(
+        'This chapter has a continuation waiting for review; answer it first'
+      );
+
     const canonOutOf = (id: number) =>
       outEdges.find((e) => e.parentChapterId === id)?.canon ?? true;
     const afterEdge = outEdges.find((e) => e.parentChapterId === afterChapterId);
