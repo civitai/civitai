@@ -25,7 +25,9 @@ dbMock.dbWrite.$queryRaw.mockImplementation((async (
   return rows;
 }) as never);
 
-const { deliverMembershipCosmetics } = await import('~/server/jobs/deliver-purchased-cosmetics');
+const { deliverMembershipCosmetics, NO_CANCEL_AT_REVOKE_FROM } = await import(
+  '~/server/jobs/deliver-purchased-cosmetics'
+);
 
 const BRONZE = 'stripe-bronze';
 const SILVER = 'stripe-silver';
@@ -101,7 +103,9 @@ beforeAll(async () => {
       "currentPeriodStart" timestamp(3) NOT NULL,
       "currentPeriodEnd" timestamp(3) NOT NULL,
       "createdAt" timestamp(3) NOT NULL,
-      "cancelAt" timestamp(3)
+      "cancelAt" timestamp(3),
+      "cancelAtPeriodEnd" boolean NOT NULL DEFAULT false,
+      "endedAt" timestamp(3)
     );
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY,
@@ -440,6 +444,162 @@ describe('deliverMembershipCosmetics', () => {
       await run(new Date('2026-10-09T23:00:00Z'), NOW);
       expect(await badgesOf(CANCELING)).toEqual([]);
     });
+  });
+});
+
+// Buzz-purchased and code-redeemed memberships end without a cancelAt. Only those that lapse on or
+// after NO_CANCEL_AT_REVOKE_FROM lose their cosmetics: stripping the older backlog was ruled out
+// (2026-10-23). Before deleting the cutoff, read the comment on the constant.
+describe('deliverMembershipCosmetics: memberships that end without a cancelAt', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const at = (days: number) => new Date(NO_CANCEL_AT_REVOKE_FROM.getTime() + days * day);
+  const ts = (d: Date) => d.toISOString();
+
+  const BUZZ_LAPSED_BEFORE = 30;
+  const BUZZ_LAPSED_AFTER = 31;
+  const CODE_ENDED_AFTER = 32;
+  const CODE_EXPIRED_CLAIMABLE = 33;
+  const BUZZ_CURRENT = 34;
+  const STRIPE_STALE_RENEWING = 35;
+  const REFERRAL_HANDOVER = 38;
+  const SUPERSEDED_TO_CASH = 39;
+  const STRIPE_ENDED_NO_CANCEL_AT = 37;
+
+  const row = (
+    id: string,
+    userId: number,
+    productId: string,
+    status: string,
+    end: Date,
+    { cancelAtPeriodEnd = true, endedAt = null as Date | null } = {}
+  ) =>
+    `('${id}', ${userId}, '${productId}', '${status}', '${ts(
+      new Date(end.getTime() - 30 * day)
+    )}', '${ts(end)}', '2026-01-01', NULL, ${cancelAtPeriodEnd}, ${
+      endedAt ? `'${ts(endedAt)}'` : 'NULL'
+    })`;
+
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "CustomerSubscription" VALUES
+        ${row('buzz-before', BUZZ_LAPSED_BEFORE, CIVITAI_BUZZ_BRONZE, 'canceled', at(-5), {
+          endedAt: at(1),
+        })},
+        ${row('buzz-after', BUZZ_LAPSED_AFTER, CIVITAI_BUZZ_BRONZE, 'active', at(1))},
+        ${row('redeemable-code-ended', CODE_ENDED_AFTER, CIVITAI_BRONZE, 'canceled', at(1), {
+          endedAt: at(1),
+        })},
+        ${row(
+          's-ended-no-cancel-at',
+          STRIPE_ENDED_NO_CANCEL_AT,
+          BRONZE,
+          'incomplete_expired',
+          at(1),
+          {
+            cancelAtPeriodEnd: false,
+            endedAt: at(1),
+          }
+        )},
+        ${row(
+          'redeemable-code-claimable',
+          CODE_EXPIRED_CLAIMABLE,
+          CIVITAI_BRONZE,
+          'expired_claimable',
+          at(1)
+        )},
+        ${row('buzz-current', BUZZ_CURRENT, CIVITAI_BUZZ_BRONZE, 'active', at(20))},
+        ${row(
+          'buzz-superseded-stale',
+          STRIPE_STALE_RENEWING,
+          CIVITAI_BUZZ_BRONZE,
+          'canceled',
+          at(1),
+          {
+            endedAt: at(-10),
+          }
+        )},
+        ${row('s-stale-renewing', STRIPE_STALE_RENEWING, BRONZE, 'active', at(3.9), {
+          cancelAtPeriodEnd: false,
+        })},
+        ${row('buzz-before-referral', REFERRAL_HANDOVER, CIVITAI_BUZZ_BRONZE, 'canceled', at(1))},
+        ${row('civ-referral', REFERRAL_HANDOVER, CIVITAI_BRONZE, 'active', at(3.9), {
+          cancelAtPeriodEnd: false,
+        })},
+        ${row('buzz-superseded', SUPERSEDED_TO_CASH, CIVITAI_BUZZ_BRONZE, 'canceled', at(1), {
+          endedAt: at(-10),
+        })},
+        ${row('s-current', SUPERSEDED_TO_CASH, BRONZE, 'active', at(20), {
+          cancelAtPeriodEnd: false,
+        })};
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId") VALUES
+        (${BUZZ_LAPSED_BEFORE}, ${CIVITAI_SEP_BRONZE}), (${BUZZ_LAPSED_BEFORE}, ${PERMANENT_BADGE}),
+        (${BUZZ_LAPSED_AFTER}, ${CIVITAI_SEP_BRONZE}), (${BUZZ_LAPSED_AFTER}, ${PERMANENT_BADGE}),
+        (${CODE_ENDED_AFTER}, ${CIVITAI_SEP_BRONZE}),
+        (${CODE_EXPIRED_CLAIMABLE}, ${CIVITAI_SEP_BRONZE}),
+        (${BUZZ_CURRENT}, ${CIVITAI_SEP_BRONZE}),
+        (${STRIPE_STALE_RENEWING}, ${SEP_BRONZE}),
+        (${REFERRAL_HANDOVER}, ${CIVITAI_SEP_BRONZE}),
+        (${SUPERSEDED_TO_CASH}, ${SEP_BRONZE}),
+        (${STRIPE_ENDED_NO_CANCEL_AT}, ${SEP_BRONZE});
+    `);
+  });
+
+  // The job runs at 23:00.
+  const runAfterCutoff = () => run(at(3 + 23 / 24), at(2 + 23 / 24));
+
+  it('a Buzz membership that lapsed after the cutoff loses its non-permanent membership cosmetics', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(BUZZ_LAPSED_AFTER)).toEqual([PERMANENT_BADGE]);
+  });
+
+  // The backlog row was closed after the cutoff (tokens claimed late, or superseded), so its
+  // endedAt is past the cutoff even though its period ended before it.
+  it('a Buzz membership that lapsed before the cutoff keeps them (forward-only, no backlog revoke)', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(BUZZ_LAPSED_BEFORE)).toEqual([CIVITAI_SEP_BRONZE, PERMANENT_BADGE]);
+  });
+
+  it('a code membership ended by the prepaid job, or left expired_claimable, loses them', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(CODE_ENDED_AFTER)).toEqual([]);
+    expect(await badgesOf(CODE_EXPIRED_CLAIMABLE)).toEqual([]);
+  });
+
+  it('a Buzz membership still inside its period keeps them', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(BUZZ_CURRENT)).toContain(CIVITAI_SEP_BRONZE);
+  });
+
+  it('a cash member with a superseded Buzz row keeps them while their renewal webhook is late', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(STRIPE_STALE_RENEWING)).toEqual([SEP_BRONZE]);
+  });
+
+  it('a referral member whose next chunk is not advanced yet keeps them past an old Buzz lapse', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(REFERRAL_HANDOVER)).toContain(CIVITAI_SEP_BRONZE);
+  });
+
+  it('the grace lasts a day: a membership still not renewed by the next run loses them', async () => {
+    await runAfterCutoff();
+    await run(at(4 + 23 / 24), at(3 + 23 / 24));
+    expect(await badgesOf(REFERRAL_HANDOVER)).toEqual([]);
+  });
+
+  it('a manual rerun soon after the nightly run keeps the grace', async () => {
+    await runAfterCutoff();
+    await run(at(3 + 23.5 / 24), at(3 + 23 / 24));
+    expect(await badgesOf(REFERRAL_HANDOVER)).toContain(CIVITAI_SEP_BRONZE);
+  });
+
+  it('a cash member with a superseded Buzz row keeps them', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(SUPERSEDED_TO_CASH)).toContain(SEP_BRONZE);
+  });
+
+  it('a cash subscription that ended without a cancelAt is unchanged: it keeps them', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(STRIPE_ENDED_NO_CANCEL_AT)).toEqual([SEP_BRONZE]);
   });
 });
 
