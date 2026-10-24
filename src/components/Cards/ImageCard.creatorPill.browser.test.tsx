@@ -98,7 +98,7 @@ function imageData(cosmetics: unknown[]) {
   } as any;
 }
 
-async function pillBackground(cosmetics: unknown[]) {
+async function renderPill(cosmetics: unknown[]) {
   renderWithProviders(
     <IntersectionObserverProvider>
       <div style={{ width: 336 }}>
@@ -109,15 +109,30 @@ async function pillBackground(cosmetics: unknown[]) {
   await vi.waitFor(() => {
     expect(document.body.querySelector('[class*="creatorPill"]')).not.toBeNull();
   });
-  return getComputedStyle(document.body.querySelector('[class*="creatorPill"]')!).backgroundColor;
+  const pill = document.body.querySelector('[class*="creatorPill"]')!;
+  return { pill: getComputedStyle(pill), name: getComputedStyle(pill.firstElementChild!) };
 }
 
-describe('ImageCard creator pill backing', () => {
-  test('keeps the shared translucent backing for a default name', async () => {
-    expect(await pillBackground([])).toBe('rgba(0, 0, 0, 0.31)');
+describe('ImageCard creator pill', () => {
+  test('keeps the shared translucent backing and no glow for a default name', async () => {
+    const { pill, name } = await renderPill([]);
+    expect(pill.backgroundColor).toBe('rgba(0, 0, 0, 0.31)');
+    expect(name.filter).not.toMatch(/0px 0px 0\.5px/);
   });
 
-  test('goes near-opaque behind a cosmetic nameplate', async () => {
-    expect(await pillBackground([nameplate])).toBe('rgba(0, 0, 0, 0.9)');
+  test('keeps that backing behind a cosmetic nameplate and glows the name instead', async () => {
+    const { pill, name } = await renderPill([nameplate]);
+    expect(pill.backgroundColor).toBe('rgba(0, 0, 0, 0.31)');
+    expect(name.filter).toMatch(/rgba\(0, 0, 0, 0\.9\d*\) 0px 0px 0\.5px/);
+  });
+
+  test("the dark scheme does not swap the nameplate glow for the name's default shadow", async () => {
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    try {
+      const { name } = await renderPill([nameplate]);
+      expect(name.filter).toMatch(/0px 0px 0\.5px/);
+    } finally {
+      document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
   });
 });

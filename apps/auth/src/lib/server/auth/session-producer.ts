@@ -5,6 +5,7 @@ import type { SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { getRedis, getSysRedis } from '../redis';
 import { shapeSessionUser } from './session-shape';
+import { SYSTEM_WORKLOAD_ROLE } from '../oauth/constants';
 
 // The auth hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
 // ARCHITECTURE"): query the user (+ profile picture + active subscriptions) + permissions, shape the rich
@@ -75,7 +76,10 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           ])
       ).as('subscriptionRows'),
       jsonArrayFrom(
-        eb.selectFrom('UserRole').select(['UserRole.role']).whereRef('UserRole.userId', '=', 'User.id')
+        eb
+          .selectFrom('UserRole')
+          .select(['UserRole.role'])
+          .whereRef('UserRole.userId', '=', 'User.id')
       ).as('roleRows'),
       jsonObjectFrom(
         eb
@@ -87,6 +91,8 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     .executeTakeFirst();
 
   if (!row) return null;
+  // The account that owns workload clients is not a person and never has a session.
+  if (row.roleRows.some((r) => r.role === SYSTEM_WORKLOAD_ROLE)) return null;
 
   // 2. permissions — system-permissions sysRedis cache. Degraded-skip: never cache a permissions-less
   //    user (would strip moderator/beta privileges until the entry expires); re-derive next request.

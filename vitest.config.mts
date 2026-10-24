@@ -471,6 +471,7 @@ const browserOptimizeDeps = {
 // `|component (chromium)|`, which is a run report naming the wrong tier — the
 // most expensive kind of wrong, because it points every reader at the wrong
 // setup file. Each project gets its own object.
+const isFirefoxRun = process.env.GEOMETRY_BROWSER === 'firefox';
 const browserModeOptions = () => ({
   enabled: true as const,
   // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
@@ -489,15 +490,22 @@ const browserModeOptions = () => ({
   // tests on NixOS". A mismatch does not say "no browser" — it collects every file
   // and executes none, which reads as a broken suite.
   provider: playwright({
+    // Opt-in, local only: `GEOMETRY_DPR=2.25` runs at a fractional device pixel ratio (CI is DPR 1).
+    ...(process.env.GEOMETRY_DPR
+      ? { contextOptions: { deviceScaleFactor: Number(process.env.GEOMETRY_DPR) } }
+      : {}),
     launchOptions: {
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      args: isFirefoxRun ? [] : ['--no-sandbox', '--disable-dev-shm-usage'],
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
         ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
         : {}),
     },
   }),
   headless: true as const,
-  instances: [{ browser: 'chromium' }],
+  // Opt-in, local only: `GEOMETRY_BROWSER=firefox` runs the browser projects in Firefox. CI stays
+  // on Chromium (no Firefox in the runner image). A Firefox run needs
+  // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pointed at the Firefox binary if the bundle isn't installed.
+  instances: [{ browser: isFirefoxRun ? ('firefox' as const) : ('chromium' as const) }],
 });
 
 /** Everything a browser project needs outside its own `test` block. */

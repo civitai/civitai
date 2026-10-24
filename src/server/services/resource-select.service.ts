@@ -251,11 +251,11 @@ async function searchModels(
 // `retryCount: 0` and the catch keep the pin off the critical path. On a cold key
 // with the refresh lock already held, fetchThroughCache's default retry sleeps
 // lockTTL/2 (5s) up to three times before giving up — inside the request. This runs
-// only while officialPinActive, i.e. the picker's initial state, so that stall lands
+// on the picker's initial state and the browse feed's Hot + base-model view, so that stall lands
 // on every concurrent modal open after a deploy or a Redis eviction even though the
 // lock winner populates the key in ~300ms. Failing to [] instead costs the pin for
 // one request and nothing else.
-async function getOfficialModelIds() {
+export async function getOfficialModelIds() {
   try {
     return await fetchThroughCache(
       REDIS_KEYS.CACHES.OFFICIAL_MODELS,

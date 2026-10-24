@@ -17,10 +17,7 @@ const MODEL_OPTIONS = [
     value: 'stepfun/step-3.5-flash',
     label: 'StepFun 3.5 Flash — text only (stepfun/step-3.5-flash)',
   },
-  {
-    value: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
-    label: 'Qwen 35B (Civitai orchestrator)',
-  },
+  { value: 'civitai/qwen3.8', label: 'Qwen 3.8 (Civitai orchestrator)' },
 ];
 
 export function ModelSelector() {

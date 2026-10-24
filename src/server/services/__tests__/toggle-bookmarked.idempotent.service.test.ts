@@ -101,10 +101,26 @@ describe('toggleBookmarked — race #2: create path uses createMany({ skipDuplic
     expect(result).toBe(true); // did not exist → now added
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledTimes(1);
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 999, modelId: 10 }],
+      data: [{ collectionId: 999, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
     expect(mockDb.collectionItem.create).not.toHaveBeenCalled();
+  });
+});
+
+// The event-engine CDC handler attributes collectedCount to `addedById` and drops events with no
+// user, so a bookmark row without it never moves the Article/Model bookmark count.
+describe('toggleBookmarked — bookmark rows carry addedById so they count', () => {
+  it.each([
+    [CollectionType.Article, 'articleId'],
+    [CollectionType.Model, 'modelId'],
+  ])('%s bookmark is written with addedById = the bookmarking user', async (type, entityProp) => {
+    await toggleBookmarked({ ...args, type });
+
+    expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
+      data: [{ collectionId: 999, [entityProp]: 10, addedById: 42 }],
+      skipDuplicates: true,
+    });
   });
 });
 
@@ -122,7 +138,7 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
     expect(result).toBe(true);
     // item op proceeds against the RE-FETCHED collection id (777), not undefined → no NPE
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 777, modelId: 10 }],
+      data: [{ collectionId: 777, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
   });
@@ -136,7 +152,7 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
     expect(result).toBe(true);
     expect(mockDb.collection.create).toHaveBeenCalledTimes(1);
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 888, modelId: 10 }],
+      data: [{ collectionId: 888, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
   });

@@ -333,22 +333,31 @@ export const useCollection = (
     enabled?: boolean;
   }
 ) => {
-  const { data: { collection, permissions, collaborators, pendingReviewCount } = {}, ...rest } =
-    trpc.collection.getById.useQuery(
-      {
-        id: collectionId,
-      },
-      {
-        enabled: true,
-        ...opts,
-      }
-    );
+  const {
+    data: {
+      collection,
+      permissions,
+      collaborators,
+      pendingReviewCount,
+      redPendingReviewCount,
+    } = {},
+    ...rest
+  } = trpc.collection.getById.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
 
   return {
     collection,
     permissions,
     collaborators,
     pendingReviewCount,
+    redPendingReviewCount,
     ...rest,
   };
 };

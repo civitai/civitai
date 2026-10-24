@@ -14,9 +14,11 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 import {
   BANKABLE_EARNING_PREDICATE_SQL,
   getBankableAmount,
+  paidToUsersSql,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
   RECEIVED_FROM_USER_SQL,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 
@@ -25,7 +27,11 @@ const sysRedis = redisMock.sysRedis;
 const afterSettle = new Date('2026-12-15T12:00:00Z');
 
 function sqlOf(callIndex: number) {
-  const [parts, ...values] = mockClickhouse.$query.mock.calls[callIndex] as [string[], ...any[]];
+  const [parts, ...values] = mockClickhouse.$query.mock.calls[callIndex] as [
+    string[] | string,
+    ...any[]
+  ];
+  if (typeof parts === 'string') return parts;
   return parts.reduce(
     (acc, part, i) => acc + part + (i < values.length ? String(values[i]) : ''),
     ''
@@ -36,25 +42,38 @@ function sqlOf(callIndex: number) {
 function mockLedger({
   snapshot,
   earned,
-  returned = 0,
+  spent = 0,
+  spentToday = 0,
   consumed,
   ingestSettled = true,
 }: {
   snapshot?: number;
   earned: number;
-  returned?: number;
+  /** Paid to other users before the start of today, then since. */
+  spent?: number;
+  spentToday?: number;
   consumed: number;
   ingestSettled?: boolean;
 }) {
-  mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-    const sql = parts.join('');
+  mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+    const sql = typeof parts === 'string' ? parts : parts.join('');
     if (sql.includes('AS balance')) return [{ balance: String(snapshot ?? 0) }];
     if (sql.includes('AS settled')) return ingestSettled ? [{ settled: 1 }] : [];
-    return [{ earned: String(earned), returned: String(returned), consumed: String(consumed) }];
+    if (sql.includes('AS consumed'))
+      return [{ earned: String(earned), consumed: String(consumed) }];
+    if (sql.includes('AS spent'))
+      return [{ spent: String(sql.includes('AND date < ') ? spent : spentToday) }];
+    throw new Error(`unexpected query: ${sql}`);
   });
 }
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+
+function issuedSqls(marker: string) {
+  return mockClickhouse.$query.mock.calls
+    .map((_, i) => squash(sqlOf(i)))
+    .filter((s) => s.includes(marker));
+}
 
 function issuedSql(marker: string) {
   const sql = mockClickhouse.$query.mock.calls
@@ -101,43 +120,43 @@ describe('getBankableAmount', () => {
     expect(result).toEqual({
       snapshot: 100_000,
       earned: 50_000,
+      spent: 0,
       consumed: 30_000,
       remaining: 100_000,
     });
   });
 
-  // Both arms on one fixture: the same 100k round trip counts in full when nothing went back, and
-  // counts nothing once the creator sent the same user 100k.
-  it('counts Buzz from a user only beyond what the creator sent that user', async () => {
-    mockLedger({ snapshot: 0, earned: 100_000, returned: 0, consumed: 0 });
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(100_000);
+  it('subtracts what the creator paid other users from what they earned', async () => {
+    mockLedger({ snapshot: 0, earned: 10_000, spent: 3_000, consumed: 0 });
 
-    mockLedger({ snapshot: 0, earned: 100_000, returned: 100_000, consumed: 0 });
-    expect(await getBankableAmount(userId, 0, afterSettle)).toEqual({
-      snapshot: 0,
-      earned: 0,
-      consumed: 0,
-      remaining: 0,
-    });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(7_000);
   });
 
-  it('keeps the part of a payment that was not sent back', async () => {
-    mockLedger({ snapshot: 10_000, earned: 100_000, returned: 30_000, consumed: 0 });
-
-    const result = await getBankableAmount(userId, 0, afterSettle);
-
-    expect(result).toEqual({ snapshot: 10_000, earned: 70_000, consumed: 0, remaining: 80_000 });
-  });
-
-  // Sending Buzz back after banking it leaves a shortfall that later earnings fill first.
-  it('carries Buzz sent back after banking as a shortfall against later earnings', async () => {
-    mockLedger({ snapshot: 0, earned: 150_000, returned: 100_000, consumed: 100_000 });
-
+  // Justin, 2026-10-23: Buzz paid to other users beyond what was earned since the cutover also
+  // comes out of the cutover snapshot. If you are about to shield the snapshot from it, that is a
+  // product decision to take back to him, not a cleanup.
+  it('takes what the creator paid other users beyond their earnings out of the cutover snapshot', async () => {
+    mockLedger({ snapshot: 100_000, earned: 0, spent: 100_000, consumed: 0 });
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
 
-    mockLedger({ snapshot: 0, earned: 230_000, returned: 100_000, consumed: 100_000 });
+    mockLedger({ snapshot: 100_000, earned: 20_000, spent: 50_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(70_000);
+  });
 
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(30_000);
+  it('leaves the cutover snapshot whole while earnings cover what was paid', async () => {
+    mockLedger({ snapshot: 100_000, earned: 30_000, spent: 20_000, consumed: 0 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(110_000);
+  });
+
+  // Both are totals since the cutover, so a month of paying out more than was earned is made up
+  // from later earnings first.
+  it('carries paying out more than was earned against later earnings', async () => {
+    mockLedger({ snapshot: 0, earned: 10_000, spent: 13_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
+
+    mockLedger({ snapshot: 0, earned: 15_000, spent: 13_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(2_000);
   });
 
   it('never reports a negative remaining amount', async () => {
@@ -174,8 +193,9 @@ describe('getBankableAmount', () => {
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
       String(userId)
     );
-    expect(mockClickhouse.$query).toHaveBeenCalledTimes(1);
-    expect(sqlOf(0)).not.toContain('AS balance');
+    expect(mockClickhouse.$query.mock.calls.map((_, i) => sqlOf(i))).not.toContainEqual(
+      expect.stringContaining('AS balance')
+    );
   });
 
   it('stores a computed snapshot once the ledger has settled', async () => {
@@ -205,7 +225,13 @@ describe('getBankableAmount', () => {
 
     const result = await getBankableAmount(userId, 0, afterSettle);
 
-    expect(result).toEqual({ snapshot: 0, earned: 2_000, consumed: 0, remaining: 2_000 });
+    expect(result).toEqual({
+      snapshot: 0,
+      earned: 2_000,
+      spent: 0,
+      consumed: 0,
+      remaining: 2_000,
+    });
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
       String(userId),
@@ -222,19 +248,22 @@ describe('getBankableAmount', () => {
     expect(sysRedis.hSet).not.toHaveBeenCalled();
   });
 
-  it('checks ingest for a row dated at least an hour past the cutover', async () => {
+  it('checks ingest for a row dated at least an hour past the cutover and not in the future', async () => {
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
     await getBankableAmount(userId, 0, afterSettle);
 
     const settledAt = new Date(BANKABLE_CUTOVER.getTime() + 60 * 60 * 1000);
     expect(issuedSql('AS settled')).toBe(
-      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(settledAt)} LIMIT 1`
+      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(
+        settledAt
+      )} AND date <= ${String(afterSettle)} LIMIT 1`
     );
   });
 
   // Pinned whole: a wrong term still returns a plausible number.
-  it('computes the cutover balance as Buzz in minus Buzz out before the cutover', async () => {
+  // One row per transaction: the balance is stored for good.
+  it('computes the cutover balance as Buzz in minus Buzz out before the cutover, each row once', async () => {
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
     await getBankableAmount(userId, 0, afterSettle);
@@ -242,12 +271,14 @@ describe('getBankableAmount', () => {
     const cutover = String(BANKABLE_CUTOVER);
     expect(issuedSql('AS balance')).toBe(
       squash(`SELECT
-        ( SELECT sum(amount) FROM buzzTransactions
+        ( SELECT sum(amount) FROM ( SELECT amount FROM buzzTransactions
           WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
-            AND date < ${cutover} )
-        - ( SELECT sum(amount) FROM buzzTransactions
+            AND date < ${cutover}
+          LIMIT 1 BY date, fromAccountId, toAccountId, transactionId ) )
+        - ( SELECT sum(amount) FROM ( SELECT amount FROM buzzTransactions
           WHERE fromAccountId = ${userId} AND fromAccountType IN (${buzzBankTypesSql})
-            AND date < ${cutover} ) AS balance`)
+            AND date < ${cutover}
+          LIMIT 1 BY date, fromAccountId, toAccountId, transactionId ) ) AS balance`)
     );
   });
 
@@ -264,19 +295,6 @@ describe('getBankableAmount', () => {
           WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
             AND date >= ${cutover}
             AND ${BANKABLE_EARNING_PREDICATE_SQL} ) AS earned,
-        ( SELECT sum(least(received.amount, sent.amount)) FROM (
-            SELECT fromAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
-            WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
-              AND date >= ${cutover}
-              AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-            GROUP BY counterparty
-          ) AS received
-          INNER JOIN (
-            SELECT toAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
-            WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
-              AND date >= ${cutover}
-            GROUP BY counterparty
-          ) AS sent ON sent.counterparty = received.counterparty ) AS returned,
         ( SELECT sumIf(amount, type = 'bank')
             + sumIf(amount, type = 'fee' AND description = 'Extraction fee')
           FROM buzzTransactions
@@ -286,6 +304,49 @@ describe('getBankableAmount', () => {
           WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
             AND type = 'extract'
             AND date >= ${cutover} AND date < ${monthStart} ) AS consumed`)
+    );
+  });
+
+  it('reads only the days after the stored total of what was paid, then stores the new total', async () => {
+    sysRedis.hGet.mockImplementation(async (key: string) =>
+      key === REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT
+        ? JSON.stringify({ through: '2026-12-10T00:00:00.000Z', spent: 500 })
+        : '0'
+    );
+    mockLedger({ earned: 10_000, spent: 300, spentToday: 200, consumed: 0 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(1_000);
+    expect(issuedSql("AND date < toDateTime('2026-12-14 00:00:00', 'UTC')")).toContain(
+      "date >= toDateTime('2026-12-10 00:00:00', 'UTC')"
+    );
+    const spentReads = mockClickhouse.$query.mock.calls
+      .map((_, i) => squash(sqlOf(i)))
+      .filter((sql) => sql.includes('AS spent'));
+    // The live read starts where the stored total ends, so no day is counted twice.
+    expect(spentReads.filter((sql) => !sql.includes('AND date < '))).toEqual([
+      expect.stringContaining("date >= toDateTime('2026-12-14 00:00:00', 'UTC')"),
+    ]);
+    // Stored only once ingest holds a row a full day past the stored total.
+    expect(issuedSqls('AS settled')).toContain(
+      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(
+        new Date('2026-12-15T00:00:00Z')
+      )} AND date <= ${String(afterSettle)} LIMIT 1`
+    );
+    expect(sysRedis.hSet).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      String(userId),
+      JSON.stringify({ through: '2026-12-14T00:00:00.000Z', spent: 800 })
+    );
+  });
+
+  it('does not store the total of what was paid while ingest has not reached it', async () => {
+    mockLedger({ earned: 10_000, spent: 300, consumed: 0, ingestSettled: false });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(300);
+    expect(sysRedis.hSet).not.toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      expect.anything(),
+      expect.anything()
     );
   });
 
@@ -372,6 +433,72 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
       .map((d) => `'${d}'`)
       .join(', ');
     expect(feeClause).toBe(expected);
+  });
+});
+
+describe('paidToUsersSql', () => {
+  // Pinned whole: a wrong account column still returns a plausible number.
+  // One row per transaction on a closed window: its total is stored for good, so a duplicate row not
+  // yet merged away would stay in it. FINAL measured a minute on a heavy creator.
+  it('counts payments from the creator, sales they bought and their part of bounties they funded, each row once', () => {
+    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= toDateTime('2026-11-01 00:00:00', 'UTC') AND date < toDateTime('2026-12-01 00:00:00', 'UTC')`;
+    expect(
+      squash(paidToUsersSql(42, { from: BANKABLE_CUTOVER, to: new Date('2026-12-01T00:00:00Z') }))
+    ).toBe(
+      squash(`SELECT sum(amount) AS spent FROM (
+        SELECT toInt64(amount) AS amount FROM buzzTransactions
+        WHERE fromAccountId = 42 AND ${paidTo}
+          AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+        LIMIT 1 BY date, fromAccountId, toAccountId, transactionId
+        UNION ALL
+        SELECT toInt64(amount) AS amount FROM buzzTransactions
+        WHERE (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0) AND ${paidTo}
+          AND JSONExtractInt(details, 'purchasedBy') = 42
+        LIMIT 1 BY date, fromAccountId, toAccountId, transactionId
+        UNION ALL
+        SELECT intDiv(amount * arraySum(arrayMap((id, a, t) -> if(id = 42 AND t >= 1793491200, a, 0), ids, amts, ats)), arraySum(amts)) AS amount
+        FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
+            JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts,
+            JSONExtract(details, 'supporterChargedAt', 'Array(Int64)') AS ats
+          FROM buzzTransactions
+          WHERE ${paidTo} AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
+            AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0
+          LIMIT 1 BY date, fromAccountId, toAccountId, transactionId )
+        WHERE has(ids, 42) )`)
+    );
+  });
+
+  it('reads the live window as it is', () => {
+    expect(paidToUsersSql(42, { from: BANKABLE_CUTOVER })).not.toContain('LIMIT 1 BY');
+  });
+});
+
+describe('receivedFromUsersSql', () => {
+  // Pinned whole: a wrong payer column or split still returns plausible pairs.
+  it('attributes user payments, platform-paid sales to their buyer and bounty awards to their supporters', () => {
+    expect(squash(receivedFromUsersSql('toAccountId = 1'))).toBe(
+      squash(`SELECT recipient, payer, sum(amount) AS amount FROM (
+        SELECT toInt64(toAccountId) AS recipient, toInt64(fromAccountId) AS payer,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE toAccountId = 1 AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+        UNION ALL
+        SELECT toInt64(toAccountId) AS recipient, toInt64(JSONExtractInt(details, 'purchasedBy')) AS payer,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE toAccountId = 1 AND (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0)
+        UNION ALL
+        SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
+        FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
+            JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts,
+            JSONExtract(details, 'supporterChargedAt', 'Array(Int64)') AS ats
+          FROM buzzTransactions
+          WHERE toAccountId = 1 AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
+            AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0 ) ARRAY JOIN arrayZip(ids, amts) AS s
+      ) GROUP BY recipient, payer`)
+    );
   });
 });
 
