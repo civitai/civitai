@@ -36,6 +36,7 @@ import {
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
+import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -52,6 +53,10 @@ export const config = {
     },
   },
 };
+
+// Bounds the `path` label of the fast-superjson write counter to procedures that exist. At runtime
+// `_def.procedures` is the flattened `{ 'model.getAll': procedure }` map (typed as the nested record).
+setTrpcProcedureRegistry(appRouter._def.procedures as unknown as Record<string, unknown>);
 
 const trpcHandler = createNextApiHandler({
   router: appRouter,

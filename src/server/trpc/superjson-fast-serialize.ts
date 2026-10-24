@@ -154,15 +154,33 @@ function defaultInstanceHasNoRegistrations(): boolean {
   );
 }
 
-export function fastSuperjsonSerialize(object: unknown): SuperJSONResult {
-  if (!defaultInstanceHasNoRegistrations()) return superjson.serialize(object);
+/** How one `fastSuperjsonSerialize` call ended (see `onOutcome`). */
+export type FastSuperjsonOutcome = 'fast' | 'bail' | 'registry_off';
+
+/**
+ * `onOutcome`, when given, is told how the call ended, before the result is returned: `fast`
+ * (the walk produced it), `bail` (handed to `superjson.serialize` after a partial walk) or
+ * `registry_off` (a superjson registration disabled the walk; nothing was walked).
+ */
+export function fastSuperjsonSerialize(
+  object: unknown,
+  onOutcome?: (outcome: FastSuperjsonOutcome) => void
+): SuperJSONResult {
+  if (!defaultInstanceHasNoRegistrations()) {
+    onOutcome?.('registry_off');
+    return superjson.serialize(object);
+  }
   let walked: Walked;
   try {
     walked = walk(object, new Set());
   } catch (error) {
-    if (error === BAIL) return superjson.serialize(object);
+    if (error === BAIL) {
+      onOutcome?.('bail');
+      return superjson.serialize(object);
+    }
     throw error;
   }
+  onOutcome?.('fast');
   const result: SuperJSONResult = { json: walked.value as SuperJSONResult['json'] };
   if (walked.annotations !== undefined) {
     result.meta = { values: walked.annotations as NonNullable<SuperJSONResult['meta']>['values'] };
