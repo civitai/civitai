@@ -9,6 +9,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
 import { purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
+import { holdMarkerSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { EntityType, JobQueueType, ModelStatus } from '~/shared/utils/prisma/enums';
@@ -377,16 +378,25 @@ async function reportCoverage(
   }
 }
 
+/**
+ * The hold lookup names the marker view: a database without it fails the lookup, which holds
+ * everyone.
+ */
+const NAME_MARKER_VIEW = true;
+
 type OwnerHolds = {
-  /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
+  /**
+   * Has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
+   * verified evidence copy.
+   */
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
 };
 
 /**
- * The CSAM report standing of these users. A failed lookup holds everyone and releases no one: a
- * hold only ever caps a retraction at a deny, so failing closed costs nothing that cannot be redone.
+ * The hold standing of these users. A failed lookup holds everyone and releases no one: a hold only
+ * ever caps a retraction at a deny, so failing closed costs nothing that cannot be redone.
  */
 async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
@@ -395,7 +405,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   try {
     const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; reported: boolean }[]>`
       SELECT u.id,
-        EXISTS (
+        ${holdMarkerSql(Prisma.sql`u.id`, NAME_MARKER_VIEW)} OR EXISTS (
           SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
             AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
         ) AS held,
