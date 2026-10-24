@@ -147,7 +147,9 @@ export const config = {
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
     embedToken: process.env.VECTOR_EMBED_TOKEN ?? '',
-    embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '4', 10)),
+    // Orchestrator jobs in flight per process: one per step, i.e. per image. An upper bound: the
+    // orchestrator's per-account quota (its RateLimit headers) usually lowers it.
+    embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '500', 10) || 500),
     embedMaxRetries: parseInt(process.env.VECTOR_EMBED_MAX_RETRIES ?? '8', 10),
     // Inputs per workflow, 1 to 128.
     embedBatchSize: Math.min(128, Math.max(1, parseInt(process.env.VECTOR_EMBED_BATCH_SIZE ?? '128', 10) || 128)),

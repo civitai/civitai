@@ -59,28 +59,49 @@ Inputs are built per media type (`buildEmbedInput`):
 
 ## Embedding
 
-`Embedder` submits orchestrator workflows with one `multimodalEmbedding` step, up to 128 inputs
-each, tier `paid`. The step type is typed locally until the orchestration client ships it.
+`Embedder` submits orchestrator workflows of `multimodalEmbedding` steps, tier `paid`. Each step
+embeds exactly one image or video (float32) and is named `img-<Image.id>`, which is how results
+map back. A workflow carries up to `VECTOR_EMBED_BATCH_SIZE` steps (1 to 128, default 128) and at
+most 8 videos. Identical inputs are served from the orchestrator's cache. The step type is typed
+locally until the orchestration client ships it.
 
-- At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process, each with up to
-  `VECTOR_EMBED_BATCH_SIZE` inputs (1 to 128, default 128).
-- A 429 or 5xx backs off exponentially with jitter, never sooner than `Retry-After`. It gives up
-  after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a batch has one `externalId`, reused across
-  its retries, so a submit that succeeded server-side is not paid for twice. It is random rather
-  than derived from the inputs, because the orchestrator would also return a _failed_ workflow
-  for its key.
-- A batch the orchestrator rejects (400, or a failed workflow) is split in half, at most four
-  times (down to groups of 8), to isolate the bad input. What is still failing then is counted
-  as `failed`, and the rest are embedded.
-- When a batch fails for another reason (retries exhausted, auth, a model mismatch), batches not
-  yet submitted are skipped. The vectors already returned are stored before the error is raised,
-  so a retry pays only for what is missing.
-- Every batch's model stamp is checked against the collection before its vectors are accepted.
-  Until a model is recorded, a call's first batch runs alone, and checks are serialised within
-  a process, so one process cannot record two models into a new collection. Across processes
-  there is no compare-and-set, so the consumer never embeds into a collection whose model is
-  not yet recorded: **the backfill canary records it first**. Until then the consumer only
-  deletes and updates payloads.
+- **In-flight budget:** at most `VECTOR_EMBED_MAX_IN_FLIGHT` orchestrator jobs (= steps =
+  images) are in flight per process, default 500, and never more than the account's in-flight
+  quota the orchestrator reports (`RateLimit-Policy` `inflight-multimodalEmbedding` `q`). Each
+  workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
+  shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
+  or reconcile are separate processes; the orchestrator's quota is per account and bounds them
+  together. The first response's quota and buzz window are logged at info level
+  (`vector-sync: orchestrator rate limits`).
+- **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
+  `Retry-After` (at least 250 ms), and every submit on that process waits it out too. 429s
+  are budgeted by time (2 h), not count, since another process can hold the account's quota
+  for a whole workflow. There is no other client-side throttling.
+- **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
+  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a workflow has
+  one `externalId`, reused across its retries, so a submit that succeeded server-side is not
+  paid for twice. It is random rather than derived from the inputs, because the orchestrator
+  would also return a _failed_ workflow for its key.
+- **Failures are per step:** a step that fails (or returns a vector of the wrong size or
+  precision, or without a model revision or profile) fails only its image, counted as
+  `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four
+  times, to isolate the bad input.
+- When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
+  workflows not yet submitted are skipped. The vectors already returned are stored before the
+  error is raised, so a retry pays only for what is missing.
+- **Model stamp per step:** every step reports its model, revision and profile; an image step's
+  profile is the image profile, a video step's the video profile. Each distinct stamp in a
+  workflow is checked against the collection before any of its vectors is kept, and a workflow
+  with two stamps for one media type is rejected. Until a model is recorded, a call's first
+  workflow runs alone, and checks are serialised within a process, so one process cannot record
+  two models into a new collection. Across processes there is no compare-and-set, so the
+  consumer never embeds into a collection whose model is not yet recorded: **the backfill canary
+  records it first**. Until then the consumer only deletes and updates payloads.
+- **Ephemeral workflows:** the orchestrator keeps no document for them. The result comes back
+  on the submit (`wait=60`) or on a long poll. A poll that fails is retried as a poll, never by
+  submitting again, which would run the steps twice. One that finishes between polls is gone
+  (a 404), and the whole workflow is sent again under a new key, which the orchestrator mostly
+  answers from its cache of identical inputs.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync
