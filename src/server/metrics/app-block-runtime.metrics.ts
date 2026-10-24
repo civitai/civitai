@@ -1843,11 +1843,13 @@ export type DocStoreEndpoint = (typeof DOC_STORE_ENDPOINTS)[number];
  * is multiplied by every pod. A test pins this set to the 5xx entries of STORAGE_ERROR_STATUS.
  *
  * `moderation_unavailable` is raised only by the moderation scan, which runs on a document write
- * or a counter increment, never on info or a read.
+ * or a counter increment, never on info or a read. `consent_unavailable` is raised only by the
+ * publish-scope check on a create or put; the route's own scope is consent-exempt, so the
+ * middleware's permission-state refusal never reaches it.
  */
 const DOC_STORE_SEEDED_ERROR_CODES: Partial<Record<StorageApiCode, readonly DocStoreEndpoint[]>> = {
   storage_disabled: DOC_STORE_ENDPOINTS,
-  consent_unavailable: DOC_STORE_ENDPOINTS,
+  consent_unavailable: ['storage_write'],
   service_unavailable: DOC_STORE_ENDPOINTS,
   internal_error: DOC_STORE_ENDPOINTS,
   moderation_unavailable: ['storage_write', 'storage_tally'],

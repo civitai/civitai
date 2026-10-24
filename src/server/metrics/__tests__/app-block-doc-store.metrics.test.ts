@@ -270,6 +270,11 @@ describe('seeded series', () => {
     expect(has('storage_tally', 'moderation_unavailable')).toBe(true);
     expect(has('storage_read', 'moderation_unavailable')).toBe(false);
     expect(has('storage_info', 'moderation_unavailable')).toBe(false);
+    // Consent is checked only when a write publishes.
+    expect(has('storage_write', 'consent_unavailable')).toBe(true);
+    expect(has('storage_read', 'consent_unavailable')).toBe(false);
+    expect(has('storage_info', 'consent_unavailable')).toBe(false);
+    expect(has('storage_tally', 'consent_unavailable')).toBe(false);
   });
 
   it('seeding does not reset a series that has already counted', async () => {
