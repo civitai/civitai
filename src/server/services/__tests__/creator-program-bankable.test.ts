@@ -20,6 +20,7 @@ import {
   RECEIVED_FROM_USER_SQL,
   receivedFromUsersSql,
   SENT_TO_USER_SQL,
+  SERVICE_RELEASE_SQL,
 } from '~/server/services/creator-program-bankable';
 
 const userId = 42;
@@ -376,6 +377,7 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
   OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))
   OR (type = 'fee' AND description IN (${placementLegs}))
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE 'App author fee%')
+  OR ${SERVICE_RELEASE_SQL}
 )`);
   });
 
@@ -436,11 +438,24 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
   });
 });
 
+// Justin, 2026-10-24: released Creator Services earnings are bankable. Holds and refunds share the
+// type and move the buyer's own Buzz, so counting them would make a refunded deal bankable.
+describe('SERVICE_RELEASE_SQL', () => {
+  it('counts only the escrow release leg, under every spelling of its type, with its buyer', () => {
+    expect(SERVICE_RELEASE_SQL).toBe(
+      "(type IN ('serviceEscrow','29','unknown_29') AND fromAccountId = 0" +
+        " AND startsWith(externalTransactionId, 'creator-service-')" +
+        " AND endsWith(externalTransactionId, '-release')" +
+        " AND JSONExtractInt(details, 'buyerId') > 0)"
+    );
+  });
+});
+
 describe('paidToUsersSql', () => {
   // Pinned whole: a wrong account column still returns a plausible number.
   // One row per transaction on a closed window: its total is stored for good, so a duplicate row not
   // yet merged away would stay in it. FINAL measured a minute on a heavy creator.
-  it('counts payments from the creator, sales they bought and their part of bounties they funded, each row once', () => {
+  it('counts payments from the creator, sales and services they bought and their part of bounties they funded, each row once', () => {
     const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= toDateTime('2026-11-01 00:00:00', 'UTC') AND date < toDateTime('2026-12-01 00:00:00', 'UTC')`;
     expect(
       squash(paidToUsersSql(42, { from: BANKABLE_CUTOVER, to: new Date('2026-12-01T00:00:00Z') }))
@@ -454,6 +469,11 @@ describe('paidToUsersSql', () => {
         SELECT toInt64(amount) AS amount FROM buzzTransactions
         WHERE (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0) AND ${paidTo}
           AND JSONExtractInt(details, 'purchasedBy') = 42
+        LIMIT 1 BY date, fromAccountId, toAccountId, transactionId
+        UNION ALL
+        SELECT toInt64(amount) AS amount FROM buzzTransactions
+        WHERE ${SERVICE_RELEASE_SQL} AND ${paidTo}
+          AND JSONExtractInt(details, 'buyerId') = 42
         LIMIT 1 BY date, fromAccountId, toAccountId, transactionId
         UNION ALL
         SELECT intDiv(amount * arraySum(arrayMap((id, a, t) -> if(id = 42 AND t >= 1793491200, a, 0), ids, amts, ats)), arraySum(amts)) AS amount
@@ -476,7 +496,7 @@ describe('paidToUsersSql', () => {
 
 describe('receivedFromUsersSql', () => {
   // Pinned whole: a wrong payer column or split still returns plausible pairs.
-  it('attributes user payments, platform-paid sales to their buyer and bounty awards to their supporters', () => {
+  it('attributes user payments, platform-paid sales and service releases to their buyer and bounty awards to their supporters', () => {
     expect(squash(receivedFromUsersSql('toAccountId = 1'))).toBe(
       squash(`SELECT recipient, payer, sum(amount) AS amount FROM (
         SELECT toInt64(toAccountId) AS recipient, toInt64(fromAccountId) AS payer,
@@ -488,6 +508,11 @@ describe('receivedFromUsersSql', () => {
           toInt64(amount) AS amount
         FROM buzzTransactions
         WHERE toAccountId = 1 AND (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0)
+        UNION ALL
+        SELECT toInt64(toAccountId) AS recipient, toInt64(JSONExtractInt(details, 'buyerId')) AS payer,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE toAccountId = 1 AND ${SERVICE_RELEASE_SQL}
         UNION ALL
         SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
         FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,

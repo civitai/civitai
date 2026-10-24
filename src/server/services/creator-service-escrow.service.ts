@@ -69,9 +69,9 @@ type LegRow = {
 
 export const holdPrefix = (dealId: number) => serviceDealTransactionId(dealId, 'hold');
 
-const ledgerEntry = (dealId: number, description: string) => ({
+const ledgerEntry = (dealId: number, description: string, details?: Record<string, number>) => ({
   description,
-  details: { entityType: 'ServiceDeal', entityId: dealId },
+  details: { entityType: 'ServiceDeal', entityId: dealId, ...details },
 });
 
 /**
@@ -665,10 +665,10 @@ export async function releaseDeal(dealId: number) {
     dealId,
     'Release',
     async (row) => {
-      const [{ sellerId, payable }] = await dbWrite.$queryRaw<
-        { sellerId: number; payable: boolean }[]
+      const [{ sellerId, buyerId, payable }] = await dbWrite.$queryRaw<
+        { sellerId: number; buyerId: number; payable: boolean }[]
       >`
-        SELECT d."sellerId", ${sellerCanBePaid(Prisma.sql`d."sellerId"`)} AS "payable"
+        SELECT d."sellerId", d."buyerId", ${sellerCanBePaid(Prisma.sql`d."sellerId"`)} AS "payable"
         FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
       // A claimed leg is paid regardless; this only tells a moderator it happened.
       if (!payable)
@@ -690,7 +690,8 @@ export async function releaseDeal(dealId: number) {
             toAccountType: row.buzzType,
             type: TransactionType.ServiceEscrow,
             externalTransactionId: row.externalTransactionId,
-            ...ledgerEntry(dealId, 'Creator service: released to the seller'),
+            // Bankable netting charges the release to this buyer; without it the release is not bankable.
+            ...ledgerEntry(dealId, 'Creator service: released to the seller', { buyerId }),
           },
           BUZZ_CALL_OPTIONS
         ));
