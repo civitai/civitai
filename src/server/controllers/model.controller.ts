@@ -890,7 +890,8 @@ export const publishModelHandler = async ({
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
     // The model's status says nothing about its versions: one a moderator took down while the
-    // model stayed public must not come back because its id was in this list.
+    // model stayed public must not come back because its id was in this list. Refused here, before
+    // publishModelById's literal-rules scan, which writes; publishModelById re-checks under a lock.
     if (!isModerator && input.versionIds?.length) {
       const downed = await dbWrite.modelVersion.count({
         where: {

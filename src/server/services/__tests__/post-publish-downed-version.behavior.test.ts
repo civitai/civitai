@@ -55,11 +55,14 @@ const DELETED = 12;
 const ON_DOWNED_MODEL = 13;
 
 let pg: PGlite;
+// Every raw statement the code under test sends, to see which ones take a lock.
+let sqlRun: string[];
+const tookLock = () => sqlRun.some((sql) => /FOR SHARE/.test(sql));
 
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL, "userId" int NOT NULL DEFAULT ${OWNER});
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int,
@@ -74,11 +77,13 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await pg.exec(`TRUNCATE "Post";`);
+  sqlRun = [];
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
+    sqlRun.push(flat.text);
     return (await pg.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
   // The ORM half of the update writes nothing the guard depends on; it returns the post as it is.
@@ -119,6 +124,38 @@ describe('publishing a post on a version a moderator took down', () => {
     expect(await isPublished()).toBe(false);
   });
 
+  // Only the owner's posts come down with a take-down, so only their publish can race one. Locking
+  // every publish would put a lock on a popular model's rows for each of its users' posts.
+  it("refuses another user's post on it too, without taking the owner's lock", async () => {
+    await pg.query(`INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (1, 6, $1)`, [
+      DOWNED,
+    ]);
+
+    await expect(
+      updatePost({ id: 1, publishedAt: new Date(), user: { id: 6, isModerator: false } } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await isPublished()).toBe(false);
+    expect(tookLock()).toBe(false);
+  });
+
+  it("takes no lock for someone publishing a post that isn't theirs", async () => {
+    await draftOn(LIVE);
+
+    await updatePost({
+      id: 1,
+      publishedAt: new Date(),
+      user: { id: 7, isModerator: false },
+    } as never).catch(() => undefined);
+    expect(tookLock()).toBe(false);
+  });
+
+  it("takes the lock for the owner's publish", async () => {
+    await draftOn(LIVE);
+
+    await publish();
+    expect(tookLock()).toBe(true);
+  });
+
   it('lets a moderator publish it', async () => {
     await draftOn(DOWNED);
 
@@ -152,7 +189,7 @@ describe('creating a post already published', () => {
   beforeEach(() => {
     canView.value = true;
     dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
-      model: { availability: 'Public' },
+      model: { availability: 'Public', userId: OWNER },
     } as never);
     dbMock.dbWrite.post.create.mockRejectedValue(new Error(PASSED_GUARD) as never);
   });
