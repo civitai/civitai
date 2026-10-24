@@ -6739,6 +6739,10 @@ export interface ServiceDealFile {
   processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
+  malwareScanWorkflowId: string | null;
+  malwareScanStartedAt: Date | null;
+  malwareScanSubmittedAt: Date | null;
+  malwareScanAttempts: number;
   unpackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;
