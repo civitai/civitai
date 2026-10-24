@@ -45,6 +45,8 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 }));
 
 import handler from '~/pages/api/upload/sign-part';
+import { UploadType } from '~/server/common/enums';
+import { buildUploadKey } from '~/utils/upload-key';
 // Mocked in ~/__tests__/setup as vi.fn(); imported so log ORDER is observable and the logger
 // can be made to REJECT.
 import { logToAxiom } from '~/server/logging/client';
@@ -86,9 +88,13 @@ function makeReq() {
     method: 'POST',
     body: {
       bucket: 'civitai-modelfiles',
-      // The handler scopes re-signing to `key.split('/')[1] === String(userId)`, so the 42
-      // here is load-bearing: any other value 403s.
-      key: 'model/42/thing.safetensors',
+      // The handler scopes re-signing to `key.split('/')[1] === String(userId)`, so the 42 here is
+      // load-bearing: any other value 403s.
+      //
+      // Built rather than written out, so the minting side and this parsing side cannot drift apart
+      // with both suites green — a literal here is a COPY of the shape, and the shape now lives in
+      // another module.
+      key: buildUploadKey(UploadType.Model, 42, 'thing.safetensors'),
       uploadId: 'test-upload-id',
       partNumber: 3,
       backend: 'b2',

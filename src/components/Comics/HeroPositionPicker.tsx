@@ -5,8 +5,8 @@ import { useCallback, useRef } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 /**
- * Lets the user drag a hero image vertically within a 16:9 frame
- * to choose which portion of the image is visible.
+ * Lets the user drag a hero image vertically within a frame (16:9 unless `aspectRatio` says
+ * otherwise) to choose which portion of the image is visible.
  * Stores a 0–100 value representing the CSS `object-position` Y%.
  */
 export function HeroPositionPicker({
@@ -14,12 +14,15 @@ export function HeroPositionPicker({
   position,
   onPositionChange,
   onRemove,
+  aspectRatio = '16 / 9',
   className,
 }: {
   url: string;
   position: number;
   onPositionChange: (pos: number) => void;
-  onRemove: () => void;
+  /** Without it there is no remove button. */
+  onRemove?: () => void;
+  aspectRatio?: string;
   className?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,7 +61,7 @@ export function HeroPositionPicker({
         ref={containerRef}
         style={{
           width: '100%',
-          aspectRatio: '16 / 9',
+          aspectRatio,
           borderRadius: 8,
           overflow: 'hidden',
           background: '#2C2E33',
@@ -73,7 +76,7 @@ export function HeroPositionPicker({
         onPointerCancel={handlePointerUp}
       >
         <img
-          src={getEdgeUrl(url, { width: 720 })}
+          src={getEdgeUrl(url, { width: 720, optimized: true })}
           alt="Hero"
           style={{
             width: '100%',
@@ -104,15 +107,17 @@ export function HeroPositionPicker({
           </Text>
         </div>
       </div>
-      <ActionIcon
-        variant="filled"
-        color="dark"
-        size="xs"
-        style={{ position: 'absolute', top: -8, right: -8 }}
-        onClick={onRemove}
-      >
-        <IconX size={12} />
-      </ActionIcon>
+      {onRemove && (
+        <ActionIcon
+          variant="filled"
+          color="dark"
+          size="xs"
+          style={{ position: 'absolute', top: -8, right: -8 }}
+          onClick={onRemove}
+        >
+          <IconX size={12} />
+        </ActionIcon>
+      )}
     </div>
   );
 }

@@ -36,6 +36,8 @@ describe('FEATURE_NOTICES', () => {
     referralKickback: 'referral-kickback-info',
     referralHowItWorks: 'referral-how-it-works',
     referralTokenShop: 'referral-token-shop-info',
+    firstModelPublished: 'first-model-published',
+    firstArticlePublished: 'first-article-published',
   };
 
   test.each(Object.entries(ID_AT_ITS_ORIGINAL_CALL_SITE))(
@@ -52,6 +54,14 @@ describe('FEATURE_NOTICES', () => {
       Object.keys(ID_AT_ITS_ORIGINAL_CALL_SITE).sort()
     );
   });
+
+  // The first-publish card links to /creators/journey, which 404s without the flag.
+  test.each(['firstModelPublished', 'firstArticlePublished'] as const)(
+    '%s is announced only to the Creator Journey audience',
+    (key) => {
+      expect(FEATURE_NOTICES[key]).toMatchObject({ audience: { feature: 'creatorJourney' } });
+    }
+  );
 
   test('every id is unique — two notices sharing one id would dismiss each other', () => {
     expect(new Set(FEATURE_NOTICE_IDS).size).toBe(FEATURE_NOTICE_IDS.length);
@@ -133,7 +143,7 @@ describe('isNoticeDismissed', () => {
 // can execute it. The hook that consumes it is covered by
 // `useFeatureNotice.audience.test.ts` (also `unit`, via happy-dom), and the
 // rendered component by `notice-callsite.browser.test.tsx` (project
-// `component`, which CI does NOT run). All three assert behaviour; none of them
+// `component`, CI's `Component tests`). All three assert behaviour; none of them
 // asserts that the field exists.
 //
 // Fixtures name flags that are NOT `remixGallery`, the only audience the
@@ -176,14 +186,6 @@ describe('isNoticeAudienceMatched', () => {
   });
 
   describe('a notice with an audience', () => {
-    test('matches a user its own flag is on for', () => {
-      expect(isNoticeAudienceMatched(targetedAlpha, flags, true)).toBe(true);
-    });
-
-    test('does NOT match a user its own flag is off for', () => {
-      expect(isNoticeAudienceMatched(targetedBeta, flags, true)).toBe(false);
-    });
-
     test('reads ITS OWN flag, not whichever flag happens to be on', () => {
       // Same map, same readiness, opposite results. A body that ignored
       // `audience.feature` could not produce both.

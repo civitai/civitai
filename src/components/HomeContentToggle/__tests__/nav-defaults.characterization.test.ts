@@ -31,8 +31,6 @@ describe('sub-nav default layout', () => {
   it('places every gate-passing item at its default with all flags on', () => {
     const { bar, more } = resolve(allFlags(true));
 
-    // `bounties` is the one item defaulting to More. It was one of five `grouped` items, all of
-    // which showed as pills above `xl` before placement stopped depending on viewport width.
     expect(bar.map((e) => e.key)).toEqual([
       'home',
       'models',
@@ -42,28 +40,29 @@ describe('sub-nav default layout', () => {
       'hubs',
       'articles',
       'comics',
-      'challenges',
+      // Gated on `features.crucible`, so it is absent from the all-flags-off vector below.
+      'crucibles',
+      'apps',
       'updates',
       'shop',
     ]);
-    expect(more.map((e) => e.key)).toEqual(['bounties']);
+    expect(more.map((e) => e.key)).toEqual(['storylines', 'bounties', 'challenges']);
   });
 
   /**
-   * `posts` and `events` are absent because they default to `hidden`, not because a gate hides
-   * them — they carry no gate at all now, so the modal can offer them to everyone. This matches
-   * what a user who never touched account settings has always seen. The flags that used to
-   * surface them are deleted in this change; anyone who had them on re-adds them from the modal.
+   * `posts` is absent because it defaults to `hidden`, not because a gate hides it — it carries
+   * no gate at all now, so the modal can offer it to everyone. This matches what a user who never
+   * touched account settings has always seen. The flag that used to surface it is deleted in this
+   * change; anyone who had it on re-adds it from the modal.
    *
    * The four promoted user-menu destinations (leaderboard, auctions, vault, collections)
    * exist in the registry but default to hidden — the sub nav is an additional surface for them,
    * not a move, so they appear only once a user places them.
    */
-  it('leaves posts, events and the promoted user-menu items out of the default layout', () => {
+  it('leaves posts and the promoted user-menu items out of the default layout', () => {
     const { bar, more } = resolve(allFlags(true));
     const placed = [...bar, ...more].map((e) => e.key);
     expect(placed).not.toContain('posts');
-    expect(placed).not.toContain('events');
     expect(placed).not.toContain('leaderboard');
     expect(placed).not.toContain('auctions');
     expect(placed).not.toContain('vault');
@@ -74,5 +73,91 @@ describe('sub-nav default layout', () => {
     const { bar, more } = resolve(allFlags(false));
     expect(bar.map((e) => e.key)).toEqual(['home', 'models', 'images', 'videos', 'updates']);
     expect(more).toEqual([]);
+  });
+});
+
+/**
+ * The `apps` pill's gate is the `/apps` page's own SSR gate (`hasAppsStoreAccess`) restated
+ * as a viewer fact. The all-on/all-off vectors above cannot tell its three disjuncts apart,
+ * so these isolate each one: a re-inline to `!!features.appBlocks` (the exact historical
+ * defect this class of gate shipped, #3907) leaves the whole default-layout suite above
+ * green while the external-only and listings-only vectors here go red.
+ */
+describe('the apps pill gate', () => {
+  /** A feature vector answering true ONLY for the named flags, false for everything else. */
+  const onlyFlags = (...names: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => (names as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+
+  it('shows the pill for the EXTERNAL-ONLY cohort (appListingsPublicExternal alone)', () => {
+    const { bar, more } = resolve(onlyFlags('appListingsPublicExternal'));
+    // Every OTHER gated item is hidden on this vector (`shop`'s own `cosmeticShop` gate
+    // among them), so the pill's presence here rides on NOTHING but its own gate —
+    // exactly the discrimination the all-on vector cannot make.
+    expect(bar.map((e) => e.key)).toEqual([
+      'home',
+      'models',
+      'images',
+      'videos',
+      'apps',
+      'updates',
+    ]);
+    expect(more).toEqual([]);
+  });
+
+  it.each([['appListings'], ['appBlocks']])('shows the pill when %s alone is on', (flag) => {
+    const { bar } = resolve(onlyFlags(flag));
+    expect(bar.some((e) => e.key === 'apps')).toBe(true);
+  });
+
+  it('shows the pill for a signed-OUT store-flag holder — the gate is flags, not auth', () => {
+    // Every OTHER vector passes isAuthed: true, so the mutant
+    // `hasAppsStoreAccess(features) && ctx.isAuthed` survives the rest of the battery.
+    // /apps itself is anon-capable behind the flag (`resolveAppsPageAccess` F-E E1),
+    // so a signed-OUT holder must keep the pill the day a segment widens to anon.
+    const { bar } = resolveNavItems(navRegistry, {
+      features: onlyFlags('appListings'),
+      isAuthed: false,
+    });
+    expect(bar.some((e) => e.key === 'apps')).toBe(true);
+  });
+
+  it('drops a PINNED pill once the viewer loses store access — gates run last over the config', () => {
+    const { bar } = resolveNavItems(
+      navRegistry,
+      { features: onlyFlags(), isAuthed: true },
+      { bar: ['home', 'apps', 'models'], more: [], hidden: [] }
+    );
+    // `images`, `videos` and `updates` carry no gate, so they render on this vector too;
+    // `apps` is the one that disappears.
+    //
+    // `updates` SURFACES at index 1 — where the dropped `apps` was pinned — and that is the
+    // anchoring rule doing its job, not a stray: an unplaced key anchors beside its REGISTRY
+    // neighbour, so moving `apps` earlier in the registry drags the keys that follow it into
+    // that slot too.
+    //
+    // The durable point: a registry REORDER changes the surviving ORDER here, not just which
+    // key vanishes — which is exactly what this vector exists to pin.
+    expect(bar.map((e) => e.key)).toEqual(['home', 'updates', 'models', 'images', 'videos']);
+  });
+});
+
+// The all-on and all-off vectors cannot tell `features.storylines` from any other flag.
+describe('the storylines entry', () => {
+  const flagsExcept = (...off: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => !(off as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+  const onlyFlag = (on: string): FeatureAccess =>
+    new Proxy({} as FeatureAccess, { get: (_target, key) => key === on }) as FeatureAccess;
+
+  it('shows with its own flag alone, in More', () => {
+    expect(resolve(onlyFlag('storylines')).more.map((e) => e.key)).toEqual(['storylines']);
+  });
+
+  it('hides with every flag but its own', () => {
+    const { bar, more } = resolve(flagsExcept('storylines'));
+    expect([...bar, ...more].map((e) => e.key)).not.toContain('storylines');
   });
 });

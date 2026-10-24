@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -26,7 +27,6 @@ import { NsfwLevel } from '~/server/common/enums';
  *     ensurePushWebhook, commitFiles, listRepoTree, getBlobContent, getRepo).
  *   - ~/server/utils/app-block-ids.newUlid is mocked deterministic so
  *     assertions can hit the generated ids by value.
- *   - global.fetch is mocked for the Discord webhook path.
  */
 
 /**
@@ -68,14 +68,20 @@ const {
       // `findUnique` added: recordPendingFromPush resolves the app owner's
       // userId via dbRead.appBlock.findUnique({ app: { userId } }).
       appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
-      user: { findUnique: vi.fn() },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
       oauthClient: { findUnique: vi.fn() },
       // W13 auto-create-on-approve: approveRequest checks for an existing onsite
       // AppListing (idempotency, keyed on appBlockId) before creating one.
-      appListing: { findUnique: vi.fn(), findFirst: vi.fn<DelegateMock>(async () => null) },
+      // `findMany` added: the three mod-queue list procs batch-read each page's slugs'
+      // store listings for the Plays + icon/cover columns. Defaults to none, which is the
+      // "app has no listing yet" case every row then projects as null.
+      appListing: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn<DelegateMock>(async () => null),
+        findMany: vi.fn<DelegateMock>(async () => []),
+      },
       // Fix #1 (onsite): withdrawRequest probes the listing's latest mod event to
       // decide whether a reset withdraw closes the listing. Null → no reset in flight.
       appListingModerationEvent: { findFirst: vi.fn<DelegateMock>(async () => null) },
@@ -84,8 +90,12 @@ const {
       // `pending` with an `AppListingPublishRequest` and no block request. Null → no
       // listing-side review, i.e. the mod-reset case this suite's assertions describe.
       appListingPublishRequest: { findFirst: vi.fn<DelegateMock>(async () => null) },
+      // listApprovedRequests reads each failed row's latest build attempt.
+      appBlockBuildAttempt: { findMany: vi.fn<DelegateMock>(async () => []) },
     },
     mockDbWrite: {
+      // approveRequest records the run its trigger started (the stale-run guard's key).
+      appBlockBuildAttempt: { create: vi.fn<DelegateMock>(async () => ({ id: 1 })) },
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
       // any stray pending review request the git-push webhook may have parked for
       // the slug while racing the approve commit.
@@ -148,6 +158,8 @@ const {
       // post-hoist (below) to run its callback against this same write mock.
       appListingModerationEvent: { create: vi.fn<DelegateMock>(async () => ({})) },
       $transaction: vi.fn(),
+      $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+      $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },
@@ -211,6 +223,16 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
 }));
 
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
+
 vi.mock('~/utils/bundle-s3', () => ({
   bundleKey: (sha: string) => `bundles/${sha}.zip`,
   getBundleBucket: () => 'app-block-bundles',
@@ -243,13 +265,12 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingModerationEventId: () => 'alme_reset_close',
 }));
 
-// Override the global env mock with the keys submitVersion / approveRequest /
-// notifyModsOfNewRequest read. The setup.ts proxy returns undefined for
-// anything not whitelisted; we preserve the proxy fallback for keys we don't
-// explicitly set (e.g. LOGGING is an array read at db-client module init).
+// Override the global env mock with the keys submitVersion / approveRequest
+// read. The setup.ts proxy returns undefined for anything not whitelisted; we
+// preserve the proxy fallback for keys we don't explicitly set (e.g. LOGGING is
+// an array read at db-client module init).
 const _publishEnvOverrides: Record<string, unknown> = {
   NEXTAUTH_URL: 'https://example.test',
-  DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.example/hook',
   FORGEJO_BASE_URL: 'https://forgejo.example',
   FORGEJO_ADMIN_TOKEN: 'tok-test',
   FORGEJO_WEBHOOK_SECRET: 'sec-test',
@@ -312,9 +333,8 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
 
 beforeEach(() => {
   // M-2 manifests here: publish-request.service uses raw `process.env.NEXTAUTH_URL`
-  // for the review URL embedded in the Discord notify (and the git-push webhook
-  // callback URL in approveRequest), not the typed `env` import. Inject it so
-  // the URL assertions work.
+  // for the git-push webhook callback URL in approveRequest, not the typed `env`
+  // import. Inject it so the URL assertions work.
   process.env.NEXTAUTH_URL = 'https://example.test';
   mockUlidSeq.i = 0;
   mockAplSeq.i = 0;
@@ -363,10 +383,9 @@ beforeEach(() => {
       (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
   );
 
-  // Default: no pending conflict, no existing app block, user lookup OK.
+  // Default: no pending conflict, no existing app block.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
-  mockDbRead.user.findUnique.mockResolvedValue({ username: 'tester' });
   mockDbWrite.appBlockPublishRequest.create.mockResolvedValue({ id: 'will-be-overwritten' });
 
   // W13 auto-create-on-approve defaults: no pre-existing listing (so the happy
@@ -406,16 +425,6 @@ beforeEach(() => {
     }
     return {};
   });
-
-  // Mock fetch (Discord webhook) to never fail by default.
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => ({ ok: true, status: 200 } as Response))
-  );
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 // ---- submitVersion ---------------------------------------------------------
@@ -787,47 +796,6 @@ describe('submitVersion', () => {
       })
     ).rejects.toThrow(/connection reset/);
   });
-
-  it('Discord notify is invoked with the right shape on submission', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const fetchSpy = vi.fn(
-      async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200 } as Response)
-    );
-    vi.stubGlobal('fetch', fetchSpy);
-
-    const buf = await makeValidBundle();
-    await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
-
-    // fire-and-forget notify — poll until it lands instead of hand-timing the
-    // microtask queue (a new `await` before the fetch would silently make a
-    // single-tick wait flaky).
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-    const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe('https://discord.example/hook');
-    expect((init as RequestInit).method).toBe('POST');
-    const body = JSON.parse((init as RequestInit).body as string);
-    expect(body.embeds[0].title).toMatch(/New publish request: hello v0\.1\.0/);
-    expect(body.embeds[0].url).toBe('https://example.test/apps/review');
-  });
-
-  it('Discord notify failure does not block submission', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new Error('discord down');
-      })
-    );
-    const buf = await makeValidBundle();
-    const result = await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
-    expect(result.publishRequestId).toMatch(/^pubreq_/);
-  });
 });
 
 // ---- withdrawRequest -------------------------------------------------------
@@ -1170,8 +1138,7 @@ describe('getMyPendingForSlug', () => {
     await getMyPendingForSlug({ slug: 'hello-world', userId: 42 });
     // mockDbRead surfaces are typed as bare vi.fn() with no signature, so
     // their .calls tuple is `[]`. Reach through `unknown` to inspect the
-    // captured args (same pattern other tests use for the Discord fetch
-    // spy).
+    // captured args.
     const calls = (
       mockDbRead.appBlockPublishRequest.findFirst as unknown as {
         mock: { calls: Array<[{ where: Record<string, unknown> }]> };
@@ -1198,7 +1165,7 @@ describe('listPendingRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1261,6 +1228,52 @@ describe('listPendingRequests', () => {
 
 // ---- listApprovedRequests --------------------------------------------------
 
+describe('listApprovedRequests — build signals on failed rows', () => {
+  it('attaches the latest attempt’s step + class to a FAILED row only, never the excerpt', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    const updated = new Date('2026-10-08T19:00:00Z');
+    const base = {
+      appBlockId: 'apb_1',
+      slug: 'hello',
+      version: '0.1.0',
+      submittedAt: new Date('2026-05-27T10:00:00Z'),
+      reviewedAt: new Date('2026-05-28T12:00:00Z'),
+      approvalNotes: null,
+      bundleSizeBytes: 1n,
+      bundleSha256: 'abc',
+      manifest: {},
+      fileSummary: {},
+      manifestDiffSummary: {},
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
+      deployUpdatedAt: updated,
+    };
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      { ...base, id: 'pubreq_failed', deployState: 'failed' },
+      { ...base, id: 'pubreq_live', deployState: 'live' },
+    ]);
+    mockDbRead.appBlockBuildAttempt.findMany.mockResolvedValueOnce([
+      {
+        publishRequestId: 'pubreq_failed',
+        failedStep: 'scan',
+        failureClass: 'unknown',
+        createdAt: new Date(updated.getTime() + 5),
+      },
+    ]);
+    const result = await listApprovedRequests({});
+    expect(
+      result.items.map((r: { id: string; buildSignals: unknown }) => [r.id, r.buildSignals])
+    ).toEqual([
+      ['pubreq_failed', { failedStep: 'scan', failureClass: 'unknown' }],
+      ['pubreq_live', null],
+    ]);
+    expect(
+      mockDbRead.appBlockBuildAttempt.findMany.mock.calls.at(-1)?.[0].where.publishRequestId
+    ).toEqual({ in: ['pubreq_failed'] });
+    for (const item of result.items) expect(item).not.toHaveProperty('deployDetail');
+  });
+});
+
 describe('listApprovedRequests', () => {
   function row(over: Record<string, unknown> = {}) {
     return {
@@ -1276,8 +1289,8 @@ describe('listApprovedRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
-      reviewedBy: { id: 999, username: 'mod', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1308,12 +1321,29 @@ describe('listApprovedRequests', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       row({
         approvalNotes: 'reviewed the iframe sandbox flags, looks good',
-        reviewedBy: { id: 999, username: 'modzilla', image: null },
+        reviewedBy: { id: 999, username: 'modzilla', deletedAt: null, image: null },
       }),
     ]);
     const result = await listApprovedRequests({});
     expect(result.items[0].approvalNotes).toBe('reviewed the iframe sandbox flags, looks good');
-    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+    expect(result.items[0].reviewedBy).toEqual({
+      id: 999,
+      username: 'modzilla',
+      deletedAt: null,
+      image: null,
+    });
+  });
+
+  it('🔴 does NOT select deployDetail — moderators get the structured state, never the excerpt', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    await listApprovedRequests({});
+    const select = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0].select;
+    expect(select.deployDetail).toBeUndefined();
+    // Positive control: the lifecycle fields the Approved tab DOES render are still selected,
+    // so the assertion above is about deployDetail rather than an empty select.
+    expect(select.deployState).toBe(true);
+    expect(select.deployUpdatedAt).toBe(true);
   });
 
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
@@ -1365,8 +1395,8 @@ describe('listRejectedRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
-      reviewedBy: { id: 999, username: 'mod', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1397,14 +1427,19 @@ describe('listRejectedRequests', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       row({
         rejectionReason: 'iframe.src origin must match the OauthClient allowedOrigin',
-        reviewedBy: { id: 999, username: 'modzilla', image: null },
+        reviewedBy: { id: 999, username: 'modzilla', deletedAt: null, image: null },
       }),
     ]);
     const result = await listRejectedRequests({});
     expect(result.items[0].rejectionReason).toBe(
       'iframe.src origin must match the OauthClient allowedOrigin'
     );
-    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+    expect(result.items[0].reviewedBy).toEqual({
+      id: 999,
+      username: 'modzilla',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
@@ -1472,6 +1507,55 @@ describe('approveRequest', () => {
     mockForgejo.commitFiles.mockResolvedValue({ sha: 'commit_sha_abc' });
   });
 
+  it.each(['my--app', 'a---b'])(
+    'refuses a first version of %s before creating the OAuth client, repo or app block',
+    async (slug) => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(
+        `Cannot approve: blockId "${slug}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+      );
+      expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+      expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['my-app', 'a-b-c', 'plainapp'])('approves a first version of %s', async (slug) => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: true });
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+  });
+
+  it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'old--name' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_legacy',
+      appId: 'oc_legacy',
+      repoUrl: 'https://forgejo.example/civitai-apps/old--name',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://old--name.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: false, appBlockId: 'apb_legacy' });
+  });
+
   it('first-version happy path wires the 4 external systems in order', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
@@ -1516,6 +1600,27 @@ describe('approveRequest', () => {
         where: expect.objectContaining({ slug: 'hello', status: 'pending' }),
         data: { status: 'withdrawn' },
       })
+    );
+
+    // The run the trigger started is recorded (the stale-run guard's key) BEFORE the
+    // 'building' write, under the run name the trigger returned.
+    expect(mockDbWrite.appBlockBuildAttempt.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        slug: 'hello',
+        sha: 'commit_sha_abc',
+        runId: 'pipelinerun-mock',
+        mode: 'build',
+        status: 'triggered',
+      }),
+      select: { id: true },
+    });
+    const buildingWrite = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.findIndex(
+      (c: unknown[]) =>
+        (c[0] as { data?: { deployState?: string } }).data?.deployState === 'building'
+    );
+    expect(mockDbWrite.appBlockBuildAttempt.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.appBlockPublishRequest.updateMany.mock.invocationCallOrder[buildingWrite]
     );
 
     // Phase 2: after triggerBuild succeeds, the approved request is marked
@@ -1758,7 +1863,11 @@ describe('approveRequest', () => {
       return { count: hit ? 1 : 0 };
     });
     // Scan-clean + rating-floor reads for the arm where the lookup DOES find the row.
-    mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2, contentRating: 'g' });
+    mockDbWrite.appListing.findUnique.mockResolvedValue({
+      iconId: 1,
+      coverId: 2,
+      contentRating: 'g',
+    });
     mockDbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
     mockDbWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
@@ -1825,7 +1934,9 @@ describe('approveRequest', () => {
 
     expect(flippedRows).toHaveLength(1);
     expect(flippedRows[0]).toMatchObject({ data: { status: 'approved' } });
-    expect(unsuspendCall()).toEqual([{ where: { id: 'apb_existing', status: 'suspended' }, data: { status: 'approved' } }]);
+    expect(unsuspendCall()).toEqual([
+      { where: { id: 'apb_existing', status: 'suspended' }, data: { status: 'approved' } },
+    ]);
   });
 
   it('🔴 the reset restore FLOORS contentRating at the media-derived rating (raise-only)', async () => {
@@ -1843,6 +1954,7 @@ describe('approveRequest', () => {
     // a mutant that echoed the declared value, or read the icon instead of the cover,
     // produces a different answer than the one asserted.
     const { approveRequest } = await import('../publish-request.service');
+    recordRatingChange.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
       id: 'apb_existing',
@@ -1851,7 +1963,12 @@ describe('approveRequest', () => {
       app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', contentRating: 'g' });
+    // Answer ONLY the (3b-reset) probe. Answering the (3b-transition) draft probe as well
+    // would run that branch too, and its hand-off to the history would stand in for this one.
+    mockDbWrite.appListing.findFirst.mockImplementation(
+      async (args: { where?: { status?: string } }) =>
+        args?.where?.status === 'pending' ? { id: 'apl_reset', contentRating: 'g' } : null
+    );
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
       coverId: 2,
@@ -1881,6 +1998,14 @@ describe('approveRequest', () => {
         data: { status: 'approved', contentRating: 'x' },
       })
     );
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_reset',
+      slug: 'hello',
+      before: 'g',
+      after: 'x',
+      actorUserId: 999,
+    });
   });
 
   it('the reset restore floor is RAISE-ONLY — tame media never lowers a mature rating', async () => {

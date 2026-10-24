@@ -4,6 +4,10 @@ import type * as FeedbackService from '~/server/services/feedback.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
+import {
+  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL,
+  GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL,
+} from '~/server/schema/feedback.schema';
 
 /**
  * `feedback.create` — the extended context must survive the ROUTER, and the
@@ -70,13 +74,25 @@ beforeEach(() => {
   isFeedbackAreaEnabledMock.mockResolvedValue(true);
 });
 
+/**
+ * Synthetic v4 uuids — the shape `createFeedbackSchema` now REQUIRES of an image id,
+ * and the shape both mint paths emit (`randomUUID()`, in the presign at
+ * `src/pages/api/v1/image-upload/index.ts` and in the relay's own server-side mint in
+ * `src/utils/s3-utils.ts`). Not keys copied out of production: this repo is public and
+ * a real id is a live object key in our store.
+ */
+const UUID_1 = '11111111-2222-4333-8444-555555555555';
+const UUID_2 = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
+const UUID_3 = '00000000-0000-4000-a000-000000000000';
+const UUID_SHOT = '99999999-8888-4777-b666-555544443333';
+
 const submission = {
   area: 'bitdex-image-feed' as const,
   message: 'the feed repeated itself',
   context: {
     path: '/images',
-    images: ['cf-1', 'cf-2', 'cf-3'],
-    screenshotId: 'cf-shot',
+    images: [UUID_1, UUID_2, UUID_3],
+    screenshotId: UUID_SHOT,
     sessionId: 'faro-abc',
   },
 };
@@ -92,18 +108,36 @@ describe('feedback.create — extended context reaches the service', () => {
       userId: USER_ID,
       context: {
         path: '/images',
-        images: ['cf-1', 'cf-2', 'cf-3'],
-        screenshotId: 'cf-shot',
+        images: [UUID_1, UUID_2, UUID_3],
+        screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
     });
   });
 
+  // 🔴 All four are VALID uuids, deliberately. With placeholder ids this test went on
+  // passing after image ids became uuid-shaped — but for the wrong reason, rejected on
+  // SHAPE before the count was ever reached, which is a count guard that no longer
+  // guards the count. Keeping them well-formed leaves the array length as the only
+  // thing this case can fail on.
   it('rejects a four-image submission at the boundary, before the service is reached', async () => {
     await expect(
       caller().create({
         ...submission,
-        context: { ...submission.context, images: ['a', 'b', 'c', 'd'] },
+        context: { ...submission.context, images: [UUID_1, UUID_2, UUID_3, UUID_SHOT] },
+      })
+    ).rejects.toThrow();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // The boundary's OTHER rejection, and the one that did not exist before: an id that
+  // is not a uuid never reaches the service. Same assertion shape as the count case
+  // above, so the two failure modes are visibly siblings.
+  it('rejects an image id that is not a uuid, before the service is reached', async () => {
+    await expect(
+      caller().create({
+        ...submission,
+        context: { ...submission.context, images: ['https://attacker.example/x.png'] },
       })
     ).rejects.toThrow();
     expect(createFeedbackMock).not.toHaveBeenCalled();
@@ -126,7 +160,7 @@ describe('feedback.create — extended context reaches the service', () => {
     await caller().create({
       area: 'bitdex-image-feed',
       message: 'no faro here',
-      context: { path: '/images', images: ['cf-1'] },
+      context: { path: '/images', images: [UUID_1] },
     });
 
     expect(createFeedbackMock).toHaveBeenCalledTimes(1);
@@ -134,11 +168,75 @@ describe('feedback.create — extended context reaches the service', () => {
   });
 });
 
-describe('feedback.create — the submission quota is not widened by uploads', () => {
-  it('is configured at 5 per hour', () => {
-    expect(FEEDBACK_RATE_LIMIT).toEqual({ max: 5, periodSeconds: 3600 });
+/**
+ * `app-block` is a declared area (moderators and the DB CHECK need the slug), but its rows must
+ * carry a server-resolved listing and are read by the app's OWNER, so only the dedicated
+ * app-feedback procedure may write them. The generic route refuses the slug DETERMINISTICALLY:
+ * the flag mock below says ON, so the only thing that can stop the submission is the guard.
+ *
+ * Matched on the guard's OWN message, not just `BAD_REQUEST`: any input-validation failure (an
+ * unknown slug, an over-long message) is also BAD_REQUEST, and would satisfy a code-only check
+ * while saying nothing about this guard. The unknown-slug case below is that control.
+ */
+describe('feedback — the generic route refuses the app-block area', () => {
+  const refusal = expect.objectContaining({
+    code: 'BAD_REQUEST',
+    message: expect.stringContaining(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL),
   });
 
+  it('create refuses app-block before the flag lookup and the service, with the flag ON', async () => {
+    await expect(
+      caller().create({ area: 'app-block', message: 'this app is broken' })
+    ).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // The seam with `create`: a notice that says "enabled" for an area whose submit is refused is
+  // the disagreement `feedback.router.flag-context.test.ts` exists to prevent.
+  it('getArea refuses app-block too, so it can never report it enabled', async () => {
+    await expect(caller().getArea({ area: 'app-block' })).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+  });
+
+  // `apps-platform` rows are counted on a server-computed fingerprint, so the generic route must
+  // not be able to write one without it. Same shape as the app-block cases: flag ON, own message.
+  it('create and getArea refuse apps-platform before the flag lookup and the service', async () => {
+    const platformRefusal = expect.objectContaining({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining(GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL),
+    });
+    await expect(
+      caller().create({ area: 'apps-platform', message: 'the cli is broken' })
+    ).rejects.toEqual(platformRefusal);
+    await expect(caller().getArea({ area: 'apps-platform' })).rejects.toEqual(platformRefusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // Positive control: every OTHER declared area still goes through both procedures. The list is
+  // hand-typed so a third dedicated-procedure area cannot silently join it.
+  it.each(['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const)(
+    'still accepts %s on create and getArea',
+    async (area) => {
+      await expect(caller().getArea({ area })).resolves.toEqual({ enabled: true });
+      await caller().create({ area, message: 'something looked wrong' });
+      expect(createFeedbackMock).toHaveBeenCalledTimes(1);
+      expect(createFeedbackMock.mock.calls[0][0].area).toBe(area);
+    }
+  );
+
+  // Control for the matcher: an undeclared slug is ALSO a BAD_REQUEST, but not this guard's.
+  it('an undeclared slug fails for a different reason (not the app-block message)', async () => {
+    const err = await caller()
+      .create({ area: 'models-feed' as never, message: 'x' })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((err as Error).message).not.toContain(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL);
+  });
+});
+
+describe('feedback.create — the submission quota is not widened by uploads', () => {
   it('wires exactly those numbers into the router’s rate limiter', () => {
     expect(rateLimitCalls).toHaveLength(1);
     const [limits] = rateLimitCalls[0] as [{ limit: number; period: number }];

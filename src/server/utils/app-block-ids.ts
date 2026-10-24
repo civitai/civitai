@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 
 // Crockford base32 alphabet (no I, L, O, U)
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const TIME_LEN = 10;
 const RANDOM_LEN = 16;
 
 function encodeTime(time: number, length: number): string {
@@ -68,7 +69,15 @@ function nextRandom(time: number): number[] {
  */
 export function newUlid(): string {
   const time = Date.now();
-  return encodeTime(time, 10) + encodeRandom(nextRandom(time));
+  return encodeTime(time, TIME_LEN) + encodeRandom(nextRandom(time));
+}
+
+// Built from the constants `newUlid` encodes with, so the two cannot disagree about the shape.
+const ULID_SHAPE = new RegExp(`^[${ALPHABET}]{${TIME_LEN + RANDOM_LEN}}$`);
+
+/** True for any string `newUlid` could return. Case-sensitive: the generator emits upper case only. */
+export function isUlidShaped(value: string): boolean {
+  return ULID_SHAPE.test(value);
 }
 
 export function newAppBlockId(): string {
@@ -91,16 +100,37 @@ export function newBlockBuzzAttributionId(): string {
   return `bba_${newUlid()}`;
 }
 
-export function newBlockAttributionPayoutId(): string {
-  return `bba_payout_${newUlid()}`;
-}
-
 export function newBlockSpendAttributionId(): string {
   return `bsa_${newUlid()}`;
 }
 
 export function newBlockSubscriptionAttributionId(): string {
   return `bsu_${newUlid()}`;
+}
+
+/**
+ * App Blocks per-generation AUTHOR FEE accrual (slice 2).
+ *
+ * Distinct prefix from `bsa_` (spend attribution) on purpose: the two tables
+ * describe the same generation and an id pasted into the wrong lookup should
+ * miss loudly rather than resolve to an unrelated row.
+ */
+export function newBlockAuthorFeeAccrualId(): string {
+  return `bafa_${newUlid()}`;
+}
+
+/**
+ * App Blocks DIGITAL GOODS. Two prefixes, not one, because the purchase (money)
+ * and the entitlement (what the viewer owns) are separate rows with separate
+ * lifetimes — a refund keeps the purchase and revokes the entitlement — and an
+ * id pasted into the wrong lookup should miss loudly.
+ */
+export function newBlockGoodPurchaseId(): string {
+  return `bgp_${newUlid()}`;
+}
+
+export function newBlockGoodEntitlementId(): string {
+  return `bge_${newUlid()}`;
 }
 
 export function newAppUserScopeGrantId(): string {
@@ -127,6 +157,11 @@ export function newAppListingReportId(): string {
 
 export function newAppListingModerationEventId(): string {
   return `alme_${newUlid()}`;
+}
+
+// App Store sub-listings. The shape is pinned by `APP_SUB_LISTING_ID_RE`.
+export function newAppSubListingId(): string {
+  return `asl_${newUlid()}`;
 }
 
 // App Blocks — agentic mod code-review report (P0). Dark/additive.

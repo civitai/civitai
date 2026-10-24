@@ -7,7 +7,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * P2b AppListingsMarketplaceBody wiring tests (REPORT-ONLY). Network-free — the
+ * P2b AppListingsMarketplaceBody wiring tests (`Component tests` in CI). Network-free — the
  * P2a `appListings.listAvailable` infinite query + feature flags are mocked.
  * Covers the kind filter passing through to the query args, the sort/category
  * controls rendering, and the card grid rendering the returned listings.
@@ -29,6 +29,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -113,7 +114,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // badge renders); `mobile: false` = the desktop popover path. The mobile drawer path
 // and the pre-hydration path get their own files.
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');

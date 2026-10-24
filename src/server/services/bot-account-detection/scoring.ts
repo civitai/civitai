@@ -46,8 +46,26 @@ export type BotAccountHeuristic = {
   /** What it claims to detect, for the humans reading a report. Never parsed. */
   description: string;
   /**
-   * Share of the blend. Relative, not absolute: the blend divides by the total weight of the
-   * heuristics that ran, so adding one does not silently dilute the others' meaning.
+   * Share of the blend, against the WHOLE REGISTRY — so adding a heuristic DOES dilute every other
+   * one's contribution, and the arithmetic is stated here because the next author to add one reads
+   * this field before they read anything else.
+   *
+   * 🔴 THIS DOCSTRING SAID THE OPPOSITE UNTIL A FOURTH HEURISTIC WAS ADDED. It read: "Relative, not
+   * absolute: the blend divides by the total weight of the heuristics that RAN, so adding one does
+   * not silently dilute the others' meaning." That was wrong, it contradicted `scoreAccount` in this
+   * same file — which had already been corrected once and records the correction — and it was wrong
+   * in the most expensive direction available: it told the one person in a position to cause the
+   * dilution that the dilution cannot happen.
+   *
+   * What the code does: `scoreAccount` divides by `Σ weight` over EVERY REGISTERED heuristic, not
+   * over the ones that had input. So with `n` equally-weighted heuristics a lone signal of `s`
+   * blends to `s / n`, and registering an `n + 1`th multiplies every existing account's confidence
+   * by `n / (n + 1)` — 25% off the top of all of them when a third registry becomes a fourth. That
+   * is DELIBERATE (see `scoreAccount` for why a blend must not silently rescale itself when a source
+   * is down) and it has a consequence that is not: `MIN_REPORTED_CONFIDENCE` is a literal, so an
+   * unchanged threshold against a larger denominator is a quietly stricter detector nobody decided
+   * on. Adding a heuristic means re-deriving that constant in the same change. There is a guard —
+   * see `LONE_SIGNAL_CUT`.
    */
   weight: number;
   /** 0..1. Out-of-range and non-finite values are clamped and COUNTED — see `scoreAccount`. */
@@ -119,9 +137,23 @@ function clampScore(raw: number): { score: number; clamped: boolean } {
 /**
  * Run every heuristic over one account.
  *
- * The blend is a weighted mean over the heuristics that RAN, so a registry of one always-zero
- * placeholder yields 0 and a registry of none yields 0 — neither of which is a claim about the
- * account.
+ * 🔴 THE BLEND DIVIDES BY EVERY REGISTERED WEIGHT, NOT BY THE HEURISTICS THAT HAD INPUT — and this
+ * docstring claimed the opposite ("a weighted mean over the heuristics that RAN") until a heuristic
+ * with no input made the difference matter. The denominator below is `subScores.reduce(…weight…)`
+ * over the whole registry; a heuristic whose source was empty contributes 0 to the numerator and
+ * its full weight to the denominator. So a permanently silent third of an equally-weighted registry
+ * of three is not neutral — it is a fixed 1/3 haircut that caps every account at 0.667, which is
+ * exactly what a `registration-cluster` score of 0.6667 blending to 0.2222 records.
+ *
+ * That is a DELIBERATE choice and not a defect to be patched here: dividing by only the heuristics
+ * that found data would make an account's confidence depend on which sources happened to be up,
+ * so the same account would score differently on a day ClickHouse was down — and `sources` exists
+ * precisely so a grading pass can exclude those runs rather than have the blend silently rescale
+ * itself. But the arithmetic has to be stated correctly, because the next person to touch the
+ * denominator will read this sentence first.
+ *
+ * A registry of one always-zero placeholder still yields 0, and a registry of none yields 0 —
+ * neither of which is a claim about the account.
  */
 export function scoreAccount(
   heuristics: readonly BotAccountHeuristic[],
@@ -145,9 +177,28 @@ export function scoreAccount(
 /**
  * The per-heuristic counters that ride out with every report.
  *
- * Three numbers per heuristic, not one, because the question shadow mode asks is "how often does
+ * FOUR numbers per heuristic, not one, because the question shadow mode asks is "how often does
  * this fire, and how hard" — `fired` alone cannot distinguish a signal that never triggers from one
  * that triggers weakly on everything.
+ *
+ * 🔴 `score_sum` IS THE "HOW HARD" HALF, AND UNTIL IT EXISTED THIS DOCSTRING PROMISED IT WITHOUT
+ * DELIVERING IT. `evaluated`, `fired` and `clamped` are all COUNTS: between them they say how often
+ * a heuristic ran, how often it returned anything at all, and how often it returned nonsense — and
+ * not one of them carries a MAGNITUDE, so a signal firing at 0.05 on everything and one firing at
+ * 0.95 on everything produce byte-identical counters. The only place a magnitude reached anybody was
+ * the `id=0.00` list dumped into each finding's `reason`, i.e. the moderator-facing sentence, which
+ * is the wrong surface for it twice over: unreadable to the person it was shown to, and per-account
+ * rather than aggregated for the person who wanted it.
+ *
+ * So the sum rides out here instead, and `score_sum / evaluated` is the mean sub-score for the run.
+ * A SUM rather than a mean because the contract's counters are a flat `Record<string, number>` with
+ * no way to say "this one is an average, weight it by that one" — two runs' means cannot be combined
+ * without their denominators, and both halves of the pair are already emitted.
+ *
+ * Rounded to four places on the way out: a float sum accumulates representation error (0.1 + 0.2)
+ * and a counter reading `1.2000000000000002` on a board invites someone to explain the tail. Four
+ * places is finer than the two the dumped clause ever rendered, so nothing is lost against what it
+ * replaced.
  *
  * The `heuristic:` prefix keeps them from colliding with the run-level counters in the same flat
  * record; a heuristic id containing a colon would read ambiguously, which is why ids are identifiers.
@@ -159,11 +210,15 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
       const evaluated = `heuristic:${sub.id}:evaluated`;
       const fired = `heuristic:${sub.id}:fired`;
       const clamped = `heuristic:${sub.id}:clamped`;
+      const scoreSum = `heuristic:${sub.id}:score_sum`;
       counters[evaluated] = (counters[evaluated] ?? 0) + 1;
       counters[fired] = (counters[fired] ?? 0) + (sub.score > 0 ? 1 : 0);
       counters[clamped] = (counters[clamped] ?? 0) + (sub.clamped ? 1 : 0);
+      counters[scoreSum] = (counters[scoreSum] ?? 0) + sub.score;
     }
   }
+  for (const key of Object.keys(counters))
+    if (key.endsWith(':score_sum')) counters[key] = Math.round(counters[key] * 10_000) / 10_000;
   return counters;
 }
 
@@ -171,17 +226,25 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
  * How much larger than every other score a heuristic's own must be before the finding counts as
  * carried by it alone.
  *
- * 🔴 DERIVED FROM THE REGISTRY'S SIZE, NOT PICKED. With `n` equally weighted heuristics and a top
- * score `s`, every other is at most `s / k`, so the rest together contribute at most `(n - 1) · s / k`
- * — which is less than `s` exactly when `k > n - 1`. At `n = 3` that makes 3 the smallest integer
- * multiple at which the leading heuristic outweighs everything else combined, which is the plain
- * reading of "this finding rests on one signal".
+ * 🔴 COMPUTED FROM THE REGISTRY'S SIZE, NOT PICKED — AND IT USED TO BE A LITERAL `3` THAT ONLY
+ * HAPPENED TO EQUAL IT. With `n` equally weighted heuristics and a top score `s`, every other is at
+ * most `s / k`, so the rest together contribute at most `(n - 1) · s / k` — which is less than `s`
+ * exactly when `k > n - 1`. The smallest integer satisfying that is `n` itself. At `n = 3` that is
+ * 3, which is why the literal was invisible; at `n = 4` it is 4, and the literal would have kept
+ * calling a finding "sole" that two heuristics between them outweighed.
  *
- * 🔴 SO IT IS TIED TO `n = 3`. A fourth registered heuristic makes `k > 3` the condition and this
- * value no longer satisfies it — re-derive here when `heuristics/index.ts` grows, rather than
- * leaving a counter that quietly starts calling a two-signal finding sole.
+ * Its own docstring said to re-derive it by hand when `heuristics/index.ts` grew. Doing the
+ * derivation IN CODE is strictly better than a note asking the next person to remember: a constant
+ * that must be edited in step with another file is a defect waiting for the edit that forgets, and
+ * this one was already one registry-entry away from firing. At `n = 3` the value is unchanged, so
+ * this closes the class without moving any counter today.
+ *
+ * `n = 0` cannot occur through `soleSignalCounters` (no heuristics means no counters and no leader),
+ * and `n = 1` gives `k = 1`, which is correct: a registry of one has no runner-up, so `s >= 1 × 0`
+ * counts every firing as sole. The floor is what keeps a degenerate `n` from producing `k = 0`,
+ * where `s >= 0` would make EVERY finding sole including ones two heuristics agreed on.
  */
-export const SOLE_SIGNAL_DOMINANCE = 3;
+export const soleSignalDominance = (registrySize: number): number => Math.max(1, registrySize);
 
 /**
  * How many of these scores each heuristic CARRIED ON ITS OWN.
@@ -189,25 +252,56 @@ export const SOLE_SIGNAL_DOMINANCE = 3;
  * 🔴 THIS IS THE COUNTER THE FALSE-POSITIVE QUESTION IS ANSWERED WITH, and `fired` cannot answer it.
  * A heuristic that fires alongside the other two on the same account is corroborated; one that
  * carries a finding by itself is the population where a known collision turns into a report nobody
- * should have received. The worked example is `content-templating`: a generation-parameter paste —
- * `Steps: …, Sampler: …, CFG scale: …, Seed: …` — fingerprints identically to the same line with
- * different numbers, because the digit masking is doing the matching, so six accounts pasting their
- * settings under one model look like one ring.
+ * should have received.
+ *
+ * 🔴 THE WORKED EXAMPLE THIS DOCSTRING CARRIED IS RETRACTED, AND SAYING SO RATHER THAN QUIETLY
+ * SWAPPING IT IS THE POINT. It described a generation-parameter paste — `Steps: …, Sampler: …,
+ * CFG scale: …, Seed: …` — fingerprinting identically to the same line with different numbers, "so
+ * six accounts pasting their settings under one model look like one ring". That collision is
+ * UNREACHABLE. It was a property of the deleted comment-text source twice over: the strings were
+ * comments, which are no longer read at all, and what made two different pastes collide was the
+ * prose normaliser's DIGIT MASKING, which `evidence.ts#normalizeFilename` deliberately does not do —
+ * see the measurement there, where masking is rejected precisely because it would collapse every
+ * `<digits>.jpg` into one key. Two filenames differing in their digits are two cluster keys. Nothing
+ * on the surface that remains can produce the example, so anyone tuning against it would have been
+ * tuning against a population that cannot appear.
+ *
+ * 🔴 THE REACHABLE FALSE POSITIVE IS A GENERIC FILENAME, and the counter is justified by that one
+ * instead. There is no length floor and no stoplist of ordinary names here, deliberately — a
+ * stoplist would remove exactly the names a ring shares, because a ring's method is to look
+ * unremarkable (`normalizeFilename`, `heuristics/similarity.ts`). So a camera or export default that
+ * several unrelated people happen to upload under is the collision that survives. What defends
+ * against it is not this counter but `CLUSTER_ZERO_AT` plus the cohort: at least THREE DISTINCT
+ * members, every one an account less than a day old. This counter is how you find out whether that
+ * defence is enough, by isolating the findings that rest on the filename signal and nothing else.
  *
  * 🔴 "CARRIED IT" IS A DOMINANCE TEST, NOT AN EXCLUSIVITY TEST, AND THE DIFFERENCE IS THE WHOLE
  * POINT OF THE COUNTER. The predicate used to be `exactly one heuristic scored above zero`, and that
  * measured a strictly smaller population than the sentence above describes: the collision's own
- * routine shape is a member who ALSO scores a trace somewhere else, and a trace excluded it. A
- * member 40 minutes old with 6 parameter-paste comments and a fingerprint cluster of 6 scores
- * `posting-velocity` 0.1389 — six items in 0.67h is 9/hour, just over the 4/hour floor — and
- * `content-templating` 0.5. It blends to 0.2130, clears `MIN_REPORTED_CONFIDENCE`, is REPORTED, and
- * under the old predicate incremented nothing. An operator reading
- * `content-templating:sole_signal = 0` concluded the collision produced no reports, on the one
- * number the decision about that collision was deferred to, and the error ran in the reassuring
- * direction. The dominance form counts it: 0.5 ≥ 3 × 0.1389.
+ * routine shape is a member who ALSO scores a trace somewhere else, and a trace excluded it. Take an
+ * account an hour old that bulk-uploaded 8 images under one ordinary name, sharing that name with 5
+ * other accounts registered the same day. `content-templating` scores the cluster of 6 at 0.5
+ * (`rampScore(6, 2, 10)`) and `posting-velocity` scores 8 items in 1.0h — 8/hour, just over the
+ * 4/hour floor — at 0.1111 (`rampScore(8, 4, 40)`). `registration-cluster` and `asset-staging` score
+ * 0: the accounts share no address or domain, which is what makes this a collision rather than a
+ * ring, and uploads attached to posts are not staged. The blend is (0.5 + 0.1111) / 4 = 0.1528, over
+ * `MIN_REPORTED_CONFIDENCE`, so it is REPORTED — and under the old predicate it incremented nothing,
+ * because of the 0.1111. An operator reading `content-templating:sole_signal = 0` would have
+ * concluded the collision produced no reports, on the one number the decision about it is deferred
+ * to, and the error ran in the reassuring direction. The dominance form counts it: 0.5 ≥ 4 × 0.1111,
+ * which is 0.4444.
+ *
+ * 🔴 AT FIVE IT WOULD NOT — 5 × 0.1111 is 0.5556, above the 0.5 that carried it. That is the
+ * derivation working rather than failing: with another heuristic registered there is one more place
+ * for an unseen contribution to hide, so the bar for "outweighs everything else combined" is higher
+ * and this member is no longer on the safe side of it. The consequence is real and worth knowing
+ * before reading the counter: the SAME account, scored by a larger registry, moves out of the
+ * sole-signal population and into the corroborated one. It already happened once — the registry went
+ * from three entries to four when `asset-staging` was added — so a drop in this counter across a
+ * change that grows the registry is the bar moving and not the collision going away.
  *
  * Two signals that genuinely agree still count for neither. At any multiple above 1 a tie fails the
- * test — `0.9 ≥ 3 × 0.9` is false — so corroboration is excluded by the arithmetic rather than by a
+ * test — `0.9 ≥ 4 × 0.9` is false — so corroboration is excluded by the arithmetic rather than by a
  * special case.
  *
  * Run over the REPORTED members rather than all scored ones: a sole signal below the threshold
@@ -228,6 +322,11 @@ export function soleSignalCounters(
   heuristics: readonly BotAccountHeuristic[]
 ): Record<string, number> {
   const counters: Record<string, number> = {};
+  // The bar is a function of how many heuristics were REGISTERED for this run, not of how many
+  // fired: the derivation bounds what the non-leaders could contribute, and a heuristic that scored
+  // 0 is a non-leader contributing 0. Taken from the argument rather than from a module constant so
+  // a run with an injected registry is graded against its own size.
+  const dominance = soleSignalDominance(heuristics.length);
   for (const heuristic of heuristics) counters[`heuristic:${heuristic.id}:sole_signal`] = 0;
   for (const account of scores) {
     // The leading score, and the largest of everything else. A registry of one leaves the runner-up
@@ -244,29 +343,42 @@ export function soleSignalCounters(
       }
     }
     if (leader === null || leader.score <= 0) continue;
-    if (leader.score < SOLE_SIGNAL_DOMINANCE * runnerUp) continue;
+    if (leader.score < dominance * runnerUp) continue;
     const key = `heuristic:${leader.id}:sole_signal`;
     counters[key] = (counters[key] ?? 0) + 1;
   }
   return counters;
 }
 
-/** The compact `id=0.00` rendering the finding's reason carries, so a moderator sees each
- *  heuristic's own number rather than only the blend. */
-export function renderSubScores(subScores: HeuristicScore[]): string {
-  if (!subScores.length) return 'no heuristics registered';
-  return subScores.map((s) => `${s.id}=${s.score.toFixed(2)}`).join(', ');
-}
+/**
+ * 🔴 `renderSubScores` IS GONE, AND IT WAS DELETED RATHER THAN LEFT UNCALLED. It produced the
+ * `id=0.00, id=0.00` clause that `report.ts` appended to every finding's `reason` — machine syntax
+ * on the one string the wire contract calls "the whole value of the row to a moderator", and the
+ * part of it a non-technical reader stops at. There is no second caller and no second surface that
+ * wants that shape, so an unused export would be an invitation to put it back.
+ *
+ * The numbers it rendered are NOT gone: `heuristicCounters` above now emits
+ * `heuristic:<id>:score_sum`, which is the magnitude a grading pass actually wanted, aggregated per
+ * run in the record that already carries the other three per-heuristic counters. The trade is stated
+ * on `buildFinding` in `report.ts`: per-ACCOUNT sub-scores no longer leave the process, because the
+ * contract has no structured field on a finding to carry them.
+ */
 
 /**
  * The evidence-citing clauses, in one string a moderator can act on.
  *
  * 🔴 THE NOTES WERE COLLECTED AND THEN DROPPED. `HeuristicScore.note` has always existed and every
- * heuristic has always been asked to produce one, but the finding's reason rendered only
- * `renderSubScores` — the bare `id=0.00` list. So the board carried three numbers and no statement
- * of what any of them SAW, which is the half a moderator needs to decide anything. With a
- * do-nothing placeholder as the only heuristic that gap was invisible, because the only note was
- * always `null`.
+ * heuristic has always been asked to produce one, but the finding's reason once rendered only the
+ * bare `id=0.00` list (by a `renderSubScores` that has since been deleted — see the block above).
+ * So the board carried three numbers and no statement of what any of them SAW, which is the half a
+ * moderator needs to decide anything. With a do-nothing placeholder as the only heuristic that gap
+ * was invisible, because the only note was always `null`.
+ *
+ * 🔴 AND THIS IS NOW THE ONLY PART OF THE SCORING IN THE SENTENCE. The numbers went to the counters
+ * and the notes stayed, which is the right way round: a note says what a signal saw, and that is
+ * what a non-technical moderator can check. A heuristic whose `explain` returns something a reader
+ * cannot act on is therefore a defect in that heuristic, not a cosmetic issue — nothing else is
+ * left to carry the evidence.
  *
  * Heuristics that scored 0 return `null` and contribute nothing here, deliberately: a reason that
  * recites every signal that did not fire buries the one that did.
@@ -286,15 +398,36 @@ export function renderNotes(subScores: HeuristicScore[]): string | null {
  * entirely as confidence-0 rows. A board that is mostly noise on its first day is a board nobody
  * reads on its second, and that failure is not recoverable by tuning later.
  *
- * WHAT THE DEFAULT IS SET AGAINST — the blend's own arithmetic, not an intuition. With three equally
- * weighted heuristics the blend is their mean, so:
- *   - one heuristic alone at 0.45 → 0.15   (the threshold)
- *   - one heuristic alone at 1.00 → 0.33
- *   - two at 0.23 each            → 0.15
- * So 0.15 admits an account on the strength of ONE signal that is about half convinced, and rejects
+ * WHAT THE DEFAULT IS SET AGAINST — the blend's own arithmetic, not an intuition. With `n` equally
+ * weighted heuristics the blend is their mean, so the cut is `LONE_SIGNAL_CUT / n`. At the current
+ * `n = 4`, i.e. 0.1125:
+ *   - one heuristic alone at 0.45 → 0.1125  (the threshold)
+ *   - one heuristic alone at 1.00 → 0.25
+ *   - two at 0.225 each           → 0.1125
+ * So it admits an account on the strength of ONE signal that is about half convinced, and rejects
  * one where every signal is weak. That is the loosest cut that still means something, chosen because
  * the shadow phase's job is to see marginal cases — a tight threshold would report only the accounts
  * nobody needed a detector to find, and would teach us nothing about where the real line sits.
+ *
+ * 🔴 IT WAS `0.15` AT `n = 3` AND IT IS `0.1125` AT `n = 4`, AND THE CHANGE IS THE WHOLE POINT. A
+ * fourth registered heuristic divides every existing account's confidence by 4 instead of 3 — a flat
+ * 25% haircut — while a literal threshold stays exactly where it is. Left at 0.15 the cut would have
+ * gone on admitting only a signal 0.6 convinced: a tighter detector nobody decided on, arrived at by
+ * not editing a file. Concretely, every account whose confidence sat in [0.15, 0.20) — a lone
+ * heuristic between 0.45 and 0.60, or any combination summing there — would have vanished from the
+ * board with no counter recording it, because `findings_suppressed` counts members below the cut and
+ * cannot say the cut moved underneath them. Re-deriving keeps the REPORTED POPULATION unchanged for
+ * every account the new heuristic scores 0 on, which is the only honest way to add a signal: strictly
+ * additive, never quietly subtractive.
+ *
+ * 🔴 IT IS STILL A LITERAL AND STILL NOT COMPUTED FROM THE REGISTRY, deliberately — `scoring.ts`
+ * owns the mechanics and knows nothing about which heuristics exist, and importing the registry here
+ * to read its length would invert that. What closes the gap instead is `LONE_SIGNAL_CUT` below plus
+ * the guard in `__tests__/scoring.test.ts`, which multiplies this constant by the registry's actual
+ * length and fails unless the product is the lone-signal sub-score. A fifth heuristic added without
+ * re-deriving this value now fails a test with the arithmetic in its name. (The older guards —
+ * `1/n > this` and `0.4/n < this` — hold at every `n` this will plausibly reach and would NOT have
+ * caught it; they are kept as sanity bounds, not as the guard.)
  *
  * 🔴 IT IS A STARTING POINT, NOT A CALIBRATION, and nothing here pretends otherwise. No run has
  * produced a graded finding, so this number is derived from the weighting rather than from data.
@@ -302,7 +435,38 @@ export function renderNotes(subScores: HeuristicScore[]): string | null {
  * distribution says where the mass actually sits, and the threshold moves to a measured value.
  * Until then the honest statement is that it is an argument, and the counters are what will settle it.
  */
-export const MIN_REPORTED_CONFIDENCE = 0.15;
+export const MIN_REPORTED_CONFIDENCE = 0.1125;
+
+/**
+ * The SUB-SCORE one heuristic must reach ON ITS OWN for its account to be reported.
+ *
+ * 🔴 THIS IS THE NUMBER THAT WAS NEVER WRITTEN DOWN, AND ITS ABSENCE IS WHY THE THRESHOLD COULD GO
+ * STALE. The reporting cut has always been an argument about a lone signal — "about half convinced"
+ * — divided by the registry's size. Only the quotient existed as a constant, so the registry could
+ * grow underneath it and nothing was left to compare against: `0.15` is not wrong-looking at `n = 4`,
+ * it is just a different claim about how convinced a lone signal must be, made by nobody.
+ *
+ * Naming the invariant half separately makes the relationship checkable —
+ * `MIN_REPORTED_CONFIDENCE × registry size === LONE_SIGNAL_CUT` — which is exactly what
+ * `__tests__/scoring.test.ts` asserts. That RELATIONSHIP is the part doing work here.
+ *
+ * 🔴 THE VALUE ITSELF IS INHERITED, NOT DECIDED, AND IT MUST NOT BE READ AS A JUDGEMENT ANYONE
+ * MADE. `0.45` is the back-derivation of the previous literal threshold: the cut was `0.15` against
+ * a registry of three, and `0.15 × 3 = 0.45`. Extracting it named a quantity that had been implicit
+ * and made it checkable — a real improvement — but extraction is not calibration, and nothing in
+ * this repository has ever chosen 0.45 on evidence. An earlier draft of this comment defended it as
+ * "the constant that carries the JUDGEMENT"; that was a claim about a decision that never happened,
+ * and it is retracted here rather than left to be cited.
+ *
+ * So: PROVISIONAL. It is carried forward unchanged because changing it would move the reported
+ * population of every heuristic at once, which is a decision that wants its own evidence and its
+ * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are CHECKED
+ * against this number (see `STAGED_ONE_AT` — they were derived from it until the ordering evidence
+ * set the volume boundary instead), so it still bounds that heuristic's firing point; that makes it
+ * more important to be honest about its provenance, not less. The
+ * `confidence_bucket_*` counters are what can eventually replace it with a measured value.
+ */
+export const LONE_SIGNAL_CUT = 0.45;
 
 /**
  * How many buckets the confidence distribution is reported in.

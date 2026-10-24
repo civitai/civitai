@@ -2,7 +2,7 @@ import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
   img2imgImages,
-  SDXL_SQUARE_AR,
+  SDXL_FULL_AR_4MP,
   SEED,
   guidancePresetsLowBalHigh,
   sliderDef,
@@ -17,12 +17,10 @@ import {
 } from '../shared';
 
 /**
- * Flux.2 (dev / flex / pro / max), ported from `flux2-graph.ts`. No negative
+ * Flux.2 (dev / flex / pro / max). No negative
  * prompt, no sampler, no CLIP skip. Only dev supports LoRA resources; the mode
  * derives from the model version id.
  */
-
-// ---- copied from flux2-graph.ts, which dies with the data-graph engine ------
 
 export type Flux2Mode = 'dev' | 'flex' | 'pro' | 'max';
 
@@ -40,8 +38,6 @@ const flux2ModeVersionOptions = [
   { label: 'Max', value: flux2VersionIds.max },
 ];
 
-// ---- end of flux2-graph.ts copies -------------------------------------------
-
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const flux2ModeOf = versionModeOf(flux2VersionIds, 'dev');
 
@@ -57,19 +53,19 @@ const CFG = sliderDef({
 const STEPS = sliderDef({ min: 20, max: 50, default: 25 });
 
 const noResources = defineGraph<Flux2ModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED);
 
 const dev = defineGraph<Flux2ModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED)
   .field('resources', familyResources);
 
-/** Tagged: v1's `flux2Mode` computed becomes the branch key, same state shape. */
+/** Tagged: the picked key is stamped into state as `flux2Mode`. */
 const modes = branch('flux2Mode', (ext: Flux2ModeExt) => flux2ModeOf(ext.model), {
   dev,
   flex: noResources,

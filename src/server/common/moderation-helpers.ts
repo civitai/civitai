@@ -1,3 +1,4 @@
+import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
 type UnpublishReasonDetail = {
   optionLabel: string;
   notificationMessage: string;
@@ -58,6 +59,12 @@ export const unpublishReasons = {
     optionLabel: 'Prohibited violent activities',
     notificationMessage:
       'Resources intended to depict graphic violence, death, extreme gore, or other forms of extreme content are prohibited under our content guidelines.',
+    type: 'policy',
+  },
+  'self-harm': {
+    optionLabel: 'Self-harm, body image disorders, or dangerous behavior',
+    notificationMessage:
+      'Resources intended to depict or promote self-harm, suicide, cutting, mutilation, disordered eating such as anorexia or bulimia, or other dangerous behavior are prohibited under our content guidelines.',
     type: 'policy',
   },
   beastiality: {
@@ -160,6 +167,12 @@ export const articleUnpublishReasons = {
       'Articles intended to depict graphic violence, death, extreme gore, or other forms of extreme content are prohibited under our content guidelines.',
     type: 'policy',
   },
+  'self-harm': {
+    optionLabel: 'Self-harm, body image disorders, or dangerous behavior',
+    notificationMessage:
+      'Articles intended to depict or promote self-harm, suicide, cutting, mutilation, disordered eating such as anorexia or bulimia, or other dangerous behavior are prohibited under our content guidelines.',
+    type: 'policy',
+  },
   beastiality: {
     optionLabel: 'Depiction of "bestiality"',
     notificationMessage:
@@ -226,6 +239,18 @@ function lookupReason(
 
 export function getUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
   return lookupReason(unpublishReasons, reason);
+}
+
+// One list for both places that take an offering down: here and the moderator app's report queue.
+export {
+  serviceOfferingTakedownReasons,
+  type ServiceOfferingTakedownReason,
+} from '@civitai/shared/service-offering-takedown';
+
+export function getServiceOfferingTakedownReason(
+  reason: string
+): UnpublishReasonDetail | undefined {
+  return lookupReason(serviceOfferingTakedownReasons, reason);
 }
 
 /** Never falls back to `unpublishReasons` — everything it returns is safe to show an article's author. */

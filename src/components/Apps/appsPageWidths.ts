@@ -4,8 +4,9 @@
  *
  * 🔴 THE MODEL, AND WHY IT CHANGED. This module used to export `APPS_PAGE_WIDTHS`,
  * a per-route CONTAINER width, and `AppsPageLayout` fed it straight into its
- * `<Container size=…>`. The shared chrome — the {@link ~/components/Apps/AppsSubNav}
- * tab strip — renders INSIDE that Container, so it inherited each page's own width
+ * `<Container size=…>`. The shared chrome — then a horizontal tab strip, now the left
+ * rail in {@link ~/components/Apps/AppsRailNav} — renders INSIDE that Container, so it
+ * inherited each page's own width
  * and the one element that is supposed to be identical on every apps page moved
  * horizontally as you navigated. Measured on a real render of `AppsPageLayout`
  * (Chromium, Mantine stylesheet loaded), reading the nav's `getBoundingClientRect()`:
@@ -135,7 +136,7 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * The narrowest column a `/apps/*` CARD LIST may be laid out in before it starts
  * putting cards SIDE BY SIDE instead of stretching each one across the container.
  *
- * 🔴 THIS EXISTS FOR `/apps/installed`, AND FOR ONE MEASURED DEFECT. That page is a
+ * 🔴 THIS EXISTS FOR `/apps/activity`, AND FOR ONE MEASURED DEFECT. That page is a
  * `Stack` of full-width cards whose header rows are
  * `<Group justify="space-between" wrap="nowrap">` — content on the left, the control
  * that acts on it on the right. Raising the container to 2560 therefore moved the
@@ -152,16 +153,51 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  *
  * A body cap would fix the gap by refusing the width, which is the thing the container
  * pass exists to stop doing. So the width is spent on COLUMNS instead: the card list is
- * a `repeat(auto-fill, minmax(…, 1fr))` grid, and 1200 is picked so the ladder steps
- * exactly where the surplus appeared —
+ * a `repeat(auto-fill, minmax(…, 1fr))` grid, and this constant is picked so the ladder
+ * steps exactly where the surplus appears.
  *
- *   content 1888 (the OLD 1920 container): `floor((1888 + 16) / (1200 + 16))` = **1 column**
- *   content 2528 (the CURRENT container):  `floor((2528 + 16) / (1200 + 16))` = **2 columns**
+ * 🔴 1100, LOWERED FROM 1200 BY THE LEFT-RAIL CHANGE, AND THE LOWERING IS A REPAIR OF
+ * THIS CONSTANT'S OWN PURPOSE RATHER THAN A NEW DENSITY OPINION. The rail takes 276px
+ * off every `/apps/*` body, so at 1200 the second column stopped arriving AT ALL:
  *
- * — i.e. nothing a 1440 or 1920 monitor shows changes, and the second column arrives at
- * 2416 of content. Both rungs are pinned in `__tests__/appsWideLayout.test.ts`; the
- * rendered consequence (the gap does not grow) is in
- * `AppsWideLayout.geometry.test.tsx`.
+ *   rail OPEN at a 2560 viewport → 2242 of grid: `floor((2242 + 16) / (1200 + 16))` = 1
+ *
+ * — i.e. the 640px content-to-control gap this constant exists to close reopened on
+ * exactly the monitors it was written for.
+ *
+ * ⚠️ THE TRUE UPPER BOUND IS **1113**, NOT 1100, AND THIS COMMENT SAID 1100 UNTIL AN AUDIT
+ * SOLVED IT RATHER THAN SAMPLING IT. Two columns need `2n + 16 ≤ 2242`, so the largest
+ * admissible `n` is 1113 — verified by scanning every integer: `floor((2242+16)/(1113+16))`
+ * is 2 and 1114 is the first value that fails. The original claim ("1100 is the LOOSEST
+ * value that restores it, and 1120 already fails") generalised a five-point sample
+ * (1050/1100/1120/1150/1200) into a global property, and the sample simply had no point
+ * between 1100 and 1120. That is the sentence someone would have quoted the next time they
+ * needed this bound.
+ *
+ * 1100 IS STILL THE SHIPPED VALUE, deliberately: it sits 13px under the bound, so the
+ * second column survives a small change in the rail width, the gutter or the scrollbar
+ * allowance without the rung silently vanishing. A value AT the bound would be maximally
+ * loose and maximally fragile.
+ *
+ * ⚠️ That margin used to be contrasted with `LISTING_FOUR_COLUMN_MIN_WIDTH`, the store's
+ * chrome-derived four-column rung, which had ZERO margin at 2560. That constant is gone —
+ * the store ladder re-tune was reverted and its wide rungs come from the card-width floor
+ * again — so the contrast has no second term and the reference is removed rather than
+ * left dangling.
+ *
+ * The rungs, recomputed for the rail-open widths (`n` columns need
+ * `n × 1100 + (n − 1) × 16` of grid, so two need **2216**):
+ *
+ *   content 1888 (the OLD 1920 container):      `floor((1888 + 16) / 1116)` = **1 column**
+ *   content 1602 (1920 viewport, rail open):    `floor((1602 + 16) / 1116)` = **1 column**
+ *   content 2242 (2560 viewport, rail open):    `floor((2242 + 16) / 1116)` = **2 columns**
+ *   content 2528 (the container, no rail):      `floor((2528 + 16) / 1116)` = **2 columns**
+ *
+ * — i.e. nothing a 1300, 1440 or 1920 monitor shows changes at either value (all three
+ * are one column with the rail open, before and after), and the second column is
+ * restored at 2560 where the old constant had just lost it. Both rungs are pinned in
+ * `__tests__/appsWideLayout.test.ts`; the rendered consequence (the gap does not grow) is
+ * in `AppsWideLayout.geometry.test.tsx`.
  *
  * 🔴 "NOTHING CHANGES" IS A CLAIM ABOUT SPACING AS WELL AS COLUMN COUNT, which is why
  * `AppsCardGrid` takes a `gap`. The lists it replaced did not share one: the Hidden tab
@@ -171,7 +207,7 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * produce the SAME rungs at both container widths, so carrying the original number is
  * free; that equivalence is asserted rather than assumed.
  */
-export const APPS_CARD_LIST_MIN_COLUMN = 1200;
+export const APPS_CARD_LIST_MIN_COLUMN = 1100;
 
 /** The DEFAULT gap between card-grid tracks, px — Mantine's `md` spacing, stated as a
  *  number because the column arithmetic above needs it. A list that used a different
@@ -186,15 +222,17 @@ export const APPS_CARD_LIST_GAP = 16;
  * column-count's job, because the grid had no way to add a column deliberately.
  * That is no longer true: {@link ~/components/Apps/appListingGrid} now carries an
  * EXPLICIT column ladder driven by a container query, so the store spends the extra
- * width as a fifth column at the one width where every card still clears the 460px it
- * renders at today, and stops there. The cap and the density are separately decided
- * instead of the cap standing in for the density — and the density decision is that
- * this container makes the cards BIGGER (492.8px at five columns in the 2528 of grid a
- * 2560 container yields; ~490.8px from a 2560 viewport, which loses ~10px more to the
- * scroll container's thin scrollbar on the platforms that reserve one),
- * not more numerous. A sixth column is declared at 2840 of grid and is deliberately
- * unreachable here; raising this constant past that fails a test rather than silently
- * shrinking every card.
+ * width as extra COLUMN WIDTH rather than as padding. The cap and the density are
+ * separately decided instead of the cap standing in for the density — and the density
+ * decision is that this container makes the cards BIGGER, not more numerous.
+ *
+ * ⚠️ THE WORKED NUMBERS HERE USED TO READ "492.8px at five columns" AND ARE RE-DERIVED:
+ * the left-rail re-tune moved the ladder, so the reachable top is FOUR columns — 620px in
+ * the 2528 of grid a 2560 container yields with no rail, 548.5px in the 2242 it yields
+ * with the rail open. Both still beat the 460px four-up the 1920 container shipped, which
+ * is the claim this paragraph exists to make. A FIFTH column is declared at 2840 of grid
+ * and is deliberately unreachable here in every rail state; raising this constant past
+ * that fails a test rather than silently shrinking every card.
  *
  * What 1920 actually cost: Mantine's `Container` centres past its cap, so a 2560
  * viewport spent `(2560 − 1920) / 2 = 320px` of dead margin on EACH side of every
@@ -209,7 +247,7 @@ export const APPS_CARD_LIST_GAP = 16;
  * ✅ THE SIBLING ROUTES NOW SPEND IT — this note used to say they did not. Every route
  * in {@link APPS_FULL_MEASURE_PAGES} lays out at up to 2528px of content, and the
  * surplus goes into COLUMN WIDTHS rather than padding: the tables carry a proportional
- * `<colgroup>` whose PRIMARY column takes the slack, and `/apps/installed`'s card list
+ * `<colgroup>` whose PRIMARY column takes the slack, and `/apps/activity`'s card list
  * steps to a second grid column. Both mechanisms live in
  * `~/components/Apps/appsWideLayout` — read {@link APPS_CARD_LIST_MIN_COLUMN} for the
  * measured 640px dead-gap defect the card half fixes.
@@ -350,8 +388,6 @@ export const APPS_PAGE_MEASURES = {
   '/apps/listing/[appListingId]/edit': APPS_READABLE_MEASURE,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_MEASURE,
-  /** The developer get-started explainer — prose. */
-  '/apps/get-started': APPS_READABLE_MEASURE,
 } as const satisfies Record<string, AppsMeasure>;
 
 export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
@@ -361,13 +397,26 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  * render a grid or a wide table and are actively hurt by an artificial cap on a large
  * monitor. They pass no `measure` to `AppsPageLayout` at all.
  *
- * 🔴 `/apps/mine` is here, not in {@link APPS_PAGE_MEASURES}, and the reason is the
- * content rather than the route: it absorbed `/apps/my-submissions` (which now 301s
- * here and has no page file) and is a table carrying an icon, a cover, three badges
- * and a date per row, with a measured `SUBMISSIONS_TABLE_MIN_WIDTH` scroll floor of
- * 1424px. Giving it the readable measure would re-create the exact clip the wide
- * width was introduced to fix; `__tests__/appsPageWidths.test.ts` pins the container
- * against that floor.
+ * 🔴 `/apps/build` IS HERE, AND IT IS THE ROUTE WHOSE CLASSIFICATION IS A REAL
+ * TRADE-OFF RATHER THAN A READING OF ITS CONTENT — so read this before "fixing" it.
+ * It is STATE-AWARE: state A (the recruiting pitch) is prose and genuinely wants the
+ * readable measure, while state C (the workbench) renders `MyAppsBody`'s table with a
+ * measured `SUBMISSIONS_TABLE_MIN_WIDTH` scroll floor of 1424px. This registry is keyed
+ * by ROUTE and can hold exactly ONE measure, so one of the two states has to lose.
+ *
+ * The table wins, because the two failures are not the same size. `APPS_READABLE_MEASURE`
+ * tops out at 1368, which is BELOW that 1424 floor — so the readable class would
+ * re-create the exact horizontal clip the wide width was introduced to fix on
+ * `/apps/mine` (this entry is that entry, inherited: `/apps/mine` 301s to `/apps/build`
+ * and has no page file). A clipped table is broken; prose on a wide measure is merely
+ * ugly. `__tests__/appsPageWidths.test.ts` pins the container against that floor and
+ * asserts the counterfactual, so the choice cannot be silently reverted.
+ *
+ * 🔴 THE RESIDUAL, STATED RATHER THAN LEFT TO BE DISCOVERED: state A's prose runs to the
+ * full container on a wide monitor. Fixing it properly means a per-STATE measure, which
+ * this module cannot express and `AppsPageLayout` would have to be taught — and hand-
+ * rolling a second width mechanism inside the page is the per-page-container pattern
+ * this module exists to have deleted. Not worth reintroducing for one state of one route.
  *
  * 🔴 `/apps/review` JOINED THIS LIST when its 1368 cap was deleted — see the note on
  * {@link APPS_PAGE_CONTAINER_WIDTH}. Taking the full container is only correct for it
@@ -376,8 +425,10 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  */
 export const APPS_FULL_MEASURE_PAGES = [
   '/apps',
-  '/apps/installed',
-  '/apps/mine',
+  '/apps/activity',
+  /** Chat beside a live preview: the preview wants every pixel the container has. */
+  '/apps/assistant',
+  '/apps/build',
   '/apps/revenue',
   '/apps/review',
   '/apps/review/[publishRequestId]',
@@ -385,23 +436,51 @@ export const APPS_FULL_MEASURE_PAGES = [
 
 /**
  * Routes that deliberately have NO `AppsPageLayout` container: they host a
- * full-viewport iframe (the block runtime / the moderator's live preview) or a
- * full-bleed dev shell. Wrapping these in the apps container would letterbox the
- * app being run/reviewed AND put a second chrome band over a third-party app.
+ * full-viewport iframe (the public block runtime, the PRIVATE run of a delisted app, or
+ * the moderator's live preview) or a full-bleed dev shell. Wrapping these in the apps
+ * container would letterbox the app being run/reviewed AND put a second chrome band over
+ * a third-party app.
  *
- * 🔴 "NO CONTAINER" IS NOT "NO WIDTH BOUND" — it stopped being that, and this
- * comment used to assert the stronger claim. All three of these routes mount
- * `PageBlockHost`, which caps ITSELF at `--app-page-max-width` (1600px, see
- * `APP_PAGE_MAX_WIDTH_PX` in `~/components/AppBlocks/PageBlockHost`) and centres
- * the app past that. Two different mechanisms at two very different thresholds:
- * this module's container is 2560 and applies to the apps CHROME, the host's cap
- * is 1600 and applies to the app itself, and an app can be excused from the
- * host's via the CSS ledger in `src/styles/globals.css`. Nothing here changes —
- * these routes still pass no `measure` and still render no `AppsPageLayout` — but
- * do not read this list as evidence that a run page is unbounded.
+ * 🔴 "NO CONTAINER" IS ALSO "NO WIDTH BOUND" AGAIN — AND THE INTERVENING CLAIM IS
+ * RETRACTED RATHER THAN DELETED, BECAUSE IT WAS TRUE WHILE IT STOOD. This comment
+ * first asserted no width bound; it was then corrected to say the opposite, because
+ * all four of these routes mount `PageBlockHost` and the host capped ITSELF at
+ * `--app-page-max-width` (then `1600px`) and centred the app past that. That whole
+ * mechanism is GONE — the constant, the custom property, the `var()` read, the auto
+ * margins and the per-app CSS ledger that could re-cap one app — so a run page really
+ * is unbounded once more, by an owner decision. The record is the tombstone above
+ * `PageBlockHostProps` in `~/components/AppBlocks/PageBlockHost`.
+ *
+ * ⚠️ AND THE HEDGE THAT USED TO FOLLOW IS RETRACTED TOO, BECAUSE IT NAMED A LEVER THAT
+ * NO LONGER EXISTS. It said "a per-app platform rule in that same stylesheet could cap
+ * ONE app again (the ledger there is deliberately empty), so 'no container here' has
+ * never meant 'nothing anywhere can bound this app'". There is no such rule and no
+ * ledger to write one in: nothing on the civitai side bounds a full-page app. What DOES
+ * still hold is that these remain two separate concerns — this module's container is
+ * 2560 and applies to the apps CHROME, while the third-party app's own width is the
+ * app's business and is set inside its own iframe document. Nothing about THIS module
+ * changes: these routes still pass no `measure` and still render no `AppsPageLayout`.
  */
 export const APPS_FULL_BLEED_PAGES = [
   '/apps/run/[slug]/[[...path]]',
+  /**
+   * The PRIVATE RUN of a delisted / suspended app. Full-bleed for exactly the reasons
+   * the public run route is: it mounts `PageBlockHost` with `fit="fill"` inside a
+   * `scrollable: false` page and passes no `measure`, so the two run surfaces share one
+   * layout contract deliberately — a divergence between them would be a bug.
+   *
+   * It renders one thing the others do not: a banner, as a preceding SIBLING of the host
+   * wrapper rather than inside it. That takes its own height out of the non-scrolling
+   * `<main>` and leaves the host's `flex: 1` resolving against the remainder, so it
+   * introduces no container and no second scroll surface — which is why this route
+   * belongs here and not in `APPS_FULL_MEASURE_PAGES`.
+   *
+   * ⚠️ That paragraph described the REMOVED `/apps/private-run/<slug>` route, whose
+   * banner was unconditional. The private run now renders from `/apps/run/[slug]` above
+   * (already in this list) and its banner is CONDITIONAL on the viewer's audience. The
+   * sibling-not-child placement — the part the width bucket actually depends on — is
+   * unchanged, so the reasoning still holds for the surviving route.
+   */
   '/apps/review/preview/[publishRequestId]',
   '/apps/dev/[blockId]',
 ] as const;

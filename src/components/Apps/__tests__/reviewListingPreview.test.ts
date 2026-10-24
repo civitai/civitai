@@ -10,8 +10,8 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 
 /**
  * Pure mapping gate for the mod-review listing PREVIEW builders (Item 3): review row
- * → `ListingCard` / `ListingDetail` store shapes. The browser component test for the
- * preview surface is report-only, so this is the blocking coverage for the mapping.
+ * → `ListingCard` / `ListingDetail` store shapes. This is the node-tier coverage for
+ * the mapping.
  * Pins: kind derivation, the name→slug fallback, submitter→creator chip, empty
  * recommend rollup, placeholder-nulled image URLs (not resolvable on this surface),
  * the omitted-in-preview scalars (tagline/description/serialId), kind-aware
@@ -32,7 +32,7 @@ function row(over: Partial<OffsitePendingRow> & { id: string }): OffsitePendingR
       category: 'utility',
       contentRating: 'PG',
     },
-    submittedBy: { id: 7, username: 'alice', image: 'img-key' },
+    submittedBy: { id: 7, username: 'alice', deletedAt: null, image: 'img-key' },
     ...over,
   };
 }

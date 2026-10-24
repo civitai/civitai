@@ -23,6 +23,10 @@ const DERIVED_FROM_ROW = [
   // `resources` + `unmatchedResources`, both derived from the row, so no caller
   // claim can enter.
   'meta: { ...meta, resources: metaResources, unmatchedResources }',
+  // backfill-lora-hashes.ts: `meta` is the row's own meta, re-read by the scan
+  // query, with only `hashes` and `resources` replaced from it. No caller supplies
+  // it, so no claim can enter.
+  'meta: { ...meta, hashes: nextHashes, resources: nextResources }',
 ];
 
 function walk(dir: string, files: string[] = []): string[] {

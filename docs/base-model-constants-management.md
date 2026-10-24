@@ -46,7 +46,6 @@ reality — it never gained `Krea 2` — so anything reading it saw a stale set 
 1. **`src/server/common/constants.ts`**
    - `baseLicenses` - License definitions with URLs, names, notices, and NSFW restrictions
    - `baseModelLicenses` - Mapping of base models to their licenses
-   - `generationConfig` - Generation settings per base model group (aspect ratios, default checkpoints)
 
 ---
 

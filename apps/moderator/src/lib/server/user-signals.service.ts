@@ -86,16 +86,14 @@ export type SharedIpAccount = LinkedAccount & {
   last: string;
 };
 
-// Ban-evasion signal: other accounts seen on the IPs this user REGISTERED or SUBSCRIBED from. Retool
-// filtered to those two types deliberately — a login IP is often a shared/carrier address, while the
-// address an account was created from is far more identifying.
+// Other accounts seen on the IPs this user REGISTERED or SUBSCRIBED from.
 //
 // Capped hard at both ends: a carrier NAT can carry thousands of unrelated accounts, and returning them
 // all would be slow and useless. A truncated result is reported rather than silently trimmed.
 // Identifying IPs are selected by their OWN query, not filtered out of `getUserIps`. That list is
 // capped at 100 (ip, type) groups ordered by recency, and a registration is by definition the oldest
 // event on the account — so for any busy user the Registration row falls outside the cap and the
-// ban-evasion panel silently reports "none found" on exactly the accounts worth investigating.
+// list silently reports "none found" on exactly the accounts worth investigating.
 async function getIdentifyingIps(userId: number): Promise<string[]> {
   const rows = await getClickhouse().$query<{ ip: string }>(`
     SELECT DISTINCT ip
@@ -108,11 +106,13 @@ async function getIdentifyingIps(userId: number): Promise<string[]> {
   return rows.map((r) => r.ip).filter((ip) => IP_PATTERN.test(ip));
 }
 
-export async function getSharedIpAccounts(
+export type SharedIpRow = { userId: number; ip: string; type: string; last: string };
+
+export async function getSharedIpRows(
   userId: number
-): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
+): Promise<{ rows: SharedIpRow[]; truncated: boolean }> {
   const identifying = await getIdentifyingIps(userId);
-  if (!identifying.length) return { accounts: [], truncated: false };
+  if (!identifying.length) return { rows: [], truncated: false };
 
   const LIMIT = 100;
   const list = identifying.map((ip) => `'${ip}'`).join(', ');
@@ -132,24 +132,33 @@ export async function getSharedIpAccounts(
     LIMIT ${LIMIT + 1}
   `);
 
-  const truncated = rows.length > LIMIT;
-  const page = rows.slice(0, LIMIT);
-  const ids = page.map((r) => Number(r.userId));
+  return {
+    rows: rows.slice(0, LIMIT).map((r) => ({
+      userId: Number(r.userId),
+      ip: r.ip,
+      type: r.type,
+      last: clickhouseDate(r.last),
+    })),
+    truncated: rows.length > LIMIT,
+  };
+}
+
+export async function getSharedIpAccounts(
+  userId: number
+): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
+  const { rows, truncated } = await getSharedIpRows(userId);
+  const ids = rows.map((r) => r.userId);
   const [byId, strikes] = await Promise.all([usersByIds(ids), strikeCountsByUserIds(ids)]);
 
   return {
-    accounts: page.map((r) => {
-      const id = Number(r.userId);
-      const u = byId.get(id);
+    accounts: rows.map((r) => {
+      const u = byId.get(r.userId);
       return {
-        userId: id,
+        ...r,
         username: u?.username ?? null,
         bannedAt: u?.bannedAt ?? null,
         muted: u?.muted ?? null,
-        strikes: strikes.get(id) ?? 0,
-        ip: r.ip,
-        type: r.type,
-        last: clickhouseDate(r.last),
+        strikes: strikes.get(r.userId) ?? 0,
       };
     }),
     truncated,
@@ -230,8 +239,7 @@ export async function getSocials(userId: number): Promise<UserSocial[]> {
 
 export type SharedSocialAccount = LinkedAccount & { url: string };
 
-// Ban-evasion signal in the same class as shared IPs, and in practice a sharper one: the most-shared
-// links in the table are spam-network domains posted by dozens of accounts each.
+// Other accounts holding one of this user's social links.
 //
 // Retool did this by SELECTing the entire UserLink table and matching in the browser. Matching in SQL
 // as a self-join is worse still — 21s for a user with many links, because it drives a sequential scan
@@ -241,9 +249,7 @@ export type SharedSocialAccount = LinkedAccount & { url: string };
 // The cap counts ACCOUNTS, not rows. Capping rows let one account holding 25 shared links fill the whole
 // window and report "25+ accounts" for what is a single alt, while pushing every genuinely distinct
 // account out of sight.
-export async function getSharedSocialAccounts(
-  userId: number
-): Promise<{ accounts: SharedSocialAccount[]; truncated: boolean }> {
+export async function getSharedSocialRows(userId: number) {
   const mine = await dbRead
     .selectFrom('UserLink')
     .select(normalizedUrl('url').as('url'))
@@ -251,7 +257,7 @@ export async function getSharedSocialAccounts(
     .where('userId', '=', userId)
     .execute();
   const urls = mine.map((r) => r.url).filter(Boolean);
-  if (!urls.length) return { accounts: [], truncated: false };
+  if (!urls.length) return { rows: [], truncated: false };
 
   const LIMIT = 25;
   const rows = await dbRead
@@ -268,12 +274,17 @@ export async function getSharedSocialAccounts(
 
   // DISTINCT ON fixes the row order, so banned-first ordering is applied here rather than in SQL.
   const sorted = rows.sort((a, b) => Number(!!b.bannedAt) - Number(!!a.bannedAt));
-  const page = sorted.slice(0, LIMIT);
-  const strikes = await strikeCountsByUserIds(page.map((r) => r.userId));
+  return { rows: sorted.slice(0, LIMIT), truncated: sorted.length > LIMIT };
+}
 
+export async function getSharedSocialAccounts(
+  userId: number
+): Promise<{ accounts: SharedSocialAccount[]; truncated: boolean }> {
+  const { rows, truncated } = await getSharedSocialRows(userId);
+  const strikes = await strikeCountsByUserIds(rows.map((r) => r.userId));
   return {
-    accounts: page.map((r) => ({ ...r, strikes: strikes.get(r.userId) ?? 0 })),
-    truncated: sorted.length > LIMIT,
+    accounts: rows.map((r) => ({ ...r, strikes: strikes.get(r.userId) ?? 0 })),
+    truncated,
   };
 }
 

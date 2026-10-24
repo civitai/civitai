@@ -1,6 +1,6 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { REDIS_KEYS } from '@civitai/redis';
-import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
+import { ALL_SCOPES } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -8,7 +8,7 @@ import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createOAuthTokenPair } from '$lib/server/oauth/token-helpers';
 import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
-import { hasScope } from '$lib/server/oauth/scope';
+import { isScopeGrantable } from '$lib/server/oauth/scope';
 import { parseBody, setWildcardCors } from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/device-token — device-flow token poll. Ported from device-token.ts.
@@ -101,8 +101,7 @@ export const POST: RequestHandler = async ({ request }) => {
       { status: 400, headers }
     );
   }
-  // Allow UserRead as the mandatory baseline (consistent with /device init), then enforce the ceiling.
-  if (!hasScope(client.allowedScopes | TokenScope.UserRead, scope)) {
+  if (!isScopeGrantable(client.allowedScopes, scope, 'user')) {
     return json(
       { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
       { status: 400, headers }

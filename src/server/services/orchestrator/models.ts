@@ -1,14 +1,19 @@
-import { getResource } from '@civitai/client';
+import { getResource, queryResources } from '@civitai/orchestration-client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
+import { dbWrite } from '~/server/db/client';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
-import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { stringifyAIR } from '~/shared/utils/air';
+import {
+  modelVersionAirSelect,
+  modelVersionToAir,
+  type ModelVersionAirInput,
+} from '~/server/utils/resource-air';
+import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
 
 export async function getModelClient({
   token,
@@ -18,7 +23,18 @@ export async function getModelClient({
   return await getResource({ client, path: { air } });
 }
 
-// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/client: the operation
+export async function queryResourcesClient({
+  token,
+  query,
+}: {
+  token: string;
+  query: { view: 'queue'; cursor?: string; take?: number };
+}) {
+  const client = createOrchestratorClient(token);
+  return await queryResources({ client, query });
+}
+
+// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/orchestration-client: the operation
 // carries [ApiExplorerSettings(IgnoreApi = true)] (orchestrator c2d2c370), so it is absent from the
 // OpenAPI documents the SDK is generated from — the endpoint itself is live.
 async function invalidateOrchestratorResource(air: string, etag: string, userId?: number) {
@@ -45,22 +61,62 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
-  const resources = await resourceDataCache.fetch(versionIds);
-  if (!resources.length) return;
+  try {
+    await invalidateVersions(versionIds, userId);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+  }
+}
 
+async function invalidateVersions(versionIds: number[], userId?: number) {
+  const versions = (await dbWrite.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: modelVersionAirSelect,
+  })) as ModelVersionAirInput[];
+  if (!versions.length) return;
+
+  // The orchestrator caches per AIR string, and a Checkpoint whose generation file is a diffusion
+  // model or UNet is reachable under both its file-kind AIR and the plain `checkpoint` one.
+  const airs = [
+    ...new Set(
+      versions.flatMap((version) => [
+        modelVersionToAir(version),
+        modelVersionToAir({ ...version, files: undefined }),
+      ])
+    ),
+  ];
+
+  await invalidateAirs(airs, userId);
+}
+
+/** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
+export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+
+  try {
+    await invalidateAirs([modelFileScanAir(file)]);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      fileId: file.fileId,
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateAirs(airs: string[], userId?: number) {
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 
-  const tasks = chunk(resources, 100).map((batch) => async () => {
+  const tasks = chunk(airs, 100).map((batch) => async () => {
     await Promise.all(
-      batch.map(async (resource) => {
-        const air = stringifyAIR({
-          baseModel: resource.baseModel,
-          type: resource.model.type,
-          modelId: resource.model.id,
-          id: resource.id,
-        });
-
+      batch.map(async (air) => {
         try {
           await invalidateOrchestratorResource(air, etag, userId);
         } catch (error) {
@@ -76,7 +132,7 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
     logToAxiom({
       name: 'bust-orchestrator-model-cache',
       type: 'error',
-      message: `${failures.length}/${resources.length} resource invalidations failed`,
+      message: `${failures.length}/${airs.length} resource invalidations failed`,
       details: failures.slice(0, 10),
     }).catch(() => undefined);
 }

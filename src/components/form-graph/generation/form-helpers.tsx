@@ -1,9 +1,13 @@
-import { Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
+import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo } from 'react';
 
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import type { PromptEnhanceImage } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
+import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
@@ -12,7 +16,9 @@ import {
   type VersionGroup,
   type VersionOption,
 } from '~/shared/form-graph/generation/checkpoint';
+import type { ResourceData } from '~/shared/generation/values';
 import type { SnippetsValue } from '~/shared/form-graph/generation/defs';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { trpc } from '~/utils/trpc';
 
 import type { GenerationStore } from './store';
@@ -43,6 +49,51 @@ export function ControllerLabel({
   );
 }
 
+/** A prompt label with the Enhance button on its right, shown once the prompt has text. */
+export function PromptLabel({
+  store,
+  prompt,
+  ...labelProps
+}: React.ComponentProps<typeof ControllerLabel> & {
+  store: GenerationStore;
+  prompt: string | undefined;
+}) {
+  return (
+    <div className="flex w-full items-center justify-between gap-2">
+      <ControllerLabel {...labelProps} />
+      {prompt && (
+        <Button
+          variant="subtle"
+          size="compact-xs"
+          leftSection={<IconSparkles size={14} />}
+          onClick={() => {
+            const snap = store.getSnapshot().state as {
+              ecosystem?: string;
+              negativePrompt?: string;
+              resources?: ResourceData[];
+              snippets?: SnippetsValue;
+              images?: PromptEnhanceImage[];
+            };
+            triggerPromptEnhance(
+              {
+                prompt,
+                negativePrompt: snap.negativePrompt,
+                ecosystem: snap.ecosystem ?? '',
+                resources: snap.resources,
+                snippetTargets: snap.snippets?.targets,
+                images: snap.images,
+              },
+              (workflow) => store.set({ workflow })
+            );
+          }}
+        >
+          Enhance
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** Path through a VersionGroup tree matching a model ID, root to leaf. */
 function findModelPath(group: VersionGroup, modelId: number): VersionOption[] | null {
   for (const opt of group.options) {
@@ -62,10 +113,10 @@ function VersionLevelDropdown({
   onChange,
 }: {
   group: VersionGroup;
-  selectedValue: number;
+  selectedValue: number | undefined;
   onChange: (id: number) => void;
 }) {
-  const selected = group.options.find((o) => o.value === selectedValue) ?? group.options[0];
+  const selected = group.options.find((o) => o.value === selectedValue);
   return (
     <Menu position="bottom-start" withinPortal>
       <Tooltip label={group.label} position="top" withArrow disabled={!group.label}>
@@ -77,7 +128,7 @@ function VersionLevelDropdown({
               'dark:bg-dark-5 dark:hover:bg-dark-4'
             )}
           >
-            {selected?.label}
+            {selected?.label ?? group.label ?? 'Version'}
           </UnstyledButton>
         </Menu.Target>
       </Tooltip>
@@ -124,30 +175,34 @@ export function VersionGroupSelector({
   const handleChange = useCallback(
     (id: number) => {
       const resourceData = getResourceData(id);
-      onChange(resourceData ?? { id });
+      onChange(resourceData ? asResourceValue(resourceData) : { id });
     },
     [getResourceData, onChange]
   );
 
-  if (!modelId || !allIds.has(modelId) || allIds.size <= 1) return null;
+  if (!modelId || allIds.size <= 1) return null;
 
+  // A model outside the group (a swapped-in checkpoint) leaves nothing selected but keeps the
+  // selector, so the way back to an official version stays on screen.
   const path = findModelPath(versions, modelId);
 
-  const levels: Array<{ group: VersionGroup; selectedValue: number }> = [];
+  const levels: Array<{ group: VersionGroup; selectedValue: number | undefined }> = [];
   let currentGroup: VersionGroup | undefined = versions;
   let pathIdx = 0;
   while (currentGroup && currentGroup.options.length > 0) {
-    const selected: VersionOption = path?.[pathIdx] ?? currentGroup.options[0];
-    levels.push({ group: currentGroup, selectedValue: selected.value });
-    currentGroup = selected.children;
+    const selected: VersionOption | undefined = path?.[pathIdx];
+    levels.push({ group: currentGroup, selectedValue: selected?.value });
+    currentGroup = selected?.children;
     pathIdx++;
   }
 
-  const leaf = levels[levels.length - 1];
+  const last = levels[levels.length - 1];
+  const leaf = last && !last.group.options.some((o) => o.children) ? last : undefined;
+  const parentLevels = leaf ? levels.slice(0, -1) : levels;
 
   return (
     <div className="flex items-center gap-1">
-      {levels.slice(0, -1).map((level, i) => (
+      {parentLevels.map((level, i) => (
         <VersionLevelDropdown
           key={level.group.label ?? i}
           group={level.group}
@@ -158,7 +213,7 @@ export function VersionGroupSelector({
       {leaf && (
         <ButtonGroupInput
           className="flex-1"
-          value={leaf.selectedValue.toString()}
+          value={leaf.selectedValue?.toString() ?? ''}
           onChange={(v) => handleChange(Number(v))}
           data={leaf.group.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
         />
@@ -185,41 +240,46 @@ export function useWildcardHandlers(store: GenerationStore) {
   );
 
   const addWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const current = readSnippets() ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        store.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        });
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const current = readSnippets() ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          store.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          });
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [store, loadFromModelVersion]); // eslint-disable-line react-hooks/exhaustive-deps

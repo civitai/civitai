@@ -66,6 +66,8 @@ const BUY_BUTTON_MIN_WIDTH = 132;
  */
 const NOTE_WIDTH = 220;
 
+const HIDDEN = { visibility: 'hidden' } as const;
+
 /** Clear air between the sticker and the chrome, on whichever side it lands. */
 const BUY_BUTTON_GAP = 8;
 
@@ -162,6 +164,7 @@ export function DraftSticker({
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
   // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
@@ -213,10 +216,11 @@ export function DraftSticker({
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
-      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx is the end of the attempt, so
-      // the next press is a new intent and needs a new key. A 5xx or a timeout
-      // is NOT: the charge may well have gone through, and minting a fresh key
-      // for the retry is how one purchase becomes two. Holding it wrongly costs
+      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx other than 408 and 429 is the end
+      // of the attempt, so the next press is a new intent and needs a new key. A
+      // 5xx or a timeout is NOT: the charge may well have gone through. Nor is a
+      // 429: an earlier press under this key may still be charging. Minting a
+      // fresh key for the retry is how one purchase becomes two. Holding it wrongly costs
       // a refusal on the next press; releasing it wrongly costs someone's Buzz.
       if (purchaseCanBeRetriedFresh(error)) clearPackPurchaseKey(draft.cosmeticId);
       showErrorNotification({
@@ -637,7 +641,9 @@ export function DraftSticker({
           <IconDropletHalf2 size={14} />
         </ActionIcon>
       </Popover.Target>
-      <Popover.Dropdown p="sm">
+      {/* Portalled, so the cluster's hiding does not reach it. A keyboard press
+          on the toggle is not an outside click, so the slider stays open. */}
+      <Popover.Dropdown p="sm" style={previewing ? HIDDEN : undefined}>
         <Text size="xs" c="dimmed" className="mb-2">
           Opacity
         </Text>
@@ -727,7 +733,7 @@ export function DraftSticker({
       }}
     >
       <div
-        className="pointer-events-auto relative cursor-move"
+        className={clsx('relative', !previewing && 'pointer-events-auto cursor-move')}
         style={{
           transform: `rotate(${draft.rotation}deg)`,
           touchAction: 'none',
@@ -756,21 +762,25 @@ export function DraftSticker({
           artworkImage
         )}
 
-        <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
+        {/* Hidden rather than unmounted: the chrome keeps its box, so the buy
+            button's measured side is still right when it comes back. */}
+        <div style={previewing ? HIDDEN : undefined}>
+          <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
 
-        {CORNERS.map((corner) => (
+          {CORNERS.map((corner) => (
+            <span
+              key={corner.className}
+              onPointerDown={begin('resize', corner)}
+              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+            />
+          ))}
+
           <span
-            key={corner.className}
-            onPointerDown={begin('resize', corner)}
-            className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+            onPointerDown={begin('rotate')}
+            className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
+            style={{ top: `-${KNOB_OFFSET * 100}%` }}
           />
-        ))}
-
-        <span
-          onPointerDown={begin('rotate')}
-          className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
-          style={{ top: `-${KNOB_OFFSET * 100}%` }}
-        />
+        </div>
       </div>
 
       <div
@@ -788,6 +798,7 @@ export function DraftSticker({
           flipped ? 'bottom-full' : 'top-full'
         )}
         style={{
+          ...(previewing ? HIDDEN : null),
           minWidth: BUY_BUTTON_MIN_WIDTH,
           // The standoff from the sticker's own box out to the rotated artwork,
           // the knob and the handles. Derived — see `chromeClearance` — because

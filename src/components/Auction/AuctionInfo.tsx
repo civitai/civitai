@@ -33,6 +33,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -63,7 +64,7 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBaseModelGenerationConfig } from '~/shared/constants/basemodel.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
@@ -235,8 +236,9 @@ export const AuctionTopSection = ({
         )}
         <HoverCard withArrow width={380}>
           <HoverCard.Target>
-            <Text c="dimmed">
+            <Text c="dimmed" size="sm" className="flex cursor-default items-center gap-1">
               <IconMoodSmile />
+              <span className="hide-mobile">Perks of winning</span>
             </Text>
           </HoverCard.Target>
           <HoverCard.Dropdown maw="100%">
@@ -256,7 +258,9 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Checkpoints will be enabled for use in generation.
+                  Every eligible checkpoint can be generated with, so winning no longer unlocks
+                  that. A winning checkpoint is marked for priority when the generator has to
+                  download it.
                 </Text>
               </Stack>
             </Stack>
@@ -464,7 +468,7 @@ export const AuctionInfo = () => {
   placeBidInViewRef.current = placeBidInView;
 
   const addBidFn = useCallback(
-    (entity: GenerationResource) => {
+    (entity: GenerationResourceValue) => {
       setSelectedModel(entity);
 
       if (!placeBidInViewRef.current) {
@@ -648,7 +652,7 @@ export const AuctionInfo = () => {
                   value={selectedModel}
                   onChange={(gVal) => {
                     if (gVal) {
-                      setSelectedModel(gVal);
+                      setSelectedModel(asResourceValue(gVal));
                     }
                   }}
                   style={{

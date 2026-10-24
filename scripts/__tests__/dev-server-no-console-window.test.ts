@@ -16,6 +16,7 @@ const FILES = [
   'scripts/daemon.mjs',
   'scripts/test-queue.mjs',
   'scripts/worktree.mjs',
+  'scripts/app-env.mjs',
 ];
 
 const read = (file: string) => readFileSync(resolve(SKILL, file), 'utf8');

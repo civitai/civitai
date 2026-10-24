@@ -7,7 +7,7 @@ import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generat
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { showErrorNotification } from '~/utils/notifications';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -56,6 +56,7 @@ function GeneratedOutputRemixMenuContent({
   remixOfId: number;
 }) {
   const router = useRouter();
+  const showCreatePostError = useShowCreatePostError();
   const createPost = trpc.post.create.useMutation();
 
   /**
@@ -82,10 +83,7 @@ function GeneratedOutputRemixMenuContent({
         createPost: () => createPost.mutateAsync({}),
       });
     } catch (e) {
-      showErrorNotification({
-        title: 'Failed to create post',
-        error: new Error((e as Error).message),
-      });
+      showCreatePostError((e as Error).message);
     }
   };
 
@@ -103,15 +101,17 @@ function GeneratedOutputRemixMenuContent({
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item
-          leftSection={<IconPhotoUp size={14} stroke={1.5} />}
-          onClick={postThisRemix}
-          // The label claims only what this does. "Post &amp; submit" promised the
-          // half that is deferred — the poster would land in the editor, publish,
-          // and have made no submission, with nothing having gone wrong.
-        >
-          Post this remix to submit it
-        </Menu.Item>
+        {output.canUse('post') && (
+          <Menu.Item
+            leftSection={<IconPhotoUp size={14} stroke={1.5} />}
+            onClick={postThisRemix}
+            // The label claims only what this does. "Post &amp; submit" promised the
+            // half that is deferred — the poster would land in the editor, publish,
+            // and have made no submission, with nothing having gone wrong.
+          >
+            Post this remix to submit it
+          </Menu.Item>
+        )}
         <Menu.Item
           component={NextLink}
           href={`/images/${remixOfId}`}

@@ -5,12 +5,14 @@ import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
-import type { UploadPartError } from '~/utils/upload-retry';
+import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  describePartFailure,
   getPartRetryDelay,
   isExpiredPartError,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  resolveUploadRowStatus,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -58,6 +60,16 @@ type ApiUploadResponse =
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
 
+/**
+ * Uploads that share an `id` (a model version, say) can be made to run one at a time. A
+ * `sequential` upload starts only when nothing else in its group is running; the others in the
+ * group are unaffected, so turning sequential off mid-way just stops queueing new files.
+ */
+type UploadGroup = { id: string; sequential: boolean };
+
+type GroupWaiter = { grant: () => void; cancel: () => void };
+type GroupState = { active: number; waiting: GroupWaiter[] };
+
 type StoreProps = {
   items: TrackedFile[];
   setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
@@ -80,6 +92,7 @@ type StoreProps = {
       type: UploadType;
       meta?: Record<string, unknown>;
       options?: UploadToS3Options;
+      uploadGroup?: UploadGroup;
     },
     cb?: ({ url, bucket, key, name, size }: UploadResult) => void
   ) => Promise<UploadResult | undefined>;
@@ -130,6 +143,112 @@ export const useS3UploadStore = create<StoreProps>()(
       });
     }
 
+    const groups = new Map<string, GroupState>();
+
+    function admitWaiting(groupId: string) {
+      const group = groups.get(groupId);
+      if (!group) return;
+      while (group.active === 0 && group.waiting.length > 0) group.waiting.shift()?.grant();
+      if (group.active === 0) groups.delete(groupId);
+    }
+
+    /**
+     * Resolves with the release to call when the upload is over, or `null` when the file was
+     * cancelled or removed while it waited. A waiting file shows as a 'pending' row, and the
+     * server is not asked for part URLs until its turn, so they cannot expire in the queue.
+     */
+    function enterGroup(
+      { file, meta }: Pick<Parameters<StoreProps['upload']>[0], 'file' | 'meta'>,
+      { id, sequential }: UploadGroup
+    ): Promise<(() => void) | null> {
+      const group = groups.get(id) ?? { active: 0, waiting: [] };
+      groups.set(id, group);
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        group.active--;
+        admitWaiting(id);
+      };
+
+      if (!sequential || (group.active === 0 && group.waiting.length === 0)) {
+        group.active++;
+        return Promise.resolve(release);
+      }
+
+      registerCatchNavigation();
+      return new Promise((resolve) => {
+        let uuid = uuidv4();
+        const waiter: GroupWaiter = {
+          grant: () => {
+            if (!get().items.some((x) => x.uuid === uuid)) return resolve(null);
+            group.active++;
+            // Past this point the file is on its way; the upload sets its own abort once it
+            // has URLs, so a cancel in between must not pretend to have stopped it.
+            updateFile(uuid, { abort: () => undefined });
+            resolve(release);
+          },
+          cancel: () => {
+            group.waiting = group.waiting.filter((x) => x !== waiter);
+            try {
+              updateFile(uuid, { status: 'aborted' });
+            } catch {
+              // the row was cleared while it waited
+            }
+            resolve(null);
+            admitWaiting(id);
+          },
+        };
+        group.waiting.push(waiter);
+
+        // A retried file already has a row, which the upload merges into when its turn comes.
+        const existing = get().items.find((x) => x.file === file);
+        if (existing) {
+          uuid = existing.uuid;
+          updateFile(uuid, {
+            status: 'pending',
+            progress: 0,
+            uploaded: 0,
+            speed: 0,
+            timeRemaining: 0,
+            abort: waiter.cancel,
+          });
+        } else {
+          set((state) => {
+            state.items.push({
+              ...pendingTrackedFile,
+              file,
+              size: file.size ?? 0,
+              uuid,
+              meta,
+              name: file.name,
+              abort: waiter.cancel,
+            });
+          });
+        }
+      });
+    }
+
+    function withUploadGroup(run: StoreProps['upload']): StoreProps['upload'] {
+      return async (args, cb) => {
+        if (!args.uploadGroup) return run(args, cb);
+        const release = await enterGroup(args, args.uploadGroup);
+        if (!release) return undefined;
+        try {
+          return await run(args, cb);
+        } catch (err) {
+          // A file that never got as far as a row of its own is still sitting as 'pending'.
+          if (args.uploadGroup.sequential) {
+            const row = get().items.find((x) => x.file === args.file);
+            if (row?.status === 'pending') updateFile(row.uuid, { status: 'error' });
+          }
+          throw err;
+        } finally {
+          release();
+        }
+      };
+    }
+
     return {
       items: [] as TrackedFile[],
       setItems: (dispatch) => {
@@ -168,7 +287,7 @@ export const useS3UploadStore = create<StoreProps>()(
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
-      upload: async ({ file, type, options, meta }, cb) => {
+      upload: withUploadGroup(async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
         if (get().items.filter((item) => item.status === 'uploading').length === 0)
           registerCatchNavigation();
@@ -289,7 +408,7 @@ export const useS3UploadStore = create<StoreProps>()(
           };
 
           // Prepare abort
-          const abortUpload = () =>
+          const abortUpload = (failure?: PartFailureReason) =>
             fetch(abortEndpoint, {
               method: 'POST',
               headers,
@@ -299,6 +418,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                ...(failure ? { failure } : {}),
               }),
             });
 
@@ -314,9 +434,9 @@ export const useS3UploadStore = create<StoreProps>()(
           // with an incidental teardown error at every call site. The abort endpoint
           // also treats an already-gone upload as success, so a throw on this path is
           // genuinely exceptional — it gets logged, not raised.
-          const abortUploadQuietly = async () => {
+          const abortUploadQuietly = async (failure?: PartFailureReason) => {
             try {
-              await abortUpload();
+              await abortUpload(failure);
             } catch (err) {
               console.error('Failed to abort upload');
               console.error(err);
@@ -422,16 +542,17 @@ export const useS3UploadStore = create<StoreProps>()(
                   reject({
                     status: xhr.status,
                     retryAfter: xhr.getResponseHeader('Retry-After'),
+                    partNumber: i,
                   } as UploadPartError);
                 }
               });
               xhr.addEventListener('error', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, networkError: true } as UploadPartError);
+                reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
               });
               xhr.addEventListener('abort', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, aborted: true } as UploadPartError);
+                reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
               });
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -441,6 +562,19 @@ export const useS3UploadStore = create<StoreProps>()(
           // Shared cancellation: trips on user abort or first fatal failure so sleeping
           // retry workers don't fire zombie PUTs after the upload has been torn down.
           const cancelController = new AbortController();
+          // 🔴 Whether the PERSON cancelled — not whether `cancelController` has tripped.
+          // Both a user cancel and the worker's own teardown trip that signal and abort
+          // the same in-flight xhrs, so neither it nor the resulting `{ aborted: true }`
+          // part errors can tell the two apart. Set in exactly one place: the `abort`
+          // handed out on the tracked row below.
+          //
+          // The sibling client `useS3Upload` had the same confusion with a worse
+          // consequence — its relay fallback was gated on the shared signal and could
+          // never run. This client has no relay (the relay route writes to the image
+          // bucket; this one serves model/training uploads), so here it is the terminal
+          // status that was wrong: a cancel racing a non-retryable part failure reported
+          // as an upload error.
+          let userAborted = false;
           const cancellableSleep = (ms: number) =>
             new Promise<void>((resolve) => {
               if (cancelController.signal.aborted) return resolve();
@@ -457,6 +591,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                userAborted = true;
                 cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
@@ -472,6 +607,15 @@ export const useS3UploadStore = create<StoreProps>()(
 
           const runWorker = async () => {
             while (queue.length > 0 && !fatalErrorRef.value) {
+              // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
+              // records `{ aborted: true }`. Neither is reachable today. This guard runs
+              // on first loop entry — synchronous with pool creation, with no `await`
+              // between registering `abort` on the row and `Promise.all`, so a click
+              // cannot land there — and thereafter only after a part SUCCEEDED, where the
+              // gap before it is a microtask, which a click also cannot land in. The two
+              // real macrotask windows inside the loop, the backoff sleep and the part
+              // re-sign, both re-enter at the `for`-loop top, whose guard DOES record.
+              // If this loop ever grows an `await` before this line, record here too.
               if (cancelController.signal.aborted) return;
               const item = queue.shift();
               if (!item) return;
@@ -514,10 +658,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+          // Shared with the hook client; the rules and the reason they are shared are on
+          // `resolveUploadRowStatus`.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? fatalErrorRef.value.aborted
-              ? 'aborted'
-              : 'error'
+            ? resolveUploadRowStatus(fatalErrorRef.value, { userAborted })
             : null;
 
           // No more progress events past this point; drop any queued frame so it can't
@@ -526,7 +670,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
           if (failureStatus) {
             setTerminalStatus(failureStatus);
-            await abortUploadQuietly();
+            await abortUploadQuietly(describePartFailure(fatalErrorRef.value));
             return;
           }
 
@@ -574,7 +718,7 @@ export const useS3UploadStore = create<StoreProps>()(
           cb?.(payload);
           return payload;
         }
-      },
+      }),
     };
   })
 );
@@ -599,7 +743,11 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
+      // A file waiting its turn in a sequential group is as lost on leave as one mid-transfer.
+      predicate: () => {
+        const { uploading, pending } = useS3UploadStore.getState().getStatus();
+        return uploading + pending > 0;
+      },
       event: 'beforeunload',
     });
 };

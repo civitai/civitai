@@ -1,3 +1,9 @@
+import { TRPCError } from '@trpc/server';
+import {
+  LegalHoldError,
+  LegalHoldStoppedError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
   claimCosmeticHandler,
@@ -14,12 +20,14 @@ import {
   getSelfStatusHandler,
   getUserBookmarkCollectionsHandler,
   getUserByIdHandler,
+  getUserSearchHydrationHandler,
   getUserCosmeticsHandler,
   getUserCreatorHandler,
   getUserEngagedModelsByIdsHandler,
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
   getUserFollowingListHandler,
+  getFollowsMeHandler,
   getUserListHandler,
   getUserListsHandler,
   getUsernameAvailableHandler,
@@ -75,6 +83,7 @@ import {
   requestEmailChangeSchema,
   verifyEmailChangeSchema,
   validateEmailTokenSchema,
+  getUserSearchHydrationSchema,
 } from '~/server/schema/user.schema';
 import {
   cosmeticStatus,
@@ -117,6 +126,7 @@ import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
   getCreator: publicProcedure
@@ -127,8 +137,8 @@ export const userRouter = router({
         ttl: CacheTTL.sm,
         tags: (input) =>
           [
-            input?.id ? `user-creator-${input.id}` : undefined,
-            input?.username ? `user-creator-${input.username}` : undefined,
+            input?.id ? userCreatorEdgeTag(input.id) : undefined,
+            input?.username ? userCreatorEdgeTag(input.username) : undefined,
           ].filter(Boolean) as string[],
       })
     )
@@ -145,6 +155,9 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getSearchHydration: publicProcedure
+    .input(getUserSearchHydrationSchema)
+    .query(getUserSearchHydrationHandler),
   getSelfStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getSelfStatusHandler),
@@ -159,6 +172,10 @@ export const userRouter = router({
   getFollowingUsers: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUserFollowingListHandler),
+  getFollowsMe: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getByIdSchema)
+    .query(getFollowsMeHandler),
   // getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -292,11 +309,25 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .query(({ ctx }) => ({ token: createToken(ctx.user.id) })),
   removeAllContent: moderatorProcedure.input(getByIdSchema).mutation(async ({ input, ctx }) => {
-    await removeAllContent(input);
-    ctx.track.userActivity({
-      type: 'RemoveContent',
-      targetUserId: input.id,
-    });
+    // `actorUserId` is threaded so the App Blocks storage purge this now triggers
+    // records WHO ordered the wipe. The other caller of `removeAllContent`
+    // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
+    // identity and correctly passes none.
+    const track = () =>
+      ctx.track.userActivity({
+        type: 'RemoveContent',
+        targetUserId: input.id,
+      });
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch(
+      (e: unknown) => {
+        if (!(e instanceof LegalHoldError)) throw e;
+        // Part of the account was deleted, so it is recorded like a wipe that finished.
+        if (e instanceof LegalHoldStoppedError) track();
+        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
+      }
+    );
+    track();
+    return { incomplete: result.incomplete };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

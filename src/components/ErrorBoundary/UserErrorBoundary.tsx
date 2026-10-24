@@ -4,6 +4,7 @@ import React, { Component, Fragment } from 'react';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { reportBoundaryError } from '~/components/ErrorBoundary/reportBoundaryError';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 interface Props {
@@ -39,13 +40,12 @@ class UserErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // You can use your own error logging service here
     console.log('Error Boundary:', { error, errorInfo });
     this.setState({ error, stack: errorInfo.componentStack });
-    fetch('/api/application-error', {
-      method: 'POST',
-      body: JSON.stringify({ message: error.message, stack: errorInfo.componentStack }),
-    });
+    // Reports to Faro AND to /api/application-error. The second sink is the pre-existing one and
+    // its server-side log alerting already watched it; what this adds is the Faro half, which no
+    // error boundary reached before.
+    reportBoundaryError(error, { boundary: 'user', componentStack: errorInfo.componentStack });
   }
 
   render() {

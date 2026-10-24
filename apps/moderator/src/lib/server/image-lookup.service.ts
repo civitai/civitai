@@ -1,8 +1,12 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
 import { getImagesForPost, type BulkBatch } from './bulk-image.service';
+import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import { approvedAppealOf } from './removal-hold';
 
 // The PAGE LOAD half of Image Lookup (Retool's "Image Lookup" app). Everything here is Postgres and
 // sub-millisecond on the indexes, so it all rides the load; the ClickHouse half lives in
@@ -60,17 +64,6 @@ export type ImageTag = {
 /** Tags the scanner assigned but did not apply — why an image was flagged without being visibly tagged. */
 export type ShadowTag = { id: number; name: string; confidence: number | null };
 
-export type ImageReactionRow = {
-  key: string;
-  userId: number;
-  username: string | null;
-  bannedAt: Date | null;
-  reaction: string;
-  createdAt: Date;
-  /** Differs from `createdAt` when the reaction was changed rather than first given. */
-  updatedAt: Date | null;
-};
-
 export type ImageReportRow = {
   id: number;
   reason: string;
@@ -87,21 +80,18 @@ export type ImageReportRow = {
   statusSetBy: string | null;
 };
 
-export type ImageModActivity = {
-  id: number;
-  activity: string;
-  createdAt: Date;
-  moderatorId: number | null;
-  moderatorUsername: string | null;
-};
+export type ImageModActivity = ModActivityRow;
+
+export type { ImageReactionRow };
 
 export type ImageLookupResult = {
   image: ImageDetail;
   tags: ImageTag[];
   shadowTags: ShadowTag[];
-  reactions: { rows: ImageReactionRow[]; truncated: boolean };
+  reactions: ReactionPage;
   reports: ImageReportRow[];
   modActivity: { rows: ImageModActivity[]; truncated: boolean };
+  approvedAppeal: ReturnType<typeof approvedAppealOf>;
 };
 
 // Retool had two inputs and two queries — an id box and a separate url box (`GetIdFromUrl`). One
@@ -169,14 +159,16 @@ export async function getImageLookup(imageId: number): Promise<ImageLookupResult
   const image = await getImage(imageId);
   if (!image) return null;
 
-  const [tags, shadowTags, reactions, reports, modActivity] = await Promise.all([
+  const [tags, shadowTags, reactions, reports, modActivity, appeals] = await Promise.all([
     getTags(imageId),
     getShadowTags(imageId),
     getReactions(imageId),
     getReports(imageId),
     getModActivity(imageId),
+    getLatestApprovedImageAppeals(dbRead, [imageId]),
   ]);
-  return { image, tags, shadowTags, reactions, reports, modActivity };
+  const approvedAppeal = approvedAppealOf(appeals.get(imageId));
+  return { image, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
 }
 
 // Post detail for Image Lookup's `?post=` view. There was no Retool "Post Lookup" app: its "Lookup Post"
@@ -236,7 +228,7 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
   // The SAME query Bulk Image Manager runs for a post — that page is where this one's images get
   // actioned, and two builders answering "the images in post N" is how they came to show different
   // flags and different orders for the same image.
-  const batch = await getImagesForPost(postId, limit, 'index');
+  const batch = await getImagesForPost(postId, { limit }, 'index');
 
   return {
     post: { ...post, availability: String(post.availability) },
@@ -372,46 +364,6 @@ async function getShadowTags(imageId: number): Promise<ShadowTag[]> {
     .execute();
 }
 
-// Retool listed every reaction row. Capped here: a popular image carries thousands, and the question a
-// moderator asks of this list ("who reacted, and are they connected?") is answered by the IP clustering
-// in the signals panel rather than by an exhaustive list.
-async function getReactions(
-  imageId: number,
-  limit = 100
-): Promise<{ rows: ImageReactionRow[]; truncated: boolean }> {
-  const rows = await dbRead
-    .selectFrom('ImageReaction as ir')
-    .leftJoin('User as u', 'u.id', 'ir.userId')
-    .select([
-      'ir.id',
-      'ir.userId',
-      'ir.reaction',
-      'ir.createdAt',
-      'ir.updatedAt',
-      'u.username',
-      'u.bannedAt',
-    ])
-    .where('ir.imageId', '=', imageId)
-    .orderBy('ir.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute();
-
-  const truncated = rows.length > limit;
-  const page = rows.slice(0, limit).map((r) => ({
-    // `ImageReaction` is unique on (imageId, userId, reaction), so one user appears once per reaction
-    // type — the row id is the only single-column key that holds.
-    key: String(r.id),
-    userId: r.userId,
-    username: r.username,
-    bannedAt: r.bannedAt,
-    reaction: String(r.reaction),
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
-
-  return { rows: page, truncated };
-}
-
 async function getReports(imageId: number): Promise<ImageReportRow[]> {
   const rows = await dbRead
     .selectFrom('ImageReport as ir')
@@ -448,32 +400,5 @@ async function getReports(imageId: number): Promise<ImageReportRow[]> {
   }));
 }
 
-// Retool ran `SELECT * FROM "ModActivity" WHERE "entityId" = <id>` with NO entityType. That is wrong,
-// not just slow: entity ids are per-type, so an image id collides with report/model/user rows and the
-// panel showed moderator actions taken on unrelated entities. The index is
-// (entityType, entityId, createdAt), so filtering by type is also what makes this an index scan.
-async function getModActivity(
-  imageId: number,
-  limit = 50
-): Promise<{ rows: ImageModActivity[]; truncated: boolean }> {
-  const rows = await dbRead
-    .selectFrom('ModActivity')
-    .select(['id', 'activity', 'createdAt', 'userId'])
-    .where('entityType', '=', 'image')
-    .where('entityId', '=', imageId)
-    .orderBy('createdAt', 'desc')
-    .limit(limit + 1)
-    .execute();
-
-  const truncated = rows.length > limit;
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
-  const page = rows.slice(0, limit).map((r) => ({
-    id: r.id,
-    activity: r.activity,
-    createdAt: r.createdAt,
-    moderatorId: r.userId,
-    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-  }));
-
-  return { rows: page, truncated };
-}
+const getModActivity = (imageId: number, limit = 50) =>
+  getModActivityFor('image', [imageId], limit);

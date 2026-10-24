@@ -70,8 +70,8 @@ import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publis
  * "no overflow" in both arms. It is an INVARIANT GUARD, not regression coverage:
  * it passes on `origin/main` too, by construction.
  *
- * NOTE ON REACH: this suite runs in CI as the REPORT-ONLY
- * `preview / component-tests` status. The gating half of this contract is the
+ * NOTE ON REACH: this suite runs in CI as the
+ * `Component tests` check. The node-tier half of this contract is the
  * `fill` opt-in ledger in `AppBlocks/__tests__/pageRunScrollContract.test.ts`.
  * This file is the empirical half, and it is the one that can see layout at all.
  */
@@ -119,6 +119,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {

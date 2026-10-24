@@ -18,14 +18,20 @@ import React, { useState } from 'react';
 import { isSortAvailable } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ResourceFilter,
   ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  resourceSort,
+  showsPricingFilter,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -40,9 +46,23 @@ const baseModelLimit = 4;
 export function ResourceSelectFiltersDropdown() {
   const {
     resources,
+    selectSource,
     filters: selectFilters,
     setFilters: setSelectFilters,
+    turboPinned,
+    excludeTurbo,
   } = useResourceSelectContext();
+  const features = useFeatureFlags();
+  const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
+  const canFilterTurbo =
+    !turboPinned &&
+    !excludeTurbo &&
+    (resources.length === 0 ||
+      resources.some((r) => TURBO_VARIANT_MODEL_TYPES.includes(r.type as ModelType)));
+  // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the
+  // generator" — several non-generator callers pass it deliberately, and the generate-price question
+  // is still the right one for them.
+  const showPaidFilter = showsPricingFilter(selectSource);
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -74,12 +94,19 @@ export function ResourceSelectFiltersDropdown() {
     : baseModelsList;
 
   const filterLength =
-    (selectFilters.types.length > 0 ? 1 : 0) + (selectFilters.baseModels.length > 0 ? 1 : 0);
+    (selectFilters.types.length > 0 ? 1 : 0) +
+    (selectFilters.baseModels.length > 0 ? 1 : 0) +
+    (selectFilters.loadedOnly ? 1 : 0) +
+    (canFilterTurbo && selectFilters.turboOnly ? 1 : 0) +
+    (showPaidFilter && selectFilters.hidePaid ? 1 : 0);
 
   const clearFilters = () => {
     const reset: Required<ResourceFilter> = {
       types: [],
       baseModels: [],
+      loadedOnly: false,
+      turboOnly: false,
+      hidePaid: false,
     };
     setSelectFilters(reset);
   };
@@ -165,7 +192,47 @@ export function ResourceSelectFiltersDropdown() {
             )}
           </Group>
         </Chip.Group>
+        {showPaidFilter && (
+          <>
+            <Divider label="Cost" className="text-sm font-bold" />
+            <Group gap={8} my={4}>
+              <Chip
+                {...chipProps}
+                checked={!!selectFilters.hidePaid}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, hidePaid: checked }))}
+              >
+                <span>Hide paid</span>
+              </Chip>
+            </Group>
+          </>
+        )}
       </Stack>
+
+      {(canFilterLoaded || canFilterTurbo) && (
+        <Stack gap="md">
+          <Divider label="Generator" className="text-sm font-bold" />
+          <Group gap="xs">
+            {canFilterLoaded && (
+              <Chip
+                {...chipProps}
+                checked={selectFilters.loadedOnly}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, loadedOnly: checked }))}
+              >
+                <span>Loaded only</span>
+              </Chip>
+            )}
+            {canFilterTurbo && (
+              <Chip
+                {...chipProps}
+                checked={selectFilters.turboOnly}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, turboOnly: checked }))}
+              >
+                <span>Turbo only</span>
+              </Chip>
+            )}
+          </Group>
+        </Stack>
+      )}
 
       {filterLength > 0 && (
         <Button
@@ -189,7 +256,7 @@ export function ResourceSelectFiltersDropdown() {
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          zIndex={400}
+          zIndex={mobileMenuSheetZIndex}
           styles={{
             content: {
               height: 'auto',

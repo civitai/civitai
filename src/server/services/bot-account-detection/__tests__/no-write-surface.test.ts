@@ -469,6 +469,34 @@ describe('the detector has no write surface', () => {
     expect(sources.map((s) => path.basename(s.file))).toContain('bot-account-detection.ts');
   });
 
+  it('🔴 the one imported module OUTSIDE this tree carries nothing that could act', () => {
+    // 🔴 THE HOLE THE IMPORT LEDGER LEAVES, CLOSED. Every check in this file walks `MODULE_DIR`
+    // plus the job file, so a specifier pointing outside that tree is ALLOWLISTED BY NAME and its
+    // contents are never read — the ledger entry records that a module is imported and can say
+    // nothing about what that module does. `../abuse-report-prose` is the first such entry, and the
+    // comment beside it asserts "the module imports NOTHING — no client, no env, no IO, no other
+    // module at all". That sentence was true when it was written and unenforced: the specifier
+    // string does not change when the module grows a `dbWrite` import.
+    //
+    // So the claim is checked where it is made. This is deliberately a ZERO-IMPORT assertion rather
+    // than an allowlist — a shared prose module has no business reaching for anything, and "it may
+    // import these three" is a rule that erodes. If this ever needs to import something, that is the
+    // moment to decide whether a module the shadow guarantee depends on should still be shared.
+    const shared = path.resolve(MODULE_DIR, '../abuse-report-prose.ts');
+    const source = readFileSync(shared, 'utf8');
+    // Positive control first: an unreadable or empty file makes the assertion below vacuous.
+    expect(source.length).toBeGreaterThan(200);
+    expect(source).toContain('export function plural');
+    expect(source).toContain('export const NO_ACTION_TAKEN');
+    expect(
+      // Comments stripped the same way `detectorSources` does it, so a specifier NAMED in prose
+      // cannot be reported as an edge — this module's docstrings discuss its callers by path.
+      importSpecifiers([{ file: shared, source: stripComments(source) }]),
+      'abuse-report-prose is imported by this detector and is NOT scanned by the walks in this ' +
+        'file — it must stay dependency-free, or the shadow guarantee rests on an unchecked module'
+    ).toEqual([]);
+  });
+
   it('scans EVERY file in the module tree, at any depth — exhaustiveness', () => {
     // 🔴 This replaces a hand-maintained list of five basenames. That list was the wrong shape of
     // assertion: it pinned which files exist, not that every file that exists is SCANNED, so a
@@ -730,26 +758,38 @@ describe('the detector has no write surface', () => {
     expect(importSpecifiers(planted)).toEqual(['~/server/services/user-restriction.service']);
   });
 
-  it('performs exactly seven database operations, all of them reads', () => {
-    // 🔴 THE LEDGER. A write added anywhere in these files is an eighth member and fails here; a
-    // read removed is a missing member and fails here too (dropping `commentV2` would silently turn
-    // every newer-comment-only account into a false negative).
+  it('performs exactly six database operations, all of them reads', () => {
+    // 🔴 THE LEDGER. A write added anywhere in these files is a seventh member and fails here; a
+    // read removed is a missing member and fails here too (dropping `commentV2.groupBy` would
+    // silently turn every newer-comment-only account's post count into a zero).
     //
-    // 🔴 IT WENT FROM FIVE TO SEVEN WITH THE HEURISTICS, AND THE TWO NEW MEMBERS ARE THE WHOLE
-    // DATABASE COST OF THIS CHANGE. `comment.findMany`/`commentV2.findMany` are the content samples
-    // the templating heuristic compares. Note what is NOT here: the velocity heuristic added
-    // nothing (it reads counts the cohort already carried) and the clustering heuristic's email
-    // half added nothing (a wider `select` on the existing `user.findMany` is not a new operation).
+    // 🔴 IT WENT FROM FIVE TO SEVEN WITH THE HEURISTICS, THEN SEVEN TO EIGHT WITH THE FILENAME
+    // SOURCE, AND NOW EIGHT TO SIX. The two that left are `comment.findMany` and
+    // `commentV2.findMany` — the comment-text samples the templating heuristic used to compare —
+    // deleted with that fingerprint source. They are the whole database saving of that change, and
+    // this ledger is where it is legible: two per-run reads on the comment tables, gone.
+    //
+    // What did NOT go: `comment.groupBy`/`commentV2.groupBy`. Those are the COHORT's post counts,
+    // a different question on the same tables, and they decide membership rather than feed a
+    // fingerprint.
+    //
+    // 🔴 `image.findMany` IS ONE MEMBER SERVING TWO READS. The filename source reads uploaded
+    // `Image.name` values; `asset-staging` reads the staged subset's timestamps. This ledger records
+    // METHODS rather than call sites, so widening what an already-permitted read is asked for does
+    // not add a member — which is the honest reading and is stated on `EvidenceDb.image`.
+    //
+    // Both are deliberately budgeted (`MAX_FILENAME_SAMPLES`, `MAX_STAGED_IMAGE_SAMPLES`) and
+    // deliberately UNFILTERED on `ingestion`/`needsReview` — see `filenameSampleArgs`, where
+    // dropping the blocked rows would remove exactly the population the heuristic reads.
     //
     // 🔴 THIS LEDGER CANNOT SEE THE CLICKHOUSE READ — `DB_CALL` anchors on a `db` handle and the
     // ClickHouse client is not one. That is not a gap being tolerated; it is why the separate
     // ClickHouse ledger below exists. Adding a source that is not Prisma leaves this assertion
     // completely unmoved, which is the exact shape of hole this file is built to refuse.
     expect(databaseOperations(detectorSources())).toEqual([
-      'comment.findMany',
       'comment.groupBy',
-      'commentV2.findMany',
       'commentV2.groupBy',
+      'image.findMany',
       'image.groupBy',
       'model.groupBy',
       'user.findMany',
@@ -771,16 +811,42 @@ describe('the detector has no write surface', () => {
     // specifier — that is the "which BINDING" gap named in the file header — so the ClickHouse
     // ledger below asserts the method set and the statement text separately.
     expect(importSpecifiers(detectorSources())).toEqual([
+      // 🔴 TYPE-ONLY, AND THIS LEDGER CANNOT TELL. `heuristics/staging.ts` takes
+      // `import type { StagedImageFacts } from '../evidence'` — erased at compile time, so the
+      // runtime module graph of `heuristics/` is unchanged and the directory keeps the property
+      // `fingerprint-keys.ts` exists to protect (no heuristic pulls `dbRead` or the ClickHouse
+      // client into its graph). `scoring.ts` already takes `./evidence` the same way. What this
+      // list CAN say is that the specifier is a local module inside this tree, which is the check
+      // that matters: it exports no client and nothing that can act on an account.
+      //
+      // 🔴 THE TWO SPELLINGS OF `abuse-report-prose` ARE ONE MODULE, reached from two depths —
+      // and it is the FIRST entry on this list that points OUTSIDE the tree this file scans (see
+      // `MODULE_DIR`, and the case below that walks its own imports for exactly that reason) —
+      // `../` from `bot-account-detection/*.ts`, `../../` from `heuristics/*.ts`. It sits at
+      // `src/server/services/abuse-report-prose.ts`, i.e. one level ABOVE this detector's tree,
+      // which is the only entry here that does: it is shared with `new-order-abuse-detection` so
+      // the two producers' moderator-facing wording cannot drift apart. The "which BINDING"
+      // question, answered: `plural` (a pure string function of a number and two words) and
+      // `NO_ACTION_TAKEN` (a string constant). The module imports NOTHING — no client, no env, no
+      // IO, no other module at all — so leaving this tree costs the shadow guarantee nothing. A
+      // future export there that reaches a data system would change that, which is what this entry
+      // is for.
+      '../../abuse-report-prose',
+      '../abuse-report-prose',
+      '../evidence',
+      '../fingerprint-keys',
       '../scoring',
       './clustering',
       './cohort',
       './evidence',
+      './fingerprint-keys',
       './heuristics',
       './job',
       './ramp',
       './report',
       './scoring',
       './similarity',
+      './staging',
       './velocity',
       '@civitai/moderation',
       // Pure string constants and one string builder — no client, no env, no IO. It is the SAME
@@ -788,6 +854,27 @@ describe('the detector has no write surface', () => {
       // with, shared rather than copied; a second hand-written copy is how two readers of one table
       // silently stop agreeing about what an address means.
       '@civitai/shared/clickhouse-ip-filters',
+      // Node's `crypto`, for `boundGroupKey`'s digest in `report.ts` — a cluster key over the wire
+      // contract's 200-character cap is hashed rather than truncated, because truncating an IDENTITY
+      // merges two unrelated clusters into one ruling. `createHash` is the only binding taken, it
+      // reaches no data system, and it cannot act on an account. The header's "which BINDING" caveat
+      // is why that is spelled out here rather than left to the specifier.
+      // 🔴 A NEW EXTERNAL SPECIFIER, AND THE HEADER'S "WHICH BINDING" CAVEAT APPLIES HARDEST HERE.
+      // The binding taken is `Prisma` and only `Prisma` — the generated namespace of query
+      // sentinels and types — used for exactly one thing: `Prisma.AnyNull`, the filter value that
+      // matches BOTH a SQL `NULL` and the JSON literal `null` on a `Json?` column. There is no
+      // other way to spell that filter: `{ equals: null }` on a `Json?` field is rejected by the
+      // query engine as ambiguous, and the alternative — selecting `meta` and testing it in
+      // JavaScript — would pull a generation-parameter blob per row off the largest table this
+      // detector reads.
+      //
+      // What else the specifier yields, stated rather than assumed away: `@prisma/client` also
+      // exports `PrismaClient`, a CONSTRUCTOR. It is not imported here, and constructing one needs
+      // a connection URL this module never reads — but that is a fact about today's source, and
+      // this ledger is the thing that forces the question to be asked again next time. The
+      // operation ledger above is what would catch a call made through one.
+      '@prisma/client',
+      'crypto',
       '~/server/clickhouse/client',
       '~/server/db/client',
       '~/server/logging/client',

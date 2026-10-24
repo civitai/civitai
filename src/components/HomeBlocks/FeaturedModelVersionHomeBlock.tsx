@@ -17,6 +17,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -68,7 +69,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata, blockInde
     data: shuffled,
   });
 
-  const items = useDedupedCappedItems(filtered, {
+  const items = useDedupedCappedItems(useViewerEventDecorations(filtered, { entity: 'model' }), {
     order: dedupeOrder(blockIndex),
     entity: 'model',
     rows: ROWS,

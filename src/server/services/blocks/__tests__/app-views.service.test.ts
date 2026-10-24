@@ -228,8 +228,8 @@ describe('getAppViews — latency is bounded, not just errors', () => {
 
   it('degrades to UNAVAILABLE when the query hangs past the timeout', async () => {
     // The degrade-don't-throw contract originally covered errors only. A SLOW
-    // ClickHouse is the more likely failure: the driver's own request_timeout
-    // defaults to five minutes, which would hold the whole Promise.all open.
+    // ClickHouse is the more likely failure: the shared client pins request_timeout
+    // to five minutes, which would hold the whole Promise.all open.
     //
     // Fake timers so this costs ~0ms instead of a real 10s on every unit run.
     // The guard is unweakened: the promise still resolves only via the abort

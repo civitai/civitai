@@ -147,6 +147,18 @@ const ChangelogItem = ({
     ? titleGradientTWStyles['blue']
     : titleGradientTWStyles[item.titleColor] ?? titleGradientTWStyles['blue'];
   const slug = `${item.id}`;
+  // Beside the type badge from sm up, beside the date below that, so a phone reader can copy it too.
+  const copyLinkButton = (
+    <ActionIcon
+      size="sm"
+      color="gray"
+      variant="transparent"
+      onClick={() => copy(`${window.location.href.split('?')[0].split('#')[0]}?id=${slug}`)}
+      title="Copy link to this update"
+    >
+      <IconLink size={16} />
+    </ActionIcon>
+  );
 
   return (
     <Card
@@ -195,17 +207,7 @@ const ChangelogItem = ({
             </span>
 
             <Group gap="xs" className="hidden sm:ml-4 sm:inline-flex">
-              <ActionIcon
-                size="sm"
-                color="gray"
-                variant="transparent"
-                onClick={() =>
-                  copy(`${window.location.href.split('?')[0].split('#')[0]}?id=${slug}`)
-                }
-                title="Copy link to this update"
-              >
-                <IconLink size={16} />
-              </ActionIcon>
+              {copyLinkButton}
               <Badge color={typeMapped.color} size="lg" variant="light">
                 {typeMapped.text}
               </Badge>
@@ -215,6 +217,7 @@ const ChangelogItem = ({
           <Group justify="space-between">
             <Group gap="xs">
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
+              <span className="sm:hidden">{copyLinkButton}</span>
               {dayjs(item.updatedAt) > dayjs(item.createdAt).add(1, 'hour') && (
                 <Text size="sm" c="dimmed">
                   Updated: {dayjs(item.updatedAt).format('MMM DD, YYYY h:mm a')}

@@ -69,6 +69,11 @@ export interface CustomNumberFlowProps {
    * `prefers-reduced-motion: reduce` set.
    */
   respectMotionPreference?: boolean;
+  /**
+   * Paint the digits with the inherited `--buzz-gradient` instead of the text colour. Needed because
+   * `background-clip: text` on an ancestor does not reach text inside the transformed digit stacks.
+   */
+  gradient?: boolean;
 }
 
 // Newline-separated digit stack rendered as a single text node. With
@@ -87,6 +92,7 @@ export function CustomNumberFlow({
   locale = 'en-US',
   className,
   respectMotionPreference = true,
+  gradient = false,
 }: CustomNumberFlowProps) {
   const { items, formatted } = parseValue(value, locale, format);
 
@@ -105,6 +111,7 @@ export function CustomNumberFlow({
   const wrapperClass = [
     classes.wrapper,
     respectMotionPreference ? classes.respectMotion : '',
+    gradient ? classes.gradient : '',
     className ?? '',
   ]
     .filter(Boolean)

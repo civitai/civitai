@@ -48,12 +48,13 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
+import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
+import { getBadgeImageUrl, splitProfileBadges } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const mapSize: Record<
@@ -120,20 +121,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-            .reverse()
-            .filter((badge, index, self) => {
-              const data = (badge.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              // Keep only the first occurrence of each unique URL
-              return (
-                url &&
-                self.findIndex((b) => {
-                  const bData = (b.data ?? {}) as BadgeCosmetic['data'];
-                  return (bData.url ?? '') === url;
-                }) === index
-              );
-            }),
+            .filter((c) => c.type === CosmeticType.Badge && !!getBadgeImageUrl(c))
+            .reverse(),
     [user]
   );
 
@@ -145,22 +134,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
 
-  // Drop badges the user chose to hide, then split the rest into their
-  // highlighted picks (their own section) and the others. Hidden wins over
-  // highlighted if stale data ever has a badge in both lists.
   const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
-  const hiddenSet = new Set(privacy?.hiddenBadgeIds ?? []);
-  const visibleBadges = badges.filter((b) => !hiddenSet.has(b.id));
-  const highlightedBadgeIds = privacy?.highlightedBadgeIds ?? [];
-  const highlightedSet = new Set(highlightedBadgeIds);
-  const highlightedBadges = highlightedBadgeIds
-    .map((id) => visibleBadges.find((b) => b.id === id))
-    .filter((b): b is (typeof badges)[number] => !!b);
-  const otherBadges = visibleBadges.filter((b) => !highlightedSet.has(b.id));
+  const { highlightedBadges, otherBadges } = splitProfileBadges(badges, privacy, getBadgeImageUrl);
 
   const renderBadge = (award: (typeof badges)[number]) => {
-    const data = (award.data ?? {}) as BadgeCosmetic['data'];
-    const url = (data.url ?? '') as string;
+    const url = getBadgeImageUrl(award);
     if (!url) return null;
     const isEnlarged = enlargedBadge === award.id;
     const style = {
@@ -183,7 +161,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       >
         <Popover.Target>
           <Box style={style}>
-            <EdgeMedia src={url} alt={award.name} />
+            <EdgeMedia src={url} alt={award.name} optimized />
           </Box>
         </Popover.Target>
         <Popover.Dropdown>
@@ -219,12 +197,13 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     <Group gap={4} wrap="nowrap" className="flex-1">
       <FollowUserButton
         userId={user.id}
+        checkFollowsYou
         leftSection={isMobile ? undefined : <IconRss size={16} />}
         size={sizeOpts.button}
         style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5, flex: 1 }}
         variant={isMobile ? 'filled' : undefined}
       />
-      <AnnouncementMuteToggle creatorId={user.id} />
+      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} />
     </Group>
   );
 
@@ -241,7 +220,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const ChatBtn = ({ label }: { label?: string }) => (
     <ChatUserButton
-      user={user}
+      user={{ ...user, cosmetics: equippedCosmetics }}
       label={label}
       size={sizeOpts.button}
       color="success.9"
@@ -326,6 +305,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {features.creatorJourney && <LegendStatusLine userId={user.id} />}
         {currentUser?.isModerator && (
           <CopyButton value={String(user.id)}>
             {({ copied, copy, color }) => (
@@ -385,7 +365,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </Group>
       )}
       {profile?.bio && !muted && (
-        <ContentClamp maxHeight={sizeOpts.bio} style={{ wordWrap: 'break-word' }}>
+        <ContentClamp
+          maxHeight={sizeOpts.bio}
+          style={{ wordWrap: 'break-word', whiteSpace: 'pre-line' }}
+        >
           {profile.bio}
         </ContentClamp>
       )}

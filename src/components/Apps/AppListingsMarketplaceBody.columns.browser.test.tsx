@@ -36,9 +36,8 @@
  * sheets in production order. A first draft of it lived in THIS file and reported card
  * heights of `[458.23, 312.75, 434.23, 312.75]` on a correct grid.
  *
- * ⚠️ REPORT-ONLY, like every `.browser.test.tsx` here: the `component` project's only CI
- * home is the preview pipeline's non-blocking `preview / component-tests`. The gating
- * half of this change lives in the `unit` project.
+ * Like every `.browser.test.tsx` here, this runs in CI as `Component tests`. The
+ * node-tier half of this change lives in the `unit` project.
  */
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -65,6 +64,7 @@ function makeCard(id: string, name: string, tagline: string | null = 'tag'): Lis
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -83,7 +83,13 @@ const mocks = vi.hoisted(() => ({ items: [] as ListingCard[] }));
 // reports `no tests` rather than a failure.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),

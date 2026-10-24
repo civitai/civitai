@@ -4,6 +4,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
+  import WalkPager from './WalkPager.svelte';
   import { dateTime, num } from '$lib/format';
   import { denied } from '$lib/permissions';
   import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
@@ -190,25 +191,12 @@
             {/each}
           </ul>
 
-          <div class="mt-3 flex items-center gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={index === 0}
-              onclick={() => (index = Math.max(0, index - 1))}
-            >
-              Previous
-            </Button>
-            <span class="text-xs text-dark-2">Page {num(index + 1)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!result.nextCursor}
-              onclick={() => result.nextCursor && advance(result.nextCursor)}
-            >
-              Next
-            </Button>
-          </div>
+          <WalkPager
+            {index}
+            hasNext={!!result.nextCursor}
+            onBack={() => (index = Math.max(0, index - 1))}
+            onNext={() => result.nextCursor && advance(result.nextCursor)}
+          />
         {/if}
       {/if}
     {:catch e}

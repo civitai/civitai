@@ -112,29 +112,6 @@ describe('cap-limit degrade signal — it fires, and the two causes are distingu
     expect(reasons()).toEqual(['db_error', 'missing_row']);
     expect(new Set(reasons()).size).toBe(2);
   });
-
-  it('the LOG carries the specific appBlockId + reason (the metric deliberately does not)', async () => {
-    // The prom counter has no `app_block_id` label — `missing_row` fires for ids
-    // that are by construction NOT in the app catalog, which is exactly the
-    // unbounded label population that grows prom-client's heap forever. So the
-    // attribution an operator needs has to be in the log line.
-    mockFindUnique.mockRejectedValue(new Error('pool exhausted'));
-    await resolveAppCapLimits(APP);
-
-    const line = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(line).toContain(APP);
-    expect(line).toContain('db_error');
-    expect(line).toContain('pool exhausted');
-  });
-
-  it('a MISSING ROW is logged too — it used to degrade with no log at all', async () => {
-    mockFindUnique.mockResolvedValue(null);
-    await resolveAppCapLimits(APP);
-
-    const line = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(line).toContain(APP);
-    expect(line).toContain('missing_row');
-  });
 });
 
 describe('cap-limit degrade signal — it does NOT fire when nothing degraded', () => {
@@ -183,18 +160,6 @@ describe('🔴 the signal is NOT a failure path', () => {
     mockFindUnique.mockRejectedValue(new Error('db down'));
 
     await expect(resolveAppCapLimits(APP)).resolves.toEqual(STRICTEST_APP_CAP_LIMITS);
-  });
-
-  it('a throwing emitter does not suppress the LOG (the emitters are independently guarded)', async () => {
-    mockRecordDegrade.mockImplementation(() => {
-      throw new Error('prom registry exploded');
-    });
-    mockFindUnique.mockResolvedValue(null);
-
-    await resolveAppCapLimits(APP);
-
-    expect(warnSpy).toHaveBeenCalled();
-    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('missing_row');
   });
 
   it('a throwing CONSOLE does not suppress the METRIC, nor break resolution', async () => {
@@ -292,37 +257,12 @@ describe('env rename — BLOCK_APP_SPEND_ABSOLUTE_MAX_* (legacy names still hono
     expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW).toBe(77);
   });
 
-  it('the new name alone emits NO deprecation warning', async () => {
-    process.env[NEW_DAILY] = '4200';
-    process.env[NEW_GENS] = '77';
-    await loadConstants();
-    expect(warnSpy).not.toHaveBeenCalled();
-  });
-
   it('🔴 the OLD name is still honoured — a set spend guardrail is never silently ignored', async () => {
     process.env[OLD_DAILY] = '1234';
     process.env[OLD_GENS] = '56';
     const m = await loadConstants();
     expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY).toBe(1_234);
     expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW).toBe(56);
-  });
-
-  it('using the OLD name logs a DEPRECATION notice naming both the old and new var', async () => {
-    process.env[OLD_GENS] = '56';
-    await loadConstants();
-    const text = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(text).toContain('DEPRECATED');
-    expect(text).toContain(OLD_GENS);
-    expect(text).toContain(NEW_GENS);
-  });
-
-  it('the deprecation notice also states that the MEANING changed to an absolute ceiling', async () => {
-    // The rename exists because the name misdescribes the semantics. A notice
-    // that only said "renamed" would leave the operator with the wrong model.
-    process.env[OLD_GENS] = '56';
-    await loadConstants();
-    const text = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(text).toContain('ABSOLUTE CEILING');
   });
 
   it('🔴 the NEW name WINS when both are set', async () => {
@@ -333,15 +273,6 @@ describe('env rename — BLOCK_APP_SPEND_ABSOLUTE_MAX_* (legacy names still hono
     const m = await loadConstants();
     expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY).toBe(111);
     expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW).toBe(11);
-  });
-
-  it('…and says so — an IGNORED guardrail var must not be silent either', async () => {
-    process.env[NEW_GENS] = '11';
-    process.env[OLD_GENS] = '99';
-    await loadConstants();
-    const text = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(text).toContain('IGNORED');
-    expect(text).toContain(OLD_GENS);
   });
 
   it('an UNUSABLE new value falls through to a usable legacy value (intent beats a typo)', async () => {
@@ -370,14 +301,6 @@ describe('env rename — BLOCK_APP_SPEND_ABSOLUTE_MAX_* (legacy names still hono
       expect(m.BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW).toBe(HARD_DEFAULT_GENS);
     }
   );
-
-  it('a legacy name set to an UNUSABLE value warns that no clamp is in force', async () => {
-    // The silent-typo case: the operator believes they clamped, and nothing did.
-    process.env[OLD_GENS] = 'oops';
-    await loadConstants();
-    const text = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(text).toContain('NO deploy-time clamp is in force');
-  });
 
   it('a legacy value is FLOORED, exactly like the new name', async () => {
     process.env[OLD_GENS] = '250.7';

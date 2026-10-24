@@ -6,7 +6,7 @@ import {
   infiniteQuerySchema,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
@@ -30,6 +30,7 @@ const collectionItemSchema = z.object({
   postId: z.number().optional(),
   modelId: z.number().optional(),
   imageId: z.number().optional(),
+  model3dId: z.number().optional(),
   note: z.string().optional(),
 });
 export type CollectItemInput = z.infer<typeof collectionItemSchema>;
@@ -48,12 +49,12 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     removeFromCollectionIds: z.coerce.number().array().optional(),
   })
   .refine(
-    ({ articleId, imageId, postId, modelId }) =>
-      [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
+    ({ articleId, imageId, postId, modelId, model3dId }) =>
+      [articleId, imageId, postId, modelId, model3dId].filter(isDefined).length === 1,
     { error: 'Only one item can be added at a time.' }
   )
   .refine(
-    ({ type, articleId, imageId, postId, modelId }) => {
+    ({ type, articleId, imageId, postId, modelId, model3dId }) => {
       if (!type) {
         // Allows any type to be passed if type is not defined
         return true;
@@ -70,6 +71,9 @@ export const saveCollectionItemInputSchema = collectionItemSchema
       }
       if (type === CollectionType.Image) {
         return imageId !== undefined;
+      }
+      if (type === CollectionType.Model3D) {
+        return model3dId !== undefined;
       }
       return false;
     },
@@ -105,6 +109,11 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // Attaches `pendingReviewCount` per collection, for the sidebar badges. Opt-in because the
+    // picker in AddToCollectionModal calls this too and draws no badge — and because a caller that
+    // renders inside the sidebar must pass the SAME value as the sidebar or the two split into
+    // separate React Query cache entries and fetch the list twice.
+    withPendingReviewCounts: z.boolean(),
   })
   .partial();
 
@@ -220,7 +229,7 @@ export const upsertCollectionInput = z
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
-    image: imageSchema.nullish(),
+    image: imageReferenceInputSchema.nullish(),
     imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
     read: z.enum(CollectionReadConfiguration).optional(),
@@ -243,8 +252,8 @@ export const getUserCollectionItemsByItemSchema = collectionItemSchema
   .extend({ note: z.never().optional() })
   .merge(getAllUserCollectionsInputSchema)
   .refine(
-    ({ articleId, imageId, postId, modelId }) =>
-      [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
+    ({ articleId, imageId, postId, modelId, model3dId }) =>
+      [articleId, imageId, postId, modelId, model3dId].filter(isDefined).length === 1,
     { error: 'Please pass a single resource to match collections to.' }
   );
 
@@ -283,14 +292,15 @@ export const updateCollectionItemsStatusInput = z
   // Detail-backed reasons read their copy from `rejectionDetail`, which only in-process callers
   // (the AI review job) can supply — so they are not reachable over the wire.
   .refine(
-    ({ rejectionReason }) => !rejectionReason || SELECTABLE_REJECTION_REASONS.includes(rejectionReason),
+    ({ rejectionReason }) =>
+      !rejectionReason || SELECTABLE_REJECTION_REASONS.includes(rejectionReason),
     { message: 'That reason is reserved for automated review.', path: ['rejectionReason'] }
   );
 
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
+  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;

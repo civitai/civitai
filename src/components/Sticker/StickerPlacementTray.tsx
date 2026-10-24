@@ -9,15 +9,18 @@ import {
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import {
   useFreePlacementStanding,
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
+import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -58,11 +61,25 @@ const STICKER_SEARCH_THRESHOLD = 12;
 const trayRowsHeight = (rows: number) =>
   rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
 
-export function StickerPlacementTray({ imageId }: { imageId: number }) {
+export function StickerPlacementTray({
+  imageId,
+  imageNsfwLevel,
+}: {
+  imageId: number;
+  imageNsfwLevel: number;
+}) {
   const currentUser = useCurrentUser();
-  const { sticker, isLoading } = useOwnedSticker();
+  const { sticker: owned, isLoading } = useOwnedSticker();
+  const sticker = useMemo(
+    () =>
+      owned.filter(
+        (option) => !isStickerKeptOffImage({ cosmeticFlags: option.flags ?? 0, imageNsfwLevel })
+      ),
+    [owned, imageNsfwLevel]
+  );
   const [shopping, setShopping] = useState(false);
   const [search, setSearch] = useState('');
+  const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
   const trayRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +87,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -91,6 +109,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       // worse — it comes back showing 2 of 83 with nothing on screen saying why.
       setShopping(false);
       setSearch('');
+      setMineOnlyRequested(false);
       return;
     }
     setTray(trayRef.current);
@@ -108,10 +127,42 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
   // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
   // its own round trip on the tray-open path — not worth taking for them.
+  // Governs the search box and the sort control only; the chip below is free and
+  // is drawn on having made something rather than on collection size.
+  const worthNarrowing = sticker.length > STICKER_SEARCH_THRESHOLD;
   const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null && sticker.length > 1,
     staleTime: 60_000,
   });
+  /**
+   * 🔴 READ OFF THE COLLECTION THE TRAY ALREADY HAS — DO NOT REINTRODUCE A QUERY.
+   * `createdById` rides along on `user.getCosmetics`, which every tray open
+   * fetches anyway, so this costs nothing: no request, no chunking, no threshold
+   * deciding who can afford to know. That is what lets the chip appear for
+   * anyone who has made a sticker rather than only for heavy collectors.
+   *
+   * It was briefly a second procedure behind a `> 12` gate. Asking instead would
+   * have meant an attribution round trip on every tray open for all 1,545 sticker
+   * owners to serve the 123 who made one — measured 2026-09-09.
+   */
+  const madeByYou = useMemo(() => {
+    const viewerId = currentUser?.id;
+    const mine = new Set<number>();
+    if (viewerId == null) return mine;
+    for (const option of sticker) if (option.createdById === viewerId) mine.add(option.id);
+    return mine;
+  }, [sticker, currentUser?.id]);
+  /**
+   * 🔴 DERIVED, NOT THE RAW TOGGLE — the filter cannot outlive its own control.
+   * The chip is drawn on this same predicate, so the two cannot come apart and
+   * leave the tray filtered to nothing with no control on screen to clear it —
+   * on the paid surface, right after a purchase changes the collection.
+   *
+   * Masking rather than clearing is deliberate: if the set repopulates under the
+   * same mounted tray, the filter the placer asked for comes back with it.
+   */
+  const mineOnly = mineOnlyRequested && madeByYou.size > 0;
+
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
@@ -131,12 +182,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     [recentUse]
   );
   const visible = useMemo(() => {
+    const pool = mineOnly ? sticker.filter((option) => madeByYou.has(option.id)) : sticker;
     const term = search.trim().toLowerCase();
     const matched = term
-      ? sticker.filter((option) =>
+      ? pool.filter((option) =>
           `${option.name ?? ''} ${option.slug ?? ''}`.toLowerCase().includes(term)
         )
-      : sticker;
+      : pool;
 
     if (sortBy === 'obtained') return matched;
 
@@ -149,7 +201,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       if (right) return 1;
       return 0;
     });
-  }, [sticker, search, sortBy, lastUsedAt]);
+  }, [sticker, search, sortBy, lastUsedAt, mineOnly, madeByYou]);
 
   if (!showing) return null;
 
@@ -205,11 +257,20 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     <div
       ref={trayRef}
       className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      // Hidden, not unmounted: the buy button keeps measuring this box, so its
+      // side does not flip while the controls are hidden.
+      style={previewing ? { visibility: 'hidden' } : undefined}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
             thing you are shopping to add to, so it stays visible while you buy. */}
-        {shopping && <StickerShopPanel maxScale={maxScale} onClose={() => setShopping(false)} />}
+        {shopping && (
+          <StickerShopPanel
+            maxScale={maxScale}
+            imageNsfwLevel={imageNsfwLevel}
+            onClose={() => setShopping(false)}
+          />
+        )}
         <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
           <div className="flex flex-wrap items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
             <div className="order-1 min-w-0 flex-1">
@@ -255,34 +316,96 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 ))}
               </div>
             </div>
-            {!isLoading && sticker.length > STICKER_SEARCH_THRESHOLD && (
+            {!isLoading && (worthNarrowing || !!madeByYou.size) && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
-                <TextInput
-                  size="xs"
-                  className="min-w-0 flex-1 sm:w-36 sm:flex-none"
-                  value={search}
-                  onChange={(event) => setSearch(event.currentTarget.value)}
-                  placeholder="Search"
-                  aria-label="Search your stickers"
-                  leftSection={<IconSearch size={14} />}
-                />
-                <Select
-                  size="xs"
-                  className="w-36 shrink-0 sm:w-40"
-                  value={sortBy}
-                  onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
-                  data={[
-                    { value: 'used', label: 'Recently used' },
-                    { value: 'obtained', label: 'Recently acquired' },
-                  ]}
-                  aria-label="Sort your stickers"
-                  allowDeselect={false}
-                  // The panel clips its overflow, and this app defaults Popover to
-                  // `withinPortal: false`, so the menu would open inside the clip.
-                  comboboxProps={{ withinPortal: true }}
-                />
+                {/* Search and sort stay on collection size — two widgets above
+                    three stickers is the clutter the threshold exists for. The
+                    chip does not, because it costs nothing and answers a
+                    question a three-sticker creator still has. */}
+                {worthNarrowing && (
+                  <>
+                    <TextInput
+                      size="xs"
+                      radius="xl"
+                      className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+                      value={search}
+                      onChange={(event) => setSearch(event.currentTarget.value)}
+                      placeholder="Search"
+                      aria-label="Search your stickers"
+                      leftSection={<IconSearch size={14} />}
+                    />
+                    <Select
+                      size="xs"
+                      radius="xl"
+                      className="w-36 shrink-0 sm:w-40"
+                      value={sortBy}
+                      onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
+                      data={[
+                        { value: 'used', label: 'Recently used' },
+                        { value: 'obtained', label: 'Recently acquired' },
+                      ]}
+                      aria-label="Sort your stickers"
+                      allowDeselect={false}
+                      // The panel clips its overflow, and this app defaults Popover to
+                      // `withinPortal: false`, so the menu would open inside the clip.
+                      comboboxProps={{ withinPortal: true }}
+                    />
+                  </>
+                )}
+                {/* Drawn only for someone who has made one: a filter that can
+                    only ever empty the tray is worse than no filter. */}
+                {!!madeByYou.size && (
+                  <FilterChip
+                    size="xs"
+                    className="shrink-0"
+                    checked={mineOnly}
+                    onChange={setMineOnlyRequested}
+                    /**
+                     * 🔴 ALL FOUR OF THESE PIN GEOMETRY, AND NONE IS DECORATION.
+                     * Mantine restyles a checked chip: padding drops 16px -> 7.5px
+                     * and a check icon appears. Those do not cancel — measured
+                     * 105.08px unchecked against 102.73px checked — so the control
+                     * visibly jumped as you toggled it, next to two inputs that do
+                     * not move. Pinning what varies, and dropping the icon, makes
+                     * the box the same in both states by construction rather than
+                     * by arithmetic.
+                     *
+                     * Dropping the icon costs this chip a cue the other filter
+                     * chips keep: FilterChip.module.scss draws a checked chip as a
+                     * primary border on a cleared background, and with the icon
+                     * hidden that border is the only thing here saying which state
+                     * it is in.
+                     *
+                     * `borderWidth`/`borderStyle` duplicate what that file already
+                     * sets for the checked state, and are kept deliberately: they
+                     * hold the box steady whatever the shared module does to the
+                     * border later. The shorthand there resolved to nothing until
+                     * PR #4749 (it named `--mantine-color-primary`, which nothing
+                     * defines), and these two longhands are why this chip did not
+                     * jump while it did.
+                     *
+                     * The height fallback is load-bearing separately:
+                     * `--input-height-xs` is scoped to an Input, so unqualified it
+                     * resolves to nothing here and the declaration is dropped —
+                     * which is why the chip first came out at 23px beside 30px
+                     * inputs.
+                     */
+                    styles={{
+                      label: {
+                        height: 'var(--input-height-xs, 1.875rem)',
+                        paddingInline: 16,
+                        borderWidth: 1,
+                        borderStyle: 'solid',
+                      },
+                      iconWrapper: { display: 'none' },
+                    }}
+                  >
+                    Made by you
+                  </FilterChip>
+                )}
               </div>
             )}
+            <StickerPreviewToggle imageId={imageId} className="order-2 shrink-0 sm:order-3" />
             <CloseButton
               className="order-2 sm:order-3"
               onClick={closeTray}
@@ -369,7 +492,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               })}
               {!isLoading && !!sticker.length && !visible.length && (
                 <Text size="sm" c="dimmed" px="xs">
-                  No stickers match “{search.trim()}”.
+                  {`No ${mineOnly ? 'stickers you made' : 'stickers'} match “${search.trim()}”.`}
                 </Text>
               )}
             </Group>

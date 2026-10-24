@@ -32,16 +32,14 @@ import path from 'node:path';
  *       satisfy the constraint 'ApiRouteConfig'.
  *       Property 'default' is missing in type '...' but required in type 'ApiRouteConfig'.
  *
- * 🔴 WHY NO EXISTING GATE CATCHES IT. `tsconfig.json` EXCLUDES
- * `src/**\/__tests__/**`, so `node scripts/typecheck.mjs` never type-checks these
- * files — but the same tsconfig INCLUDES `.next/types/**\/*.ts`, and the generated
+ * WHY TYPECHECK CATCHES IT TOO, AND WHY THIS GUARD STAYS. `tsconfig.json` EXCLUDES
+ * `src/**\/__tests__/**`, but INCLUDES `.next/types/**\/*.ts`, and the generated
  * validator drags each excluded file back into the program via `typeof import(...)`.
- * The validator only exists AFTER `next build`, so the standalone Typecheck task is
- * structurally blind to this class: it is not that the check is weak, it is that
- * the file it would have to read has not been generated yet. Unit tests, ESLint and
- * Prettier are all likewise blind — the file is perfectly valid TypeScript. The
- * only gate that runs `next build` is the preview pipeline, which is why this
- * surfaces as "Typecheck green, preview build red".
+ * The validator used to exist only after `next build`, so the standalone typecheck
+ * could not see this class. `scripts/typecheck.mjs` now runs `next typegen` before
+ * `tsc`, so `pnpm run typecheck` (and the CI typecheck that runs it) fails on it
+ * before merge. This guard is the faster, earlier check, and it names the remedy.
+ * Unit tests, ESLint and Prettier stay blind — the file is valid TypeScript.
  *
  * 🔴 WHY THE GUARD COVERS ALL OF `src/pages/**`, NOT JUST `src/pages/api/**`.
  * `isPageFile` does not distinguish the two, and `generateValidatorFile` applies

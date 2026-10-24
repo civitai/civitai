@@ -1,5 +1,5 @@
 import { Anchor, Stack, Text } from '@mantine/core';
-import { randomId } from '@mantine/hooks';
+import { randomId, useLocalStorage } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -19,13 +19,20 @@ import {
   UNQUANTIZED_QUANT_TYPE,
 } from '~/utils/file-display-helpers';
 import {
-  getModelFileFormat,
   inferGgufQuantType,
   inferSafetensorsPrecision,
+  resolveUploadPrecision,
 } from '~/utils/file-helpers';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
+import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -84,9 +91,14 @@ type FilesContextState = {
   files: FileFromContextProps[];
   linkedComponents: LinkedComponent[];
   modelId?: number;
+  modelVersionId?: number;
+  modelType?: ModelType | null;
   baseModel?: string;
   usageControl?: ModelUsageControl | null;
   dropzoneConfig: DropzoneOptions;
+  // Opt-in: each file finishes (and is saved) before the next one starts.
+  sequentialUploads: boolean;
+  setSequentialUploads: (sequential: boolean) => void;
   onDrop: (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
@@ -96,6 +108,7 @@ type FilesContextState = {
   addLinkedComponent: (
     component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
   ) => Promise<void>;
+  adoptFiles: (modelFileIds: number[]) => Promise<void>;
   removeLinkedComponent: (versionId: number) => void;
 };
 
@@ -108,6 +121,27 @@ type FilesProviderProps = {
   children: React.ReactNode;
 };
 
+function toFileFromContext(
+  file: NonNullable<ModelVersionById['files']>[number],
+  { versionId, modelType, uuid }: { versionId?: number; modelType?: ModelType | null; uuid: string }
+) {
+  return {
+    id: file.id,
+    name: file.name,
+    overrideName: file.overrideName ?? null,
+    type: file.type as ModelFileType,
+    sizeKB: file.sizeKB,
+    size: file.metadata?.size,
+    fp: file.metadata?.fp,
+    format: file.metadata?.format,
+    quantType: file.metadata?.quantType,
+    isRequired: file.metadata?.isRequired ?? null,
+    versionId,
+    uuid,
+    modelType,
+  } as FileFromContextProps;
+}
+
 const FilesContext = createContext<FilesContextState | null>(null);
 export const useFilesContext = () => {
   const context = useContext(FilesContext);
@@ -117,27 +151,27 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { precisions } = useModelFileOptions();
   const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
+  const [sequentialUploads, setSequentialUploads] = useLocalStorage({
+    key: 'model-files-sequential-upload',
+    defaultValue: false,
+  });
+  // Read when a file's upload starts, so the switch never reaches into one already running.
+  const sequentialUploadsRef = useRef(sequentialUploads);
+  sequentialUploadsRef.current = sequentialUploads;
 
   const [errors, setErrors] = useState<FileErrors | null>(null);
   const [files, setFiles] = useState<FileFromContextProps[]>(() => {
-    const initialFiles = (version?.files?.map((file) => ({
-      id: file.id,
-      name: file.name,
-      overrideName: file.overrideName ?? null,
-      type: file.type as ModelFileType,
-      sizeKB: file.sizeKB,
-      size: file.metadata?.size,
-      fp: file.metadata?.fp,
-      format: file.metadata?.format,
-      quantType: file.metadata?.quantType,
-      isRequired: file.metadata?.isRequired ?? null,
-      versionId: version.id,
-      uuid: randomId(),
-      modelType: model?.type ?? null,
-    })) ?? []) as FileFromContextProps[];
+    const initialFiles = (version?.files ?? []).map((file) =>
+      toFileFromContext(file, {
+        versionId: version?.id,
+        modelType: model?.type ?? null,
+        uuid: randomId(),
+      })
+    );
     const uploading = useS3UploadStore
       .getState()
       .items.filter((x) => x.meta?.versionId === version?.id)
@@ -163,6 +197,38 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   // Tracks files whose byte-upload has already been kicked off so the auto-start
   // effect doesn't start the same file twice across renders.
   const startedUploadsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * For files created outside this provider. `files` is seeded once in a `useState` initializer,
+   * so no query invalidation reaches it.
+   *
+   * 🔴 Append-only, and only the named ids. Re-seeding would revert unsaved metadata edits and
+   * duplicate an upload whose row the server committed before this client learned its id.
+   *
+   * `getByIdForEdit`, not `getById`: it reads the primary (`forceWriteDb`), so a file created a
+   * moment ago is not lost to replica lag.
+   */
+  const adoptFiles = async (modelFileIds: number[]) => {
+    if (!version?.id || !modelFileIds.length) return;
+    const fresh = await queryUtils.modelVersion.getByIdForEdit.fetch({
+      id: version.id,
+      withFiles: true,
+    });
+    const wanted = new Set(modelFileIds);
+    setFiles((state) => {
+      const present = new Set(state.map((file) => file.id).filter(isDefined));
+      const added = (fresh?.files ?? [])
+        .filter((file) => wanted.has(file.id) && !present.has(file.id))
+        .map((file) =>
+          toFileFromContext(file, {
+            versionId: version.id,
+            modelType: model?.type ?? null,
+            uuid: randomId(),
+          })
+        );
+      return added.length ? [...state, ...added] : state;
+    });
+  };
 
   const handleUpdateFile = (uuid: string, file: Partial<FileFromContextProps>) => {
     setFiles((state) => state.map((x) => (x.uuid === uuid ? { ...x, ...file } : x)));
@@ -263,10 +329,14 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess(_, variables) {
+    async onSuccess(result, variables) {
       hideNotification('publishing-version');
       const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
+      if (notifyIfPublishHeld(result)) {
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        return;
+      }
       showPublishedNotification(modelId, modelVersionId);
     },
     onError(error) {
@@ -280,7 +350,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation({
     async onSuccess(results) {
       hideNotification('publishing-version');
-      if (results) showPublishedNotification(results.modelId, results.id);
+      if (!results) return;
+      if (notifyIfPublishHeld(results)) {
+        await queryUtils.model.getById.invalidate({ id: results.modelId });
+        return;
+      }
+      showPublishedNotification(results.modelId, results.id);
     },
     onError(error) {
       hideNotification('publishing-version');
@@ -460,14 +535,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
 
     if (targetIndex >= 0) {
-      // Only conflicts the edited file is part of — an unrelated pair of siblings
+      // Only groups the edited file is part of — an unrelated pair of siblings
       // that happen to share a key isn't this save's problem.
-      const target = files[targetIndex];
-      const conflicts = getConflictingFiles(files).filter((group) => group.includes(target));
-      if (conflicts.length) {
-        showConflictNotification(conflicts);
-        return false;
-      }
+      warnSimilarFiles(files, files[targetIndex]);
       return true;
     }
 
@@ -504,11 +574,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
     }
 
-    const conflicts = getConflictingFiles(files);
-    if (conflicts.length) {
-      showConflictNotification(conflicts);
-      return false;
-    }
+    warnSimilarFiles(files);
     return true;
   };
 
@@ -570,7 +636,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const fileName = item.file.name.toLowerCase();
       if (fileName.endsWith('.safetensors') || fileName.endsWith('.sft')) {
         inferSafetensorsPrecision(item.file)
-          .then((fp) => {
+          .then((headerFp) => {
+            const fp = resolveUploadPrecision({
+              fileName: item.name,
+              headerFp,
+              precisions,
+            });
             if (fp) handleUpdateFile(item.uuid, { fp });
           })
           .catch(() => null);
@@ -654,6 +725,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
           meta: { versionId, type, size, fp, format, quantType, isRequired, uuid },
+          uploadGroup: {
+            id: `model-version-${versionId}`,
+            sequential: sequentialUploadsRef.current,
+          },
         },
         async ({ meta, size: uploadedSize, backend, ...result }) => {
           // `uploadedSize` is the byte size of the upload (renamed to avoid
@@ -787,10 +862,15 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         updateFile: handleUpdateFile,
         removeFile,
         dropzoneConfig,
+        sequentialUploads,
+        setSequentialUploads,
         modelId: model?.id,
+        modelVersionId: version?.id,
+        modelType: model?.type ?? null,
         baseModel: version?.baseModel ?? undefined,
         usageControl: version?.usageControl,
         validationCheck: checkValidation,
+        adoptFiles,
         addLinkedComponent,
         removeLinkedComponent,
       }}
@@ -827,43 +907,25 @@ const metadataSchema = modelFileMetadataSchema
   })
   .array();
 
-// The key is positional so absent fields can't collapse two distinct files onto
-// the same key.
-export const getConflictingFiles = (files: FileFromContextProps[]) => {
-  const groups = new Map<string, FileFromContextProps[]>();
-
-  files.forEach((item) => {
-    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
-      .map((value) => value ?? '')
-      .join('|');
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  });
-
-  // Component files need none of size/fp/quantType, so a group where no member has
-  // any of them (e.g. two bare Text Encoders) has nothing to disambiguate on and
-  // isn't a real duplicate.
-  const hasDistinguishingSettings = (file: FileFromContextProps) =>
-    !!(file.size || file.fp || file.quantType);
-
-  return [...groups.values()].filter(
-    (group) => group.length > 1 && group.some(hasDistinguishingSettings)
-  );
-};
-
-const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
-  showErrorNotification({
-    title: 'Duplicate file types',
-    error: new Error(
-      conflicts
-        .map(
-          (group) =>
-            `${group
-              .map((f) => f.name)
-              .join(', ')}: same type, size, format, precision and quant, one must differ`
-        )
-        .join('\n')
-    ),
-  });
+const warnSimilarFiles = (files: FileFromContextProps[], target?: FileFromContextProps) => {
+  const listNames = (group: FileFromContextProps[]) => group.map((f) => f.name).join(', ');
+  const warnings = getSimilarFiles(files).filter((group) => !target || group.includes(target));
+  if (warnings.length) {
+    showWarningNotification({
+      title: 'Files share the same type, format and precision',
+      message: (
+        <Stack gap={4}>
+          {warnings.map((group, i) => (
+            <Text key={i} size="sm">
+              {listNames(group)}
+            </Text>
+          ))}
+          <Text size="sm">Make sure the file names make clear how they differ.</Text>
+        </Stack>
+      ),
+      autoClose: 8000,
+    });
+  }
 };
 
 /** Model types whose primary file is an archive/config rather than model weights */

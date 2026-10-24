@@ -11,6 +11,13 @@ Adds a new ecosystem and base model entry to [basemodel.constants.ts](src/shared
 
 Use when a new model provider or variant is being added to Civitai — e.g., new provider (Baidu's Ernie), new architecture (Flux's Kontext), or a variant of an existing family whose resources aren't interchangeable with its siblings.
 
+This skill has two modes, and you should only be here if one of them applies:
+
+- **New ecosystem**: a new line, or a checkpoint that existing resources in its ecosystem won't run on (for example `LTXV` → `LTXV2`).
+- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem. Also used for the API-only exception below.
+
+**A new release of an API-only model that already has an ecosystem usually needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so — unless the existing base model is hosted weights whose licence, restrictions or LoRAs must not apply to the API release; then use **Base model only** with `hidden: true` (`Ideogram 4.5` beside `Ideogram 4.0`). `onboard-generator-model` Phase 0 has the full decision.
+
 ## The test: does this need its own ecosystem?
 
 Answer this **before** picking IDs. The ecosystem is the **compatibility** key, not a UI grouping and not a media label:
@@ -30,7 +37,7 @@ That is the whole test. [getGenerationSupport](src/shared/constants/basemodel.co
 | Split, but they're compatible | Resources don't cross | Add `crossEcosystemRules` entries — additive, that's what the mechanism is for |
 | Merged, but they're incompatible | Incompatible resources offered as compatible | Change the ecosystem key → **changes the AIR URN namespace on already-published resources** |
 
-Splitting is reversible; merging is not. This is doubly true for API-only / `modelLocked` ecosystems, where no community resources exist yet — the split costs nothing today and preserves the option.
+Splitting is reversible; merging is not. This is doubly true when you're creating the first ecosystem for an API-only line: no community resources exist yet, so the split costs nothing today and keeps the option open. This doesn't apply to a later release in that line, which gets no new records at all (see "When to use").
 
 Media-specific *labelling* for creators is a `BaseModelRecord` concern, not an ecosystem one — several base models can share one ecosystem, each with its own `name` and `type`.
 
@@ -54,12 +61,11 @@ Ask the user for the model name and a reference link (HuggingFace page, official
 
 Read the current state of [basemodel.constants.ts](src/shared/constants/basemodel.constants.ts) to determine the next available IDs. Use Read with offsets — don't load the whole file.
 
-- **`ECO.<Name>`**: next available ecosystem ID. Groupings in `ECO`:
-  - Image models: 1-50 range (first come, first served; find next gap)
-  - Video models: 47-66 range
-  - Utility: 66+
+- **`ECO.<Name>`**: ECO IDs are one global namespace; the media-type comments in the block are not
+  ranges. Take the next unused number above the highest root ID (the `Root ecosystems` blocks), and
+  never enter a child range: 100-199 is SDXL children, 200+ AuraFlow children. When the next root
+  number would be 100 or above, ask the user to pick a new root block.
   - Child ecosystems (`parentEcosystemId` set): 100+ for SDXL children, 200+ for AuraFlow children
-  - Pick the next unused number within the appropriate block
 - **`BM.<Name>`**: next available base model ID. Read the `BM` constant block, find the next unused number.
 - **Family ID**: try to match an existing family in `ecosystemFamilies`. If none match, propose creating a new one (confirm with user).
 - **License ID**: try to match an existing license in `licenses` by name/URL. If none match, create a new entry (confirm with user).
@@ -108,6 +114,8 @@ After the ecosystem is added and typecheck passes, ask:
 > Do you want to add generation support now? This wires the ecosystem into the generation form with a graph, handler, and workflow config. (Runs the `add-generation-support` skill.)
 
 If yes, invoke the `add-generation-support` skill. If no, stop — the ecosystem record alone is enough for it to appear in model listings.
+
+**Skip this offer when you were invoked by `onboard-generator-model`.** Generation support hardcodes the version ID of the official checkpoint. That version can't be created until this change is deployed, because `modelVersion.upsert` rejects base-model names the running server doesn't know.
 
 Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featurable in auctions** (`AuctionBase`) are manual DB steps that the constants do **not** handle automatically — miss them and the feature silently half-works (this bit Anima and Krea 2). Those steps are documented in the `add-generation-support` skill under "Post-onboarding: generation coverage & auction featurability."
 
@@ -174,4 +182,5 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
 
 - **Ernie** (Baidu, image): new family, new license; ECO.Ernie = 67, BM.Ernie = 83, familyId 17, licenseId 13 (Apache 2.0 — matched existing).
 - **Seedance** (ByteDance, video): family 12 (ByteDance — existed), licenseId 23 (Seedream — shared with Seedream since ByteDance uses the same agreement).
-- **Flux 3 Video** (BFL, video): ECO.Flux3Video = 79, BM.Flux3Video = 98, family 1, new licenseId 39. A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems, named for the modality so the siblings land without a rename. Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.
+- **Flux 3 Video / Flux.3** (BFL): ECO.Flux3Video = 79, BM.Flux3Video = 98; ECO.Flux3 = 92, BM.Flux3 = 112 (display "Flux.3"); both family 1, licenseId 39 (BFL ToS, new with Video, shared by Image). A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems. Video took a modality-suffixed key; the Image release took the bare `Flux3` to match Flux.1/Flux.2 naming, so a third sibling needs its own suffix (e.g. `Flux3Dev`). Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.
+- **MOSS Image** (OpenMOSS): the merge cost, measured. Base and SFT shipped as two weight releases and were split on the rule above (ECO 96/97, BM 117/118), then merged into the one `MossImage` ecosystem three days after launch once their LoRAs proved interchangeable. By then the community had published dozens of versions against `MOSS Image Base`, so the merge was a prod relabel of every one of them (`ModelVersion.baseModel`, coverage row, generation presets, cache busts) and an AIR rename. Check compatibility with the provider before the split when the weights are a base/fine-tune pair of the same model.

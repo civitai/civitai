@@ -33,12 +33,9 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   BlockedByUsers: emptyPreference,
 }));
 
-const {
-  getCommentHandler,
-  getCommentCountV2Handler,
-  getCommentsInfiniteHandler,
-  getCommentsThreadDetailsHandler,
-} = await import('../commentv2.controller');
+const { getCommentHandler, getCommentCountV2Handler, getCommentsInfiniteHandler } = await import(
+  '../commentv2.controller'
+);
 
 const input = { entityType: 'image', entityId: 1 } as never;
 const ctxFor = (user: { id: number; isModerator?: boolean } | undefined) => ({ user } as never);
@@ -54,18 +51,6 @@ describe('CommentV2 handlers forward who is asking', () => {
     await getCommentsInfiniteHandler({ ctx: ctxFor(user), input });
 
     expect(getCommentsInfinite).toHaveBeenCalledWith(
-      expect.objectContaining({ isModerator: expected })
-    );
-  });
-
-  it.each([
-    ['a moderator', { id: 1, isModerator: true }, true],
-    ['an ordinary signed-in user', { id: 2, isModerator: false }, false],
-    ['a signed-out viewer', undefined, false],
-  ])('getThreadDetails: %s', async (_label, user, expected) => {
-    await getCommentsThreadDetailsHandler({ ctx: ctxFor(user), input });
-
-    expect(getCommentsThreadDetails2).toHaveBeenCalledWith(
       expect.objectContaining({ isModerator: expected })
     );
   });

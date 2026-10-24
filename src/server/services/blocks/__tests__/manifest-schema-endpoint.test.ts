@@ -119,7 +119,7 @@ describe('GET /api/blocks/manifest-schema', () => {
 
     expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
     expect(res._headers['Access-Control-Allow-Methods']).toBe('GET');
-    expect(res._headers['Access-Control-Allow-Headers']).toBe('*');
+    expect(res._headers['Access-Control-Allow-Headers']).toMatch(/\bAuthorization\b/);
     expect(String(res._headers['Cache-Control'])).toContain('public');
     expect(String(res._headers['Cache-Control'])).toContain('s-maxage=');
   });

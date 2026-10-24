@@ -5,6 +5,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { WILDCARD_MAX_CONCURRENT } from '~/components/AppBlocks/wildcardPackParse';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * W13 wildcard-pack import bridge (page surface).
@@ -60,6 +61,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -233,6 +240,7 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       const payload = r.payload as { requestId: string; pack?: any; error?: string };
       expect(payload.requestId).toBe('rq_wp');
       expect(payload.error).toBeUndefined();
+      expectReplyKeys('GET_WILDCARD_PACK', 'success', ['pack'], payload);
       expect(payload.pack.lists).toEqual({
         colors: ['red', 'blue', '#ffffff'],
         animals: ['cat', 'dog'],
@@ -279,6 +287,7 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       const r = replies.last('WILDCARD_PACK_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_big', error: 'too-large' });
+      expectReplyKeys('GET_WILDCARD_PACK', 'error', ['error'], r.payload);
     });
     expect(fetchedSignedUrl('huge.zip')).toBe(false);
     replies.stop();

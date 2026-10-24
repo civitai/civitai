@@ -1,31 +1,33 @@
 /**
- * Step-input router for the form-graph lane: `generationHub.parse().data` in,
- * @civitai/client steps out. Mirrors the data-graph dispatcher
- * (`../ecosystems/index.ts`) for the ported families; an unported ecosystem is
- * a loud error rather than a silent fallthrough, because reaching here with
- * one means the caller routed a family this lane cannot serve yet.
+ * Step-input router: `generationHub.parse().data` in, @civitai/orchestration-client steps out.
+ * An unrouted ecosystem is a loud error rather than a silent fallthrough —
+ * reaching here with one means the caller routed a family this has no handler for.
  *
  * `data.ecosystem` is the WIRE value — for wan that is the derived backend
  * key, which is exactly what the version lookup wants.
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChromaInput } from './chroma.handler';
 import { createFluxInput } from './flux.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
+import { createFlux3KleinInput } from './flux3-klein.handler';
+import { createMossImageInput } from './moss-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
-import { createImagen4Input } from './imagen4.handler';
+import { createKrea3Input } from './krea3.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
+import { createMingInput } from './ming.handler';
 import { createMuseImageInput } from './muse-image.handler';
 import { createMAIInput } from './mai.handler';
 import { createErnieInput } from './ernie.handler';
+import { createIdeogramInput } from './ideogram.handler';
 import { createSeedreamInput } from './seedream.handler';
 import { createAnimaInput } from './anima.handler';
 import { createMageFlowInput } from './mage-flow.handler';
@@ -38,7 +40,6 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createWanImageInput } from './wan-image.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createMochiInput } from './mochi.handler';
-import { createSoraInput } from './sora.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
@@ -48,6 +49,8 @@ import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
+import { createYuE2Input } from './yue2.handler';
+import { createSoniloInput } from './sonilo.handler';
 import {
   createPolyGenInput,
   createTripoInput,
@@ -61,22 +64,27 @@ import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
 import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
-import type { EcosystemGenerationData, LooseGenerationData } from './types';
+import type { EcosystemGenerationData } from './types';
 
 export type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
 export { createFluxInput } from './flux.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
+export { createFlux3KleinInput } from './flux3-klein.handler';
+export { createMossImageInput } from './moss-image.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
-export { createImagen4Input } from './imagen4.handler';
+export { createKrea3Input } from './krea3.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
+export { createMingInput } from './ming.handler';
 export { createMuseImageInput } from './muse-image.handler';
 export { createMAIInput } from './mai.handler';
 export { createErnieInput } from './ernie.handler';
+export { createIdeogramInput } from './ideogram.handler';
 export { createSeedreamInput } from './seedream.handler';
 export { createAnimaInput } from './anima.handler';
 export { createMageFlowInput } from './mage-flow.handler';
@@ -89,7 +97,6 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createWanImageInput } from './wan-image.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createMochiInput } from './mochi.handler';
-export { createSoraInput } from './sora.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
@@ -99,6 +106,8 @@ export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
+export { createYuE2Input } from './yue2.handler';
+export { createSoniloInput } from './sonilo.handler';
 export {
   createPolyGenInput,
   createTripoInput,
@@ -117,33 +126,15 @@ export async function createFormGraphStepInput(
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
   const normalizedData = withSeed(data);
-  const loose = normalizedData as LooseGenerationData;
 
-  const steps = await createStep(normalizedData, handlerCtx);
-
-  // Enhanced compatibility mode: comfyui engine for every textToImage step.
-  // Assumes parsed data: the graph never emits enhancedCompatibility for flux
-  // ultra (whose step must keep its own engine) — unparsed input would bypass
-  // that guarantee.
-  if (
-    loose.enhancedCompatibility &&
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(loose.ecosystem ?? '')
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createStep(normalizedData, handlerCtx);
 }
 
 /**
  * Fill the seed preserving the arm type. Constrained to `object`, not
  * `{ seed?: ... }` — that is a weak type, and an arm with no seed field at
  * all (Flux3Video) fails the no-common-properties rule. The extra key on such
- * an arm is inert: v1's dispatcher seeds unconditionally the same way.
+ * an arm is inert.
  */
 function withSeed<T extends object>(data: T): T {
   const seed = (data as { seed?: number }).seed;
@@ -158,7 +149,6 @@ function createStep(
 
   switch (data.ecosystem) {
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':
@@ -181,6 +171,8 @@ function createStep(
 
     case 'Flux2':
       return createFlux2Input(data, handlerCtx);
+    case 'Flux3':
+      return createFlux3Input(data, handlerCtx);
 
     case 'Flux2Klein_9B':
     case 'Flux2Klein_9B_base':
@@ -188,20 +180,28 @@ function createStep(
     case 'Flux2Klein_4B_base':
       return createFlux2KleinInput(data, handlerCtx);
 
+    case 'Flux3Klein':
+    case 'Flux3Klein_base':
+      return createFlux3KleinInput(data, handlerCtx);
+
+    case 'MossImage':
+      return createMossImageInput(data, handlerCtx);
+
     case 'Boogu':
       return createBooguInput(data, handlerCtx);
 
     case 'Krea2':
       return createKrea2Input(data, handlerCtx);
-
-    case 'Imagen4':
-      return createImagen4Input(data, handlerCtx);
+    case 'Krea3':
+      return createKrea3Input(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);
 
     case 'Reve':
       return createReveInput(data, handlerCtx);
+    case 'Ming':
+      return createMingInput(data, handlerCtx);
     case 'MuseImage':
       return createMuseImageInput(data, handlerCtx);
 
@@ -210,6 +210,9 @@ function createStep(
 
     case 'Ernie':
       return createErnieInput(data, handlerCtx);
+
+    case 'Ideogram':
+      return createIdeogramInput(data, handlerCtx);
 
     case 'Seedream':
       return createSeedreamInput(data, handlerCtx);
@@ -234,6 +237,7 @@ function createStep(
 
     case 'Qwen':
     case 'Qwen2':
+    case 'Qwen21':
     case 'Qwen3':
       return createQwenInput(data, handlerCtx);
 
@@ -264,9 +268,6 @@ function createStep(
     case 'Mochi':
       return createMochiInput(data, handlerCtx);
 
-    case 'Sora2':
-      return createSoraInput(data, handlerCtx);
-
     case 'HyV1':
       return createHunyuanInput(data, handlerCtx);
 
@@ -293,6 +294,12 @@ function createStep(
 
     case 'MiniMaxMusic3':
       return createMiniMaxMusicInput(data, handlerCtx);
+
+    case 'YuE2':
+      return createYuE2Input(data, handlerCtx);
+
+    case 'Sonilo':
+      return createSoniloInput(data, handlerCtx);
 
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);

@@ -9,6 +9,9 @@ $black: var(--mantine-color-black, #000000);
   grid-auto-rows: 0;
   overflow: hidden;
   margin-top: -8px;
+  // Event hats get only the items' 8px margin of room, and no room to grow.
+  --event-decoration-allowance: 8px;
+  --event-decoration-grow: 1;
 
   &::-webkit-scrollbar {
     background: transparent;
@@ -20,7 +23,7 @@ $black: var(--mantine-color-black, #000000);
     border-radius: 4px;
   }
 
-  &>* {
+  & > * {
     margin: 8px;
   }
 
@@ -35,7 +38,7 @@ $black: var(--mantine-color-black, #000000);
     padding-left: $spacing-md;
     padding-right: $spacing-md;
 
-    &>* {
+    & > * {
       scroll-snap-align: center;
     }
   }
@@ -52,15 +55,14 @@ $black: var(--mantine-color-black, #000000);
   padding-left: $spacing-md;
   padding-right: $spacing-md;
 
-  &>* {
+  & > * {
     scroll-snap-align: initial;
   }
 
   @container (max-width: theme('screens.sm')) {
-
     scroll-snap-type: x mandatory;
 
-    &>* {
+    & > * {
       scroll-snap-align: center;
     }
   }
@@ -76,10 +78,7 @@ $black: var(--mantine-color-black, #000000);
       }
 
       &::-webkit-scrollbar-thumb {
-        background-color: light-dark(
-          rgba($black, 0.5),
-          rgba($white, 0.5)
-        );
+        background-color: light-dark(rgba($black, 0.5), rgba($white, 0.5));
       }
     }
   }
@@ -90,7 +89,6 @@ $black: var(--mantine-color-black, #000000);
   scroll-snap-type: auto;
 
   @container (max-width: theme('screens.sm')) {
-
     scroll-snap-type: x mandatory;
   }
 

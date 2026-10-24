@@ -1,7 +1,8 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
+import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
@@ -75,6 +76,17 @@ function logCredentialAttribution(
   }
 }
 
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
+export const init: ServerInit = async () => {
+  try {
+    const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
+    await releaseLeasesAtBoot();
+  } catch (error) {
+    void logAxiomError(error, { event: 'text-scan test run lease release failed' });
+  }
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
@@ -116,6 +128,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   // After applyGrants, never before: the resolver reads the store it just populated.
   event.locals.grants = resolvePermissions(result.user);
 
+  const moved = movedViewTarget(event.url);
+  if (moved) return new Response(null, { status: 307, headers: { location: moved } });
+
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
   // senior, /images/minor → staff. canAccess's prefix match resolves `__data.json` data requests and
@@ -131,7 +146,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
     // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
     // grant for it, and there was nothing on screen that could have told them otherwise.
-    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
+    // The query string rides along so the dashboard can link back to exactly what was asked for.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
     return new Response(null, { status: 303, headers: { location: denied } });
   }
 

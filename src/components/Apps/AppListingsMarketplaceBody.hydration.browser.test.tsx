@@ -8,10 +8,10 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 
 /**
  * Regression: `/apps` STORE HYDRATION SAFETY — the sibling of
- * `AppsSubNav.hydration.browser.test.tsx`, for the change that put the store's
+ * `AppsRailNav.hydration.browser.test.tsx`, for the change that put the store's
  * filters in the URL.
  *
- * THE INCIDENT THIS GUARDS (see the long comment in `AppsSubNav.tsx`): a value
+ * THE INCIDENT THIS GUARDS (see the long comment in `useAppsNavSections.ts`): a value
  * that differed between the SERVER render and the FIRST CLIENT render bailed
  * React hydration (#418/#425) at the `/apps` page ROOT, leaving EVERY `/apps`
  * page un-hydrated and inert — dead buttons, queries that never fired. It was
@@ -57,6 +57,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -78,7 +79,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => mocks.isClient }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
 // It replaces the module outright, so a named import in the file's module graph that

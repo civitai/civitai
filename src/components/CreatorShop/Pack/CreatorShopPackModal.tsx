@@ -34,6 +34,7 @@ import {
 import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import {
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
@@ -58,7 +59,18 @@ type Bundlable = PackMemberPricing & {
 
 const memberUses = (member: Bundlable) => stickerUsesFromCosmeticData(member.data);
 
-export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem }) {
+/**
+ * A first-paint SEED, not the source of truth. `getPack` is, and the hydration
+ * effect below overwrites all four scalars with it before Save unlocks — the
+ * caller's row can be arbitrarily stale, because the query client runs at
+ * `staleTime: Infinity`.
+ */
+export type PackEditTarget = Pick<
+  CreatorShopManageItem,
+  'id' | 'title' | 'description' | 'unitAmount' | 'availableQuantity'
+>;
+
+export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const { submitPack, updatePack } = useMutateCreatorShop();
@@ -91,6 +103,10 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   useEffect(() => {
     if (!existing || hydrated) return;
     setHydrated(true);
+    setName(existing.title);
+    setDescription(existing.description ?? '');
+    setPrice(existing.unitAmount);
+    setQuantity(existing.availableQuantity ?? undefined);
     setSelected(
       existing.members.map((m) => ({
         cosmeticId: m.cosmeticId,
@@ -145,6 +161,13 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     [selected]
   );
 
+  // Compared against what the server returned, so a reordered picker doesn't read
+  // as an edit and a stale caller row can't make one look unchanged.
+  const contentsChanged =
+    !existing ||
+    selected.length !== existing.members.length ||
+    selected.some((m) => !existing.members.find((e) => e.cosmeticId === m.cosmeticId));
+
   const uploading = files.some((file) => file.status === 'uploading');
   const tooFew = selected.length < PACK_MIN_MEMBERS;
   const tooMany = selected.length > PACK_MAX_MEMBERS;
@@ -168,7 +191,27 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   // button still works.
   const feeShortfall =
     !isEdit && !loadingBuzz && packFee !== undefined && feeAccountBalance < packFee;
+  // The server refuses both outright, so without this the editor is the very
+  // thing it replaced: a form that takes what a moderator types and fails on save.
+  const awaitingPack = isEdit && !hydrated;
+  // Whether this edit touches the blue-buzz setting at all. The payload sends the
+  // field only when it did, and the server only re-checks the blockers when it
+  // did — so the client must refuse on the same condition, or it blocks a title
+  // fix the server would have accepted and makes turning blue OFF the only way
+  // out of an edit that never touched it.
+  const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;
+  // Archiving OVERWRITES status, so the review verdict is the only thing that
+  // tells a rejected pack from an ordinary archived one. Without it the alert
+  // tells a moderator to restore a pack whose restore the server refuses as
+  // REJECTED_IS_FINAL.
+  const wasRejected =
+    existing?.status === CosmeticShopItemStatus.Rejected ||
+    (existing?.status === CosmeticShopItemStatus.Archived && !!existing.lastReviewWasRejection);
+  const uneditableStatus = wasRejected || existing?.status === CosmeticShopItemStatus.Archived;
   const canSubmit =
+    // An edit saves what `getPack` returned, never the caller's seed.
+    (!isEdit || hydrated) &&
+    !uneditableStatus &&
     !!name.trim() &&
     (isEdit || packFee !== undefined) &&
     !tooFew &&
@@ -176,7 +219,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     !priceTooLow &&
     !uploading &&
     (isEdit || !imageId || rightsAffirmed) &&
-    !(acceptsBlueBuzz && blueBlockers.length);
+    !(blueChanged && acceptsBlueBuzz && blueBlockers.length);
 
   const handleDrop = async (dropped: File[]) => {
     const file = dropped[0];
@@ -206,12 +249,21 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         id: item.id,
         name,
         description: description || null,
-        price,
+        // Both are omitted when unchanged, which is the contract the server is
+        // written against. Sent unconditionally they re-snapshot every member's
+        // `floorAmount` — the basis each member's creator is PAID on — rewrite
+        // `packMemberCount` past the guard that refuses a pack whose member has
+        // gone, and drop the pack back into review, all on an edit that touched
+        // only the title.
+        ...(price !== existing?.unitAmount ? { price } : {}),
+        ...(contentsChanged ? { memberCosmeticIds } : {}),
         availableQuantity: quantity ?? null,
-        acceptsBlueBuzz,
+        // Same rule as the two above. Sent unconditionally it makes the server's
+        // blue-buzz check fire on every title edit, which a member opting out
+        // since then turns into a refusal of an edit that never touched blue.
+        ...(blueChanged ? { acceptsBlueBuzz } : {}),
         // Explicit null so clearing the cover actually clears it.
         imageUrl: imageId ?? null,
-        memberCosmeticIds,
       });
     else {
       if (packFee === undefined) {
@@ -243,15 +295,26 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             <Loader type="bars" />
           </Center>
         )}
+        {/* Save is gated on `hydrated`, so without this a failed load leaves a
+            filled-in form that can never be submitted and never says why. */}
+        {isEdit && !loadingExisting && !existing && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            Couldn&apos;t load this pack. Close and reopen to try again.
+          </Alert>
+        )}
         <TextInput
           label="Pack name"
           withAsterisk
+          // Editable only once the server's values are in: hydration overwrites
+          // these, so typing before it lands is silently discarded.
+          disabled={awaitingPack}
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
         />
         <Textarea
           label="Description"
           autosize
+          disabled={awaitingPack}
           minRows={2}
           value={description ?? ''}
           onChange={(e) => setDescription(e.currentTarget.value)}
@@ -298,6 +361,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
                   variant="subtle"
                   color="red"
                   leftSection={<IconX size={14} />}
+                  // Same reason as Add below: hydration REPLACES `selected`, so a
+                  // removal made before getPack lands is silently undone.
+                  disabled={awaitingPack}
                   onClick={() =>
                     setSelected((cur) => cur.filter((m) => m.cosmeticId !== member.cosmeticId))
                   }
@@ -316,6 +382,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
 
         <TextInput
           label="Add items"
+          disabled={awaitingPack}
           placeholder="Search published cosmetics"
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
@@ -345,7 +412,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
                     size="compact-xs"
                     variant="light"
                     leftSection={<IconPlus size={14} />}
-                    disabled={selected.length >= PACK_MAX_MEMBERS}
+                    // `awaitingPack` too: hydration REPLACES `selected`, so an
+                    // item added before getPack lands disappears without a word.
+                    disabled={awaitingPack || selected.length >= PACK_MAX_MEMBERS}
                     onClick={() => setSelected((cur) => [...cur, option as Bundlable])}
                   >
                     Add
@@ -359,6 +428,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         <Divider label="Pricing" />
         <NumberInput
           label="Pack price"
+          disabled={awaitingPack}
           withAsterisk
           min={floor || undefined}
           value={price}
@@ -382,6 +452,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         )}
         <NumberInput
           label="Available quantity"
+          disabled={awaitingPack}
           description="Leave empty for unlimited."
           min={1}
           value={quantity}
@@ -392,7 +463,16 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
           label="Accept Blue Buzz"
           checked={acceptsBlueBuzz}
           onChange={(e) => setAcceptsBlueBuzz(e.currentTarget.checked)}
-          disabled={blueBlockers.length > 0}
+          // `awaitingPack` like every other control: hydration OVERWRITES this
+          // from the server, so a toggle made during the load window is discarded
+          // and — because the field is only sent when it differs from that same
+          // server value — discarded silently.
+          //
+          // Then un-tickable, never un-un-tickable. A pack saved as blue-accepting
+          // whose member later stops accepting blue hydrates this ON with blockers
+          // present, and `canSubmit` refuses that combination — so disabling it
+          // outright froze the only control that clears the refusal.
+          disabled={awaitingPack || (blueBlockers.length > 0 && !acceptsBlueBuzz)}
         />
         {blueBlockers.length > 0 && (
           <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
@@ -401,6 +481,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             This pack can&apos;t accept Blue Buzz because{' '}
             {blueBlockers.map((m) => m.name).join(', ')} {blueBlockers.length > 1 ? 'do' : 'does'}{' '}
             not.
+            {blueChanged && acceptsBlueBuzz && ' Turn it back off to save.'}
           </Alert>
         )}
 
@@ -452,7 +533,25 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             />
           )}
         </Group>
-        {existing?.status && (
+        {!!existing?.unavailableCount && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            {/* Named rather than hidden: these are already gone from the list
+                above, so editing the contents drops them for good and takes
+                their creators' payout share with them. */}
+            {existing.unavailableCount} item
+            {existing.unavailableCount > 1 ? 's are' : ' is'} no longer available and{' '}
+            {existing.unavailableCount > 1 ? 'are' : 'is'} not shown above. Changing the contents
+            removes {existing.unavailableCount > 1 ? 'them' : 'it'} permanently.
+          </Alert>
+        )}
+        {uneditableStatus && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            {wasRejected
+              ? 'This pack was rejected, which is final. It cannot be edited.'
+              : 'This pack is archived. Restore it before editing.'}
+          </Alert>
+        )}
+        {existing?.status && !uneditableStatus && (
           <Text size="xs" c="dimmed">
             Changing the contents or the price sends this pack back through review.
           </Text>

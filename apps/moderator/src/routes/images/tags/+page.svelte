@@ -1,15 +1,16 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   type Item = PageData['items'][number];
 
   const resolved = new SvelteMap<string, 'removed' | 'kept'>();
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
   $effect(() => {
     data.items;
     resolved.clear();
@@ -37,11 +38,7 @@
 
   const bulkSubmit: SubmitFunction = ({ formData }) => {
     const outcome = formData.get('disable') === 'true' ? 'removed' : 'kept';
-    selectedImageIds
-      .split(',')
-      .map(Number)
-      .filter(Boolean)
-      .forEach((id) => markResolved(id, outcome));
+    for (const id of selected) markResolved(Number(id), outcome);
     selected.clear();
     return async ({ update }) => update({ invalidateAll: false });
   };

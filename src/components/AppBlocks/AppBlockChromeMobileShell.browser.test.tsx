@@ -42,6 +42,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as TrpcMod from '~/utils/trpc';
 // Raw text, not a stylesheet import — see `safeAreaRuleText()` for why.
 import globalsCss from '~/styles/globals.css?raw';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 const mocks = vi.hoisted(() => ({
   features: { appListings: true } as Record<string, boolean>,
@@ -65,42 +66,33 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useOptionalFeatureFlags: () => mocks.features,
 }));
 
-// The `blocks.*` namespace is reached by `AppPermissionsActivityDrawer`, which the
-// parity test opens from a sheet row. Empty fixtures — its data-driven behaviour has
-// its own suite; here it is only the target of an ACTION row.
+/**
+ * 🔴 A PROXY, AND THIS FILE WAS ONE LINE FROM A CRASH IT COULD NOT HAVE EXPLAINED.
+ *
+ * The `blocks.*` namespace is reached by `AppPermissionsActivityDrawer`, which the PARITY GUARD
+ * test below genuinely `click()`s open from a sheet row. Phase 3 made that drawer's scope section
+ * render `ScopeConsentList`, whose `useScopeRevoke` calls `trpc.useUtils()` on every render — a
+ * member the enumerated mock here did not have.
+ *
+ * ⚠️ IT PASSED ANYWAY, FOR A REASON THAT IS NOT COVERAGE: line ~53 mocks
+ * `useCurrentUser: () => null`, so `DrawerBody` takes its `!isAuthed` branch and never reaches the
+ * hook. The first arm in this file to drive an AUTHED viewer would have got
+ * `TypeError: trpc.useUtils is not a function` and failed on a missing element, with nothing
+ * pointing at the fixture. That is a latent trap left by a green test, which is worse than a red
+ * one. Found by the test-review lane; the two sibling chrome files had already paid for it.
+ *
+ * Converted rather than patched: this file asserts on no tRPC spy, so every procedure named here
+ * existed only to stop a subtree crashing — precisely what the shared proxy does for all of them,
+ * including whatever the drawer reaches next. See `test/trpcProxyStub.ts`.
+ */
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      getAppDetail: { useQuery: () => ({ data: mocks.detail, isLoading: false, error: null }) },
-      // Reached only by F4's entry points, which this file does not drive (that path
-      // has its own suite). Present so a render cannot die on an undefined namespace.
-      getMyReview: { useQuery: () => ({ data: null }) },
+  trpc: makeTrpcProxy({
+    // The one procedure whose CONTENT this file measures (the store card's detail).
+    'appListings.getAppDetail': {
+      useQuery: () => ({ data: mocks.detail, isLoading: false, error: null }),
     },
-    blocks: {
-      listMyScopeGrants: { useQuery: () => ({ data: [], isLoading: false }) },
-      listMyAppActivity: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-      listMyScopeInvocations: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-    },
-    modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
-    useQueries: () => [],
-  },
+  }),
 }));
 
 // eslint-disable-next-line import/first
@@ -377,11 +369,15 @@ describe('AppBlockChrome mobile shell', () => {
   });
 
   test(`REGRESSION — at ${PHONE[0]}x${PHONE[1]} the platform nav is inside the ⋮ sheet`, async () => {
-    // 🔴 RED AT `origin/main`, BEHAVIOURALLY. The failing assertion is the presence of
-    // "Installed apps" after opening the ⋮. That label exists ONLY in the platform-nav
-    // section — the ⋮ menu's own item for the same route is worded "Manage apps" — so
-    // at main, where the ⋮ carries app actions only, it is not reachable from this
-    // trigger at any width.
+    // 🔴 RED AT THE REVISION THAT INTRODUCED IT, BEHAVIOURALLY. The failing assertion is
+    // the presence of the platform nav's own label for the activity route after opening
+    // the ⋮. That label exists ONLY in the platform-nav section — the ⋮ menu's own item
+    // for the same route is worded "Manage apps" — so at the pre-fold revision, where the
+    // ⋮ carries app actions only, it is not reachable from this trigger at any width.
+    //
+    // ⚠️ THE LABEL MOVED WITH THE ROUTE: it read "Installed apps" until `/apps/installed`
+    // became `/apps/activity` and it became "App activity". Same item, same section, same
+    // claim — only the word changed.
     //
     // 🔴 IT IS ASSERTED BY LABEL, NOT BY A TESTID, ON PURPOSE. A testid on the new
     // sheet would go red at main merely by not existing, which proves nothing. A user-
@@ -399,7 +395,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(sheet, 'the ⋮ must have opened SOME surface').not.toBeNull();
 
     const labels = rowLabels(sheet as HTMLElement);
-    for (const label of ['Marketplace', 'Installed apps', 'My apps']) {
+    for (const label of ['Marketplace', 'App activity', 'My apps']) {
       expect(
         labels,
         `at ${PHONE[0]}px "${label}" must be reachable from the ⋮ — the platform nav folds into ` +

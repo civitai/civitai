@@ -682,6 +682,156 @@ describe('POST /api/v1/block-tokens', () => {
   // ===========================================================================
   // NSFW-APP-RED-ONLY — host-driven maturity ceiling + mature-app refusal.
   // ===========================================================================
+  /**
+   * 🔴 `effectiveBrowsingLevel` — the per-VIEWER narrowing of `maxBrowsingLevel`.
+   *
+   * `maxBrowsingLevel` is a property of the DOMAIN: every viewer on
+   * `civitai.red` is handed the identical, maximally-wide ceiling, so a block
+   * rendering mature affordances off it shows them to a viewer whose own
+   * setting says PG. This field is the domain ceiling intersected with the
+   * viewer's own level (`getServerBrowsingLevel` — the platform's existing
+   * source of truth, reused rather than re-derived).
+   *
+   * 🔴 EVERY CASE BELOW MAKES THE DOMAIN AND THE VIEWER DISAGREE. The two
+   * disagree in BOTH directions in production (red ⇒ the domain is wider; blue
+   * ⇒ the viewer is wider), and a fixture where they agree cannot tell an
+   * intersection apart from either operand.
+   *
+   * The mocked `getFeatureFlags` must return `canViewNsfw` here — the route
+   * reads it to decide whether the viewer's saved level is honoured at all —
+   * so each case sets it explicitly rather than inheriting the suite default.
+   */
+  describe('effectiveBrowsingLevel (per-viewer ceiling in the mint response)', () => {
+    async function mintAs(opts: {
+      host: string;
+      canViewNsfw: boolean;
+      user: Record<string, unknown> | null;
+    }) {
+      const flagMod = await import('~/server/services/feature-flags.service');
+      (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        appBlocks: true,
+        canViewNsfw: opts.canViewNsfw,
+      });
+      mockSession.value = (opts.user ? { user: opts.user } : null) as never;
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({
+          origin: `https://${opts.host}`,
+          headers: { host: opts.host },
+          body: validBody(),
+        }),
+        res
+      );
+      return res;
+    }
+
+    const modBase = { id: 42, bannedAt: null, isModerator: true };
+
+    it('🔴 red domain + a viewer with NSFW OFF → PG, NOT the domain ceiling', async () => {
+      // The direction the feature exists for: the domain permits everything and
+      // the viewer permits PG. An implementation that echoed `maxBrowsingLevel`
+      // would return all-levels here.
+      const { allBrowsingLevelsFlag, publicBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: false, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect(res._status).toBe(200);
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).not.toBe(body.maxBrowsingLevel);
+    });
+
+    it('red domain + a full-NSFW viewer → the full ceiling (not a blanket clamp)', async () => {
+      const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect((res._body as { effectiveBrowsingLevel: number }).effectiveBrowsingLevel).toBe(
+        allBrowsingLevelsFlag
+      );
+    });
+
+    it('red domain + a PG13-capped viewer → PG13, strictly between the two extremes', async () => {
+      // A third distinct value, so the assertion cannot be satisfied by either
+      // "always the domain ceiling" or "always PG".
+      const { NsfwLevel } = await import('~/server/common/enums');
+      const { Flags } = await import('~/shared/utils/flags');
+      const level = Flags.addFlag(NsfwLevel.PG, NsfwLevel.PG13);
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: level },
+      });
+      expect((res._body as { effectiveBrowsingLevel: number }).effectiveBrowsingLevel).toBe(level);
+    });
+
+    it('🔴 a full-NSFW viewer on civitai.com CANNOT widen past the SFW domain ceiling', async () => {
+      // The widening case. `canViewNsfw` is true site-wide on blue, so the raw
+      // viewer level here carries R/X/XXX while the App-Blocks domain ceiling is
+      // SFW. Projecting the viewer's raw level would hand a publisher the mature
+      // bits on a domain whose whole point is that they are not allowed.
+      const { allBrowsingLevelsFlag, sfwBrowsingLevelsFlag, nsfwBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const { Flags } = await import('~/shared/utils/flags');
+      const res = await mintAs({
+        host: 'civitai.com',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect(res._status).toBe(200);
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).not.toBe(allBrowsingLevelsFlag);
+      // The specific harm: no mature bit survives.
+      expect(Flags.intersects(body.effectiveBrowsingLevel, nsfwBrowsingLevelsFlag)).toBe(false);
+    });
+
+    it('a signed-in viewer with NO saved level on red → PG (fail-closed, not the ceiling)', async () => {
+      const { allBrowsingLevelsFlag, publicBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: null },
+      });
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
+    });
+
+    it('the response ALWAYS carries a level that is a subset of maxBrowsingLevel', async () => {
+      // Structural, over every case this suite can produce: whatever the pair,
+      // `effective & ~max` is empty. A block can never widen its own ceiling.
+      const cases = [
+        { host: 'civitai.red', canViewNsfw: true, browsingLevel: 31, showNsfw: true },
+        { host: 'civitai.red', canViewNsfw: true, browsingLevel: 1, showNsfw: true },
+        { host: 'civitai.com', canViewNsfw: true, browsingLevel: 31, showNsfw: true },
+        { host: 'civitai.com', canViewNsfw: false, browsingLevel: 31, showNsfw: true },
+      ];
+      for (const c of cases) {
+        const res = await mintAs({
+          host: c.host,
+          canViewNsfw: c.canViewNsfw,
+          user: { ...modBase, showNsfw: c.showNsfw, browsingLevel: c.browsingLevel },
+        });
+        const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+        expect(typeof body.effectiveBrowsingLevel).toBe('number');
+        expect(body.effectiveBrowsingLevel & ~body.maxBrowsingLevel).toBe(0);
+      }
+    });
+  });
+
   describe('NSFW-app-red-only maturity', () => {
     it('red-capable host (civitai.red) mints the FULL mature ceiling', async () => {
       mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;

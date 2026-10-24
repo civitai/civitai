@@ -12,14 +12,17 @@ import {
   Radio,
   ThemeIcon,
   Alert,
+  Anchor,
 } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconTrash } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { PointerCard } from '~/components/Account/SettingsLayout';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function DeleteCard() {
+export function DeleteCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
   const { logout } = useAccountContext();
   const { data: subscriptions, isLoading: subscriptionsLoading } =
@@ -27,6 +30,19 @@ export function DeleteCard() {
       enabled: !!currentUser,
     });
   const hasActiveMembership = !subscriptionsLoading && !!subscriptions && subscriptions.length > 0;
+  // The server refuses too (`deleteUserHandler`); this just says so before the user gets there.
+  const restricted = !!currentUser?.muted;
+  // Inline content only: PointerCard already wraps `description` in a <Text>.
+  const restrictedNotice = restricted ? (
+    <>
+      Restricted accounts can&apos;t be closed from account settings. You can still have your
+      account deleted:{' '}
+      <Anchor href={SUPPORT_LINKS.portal} target="_blank" rel="noopener noreferrer" inherit>
+        open a ticket through our support portal
+      </Anchor>{' '}
+      and our team will process it.
+    </>
+  ) : null;
 
   const deleteAccountMutation = trpc.user.delete.useMutation({
     async onSuccess() {
@@ -224,19 +240,43 @@ export function DeleteCard() {
         </Stack>
       </Modal>
 
-      {/* MAIN DELETE ACCOUNT BUTTON */}
-      <Card withBorder>
-        <Stack>
-          <Title order={2}>Delete account</Title>
-          <Text size="sm">
-            Once you delete your account, there is no going back. Please be certain when taking this
-            action.
-          </Text>
-          <Button variant="outline" color="red" onClick={handleDeleteClick}>
-            Delete your account
-          </Button>
-        </Stack>
-      </Card>
+      {flat ? (
+        <PointerCard
+          id="delete-account"
+          tone="danger"
+          icon={<IconAlertTriangle size={18} />}
+          title="Delete account"
+          description={
+            restrictedNotice ??
+            'You choose what happens to your models and images. This cannot be undone.'
+          }
+          action={
+            <Button
+              color="red"
+              size="compact-sm"
+              leftSection={<IconTrash size={14} />}
+              disabled={restricted}
+              onClick={handleDeleteClick}
+            >
+              Delete account
+            </Button>
+          }
+        />
+      ) : (
+        <Card withBorder>
+          <Stack>
+            <Title order={2}>Delete account</Title>
+            <Text size="sm">
+              Once you delete your account, there is no going back. Please be certain when taking
+              this action.
+            </Text>
+            {restrictedNotice && <Text size="sm">{restrictedNotice}</Text>}
+            <Button variant="outline" color="red" disabled={restricted} onClick={handleDeleteClick}>
+              Delete your account
+            </Button>
+          </Stack>
+        </Card>
+      )}
     </>
   );
 }

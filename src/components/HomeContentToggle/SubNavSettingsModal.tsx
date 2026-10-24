@@ -21,7 +21,7 @@ import { forwardRef, useRef } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
-import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
+import { isNavEntryVisible, navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import type { NavGroup } from '~/components/HomeContentToggle/nav-registry';
 import type { NavRow as Row } from '~/components/HomeContentToggle/nav-rows';
 import { matchesDefaults, rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
@@ -147,6 +147,10 @@ export default function SubNavSettingsModal() {
   const rowsBeforeDrag = useRef<Row[] | null>(null);
   const source = isResolved ? settings ?? null : undefined;
   const [rows, setRows] = useSeededState(source, seedRows);
+  const [keepProfileLabels, setKeepProfileLabels] = useSeededState(
+    source,
+    (s) => s?.navigation?.keepProfileLabels ?? false
+  );
   const [showLabels, setShowLabels] = useSeededState(
     source,
     (s) => s?.navigation?.showLabels ?? true
@@ -155,13 +159,10 @@ export default function SubNavSettingsModal() {
   // The same gate the nav applies, so the modal never offers a destination the viewer cannot
   // reach. Filtering only what is DISPLAYED — `rows` stays whole, so a gated item keeps its
   // place and is written back untouched instead of being dropped on save.
-  const isReachable = (row: Row) =>
-    navRegistry
-      .find((entry) => entry.key === row.key)
-      ?.visible?.({
-        features,
-        isAuthed: !!currentUser,
-      }) ?? true;
+  const isReachable = (row: Row) => {
+    const entry = navRegistry.find((entry) => entry.key === row.key);
+    return !entry || isNavEntryVisible(entry, { features, isAuthed: !!currentUser });
+  };
   const shown = rows.filter(isReachable);
 
   // `SortableItem` spreads dnd-kit's `attributes`, which announce the rows as keyboard-reorderable
@@ -215,7 +216,9 @@ export default function SubNavSettingsModal() {
     mutate.mutate({
       // Writing nothing when the layout equals the defaults keeps the row small AND leaves the
       // user tracking nav items that ship later.
-      navigation: matchesDefaults(rows, showLabels) ? undefined : rowsToConfig(rows, showLabels),
+      navigation: matchesDefaults(rows, showLabels, keepProfileLabels)
+        ? undefined
+        : rowsToConfig(rows, showLabels, keepProfileLabels),
     });
 
   // Deletes the key rather than writing empty groups, so the user resumes tracking the defaults —
@@ -252,6 +255,24 @@ export default function SubNavSettingsModal() {
                 checked={showLabels}
                 onChange={(e) => setShowLabels(e.currentTarget.checked)}
                 aria-label="Show labels"
+              />
+            </Group>
+          </Paper>
+
+          <Paper withBorder radius="md" p="md">
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Text size="sm" fw={600}>
+                  Keep profile tab labels
+                </Text>
+                <Text size="xs" c="dimmed">
+                  On narrow screens, scroll the profile tabs instead of shrinking them to icons.
+                </Text>
+              </Stack>
+              <Switch
+                checked={keepProfileLabels}
+                onChange={(e) => setKeepProfileLabels(e.currentTarget.checked)}
+                aria-label="Keep profile tab labels"
               />
             </Group>
           </Paper>

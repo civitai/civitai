@@ -1,7 +1,7 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_SQUARE_AR,
+  SDXL_FULL_AR,
   SEED,
   defaultSamplerPresets,
   guidancePresetsLowBalHigh,
@@ -10,9 +10,8 @@ import {
 } from '../defs';
 import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
-/** Chroma, ported from `chroma-graph.ts`. No negative prompt, no CLIP skip. */
+/** Chroma. No negative prompt, no CLIP skip. */
 
-// Copied from chroma-graph.ts, which dies with the data-graph engine.
 const chromaVersionId = 2164239;
 /** Flow-compatible samplers. */
 const chromaSamplers = ['Euler', 'Euler a', 'DPM++ SDE', 'DPM++ 2M Karras', 'DPM++ SDE Karras'];
@@ -28,7 +27,7 @@ export const chroma = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resources', familyResources)
   .use(promptOnlyTextBlock)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field(
     'sampler',
     selectDef({ options: chromaSamplers, default: 'Euler', presets: defaultSamplerPresets })

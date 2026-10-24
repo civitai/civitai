@@ -20,10 +20,8 @@ import {
  * a zod schema over `router.query`, read through `useZodRouteParams` (see
  * `useAppsStoreQueryParams.ts`, and `useModelQueryParams2` for the precedent).
  *
- * REACT-FREE ON PURPOSE. The browser-mode (`component`) suites run only in the PR
- * preview pipeline, report-only and not a required check, so the parse/serialise
- * decisions that decide whether a shared link works have to be coverable by the
- * node `unit` project — same split as
+ * REACT-FREE ON PURPOSE, so the parse/serialise decisions that decide whether a
+ * shared link works are testable in the node `unit` project without a browser — same split as
  * `appListingCardView` / `recentAppsRail` / `appListingGrid`.
  *
  * 🔴 EVERY FIELD DEGRADES INDEPENDENTLY (`.catch(...)` per field, not one
@@ -39,7 +37,7 @@ import {
  * 🔴 HYDRATION. Everything here is a pure function of `router.query`. No
  * `window`, no `localStorage`, no `Date`, no feature flag — so the server render
  * and the first client paint are identical BY CONSTRUCTION, which is the actual
- * invariant behind the `/apps` hydration incident documented in `AppsSubNav.tsx`
+ * invariant behind the `/apps` hydration incident documented in `useAppsNavSections.ts`
  * (a first-client-paint divergence bailed hydration of the whole `/apps` root
  * and left every page inert). Do not reach for a client-only source in here; the
  * regression test `AppListingsMarketplaceBody.hydration.browser.test.tsx` mounts

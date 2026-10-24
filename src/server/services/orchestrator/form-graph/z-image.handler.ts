@@ -1,21 +1,23 @@
 /**
- * ZImage handler for the form-graph lane (ZImageTurbo + ZImageBase) — SdCpp
+ * ZImage handler for the form-graph lane (ZImageTurbo + ZImageBase) — comfy
  * imageGen steps, with optional ControlNet preprocess steps.
  */
 
 import type {
-  ZImageTurboCreateImageGenInput,
-  ZImageBaseCreateImageGenInput,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
+import type {
+  ComfyZImageBaseCreateImageGenInput,
+  ComfyZImageTurboCreateImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
-type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
+type ZImageInput = ComfyZImageTurboCreateImageGenInput | ComfyZImageBaseCreateImageGenInput;
 
 const baseModelToModel: Record<string, 'turbo' | 'base'> = {
   ZImageTurbo: 'turbo',
@@ -42,12 +44,8 @@ export const createZImageInput = defineHandler<
 
   const genStep: ImageGenStepTemplate = {
     $type: 'imageGen',
-    // Cast: `controlNets` is not yet declared on ZImage*ImageGenInput in the
-    // @civitai/client types but is accepted by the orchestrator for ZImage
-    // workflows. Drop the cast once the client SDK is regenerated with the
-    // field on SdCpp imageGen inputs.
     input: removeEmpty({
-      engine: 'sdcpp',
+      engine: 'comfy',
       ecosystem: 'zImage',
       model,
       operation: 'createImage' as const,
@@ -57,12 +55,12 @@ export const createZImageInput = defineHandler<
       height: data.aspectRatio.height,
       cfgScale: data.cfgScale ?? 1,
       steps: data.steps ?? 4,
-      sampleMethod: sampler ?? 'euler',
-      schedule: scheduler ?? 'simple',
+      sampler: sampler ?? 'euler',
+      scheduler: scheduler ?? 'simple',
       quantity,
       seed: data.seed,
       loras,
-      diffuserModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+      diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       ...(controlNets.length ? { controlNets } : {}),
     }) as ZImageInput,
   };

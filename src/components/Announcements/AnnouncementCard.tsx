@@ -2,6 +2,7 @@ import type { ButtonVariant } from '@mantine/core';
 import { alpha, Button, Title, useMantineTheme } from '@mantine/core';
 import clsx from 'clsx';
 import React from 'react';
+import remarkBreaks from 'remark-breaks';
 import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -11,6 +12,9 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useInternalHosts } from '~/hooks/useInternalHosts';
+import { isExternalHref } from '~/utils/external-link';
 
 export type AnnouncementCardAction = {
   link: string;
@@ -101,6 +105,7 @@ export function AnnouncementCard({
 }: AnnouncementCardProps) {
   const impressionRef = useTrackImpression<HTMLElement>(impressions);
   const theme = useMantineTheme();
+  const internalHosts = useInternalHosts();
   const borderColor = theme.colors[color]?.[4] ?? theme.colors.blue[4];
 
   const body = (
@@ -118,9 +123,10 @@ export function AnnouncementCard({
           {cover.kind === 'key' ? (
             <EdgeMedia
               src={cover.src}
-              // Shared with `announcement-media-check` so the monitored variant stays the
-              // variant users actually load. See announcement-image.ts.
+              // Shared with `announcement-media-check`: the explicit `optimized` keeps the banner
+              // on ONE variant, so the monitor can name the URL users load. See announcement-image.ts.
               width={ANNOUNCEMENT_IMAGE_WIDTH}
+              optimized
               alt="Announcement banner image"
               className="absolute inset-0 size-full object-cover"
             />
@@ -160,23 +166,47 @@ export function AnnouncementCard({
             {controls}
           </div>
         )}
-        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+        {/* `p` and `br` so the line breaks a creator typed survive: unwrapped paragraphs and
+            soft breaks are both plain whitespace, which HTML collapses to a space. */}
+        <CustomMarkdown
+          allowedElements={['a', 'p', 'br']}
+          unwrapDisallowed
+          remarkPlugins={[remarkBreaks]}
+          className="[&_p+p]:mt-2"
+          warnOnExternalLinks
+        >
           {content}
         </CustomMarkdown>
         {!!actions.length && (
-          <div className="flex gap-2">
-            {actions.map((action, index) => (
-              <Button
-                key={index}
-                component={Link}
-                href={action.link}
-                onClick={() => onActionClick?.(action, index)}
-                variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
-                color={action.color ?? color}
-              >
-                {action.linkText}
-              </Button>
-            ))}
+          <div className="flex flex-wrap gap-2">
+            {actions.map((action, index) => {
+              const variant = (action.variant || 'outline') as ButtonVariant;
+              const shared = {
+                variant,
+                color: action.color ?? color,
+                children: action.linkText,
+              };
+
+              if (!isExternalHref(action.link, internalHosts))
+                return (
+                  <Button
+                    key={index}
+                    component={Link}
+                    href={action.link}
+                    onClick={() => onActionClick?.(action, index)}
+                    {...shared}
+                  />
+                );
+
+              return (
+                <Button
+                  key={index}
+                  component="a"
+                  {...externalLinkAnchorProps(action.link, () => onActionClick?.(action, index))}
+                  {...shared}
+                />
+              );
+            })}
           </div>
         )}
         {footer}

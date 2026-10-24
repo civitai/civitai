@@ -6,6 +6,7 @@ import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-he
 import type { JobContext } from '~/server/jobs/job';
 import { createLogger } from '~/utils/logging';
 import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 
 const log = createLogger('metric-helpers');
 
@@ -61,7 +62,12 @@ function timeframeSum(
   additionalConditions = '',
   timeframeAlias = 'tf'
 ) {
-  const conditionCheck = additionalConditions ? `WHEN NOT (${additionalConditions}) THEN 0` : '';
+  // `IS NOT TRUE` rather than `NOT (...)` so an outer-joined row, where the condition is
+  // NULL rather than false, scores 0 instead of falling through to the AllTime arm and
+  // counting a reaction that is not there. Identical for every inner-joined caller.
+  const conditionCheck = additionalConditions
+    ? `WHEN (${additionalConditions}) IS NOT TRUE THEN 0`
+    : '';
   additionalConditions =
     additionalConditions && !additionalConditions.startsWith('AND')
       ? `AND ${additionalConditions}`
@@ -122,6 +128,15 @@ function reactionTimeframes(reactionElementAlias = 'r', timeframeAlias = 'tf') {
     .join(',\n');
 }
 
+/**
+ * The metric columns a reaction aggregate writes. Exported because a job has to seed them
+ * to zero for the entities the aggregate returns no row for, which the three post/article
+ * reaction tasks do inline before issuing their query.
+ */
+export const reactionCountKeys = Object.keys(ReviewReactions).map(
+  (reaction) => `${reaction.toLowerCase()}Count`
+);
+
 const reactionMetricNames = Object.keys(ReviewReactions)
   .map((reaction) => `"${reaction.toLowerCase()}Count"`)
   .join(', ');
@@ -131,6 +146,7 @@ const reactionMetricUpserts = Object.keys(ReviewReactions)
   .join(', ');
 
 export const snippets = {
+  excludedReactorFilter,
   reactionTimeframes,
   timeframeSum,
   timeframeCount,

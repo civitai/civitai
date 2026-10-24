@@ -16,16 +16,38 @@
  * pinned to each other by `src/server/services/__tests__/restriction-type-seam.test.ts`, which
  * imports and executes this module rather than reading it as text.
  */
-export const RESTRICTION_TYPES = ['generation', 'bot-account'] as const;
+export const RESTRICTION_TYPES = ['generation', 'bot-account', 'scam'] as const;
 export type RestrictionType = (typeof RESTRICTION_TYPES)[number];
 
 /** What the queue shows when the URL names no type — the only type that existed before the seam. */
 export const RESTRICTION_TYPE: RestrictionType = 'generation';
 
+export const GENERATOR_RESTRICTIONS_PATH = '/audit/generator-restrictions';
+export const SCAM_RESTRICTIONS_PATH = '/users/scam-restrictions';
+/** Every page that mounts the restriction queue — the pages whose grants may read what its detail panel fetches. */
+export const RESTRICTION_PAGES = [GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH] as const;
+
+/** Scam restrictions review users, not prompts, so they have their own page under Users. */
+export const GENERATOR_RESTRICTION_TYPES = ['generation', 'bot-account'] as const;
+
 export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
   generation: 'Generation',
   'bot-account': 'Bot account',
+  scam: 'Scam',
 };
+
+export const SORT_ORDERS = ['oldest', 'newest'] as const;
+export type SortOrder = (typeof SORT_ORDERS)[number];
+
+export const SORT_LABELS: Record<SortOrder, string> = {
+  oldest: 'Oldest first',
+  newest: 'Newest first',
+};
+
+// A Pending row keeps its account muted, so that queue is worked oldest first: newest first left
+// month-old mutes on the last page.
+export const defaultSortFor = (status: string | undefined): SortOrder =>
+  status === 'Pending' ? 'oldest' : 'newest';
 
 /**
  * The types a VERDICT can be handed to — narrower than `RESTRICTION_TYPES`, which is what may be
@@ -59,11 +81,11 @@ export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
  *     constants declared in this file is fine — that is the same value everywhere. Reading one from
  *     the environment is not, and is refused by name.
  */
-export const RULINGS_WIRED_FOR: readonly RestrictionType[] = ['generation'];
+export const RULINGS_WIRED_FOR: readonly RestrictionType[] = ['generation', 'scam'];
 
 /** Why a ruling may not be handed to a row of this type, or `null` when it may. */
 export function unwiredRulingReason(type: string): string | null {
   return (RULINGS_WIRED_FOR as readonly string[]).includes(type)
     ? null
-    : `Rulings are not yet available for "${type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+    : `Rulings are not yet available for "${type}" restrictions — no verdict effects are defined for this type. This restriction was NOT resolved.`;
 }

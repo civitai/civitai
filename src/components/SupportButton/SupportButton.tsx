@@ -7,7 +7,7 @@ import {
   Stack,
   Badge,
   createPolymorphicComponent,
-  UnstyledButton
+  UnstyledButton,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';
@@ -85,7 +85,7 @@ const holidayButton: SupportButtonOption = {
   href: '/pricing?utm_campaign=holiday_promo',
 };
 
-export const SupportButton = () => {
+export function useSupportOption() {
   const { seed } = useAppContext();
   const features = useFeatureFlags();
   const selectedOption = new Random(seed).fromArray(options);
@@ -93,6 +93,13 @@ export const SupportButton = () => {
   // funnel users to the buzz purchase flow where NoCryptoUpsell pitches the
   // membership in context.
   const href = features.isGreen ? selectedOption.href : '/purchase/buzz';
+
+  return { ...selectedOption, href };
+}
+
+export const SupportButton = () => {
+  const selectedOption = useSupportOption();
+  const { href } = selectedOption;
 
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>
@@ -127,6 +134,25 @@ export const SupportButton = () => {
   );
 };
 
+function getVariantStyles(variant: Variant) {
+  switch (variant) {
+    case 'primary':
+      return classes.supportButtonPrimary;
+    case 'gift':
+      return classes.supportButtonGift;
+    case 'heart':
+      return classes.supportButtonHeart;
+    case 'sparkle':
+      return classes.supportButtonSparkle;
+    case 'royal':
+      return classes.supportButtonRoyal;
+    case 'premium':
+      return classes.supportButtonPremium;
+    default:
+      return classes.supportButtonPrimary;
+  }
+}
+
 interface SupportButtonBaseProps
   extends UnstyledButtonProps,
     Omit<React.ComponentPropsWithoutRef<'button'>, keyof UnstyledButtonProps> {
@@ -137,25 +163,6 @@ interface SupportButtonBaseProps
 
 const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
   ({ position, icon: Icon, children, className, classVariant = 'primary', ...props }, ref) => {
-    const getVariantStyles = (variant: SupportButtonOption['variant']) => {
-      switch (variant) {
-        case 'primary':
-          return classes.supportButtonPrimary;
-        case 'gift':
-          return classes.supportButtonGift;
-        case 'heart':
-          return classes.supportButtonHeart;
-        case 'sparkle':
-          return classes.supportButtonSparkle;
-        case 'royal':
-          return classes.supportButtonRoyal;
-        case 'premium':
-          return classes.supportButtonPremium;
-        default:
-          return classes.supportButtonPrimary;
-      }
-    };
-
     return (
       <HoverCard withArrow openDelay={400} closeDelay={100} position={position} withinPortal>
         <HoverCard.Target>
@@ -198,3 +205,20 @@ export const SupportButtonPolymorphic = createPolymorphicComponent<
   'button',
   SupportButtonBaseProps
 >(SupportButtonBase);
+
+/** The same pill as `SupportButton`, small enough to sit beside a name. */
+export function SupportChip({ onClick }: { onClick?: () => void }) {
+  const { href, text, icon: Icon, variant } = useSupportOption();
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={clsx(classes.supportButton, classes.supportChip, getVariantStyles(variant))}
+    >
+      <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
+        {text}
+      </Text>
+      <Icon size={14} className={classes.supportButtonIcon} />
+    </Link>
+  );
+}

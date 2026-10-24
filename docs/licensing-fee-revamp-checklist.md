@@ -369,8 +369,7 @@ and every subscription writer goes through it: Paddle, Stripe, redeemable codes,
 - [x] **Checked writer by writer, 2026-08-25: no gap.** Stripe is the live provider and every one of
       its subscription writes pairs with an invalidation
       ([stripe.service.ts](../src/server/services/stripe.service.ts) 524/527, 636/637, 644/652,
-      685/734, 1143). Two writers invalidate nothing, and neither matters:
-      `process-subscriptions-requiring-renewal.ts` writes only `metadata` (no tier change), and the
+      685/734, 1143). One writer invalidates nothing, and it does not matter: the
       Paddle `cancelSubscriptionHandler` does change status but is **not routed** — the procedure is
       commented out in [paddle.router.ts](../src/server/routers/paddle.router.ts) and nothing else
       reaches it.

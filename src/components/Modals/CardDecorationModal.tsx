@@ -1,4 +1,5 @@
 import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
+import { useEffect } from 'react';
 import { openConfirmModal } from '@mantine/modals';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
@@ -15,9 +16,11 @@ import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -30,7 +33,7 @@ export default function CardDecorationModal({
   currentCosmetic,
 }: Props) {
   const dialog = useDialogContext();
-  const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
+  const form = useForm({ schema, defaultValues: { cosmetic: null } });
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
@@ -43,7 +46,6 @@ export default function CardDecorationModal({
         equippedToId: entityId,
         equippedToType: entityType,
         cosmeticId: currentCosmetic.id,
-        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
       dialog.onClose();
       return;
@@ -86,12 +88,27 @@ export default function CardDecorationModal({
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
         (data.url || data.cssFrame) &&
+        // An event decoration is worn beside a frame and has its own picker.
+        !isEventDecorationData(data) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
+  // Feeds do not carry a frame's claimKey, so the one worn here is found among the owner's own.
+  const worn = currentCosmetic
+    ? items.find(
+        (item) =>
+          item.id === currentCosmetic.id &&
+          item.equippedToId === entityId &&
+          item.equippedToType === entityType
+      )
+    : undefined;
+  useEffect(() => {
+    if (worn) form.reset({ cosmetic: { id: worn.id, claimKey: worn.claimKey } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worn?.id, worn?.claimKey]);
 
   return (
     <Modal
@@ -152,6 +169,7 @@ export default function CardDecorationModal({
                         className="size-full object-cover"
                         wrapperProps={{ className: 'h-full' }}
                         skip={4}
+                        optimized
                       />
                     </Paper>
                     <IconArrowRight size={24} style={{ flexShrink: 0 }} />
@@ -166,11 +184,14 @@ export default function CardDecorationModal({
                         wrapperProps={{ className: 'h-full' }}
                         skip={4}
                         contain
+                        optimized
                       />
                     </Paper>
                   </Group>
                 )}
-              <PreviewCard image={image} decoration={selectedItem} />
+              <div className="pt-4">
+                <PreviewCard image={image} decoration={selectedItem} />
+              </div>
               <Button
                 radius="xl"
                 type="submit"
@@ -194,13 +215,22 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name' | 'type' | 'thumbnailUrl'>;
-  currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  currentCosmetic?: Pick<ContentDecorationCosmetic, 'id'> | null;
 };
 
 export const PreviewCard = ({
   image,
   decoration,
-}: Pick<Props, 'image'> & { decoration?: ContentDecorationCosmetic }) => {
+  hat,
+  width,
+}: Pick<Props, 'image'> & {
+  /** A frame. */
+  decoration?: ContentDecorationCosmetic;
+  /** An event decoration, worn beside any frame. */
+  hat?: EventDecorationData;
+  /** Card width in px; a feed card's by default. */
+  width?: number;
+}) => {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
     originalAspectRatio > 1
@@ -210,10 +240,15 @@ export const PreviewCard = ({
   if (!image) return null;
 
   const heightRatio = image.height && image.width ? image.height / image.width : 1;
-  const cardHeight = heightRatio * constants.cardSizes.image;
+  const cardHeight = heightRatio * (width ?? constants.cardSizes.image);
 
-  return (
-    <MasonryCard height={cardHeight} frameDecoration={decoration}>
+  const card = (
+    <MasonryCard
+      height={cardHeight}
+      frameDecoration={decoration}
+      eventDecoration={hat}
+      cardWidth={width}
+    >
       <EdgeMedia2
         src={image.url}
         type={image.type}
@@ -222,7 +257,9 @@ export const PreviewCard = ({
         wrapperProps={{ className: 'h-full' }}
         anim
         contain
+        optimized
       />
     </MasonryCard>
   );
+  return width ? <div style={{ width }}>{card}</div> : card;
 };

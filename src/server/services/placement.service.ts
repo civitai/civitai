@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
   clampApprovalShares,
   clampDeclineFeeRate,
+  isDeclineFeeHostAdjustable,
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
@@ -47,6 +48,11 @@ const placementConfigSchema = z.object({
 });
 
 export type PlacementConfig = {
+  /**
+   * Platform-fixed surfaces only. A host-set surface's rate lives on its space
+   * (`ResolvedPlacementSpace.declineFeeRate`), and answering here too would be a
+   * second, different answer — the operator floor makes a 0% host read as 5%.
+   */
   declineFeeRate: (surface: PlacementSurface) => number;
   expiryHours: (surface: PlacementSurface) => number;
   priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
@@ -77,11 +83,14 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   }
 
   return {
-    declineFeeRate: (surface) =>
-      clampDeclineFeeRate(
+    declineFeeRate: (surface) => {
+      if (isDeclineFeeHostAdjustable(surface))
+        throw new Error(`placement config: the decline fee on ${surface} is set by its host`);
+      return clampDeclineFeeRate(
         stored.declineFeeRates?.[surface],
         PLACEMENT_SURFACES[surface].defaultDeclineFeeRate
-      ),
+      );
+    },
     expiryHours: (surface) =>
       clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>
@@ -123,12 +132,16 @@ export type PlacementPriceRange = {
  * capacity they may offer. D and E must not each reimplement the score-and-tier
  * scaling, and nothing may persist the result — the caps move the moment a
  * membership lapses or a score is recomputed.
+ *
+ * Pass `config` only when it was read for this same call. One held across
+ * requests would price placements against a stale row.
  */
 export async function placementPriceRange(
   userId: number,
-  surface: PlacementSurface
+  surface: PlacementSurface,
+  config?: PlacementConfig
 ): Promise<PlacementPriceRange> {
-  const [scoreRow, capTier, config] = await Promise.all([
+  const [scoreRow, capTier, resolvedConfig] = await Promise.all([
     // Cast through `numeric`: `::int` raises on a fractional stored total rather
     // than truncating it. Text that isn't a number at all still raises.
     dbRead.$queryRaw<{ score: number | null }[]>`
@@ -140,12 +153,21 @@ export async function placementPriceRange(
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
     getCapTier(userId),
-    getPlacementConfig(),
+    config ?? getPlacementConfig(),
   ]);
 
+  return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+function toPlacementPriceRange(
+  rawScore: number | null | undefined,
+  capTier: string | null,
+  surface: PlacementSurface,
+  config: PlacementConfig
+): PlacementPriceRange {
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
   // heavily-reported creator can land below zero and gets the bottom band.
-  const score = scoreRow[0]?.score ?? 0;
+  const score = rawScore ?? 0;
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
@@ -155,6 +177,34 @@ export async function placementPriceRange(
     score,
     tier,
   };
+}
+
+/**
+ * `placementPriceRange` for many creators at once, keyed by user id, so a page of cards does not
+ * price each owner on its own round trips.
+ */
+export async function placementPriceRanges(
+  userIds: number[],
+  surface: PlacementSurface,
+  config?: PlacementConfig
+): Promise<Map<number, PlacementPriceRange>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Map();
+  const [scoreRows, capTiers, resolvedConfig] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; score: number | null }[]>`
+      SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ANY(${ids}::int[])
+    `,
+    getCapTiers(ids),
+    config ?? getPlacementConfig(),
+  ]);
+  const scoreById = new Map(scoreRows.map((row) => [row.id, row.score]));
+  return new Map(
+    ids.map((id) => [
+      id,
+      toPlacementPriceRange(scoreById.get(id), capTiers.get(id) ?? null, surface, resolvedConfig),
+    ])
+  );
 }
 
 /**

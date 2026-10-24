@@ -1,11 +1,11 @@
-// The external orchestrator SDK client (@civitai/client). Mirrors the monolith's
+// The external orchestrator SDK client (@civitai/orchestration-client). Mirrors the monolith's
 // services/orchestrator/client.ts: submit/get/cancel workflow on the EXTERNAL orchestrator. A per-user
 // client is minted with that user's orchestrator token; the internal client uses the system access token.
 //
-// P0: the factory is wired to prove the @civitai/client import + connection config (baseUrl/env/auth). No
+// P0: the factory is wired to prove the @civitai/orchestration-client import + connection config (baseUrl/env/auth). No
 // generation feature calls it yet — workflows.ts / orchestration-new.service.ts move in P2.
 
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 
 /** Build a per-user orchestrator client bound to that user's minted orchestrator token. */
 export function createOrchestratorClient(token: string) {

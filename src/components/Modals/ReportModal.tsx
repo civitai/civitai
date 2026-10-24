@@ -26,12 +26,11 @@ import { SpamForm } from '~/components/Report/SpamForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/shared/utils/report-helpers';
+import { ReportEntity, reportEntityLabels } from '~/shared/utils/report-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { getDisplayName } from '~/utils/string-helpers';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
@@ -63,6 +62,9 @@ const reports = [
       ReportEntity.BountyEntry,
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -86,6 +88,10 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -110,6 +116,10 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -124,7 +134,12 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.BountyEntry,
+      ReportEntity.Challenge,
+      ReportEntity.Crucible,
+    ],
   },
   {
     // Its own reason, not TOSViolation. Reports dedupe on (reason, entityId), so
@@ -161,9 +176,34 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
 ];
+
+/**
+ * The dialog's title. Names the entity from `reportEntityLabels`, never `getDisplayName`, which
+ * leaves camelCase half-split ("Report service Offering"); see the note on `reportEntityLabels`.
+ */
+export const reportModalTitle = ({
+  entityType,
+  selected,
+  placementTarget,
+}: {
+  entityType: ReportEntity;
+  selected: { key: string; label: string } | null;
+  placementTarget?: ReportModalProps['placementTarget'];
+}) =>
+  selected?.key === 'sticker-placement' && placementTarget === 'comment'
+    ? 'Report this note'
+    : selected?.label ?? `Report ${reportEntityLabels[entityType]}`;
+
+/** The reasons offered for an entity, in display order. */
+export const reportOptionsFor = (entityType: ReportEntity) =>
+  reports.filter(({ availableFor }) => availableFor.includes(entityType));
 
 const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
@@ -213,10 +253,7 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title =
-    selected?.key === 'sticker-placement' && placementTarget === 'comment'
-      ? 'Report this note'
-      : selected?.label ?? `Report ${getDisplayName(entityType)}`;
+  const title = reportModalTitle({ entityType, selected, placementTarget });
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
   const queryUtils = trpc.useUtils();
@@ -236,7 +273,7 @@ export default function ReportModal({
     },
     async onSuccess(_, variables) {
       showSuccessNotification({
-        title: 'Resource reported',
+        title: `${reportEntityLabels[entityType]} reported`,
         message: 'Your request has been received',
       });
       dialog.onClose();
@@ -371,8 +408,7 @@ export default function ReportModal({
               // label="Report reason"
             >
               <Stack pb="xs">
-                {reports
-                  .filter(({ availableFor }) => availableFor.includes(entityType))
+                {reportOptionsFor(entityType)
                   .filter((item) => {
                     if (entityType === ReportEntity.Model) {
                       if (item.reason === ReportReason.Claim) return data?.userId !== -1;

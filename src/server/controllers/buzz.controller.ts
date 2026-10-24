@@ -22,6 +22,7 @@ import {
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
+  getTransactionByExternalId,
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
@@ -166,6 +167,8 @@ export async function createBuzzTipTransactionHandler({
     const blocked = await amIBlockedByUser({
       userId: fromAccountId,
       targetUserId: input.toAccountId,
+      // A write path: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) {
       throw throwBadRequestError('You cannot send Buzz to a user that has blocked you');
@@ -259,6 +262,20 @@ export async function createBuzzTipTransactionHandler({
       externalTransactionId: `${sharedId}-${toAccountId}`,
     }));
 
+    // With a key, a leg already on the ledger moved on an earlier call. Buzz reports a replayed
+    // leg in `transactions` (with the existing id) today and in `conflicts` once it stops
+    // pre-checking duplicates, so the batch response alone cannot say which legs are new. The
+    // endpoint's idempotency claim keeps a same-key call from running concurrently with this one.
+    const alreadyMoved = new Set<string>();
+    if (idempotencyKey) {
+      const existing = await Promise.all(
+        transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
+      );
+      transactions.forEach((t, i) => {
+        if (existing[i]) alreadyMoved.add(t.externalTransactionId);
+      });
+    }
+
     // Now, create all transactions
     const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
 
@@ -286,7 +303,7 @@ export async function createBuzzTipTransactionHandler({
     // shaped on the wire. Both signals agree on the full-replay case above; the belt
     // is what keeps the fail direction safe (never fire a side effect for money that
     // did not move) if the identifier shape ever changes.
-    const conflictedIds = new Set(data.conflicts);
+    const conflictedIds = new Set([...data.conflicts, ...alreadyMoved]);
     const settled =
       data.transactions.length === 0
         ? []

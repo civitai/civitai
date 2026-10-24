@@ -5,11 +5,9 @@ import { SEED, aspectRatioDef, enumDef, imagesDef, sliderDef, workflowScoped } f
 import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Hunyuan video (HyV1), ported from `hunyuan-graph.ts`. LoRAs supported;
+ * Hunyuan video (HyV1). LoRAs supported;
  * cfg/steps sliders with presets, fixed durations. No negative prompt.
  */
-
-// ---- copied from hunyuan-graph.ts, which dies with the data-graph engine ----
 
 const hunyuanAspectRatios = getAspectRatioOptions('480p', ['16:9', '3:2', '1:1', '2:3', '9:16']);
 
@@ -17,8 +15,6 @@ const hunyuanDurations = [
   { label: '3 seconds', value: 3 },
   { label: '5 seconds', value: 5 },
 ];
-
-// ---- end of hunyuan-graph.ts copies -----------------------------------------
 
 export const hunyuan = defineGraph<FamilyExt>({ scope: familyScope })
   .field(

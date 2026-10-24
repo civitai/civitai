@@ -652,7 +652,7 @@ describe('toDate', () => {
  *     would come back.
  */
 describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
-  it('is at least the onsite table’s measured natural width (1424 px)', () => {
+  it('is at least the seeded floor (1424 px, measured on the since-deleted onsite table)', () => {
     // Below this, the full six-button action row cannot be laid out without the
     // columns collapsing — the state the measurement was taken in.
     expect(SUBMISSIONS_TABLE_MIN_WIDTH).toBeGreaterThanOrEqual(1424);
@@ -671,13 +671,13 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
  * `/apps/*` route renders in ONE container (`APPS_PAGE_CONTAINER_WIDTH`), so no page has a
  * width of its own to alias. What the alias was really protecting — that this page is wide
  * enough for the floor below — is asserted as a relationship in `appsPageWidths.test.ts`.
- * The scroll-floor arithmetic below stays here because it is still about THESE two tables.
+ * The scroll-floor arithmetic below stays here because it is still about this table.
  */
 
-describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
+describe('the my-submissions table scrolls rather than clips (S3, structural)', () => {
   const APPS_DIR = path.resolve(__dirname, '..');
   const read = (file: string) => readFileSync(path.join(APPS_DIR, file), 'utf8');
-  const LISTS = ['MySubmissionsList.tsx', 'OffsiteSubmissionsList.tsx'] as const;
+  const LISTS = ['OffsiteSubmissionsList.tsx'] as const;
 
   /**
    * 🔴 EVERY assertion here is ANCHORED TO THE `<Table.ScrollContainer …>` OPENING

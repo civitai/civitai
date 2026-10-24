@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Unit tests for applyModelFlagSideEffects — the post-update flag fan-out
 // extracted from upsertModel (model tag/search-index refresh, gallery cache
@@ -132,7 +132,13 @@ function imageUpdateCall() {
   return { sql: (strings as string[]).join('?'), values };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  // A gallery-settings bust schedules a second delete; a real timer could land in a later test.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
   mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
@@ -317,7 +323,7 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
       after: { ...baseAfter, gallerySettings: { level: 4 } },
     });
 
-    expect(mockRedisDel).toHaveBeenCalledWith('model:gallery-settings:42');
+    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
   });
 
   it('does not touch the gallery cache when the browsing level is unchanged', async () => {

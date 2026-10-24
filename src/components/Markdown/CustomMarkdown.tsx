@@ -7,9 +7,13 @@ import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundar
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useInternalHosts } from '~/hooks/useInternalHosts';
+import { isExternalHref } from '~/utils/external-link';
 
 type CustomOptions = Options & {
   allowExternalVideo?: boolean;
+  warnOnExternalLinks?: boolean;
 };
 
 /**
@@ -19,6 +23,7 @@ type CustomOptions = Options & {
  */
 export function CustomMarkdown({
   allowExternalVideo,
+  warnOnExternalLinks,
   components,
   className,
   remarkPlugins,
@@ -26,6 +31,7 @@ export function CustomMarkdown({
   ...options
 }: CustomOptions) {
   const user = useCurrentUser();
+  const internalHosts = useInternalHosts();
 
   // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
   // markdown surface. Caller-provided remark plugins still run alongside it.
@@ -43,6 +49,8 @@ export function CustomMarkdown({
       ? Array.from(new Set([...allowedElements, 'time']))
       : undefined;
 
+  // 🔴 `a` and `time` are defined AFTER the spread, so a caller's own renderers for them are
+  // silently dropped — which is why `warnOnExternalLinks` is a prop rather than a component.
   const mergedComponents: Options['components'] = {
     ...components,
     time: ({ node, ...props }) => {
@@ -78,6 +86,15 @@ export function CustomMarkdown({
       if (typeof window !== 'undefined') href = href.replace('//civitai.com', `//${location.host}`);
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
+
+      // A plain anchor, not `Link`: the href is then the `/leaving` page, which `Link` would
+      // treat as an in-app route.
+      if (warnOnExternalLinks && isExternalHref(href, internalHosts))
+        return (
+          <a target="_blank" rel="nofollow noreferrer" {...externalLinkAnchorProps(href)}>
+            {props.children}
+          </a>
+        );
 
       return (
         <Link legacyBehavior href={href} passHref>

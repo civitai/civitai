@@ -3,6 +3,11 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { fromJson } from '~/utils/json-helpers';
 import { logToAxiom } from '~/server/logging/client';
 
+// ⚠️ This is NOT the prompt-audit leet fold. That one lives in
+// `@civitai/mod-utils/prompt-audit/word-regex` and folds four characters; this one also
+// folds `a -> [a|@]`, so the two disagree on every term containing an `a`. The
+// divergence is longstanding and unexplained — merging them would change what one of
+// the two matches, so they are kept apart deliberately rather than by oversight.
 const wordReplace = (word: string) => {
   return word
     .replace(/i/g, '[i|l|1]')

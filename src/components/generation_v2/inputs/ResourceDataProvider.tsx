@@ -74,6 +74,7 @@ export function ResourceDataProvider({ children, initialIds }: ResourceDataProvi
 
   // Read from the global store
   const storeResources = useResourceDataStore((state) => state.resources);
+  const storeNotFound = useResourceDataStore((state) => state.notFound);
 
   // IDs not yet in the store
   const uncachedIds = useMemo(
@@ -131,10 +132,10 @@ export function ResourceDataProvider({ children, initialIds }: ResourceDataProvi
   // Get resource data by ID
   const getResourceData = useCallback((id: number) => resourceMap.get(id), [resourceMap]);
 
-  // A resource is loading if it's registered but not yet in the store
+  // Registered, not in the store, and not known to be missing: a deleted id must not read as loading forever.
   const isResourceLoading = useCallback(
-    (id: number) => registeredIds.has(id) && !storeResources.has(id),
-    [registeredIds, storeResources]
+    (id: number) => registeredIds.has(id) && !storeResources.has(id) && !storeNotFound.has(id),
+    [registeredIds, storeResources, storeNotFound]
   );
 
   // Overall loading: any of our registered IDs not yet in the store

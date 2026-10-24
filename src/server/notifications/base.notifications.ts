@@ -71,7 +71,7 @@ export type NotificationProcessor = {
   /**
    * Inverts what a `UserNotificationSettings` row MEANS for this type: subscribed, rather than the
    * global default of opted-out. A processor may only set this if its query derives recipients by
-   * joining that table (`cosmetic-shop-item-added-to-section` is the only one) — pairing it with the
+   * joining that table (`cosmetic-shop-item-added-to-section` and `sticker-placement-auto-accepted`) — pairing it with the
    * usual `NOT EXISTS` clause ships the notification ON while the UI renders it OFF.
    *
    * Read by the toggle handler, not just the UI, so a row is never written with the wrong polarity.
@@ -98,6 +98,16 @@ export type NotificationProcessorRunInput = {
   lastSent: string;
   lastSentDate: Date;
   clickhouse: CustomClickHouseClient | undefined;
+  /**
+   * Read once per job run by the server-only runner and passed in, because the processor
+   * files are in the client graph and cannot import the reader.
+   *
+   * Required but nullable, not optional: the reaction milestones default a missing list to
+   * `[]`, so a caller that simply omitted the key would ship every milestone unfiltered
+   * without a sound. Required, `tsc` rejects any new caller that forgets it; nullable, a
+   * test can still say `undefined` on purpose.
+   */
+  excludedUserIds: number[] | undefined;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {

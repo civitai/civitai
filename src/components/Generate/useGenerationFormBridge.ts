@@ -1,6 +1,5 @@
-import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useOptionalFormStore } from 'form-graph/react';
-import { DataGraphContext } from '~/libs/data-graph/react/DataGraphProvider';
 
 export type GenerationFormBridge = {
   /** Snapshot of every resolved value, keyed by field. */
@@ -13,27 +12,14 @@ export type GenerationFormBridge = {
 };
 
 /**
- * The generation form as seen by chrome that is SHARED between the two form
- * lanes (v1 DataGraphProvider, form-graph FormProvider): presets, the
- * self-hosted block, the membership upsell's red handoff. Both stores expose
- * the same five operations; this picks whichever provider is mounted. Null
- * when neither is (e.g. the header button outside the sidebar). Dies with
- * the v1 lane — see also `useSnippetsGraph`, its field-level sibling.
+ * The generation form as seen by chrome OUTSIDE it: presets, the self-hosted block, the
+ * membership upsell's red handoff. Null when no form is mounted (e.g. the header button
+ * outside the sidebar).
  */
 export function useGenerationFormBridge(): GenerationFormBridge | null {
-  const v1Graph = useContext(DataGraphContext);
   const store = useOptionalFormStore();
 
   return useMemo(() => {
-    if (v1Graph) {
-      return {
-        getState: () => v1Graph.getSnapshot() as Record<string, unknown>,
-        set: (patch) => v1Graph.set(patch as Parameters<typeof v1Graph.set>[0]),
-        getComputedKeys: () => v1Graph.getComputedKeys(),
-        subscribe: (cb) => v1Graph.subscribe(cb),
-        subscribeKey: (key, cb) => v1Graph.subscribe(key, cb),
-      };
-    }
     if (store) {
       return {
         getState: () => store.getSnapshot().state as Record<string, unknown>,
@@ -44,10 +30,10 @@ export function useGenerationFormBridge(): GenerationFormBridge | null {
       };
     }
     return null;
-  }, [v1Graph, store]);
+  }, [store]);
 }
 
-/** Reactive read of one field's value through whichever lane is mounted. */
+/** Reactive read of one field's value, or undefined when no form is mounted. */
 export function useGenerationFormValue<T = unknown>(key: string): T | undefined {
   const bridge = useGenerationFormBridge();
   const subscribe = useCallback(

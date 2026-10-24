@@ -1,6 +1,6 @@
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import type { XGuardModerationStep } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { XGuardModerationStep } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import pLimit from 'p-limit';
 import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';

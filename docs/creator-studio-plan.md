@@ -56,7 +56,7 @@ main app's React/Mantine components — these apps are **Svelte 5 / SvelteKit / 
 - [`docs/auth/spoke-integration-guide.md`](auth/spoke-integration-guide.md) + [`docs/auth/auth-hub-spoke-overview.md`](auth/auth-hub-spoke-overview.md)
   — the hub↔spoke auth contract (`civ-token`, `@civitai/auth`, `createSpokeGuard`).
 - [`packages/civitai-ui/README.md`](../packages/civitai-ui/README.md) — **`@civitai/ui`**, the shared shadcn-svelte
-  component package (24 primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
+  component package (shadcn-svelte primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
   into the app.
 
 **Scaffolding:** use the **`scaffold-civitai-app`** skill to stand up `apps/creator-studio`. It cherry-picks only the
@@ -226,7 +226,7 @@ the relevant routes to `creator.civitai.com`, and (b) mark each block for deleti
 |---|---|
 | `src/server/jobs/deliver-creator-compensation.ts:150` | **Stop minting `Compensation`-type `BuzzTransaction` rows at cutover**; keep `tip` + `licenseFee` payout paths. This is the real sunset. |
 | `src/store/tip.store.ts:4` | `creatorTip: 0.25` default → remove creator-tip default. |
-| `src/components/generation_v2/FormFooter.tsx:150` | Remove `creatorComp && hasCreatorTip` tip line from cost calc. |
+| `src/components/form-graph/generation/FormFooter.tsx` | Remove `creatorComp && hasCreatorTip` tip line from cost calc. |
 | `src/components/ImageGeneration/GenerationForm/GenerationCostPopover.tsx:108` | Remove creator-tip rate UI. |
 | `src/components/Buzz/Rewards/DailyCreatorCompReward.tsx` | Remove the "Compensation" tab; License-Fees view moves to Studio `/earnings`. |
 | `src/pages/user/buzz-dashboard.tsx:77` | Remove `creatorComp`-gated comp section; **redirect** creator-earnings entry to `creator.civitai.com/earnings`. |

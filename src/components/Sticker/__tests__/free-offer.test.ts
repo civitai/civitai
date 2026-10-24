@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   FREE_PLACEMENTS_PER_DAY,
   FREE_SLOT_TAKEN_NOTE,
-  PLACEMENT_SURFACES,
+  placementSurfaceAllowsZeroPrice,
+  placementSurfaces,
   SHARED_ALLOWANCE_NOTE,
 } from '~/shared/utils/placement';
 import {
@@ -17,6 +18,7 @@ import {
   preCommitFreeReason,
   trayNotes,
 } from '~/components/Sticker/free-offer';
+import { isPromotionSurface } from '~/shared/utils/promotion';
 
 describe('the free option is a price, not a process', () => {
   /**
@@ -641,8 +643,15 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    * to `PLACEMENT_SURFACES` and this goes red, pointing at the copy that needs
    * the third name.
    */
+  // Promotions are paid only, and a zero-priceable surface has no free tier: neither draws on this
+  // budget.
   it('fails if a surface is added to the shared budget without updating the copy', () => {
-    expect(Object.keys(PLACEMENT_SURFACES).sort()).toEqual(['remixGallery', 'sticker']);
+    expect(
+      placementSurfaces
+        .filter((surface) => !isPromotionSurface(surface))
+        .filter((surface) => !placementSurfaceAllowsZeroPrice(surface))
+        .sort()
+    ).toEqual(['remixGallery', 'sticker']);
   });
 });
 

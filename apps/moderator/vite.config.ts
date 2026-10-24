@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv } from 'vite';
+
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 
 export default defineConfig(({ mode }) => {
   // SvelteKit/Vite load .env into $env/dynamic/private, NOT into process.env — but the @civitai/*
@@ -11,6 +14,8 @@ export default defineConfig(({ mode }) => {
   for (const key in fileEnv) process.env[key] ??= fileEnv[key];
 
   return {
+    // Inlined at build and in dev; the release script bumps package.json, so this tracks the release.
+    define: { __APP_VERSION__: JSON.stringify(version) },
     plugins: [tailwindcss(), sveltekit()],
     // Precompile the routes at startup instead of on first request. Vite dev compiles a route the
     // first time it is hit, which on this app is tens of seconds — long enough to read as a hang
@@ -37,9 +42,9 @@ export default defineConfig(({ mode }) => {
         '@civitai/brand',
         '@civitai/buzz',
         '@civitai/email',
-        // @civitai/client ships ESM with extensionless directory imports (dist/generated) that Node's
+        // @civitai/orchestration-client ships ESM with extensionless directory imports (dist/generated) that Node's
         // ESM loader rejects when externalized — bundle it so Vite resolves them.
-        '@civitai/client',
+        '@civitai/orchestration-client',
         '@civitai/clickhouse',
         '@civitai/db',
         '@civitai/db-queries',

@@ -52,7 +52,12 @@ import {
   updateCreatorShopItem,
 } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { shopItemReviewVersion } from '../creator-shop.data';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
@@ -97,8 +102,10 @@ dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[
 dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
   (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
 );
-dbMock.dbWrite.$transaction.mockImplementation((...args: unknown[]) =>
-  (mocks.transaction as (...a: unknown[]) => unknown)(...args)
+dbMock.dbWrite.$transaction.mockImplementation((arg: unknown) =>
+  typeof arg === 'function'
+    ? (arg as (tx: unknown) => unknown)(dbMock.dbWrite)
+    : (mocks.transaction as (...a: unknown[]) => unknown)(arg)
 );
 
 const RESELLER_ID = 200;
@@ -385,6 +392,18 @@ describe('the owner can change an item’s resale terms after publishing', () =>
     expect(mocks.cosmeticUpdate).not.toHaveBeenCalled();
   });
 
+  // The share is a money term a moderator's verdict must not approve unseen: recording it moves the
+  // version the verdict is pinned to (`shopItemReviewVersion`).
+  it('records a share-only edit in the history, with the exact before and after', async () => {
+    const before = ownedItem({ sellableByOthers: true, sellerShare: 50, purchases: 4 }).meta;
+    await update({ sellerShare: 10 });
+
+    expect(savedMeta().history?.at(-1)?.changes).toEqual([
+      { field: 'sellerShare', from: 50, to: 10 },
+    ]);
+    expect(shopItemReviewVersion(savedMeta())).not.toBe(shopItemReviewVersion(before));
+  });
+
   it('refuses a cross-lister editing the original creator’s terms', async () => {
     mocks.shopItemFindUnique.mockResolvedValue({
       ...ownedItem({ sellableByOthers: true, sellerShare: 50 }),
@@ -474,6 +493,73 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().listed).toBe(true);
   });
 
+  // The share assertion above is `objectContaining`, which cannot see an extra
+  // key. This one is an exact key set on both sections, so widening the list
+  // the storefront publishes fails here rather than shipping.
+  it('publishes exactly the shared display keys, plus the buyer’s share on a resold item', async () => {
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 50 }]);
+    const row = shopItemRow(SHOP_ITEM_ID);
+    const wideMeta = {
+      ...row.meta,
+      purchases: 3,
+      acceptsBlueBuzz: true,
+      creatorId: 77,
+      submissionFee: 250,
+      imageHash: 'a1b2c3',
+      history: [],
+    };
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }])
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }]);
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    expect(Object.keys(cosmetics[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
+    expect(Object.keys(resold[0].meta).sort()).toEqual([
+      'acceptsBlueBuzz',
+      'purchases',
+      'sellerShare',
+    ]);
+    expect(resold[0].meta.sellerShare).toBe(50);
+  });
+
+  // Read only for the keys these two queries gate a NULL-cosmetic listing with.
+  const admitsBoxListing = (where: Record<string, unknown>): boolean => {
+    if (where.itemDefinitionId === null) return false;
+    if (where.cosmetic !== undefined) return false;
+    if (where.cosmeticId !== undefined && where.cosmeticId !== null) return false;
+    if (Array.isArray(where.OR) && !where.OR.some(admitsBoxListing)) return false;
+    return true;
+  };
+
+  // A mystery box listing has no cosmetic, so the pack branch would show it as a pack.
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    'never shows a mystery box listing (stickers %s, packs %s)',
+    async (stickersEnabled, packsEnabled) => {
+      mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+      // The reading admits what the pack branch used to be.
+      expect(admitsBoxListing({ listed: true, OR: [{ cosmeticId: null }] })).toBe(true);
+
+      await getCreatorShop({
+        userId: RESELLER_ID,
+        viewerId: RESELLER_ID,
+        stickersEnabled,
+        packsEnabled,
+      });
+
+      expect(admitsBoxListing(mocks.shopItemFindMany.mock.calls[0][0].where)).toBe(false);
+      expect(admitsBoxListing(resoldWhere())).toBe(false);
+    }
+  );
+
   // Preview is a moderator design aid with no resale rows behind it, so it must
   // keep showing only what's genuinely on offer.
   it('preview still requires a live, resellable item', async () => {
@@ -484,6 +570,35 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().status).toBe('Published');
     expect(resoldWhere().listed).toBe(true);
     expect(resoldWhere().meta).toEqual({ path: ['sellableByOthers'], equals: true });
+  });
+
+  /**
+   * Both storefront sanitizers, against a fixture where the purchase rows and
+   * `meta.purchases` disagree. Without this, reverting either of them to the
+   * counter reddens nothing in this file — the sold count is not otherwise
+   * asserted on the storefront path.
+   */
+  it('reports the purchase rows as the sold count, not the meta counter', async () => {
+    const OWN_ITEM_ID = SHOP_ITEM_ID + 1;
+    const withCounterDrift = (id: number) => ({
+      ...shopItemRow(id),
+      meta: { sellableByOthers: true, sellerShare: 0, purchases: 3 },
+    });
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([withCounterDrift(OWN_ITEM_ID)])
+      .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)]);
+    mocks.queryRaw.mockImplementation(soldCountsFake({ [OWN_ITEM_ID]: 7, [SHOP_ITEM_ID]: 5 }));
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    // Distinct ids and counts, so a count read for only one of the two
+    // queries' items shows up as a 0 on the other.
+    expect(cosmetics[0].meta.purchases).toBe(7);
+    expect(resold[0].meta.purchases).toBe(5);
   });
 });
 
@@ -516,6 +631,18 @@ describe('withdrawing an item ends its resale listings', () => {
     mocks.shopItemFindFirst.mockResolvedValue(null);
     mocks.packMemberFindMany.mockResolvedValue([]);
     mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it('refuses to list a mystery box listing, for a moderator too', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      ownedItem({ cosmeticId: null, cosmetic: null, itemDefinitionId: 9 })
+    );
+
+    for (const listed of [true, false])
+      await expect(
+        setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: 1, isModerator: true, listed })
+      ).rejects.toThrow('Mystery box listings stay unlisted');
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
   it('deletes every listing when the item is delisted', async () => {

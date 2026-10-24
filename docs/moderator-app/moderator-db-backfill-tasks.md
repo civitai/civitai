@@ -39,6 +39,7 @@ Attribution columns — all `text`, all holding two schemes:
 | `UserNotes` | `lastUpdateBy` | 58,148 | 22 |
 | `Mods_TaskTimers` | `lastUpdateBy` | 18,656 | 18 |
 | `UserStrikes` | `createdBy` | 12,902 | 17 |
+| `ModelNotes` | `createdBy` | 938 | 9 — **two schemes as of 2026-09-29**, when Model Lookup began writing `locals.user.username`. ⚠️ This column is also the **edit authorisation** (`where "createdBy" = <username>`), so replacing the text with an id changes who may edit which note. |
 | `ModerationImageHelp` | `createdBy` / `handledBy` | 37 | 11 |
 | `TimedMutes` | `createdBy` | 0 | — (table dropped, §C) |
 
@@ -69,12 +70,12 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 
 ### B. Add id columns beside the name columns
 
-- [ ] **Add a nullable `<column>UserId integer` next to each of the eight that survive** — all but
+- [ ] **Add a nullable `<column>UserId integer` next to each of the nine that survive** — all but
       `TimedMutes.createdBy`, whose table §C drops — backfill from the map, and leave the text column in
       place. Do **not** replace the text: for the ~half that never map, the name is the only record of
       who acted.
-- [ ] **Repoint the spoke's writes** to populate both. Today `moderation-memory.service.ts` and
-      `front-page-timers.ts` write the username only.
+- [ ] **Repoint the spoke's writes** to populate both. Today `moderation-memory.service.ts`,
+      `model-notes.service.ts` and `front-page-timers.ts` write the username only.
 - [ ] **Then, and only then, join on the id.** Until the backfill lands, reads must keep matching on
       text or they silently return nothing.
 

@@ -23,6 +23,12 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 /** One prefill asset (icon/cover) — its imageId + an edge-resolved preview URL. */
 export type EditAsset = { imageId: number | null; url: string | null };
 
+/**
+ * The civitai.red icon / cover overrides as the editor reads them; `available: false` while the
+ * environment cannot store them (the picker is then replaced by a note).
+ */
+export type EditRedMedia = { available: boolean; icon: EditAsset; cover: EditAsset };
+
 /** One prefill screenshot — its row id + imageId + edge-resolved preview URL. */
 export type EditScreenshot = {
   id: string;
@@ -91,10 +97,16 @@ export type ListingEditContext = {
     screenshots: EditScreenshot[];
   };
   /**
+   * The edit target's civitai.red icon / cover overrides (`ListingAssetStep`'s `redMedia`).
+   * OPTIONAL so pre-existing edit contexts + fixtures still type-check; absent renders no
+   * civitai.red section.
+   */
+  redMedia?: EditRedMedia;
+  /**
    * OAuth-connect scope disclosure (present for the merged external-app model;
    * OPTIONAL so pre-existing non-connect edit contexts + tests still type-check):
    *   - `connectClientId`            — the linked client (null → no scope section).
-   *   - `connectAllowedScopes`       — the client's CURRENT allowedScopes = the
+   *   - `connectAllowedScopes`       — the client's CURRENT consentable scopes = the
    *     DERIVED requested set the form shows read-only + submits.
    *   - `connectRequestedScopes`     — the STORED snapshot (for drift detection).
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
@@ -240,7 +252,7 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
  *
  * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
  * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT `allowedScopes` has DRIFTED from the stored snapshot, and
+ * connect client's CURRENT consentable scopes has DRIFTED from the stored snapshot, and
  * `materialPatchChanges` counts that key as material only when the two masks actually
  * differ. So while they agree, a justification edit is trivial and saves fine here.
  *
@@ -278,7 +290,7 @@ export function scopeDisclosureLockedForEdit(
 export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormValues {
   const base = emptyOffsiteSubmitForm();
   const s = ctx.scalars;
-  // The requested scopes are DERIVED from the client's CURRENT allowedScopes (read-
+  // The requested scopes are DERIVED from the client's CURRENT consentable scopes (read-
   // only in the form; the server re-snapshots them on save). Prefilled justifications
   // are pruned to that derived set so a scope the client no longer has doesn't seed a
   // dangling rationale.
@@ -488,7 +500,7 @@ export function buildScalarPatch(
   }
 
   // OAuth-connect scope disclosure: the server re-snapshots `requestedScopes` from
-  // the client's CURRENT allowedScopes whenever the patch touches scopes, so we send
+  // the client's CURRENT consentable scopes whenever the patch touches scopes, so we send
   // the (derived) mask + shaped justifications when EITHER the justifications changed
   // OR the client's allowedScopes drifted from the stored snapshot. Both re-enter mod
   // review on an approved listing (a scope change is material). No client → no scope

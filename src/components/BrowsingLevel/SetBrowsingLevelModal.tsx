@@ -15,10 +15,12 @@ import { trpc } from '~/utils/trpc';
 import classes from './SetBrowsingLevelModal.module.scss';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 
 export default function SetBrowsingLevelModal({
   imageId,
   nsfwLevel,
+  isOwner,
   hideLevelSelect = false,
   skipImageUpdate = false,
   onSubmit,
@@ -30,8 +32,12 @@ export default function SetBrowsingLevelModal({
   const [selectedNsfwLevel, setSelectedNsfwLevel] = useState<NsfwLevel>(nsfwLevel);
 
   const updateImageNsfwLevel = trpc.image.updateImageNsfwLevel.useMutation({
-    onSuccess: () => {
-      if (!isModerator) showSuccessNotification({ message: 'Image rating vote received' });
+    onSuccess: ({ applied }, { nsfwLevel: level }) => {
+      if (isModerator) return;
+      if (applied) {
+        imageStore.setImage(imageId, { nsfwLevel: level });
+        showSuccessNotification({ message: 'Image rating updated' });
+      } else showSuccessNotification({ message: 'Image rating vote received' });
     },
     onError: (error) => {
       if (isModerator) {
@@ -42,6 +48,9 @@ export default function SetBrowsingLevelModal({
       }
     },
   });
+
+  const isOwnerRaise = (level: NsfwLevel) =>
+    !isModerator && !!isOwner && !skipImageUpdate && level > selectedNsfwLevel;
 
   const handleClick = (level: NsfwLevel) => {
     if (isModerator) {
@@ -86,19 +95,33 @@ export default function SetBrowsingLevelModal({
             className={clsx(classes.root, { [classes.horizontal]: isModerator })}
           >
             {browsingLevels.map((level) => (
-              <UnstyledButton
+              <PopConfirm
                 key={level}
-                p="md"
-                w="100%"
-                className={clsx({
-                  [classes.active]: selectedNsfwLevel === level,
-                  ['text-center']: isModerator,
-                })}
-                onClick={() => handleClick(level)}
+                enabled={isOwnerRaise(level)}
+                withinPortal
+                position="bottom"
+                width={280}
+                message={
+                  <Text size="sm">
+                    Raise this image to {browsingLevelLabels[level]}? This applies right away, and
+                    lowering it again goes to review.
+                  </Text>
+                }
+                onConfirm={() => handleClick(level)}
               >
-                <Text fw={700}>{browsingLevelLabels[level]}</Text>
-                {!isModerator && <Text>{browsingLevelDescriptions[level]}</Text>}
-              </UnstyledButton>
+                <UnstyledButton
+                  p="md"
+                  w="100%"
+                  className={clsx({
+                    [classes.active]: selectedNsfwLevel === level,
+                    ['text-center']: isModerator,
+                  })}
+                  onClick={() => handleClick(level)}
+                >
+                  <Text fw={700}>{browsingLevelLabels[level]}</Text>
+                  {!isModerator && <Text>{browsingLevelDescriptions[level]}</Text>}
+                </UnstyledButton>
+              </PopConfirm>
             ))}
           </Paper>
         )}
@@ -150,6 +173,8 @@ export default function SetBrowsingLevelModal({
 export interface SetBrowsingLevelModalProps {
   imageId: number;
   nsfwLevel: NsfwLevel;
+  /** The viewer owns the image: raising its rating applies immediately, so it asks first. */
+  isOwner?: boolean;
   hideLevelSelect?: boolean;
   /** When true, only calls onSubmit without updating the image nsfwLevel via the image mutation. */
   skipImageUpdate?: boolean;

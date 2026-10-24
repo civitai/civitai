@@ -43,10 +43,10 @@ import type * as TrpcMod from '~/utils/trpc';
  * Delete the red arm and the green one stops proving anything.
  *
  * NOTE ON REACH: this suite DOES run in CI — `pnpm run test:component`, surfaced
- * as the `preview / component-tests` commit status — but REPORT-ONLY, so a break
- * here is visible without blocking a merge. The source-scan half of this contract
+ * as the `Component tests` check — so a break here turns it red without
+ * blocking a merge. The source-scan half of this contract
  * is `__tests__/pageRunScrollContract.test.ts`, in the node `unit` project —
- * report-only on a pull request too (`continue-on-error`), and an honest verdict
+ * report-only on a pull request (`continue-on-error`), and an honest verdict
  * on a push to `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE:
  * `main` requires no status check at all in this repo. This file is the empirical
  * half, and it is the one that can see layout at all.
@@ -83,6 +83,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {

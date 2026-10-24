@@ -10,7 +10,7 @@ import { TRPCError } from '@trpc/server';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({ invokeBlobArchiveStepTemplate: mockInvoke }));
+vi.mock('@civitai/orchestration-client', () => ({ invokeBlobArchiveStepTemplate: mockInvoke }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 
 import { createBlobArchive } from '~/server/services/orchestrator/blobArchive';

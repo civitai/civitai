@@ -82,6 +82,7 @@ export const getServerAuthSession = async ({
         req.context.tokenScope = result.tokenScope;
         req.context.buzzLimit = (result as any).buzzLimit ?? null;
         req.context.apiKeyId = (result as any).apiKeyId ?? null;
+        req.context.apiKeyType = (result as any).apiKeyType ?? null;
         req.context.subject = (result as any).subject ?? null;
       }
     }

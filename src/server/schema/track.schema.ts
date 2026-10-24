@@ -1,5 +1,44 @@
 import * as z from 'zod';
+import {
+  BRIDGE_HOSTS,
+  BRIDGE_MESSAGE_BATCH_MAX,
+  BRIDGE_MESSAGE_COUNT_MAX,
+  BRIDGE_MESSAGE_OUTCOMES,
+} from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
+import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_GROUP_IDS,
+  USER_MENU_HEADER_GROUP,
+} from '~/shared/constants/user-menu-groups.constants';
+
+/*
+ * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
+ * serializes the value, without building the string; an unserializable value is left to the code
+ * that serializes it, as before. The filters cap and the action cap leave headroom over the largest
+ * payloads seen for those inputs; view `details` could not be measured, so it shares the action
+ * cap.
+ */
+
+/** The longest `trackSearch` `filters` payload. */
+export const TRACK_FREEFORM_MAX_CHARS = 64 * 1024;
+/** The longest `addView` `details` payload, and the longest whole `addAction` input. */
+export const TRACK_DETAILS_MAX_CHARS = 256 * 1024;
+
+/** A zod refinement refusing a value whose JSON is longer than `maxChars`, naming that limit. */
+function withinChars(maxChars: number) {
+  return [
+    (value: unknown) => measureJsonLength([value], maxChars) !== 'over',
+    { message: `exceeds ${maxChars} serialized characters` },
+  ] as const;
+}
+const boundedFreeform = (maxChars: number) =>
+  z
+    .object({})
+    .passthrough()
+    .optional()
+    .refine(...withinChars(maxChars));
 
 // Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
 // so index + 1 is that ordinal, and the test's snapshot pins it. A value the columns carry but these omit is
@@ -36,13 +75,79 @@ export const VIEW_ENTITY_TYPES = [
   'Model3D',
 ] as const;
 
+/**
+ * Accepts a real number OR a numeric string, and falls back to 0 for everything
+ * else (a boolean, an object, `null`, a non-numeric string, or an absent key).
+ *
+ * Why a fallback rather than a rejection: these fields feed analytics columns
+ * whose row must still be written. Rejecting an unparseable dimension would turn
+ * a slightly-wrong row into NO row, which silently reduces the very volume this
+ * schema exists to protect.
+ *
+ * Why not `z.coerce.number()`: it runs `Number()` over ANY input, so `true`
+ * becomes 1 and `null`/`''` become 0 while reporting success — the same
+ * silent-wrong-value class as the banned `z.coerce.boolean()` (see
+ * src/server/services/__tests__/no-coerce-boolean-in-api.test.ts). The union
+ * below only ever coerces something that was genuinely a number or a string,
+ * and `Number.isFinite` rejects the NaN/Infinity results.
+ */
+const numberOrNumericString = z
+  .union([z.number(), z.string()])
+  .transform((value) => (typeof value === 'number' ? value : Number(value)))
+  .refine((value) => Number.isFinite(value))
+  .catch(0);
+
+/**
+ * Body schema for the POST /api/internal/ping page-view beacon (client:
+ * src/components/TrackView/TrackPageView.tsx).
+ *
+ * The handler used to TYPE-assert `JSON.parse`'s `any` and pass the fields
+ * straight through, so nothing was checked at runtime. Three consequences, all
+ * of which this schema closes:
+ *
+ *  1. `ads` reached a BOOLEAN analytics column with whatever the caller sent.
+ *     A string/number/object there is rejected by the analytics client, which
+ *     drops the row without the app ever seeing an error — the beacon response
+ *     is fire-and-forget, so an invalid `ads` destroyed the page view silently.
+ *  2. A missing or non-string `path` threw inside `getMatchingPathname` (its
+ *     first operation is `url.replace(...)`), escaping as a raw 500 on a public
+ *     endpoint. Same class as the two throws this route already hardened into
+ *     400s. `path` is the one field that is genuinely REQUIRED, so it is the one
+ *     field that rejects.
+ *  3. A numeric STRING dimension (`windowWidth: '1920'`) became 0, because the
+ *     downstream column clamp opens with `Number.isFinite(value)` and that is
+ *     `false` for a string — no coercion, no error, just a wrong value.
+ *
+ * COERCE-AND-DEFAULT, DO NOT REJECT. A body that omits `duration` or the window
+ * dimensions already wrote a row before this schema existed — an absent
+ * dimension hit a `?? 0`, and an absent `duration` reached the insert as NaN and
+ * was mapped to 0 by the column clamp — so turning either into a 400 would
+ * quietly cut page-view volume. Only `path` — which cannot be defaulted to
+ * anything meaningful, and which throws downstream when absent — is required.
+ *
+ * A non-boolean `ads` becomes `false` rather than a 400, matching the spirit of
+ * the previous `ads ?? false` and keeping the row.
+ *
+ * The object is non-strict, so unknown keys are stripped rather than forwarded
+ * into the analytics insert.
+ */
+export const pageViewBeaconSchema = z.object({
+  ads: z.boolean().catch(false),
+  duration: numberOrNumericString,
+  path: z.string(),
+  windowWidth: numberOrNumericString,
+  windowHeight: numberOrNumericString,
+});
+
+export type PageViewBeaconSchema = z.infer<typeof pageViewBeaconSchema>;
+
 export const addViewSchema = z.object({
   type: z.enum(VIEW_TYPES),
   entityType: z.enum(VIEW_ENTITY_TYPES),
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
-  details: z.object({}).passthrough().optional(),
+  details: boundedFreeform(TRACK_DETAILS_MAX_CHARS),
   nsfwLevel: z.number().optional(),
   browsingLevel: z.number().optional(),
 });
@@ -234,7 +339,7 @@ export type TrackSearchInput = z.infer<typeof trackSearchSchema>;
 export const trackSearchSchema = z.object({
   query: z.string().trim(),
   index: z.string(),
-  filters: z.object({}).passthrough().optional(),
+  filters: boundedFreeform(TRACK_FREEFORM_MAX_CHARS),
 });
 
 // action tracking schemas
@@ -426,32 +531,51 @@ const imageRemixClickSchema = z.object({
 //     dashboard should treat `isRateLimited:true` as the source of truth
 //     for "capacity-bounded click" and ignore `isValid` on those rows.
 //
-//   hasRemixOfId semantics:
-//      'new' (v2): true whenever the generator was opened from the remix
-//                entry point. It no longer gates on prompt similarity — an
+//   hasRemixOfId semantics: THREE definitions across history, not two. The
+//     field is `!!remixOfId` at submit; what lets that id survive to submit has
+//     changed twice, and each change moves the boundary of a roll-up.
+//      'legacy', and 'new' before v5.1.0: gated on a >=0.75 prompt-similarity
+//                score against the remixed image's prompt, on every branch.
+//      'new' from v5.1.0 (#3871): ungated — true whenever the generator was
+//                opened from the remix entry point. The gate went because an
 //                image edit or an image-to-video shares no prompt with its
-//                source, so the old >=0.75 threshold dropped the link exactly
-//                where the derivation was most literal. Historical 'legacy'
-//                and pre-2026-08 'new' rows DO carry that gate, so a roll-up
-//                across that boundary compares two different definitions.
-//                Whether a derivation was actually verified is a separate
-//                field on the image (meta.extra.sourceImageIds), not this one.
-//      'video':  hasRemixOfId is NOT emitted (field absent in the details
-//                payload — see VideoGenerationForm.tsx:153-165, 241-252).
-//                Video form has no prompt-similarity hook yet; add when
-//                video remix analytics matter.
-//     A query GROUP BY hasRemixOfId is safe to roll up across formVersion
-//     'legacy' and 'new', but should EXCLUDE 'video' (the field is missing,
-//     not false) or split it out as its own bucket.
+//                source, so it dropped the link exactly where the derivation
+//                was most literal.
+//      'new' and 'form-graph' from v5.1.101: gated again, but only where the
+//                prompt is the carrier — a form still holding the source media
+//                keeps the id, a pure txt2img must still score >=0.75. The
+//                claim now also expires (REMIX_CLAIM_TTL) and is scoped to the
+//                remix it came from, so these rows additionally stop counting a
+//                source the user left behind hours ago. See
+//                `utils/remix-claim.ts`.
+//     Each version is the earliest release containing the change; the boundary
+//     in the data is the deploy behind it.
+//      'video':  historical rows only. No emitter has existed since v5.0.1786
+//                (Jun 2026), when the legacy forms went; video now renders
+//                through the same footer as everything else and emits the field
+//                like any other row. An empty 'video' bucket is the end of a
+//                label, NOT a drop in video generation.
+//     Whether a derivation was actually VERIFIED is a different field on the
+//     image (meta.extra.sourceImageIds); this one is only the user's claim.
+//     A GROUP BY hasRemixOfId rolls up across 'legacy', 'new' and 'form-graph'
+//     only if both definition boundaries above are acceptable for the question
+//     being asked; 'video' rows have the field absent rather than false, so
+//     exclude them or bucket them on their own.
+//     'new' and 'form-graph' were also different POPULATIONS, not just different
+//     forms: the form-graph lane was gated by a flag, so those rows are whatever
+//     audience it admitted rather than everyone. HISTORIC ROWS ONLY — the flag and
+//     the other lane are gone and everything now emits 'form-graph', so a rate
+//     compared across the two buckets compares two cohorts for any window that
+//     straddles the cutover.
 //
 //   formVersion: absent on rate-limited emits from GenForm — the legacy
 //     image GenForm wrapper and VideoGenerationForm don't have a way to
-//     discriminate from the wrapping layer without a prop drill. v2's
-//     FormFooter rate-limit emit does include formVersion:'new'. So
-//     `isRateLimited:true AND formVersion missing` = legacy image or
-//     video form; `isRateLimited:true AND formVersion:'new'` = v2.
-//     Rate-limited GenForm emits are ONLY fired from the two opt-in call
-//     sites (`<GenForm track>` in GenerationForm2 + VideoGenerationForm);
+//     discriminate from the wrapping layer without a prop drill. The retired v2
+//     FormFooter's rate-limit emit did include formVersion:'new'. So in HISTORIC
+//     data, `isRateLimited:true AND formVersion missing` = legacy image or video
+//     form and `formVersion:'new'` = v2; today every emit is 'form-graph'.
+//     Rate-limited GenForm emits are ONLY fired from the opt-in call sites
+//     (`<GenForm track>` in the surviving footer + VideoGenerationForm);
 //     orchestrator modals (upscale / bg-removal / video-interpolation)
 //     deliberately omit the rate-limited emit so they don't produce
 //     asymmetric data — they have no success / validation-fail emits of
@@ -565,10 +689,9 @@ const generatorSubmitSchema = z.object({
     // opened from the remix entry point. See the doc-block above: the meaning
     // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
-    // 'new' (generation_v2/FormFooter) is emitted by the current form;
-    // 'form-graph' by the form-graph lane's footer. 'legacy'/'video' are
-    // retained for backward-compatibility with historical events from the
-    // removed legacy generation form.
+    // Every emit is 'form-graph' today. 'new' came from the retired v2 footer and
+    // 'legacy'/'video' from the generation form before it — all three are retained only
+    // so historical events stay readable.
     formVersion: z.enum(['legacy', 'new', 'video', 'form-graph']).optional(),
     // False when the submit attempt failed validation (react-hook-form
     // onError path or graph.validate() early return). The data team can
@@ -694,6 +817,75 @@ const announcementClickSchema = z.object({
 // The containment direction in `action-type-enum-drift.test.ts` is what keeps this true in
 // one direction (every arm here must be an `ActionType`); the reverse is deliberately not
 // asserted, which is exactly what lets a server-only type exist.
+// The consolidated `/apps/build` developer funnel. `/apps/get-started`, `/apps/submit`
+// and `/apps/mine` carried ZERO instrumentation between them, so nothing could answer
+// the only question the funnel exists to answer: of the people shown the pitch, how many
+// reach the CLI, and how many go on to start an app.
+//
+// 🔴 CLIENT-POSTABLE ON PURPOSE, UNLIKE THE THREE SERVER-ONLY TYPES ABOVE, and the
+// difference is what the number is FOR. `App_Open` and the mute pair are absent from this
+// schema because each drives a figure someone benefits from inflating — a public play
+// count, a creator-facing mute chart. These four steps drive an internal funnel ratio that
+// nobody is paid by, and the `view` step happens in the browser on a page render with no
+// server round-trip of its own, so a server-side emitter would have to invent one. A
+// script posting these skews an internal conversion chart and nothing else.
+//
+// 🔴 EVERY FIELD IS A CLOSED ENUM — NO FREE STRING. `details` is a `String` column at
+// storage (`tracker.action` JSON-stringifies whatever it is handed), so the only thing
+// standing between a browser POST and arbitrary text in that column is this schema. Both
+// fields are `z.enum`, so a tampered client can post a WRONG combination but cannot post
+// user text, an unbounded string, or a value the funnel query does not already know.
+//
+// `state` is carried on every step, `view` included, because the funnel question is
+// per-state: a `create_entry` from the pitch (a non-author clicking through) and one from
+// the workbench (an author adding their fifth app) are different events that would
+// otherwise be indistinguishable in the rollup.
+const appsBuildActionSchema = z.object({
+  type: z.literal('AppsBuild_Action'),
+  details: z.object({
+    /**
+     * Which funnel step fired. Ordered as the funnel runs.
+     *
+     * `agent_prompt_copy` is the SECOND route to the same destination, kept separate from
+     * `cli_copy` on purpose: the page offers "copy three commands and run them" and "paste
+     * one prompt into a coding agent", and which one developers take is the question the
+     * split exists to answer. Folding it into `cli_copy` would make that unanswerable after
+     * the fact, and `state` does not separate them (both fire in all three states).
+     *
+     * 🔴 ADDING A VALUE HERE NEEDS NO ClickHouse MIGRATION — `details` is a String column
+     * (`tracker.action` JSON-stringifies it), so only a new `type` would. It DOES need the
+     * set in `components/Apps/__tests__/appsBuildState.test.ts` updated, which pins this
+     * enum's members exactly; that pin is why this is a deliberate edit rather than a
+     * silent one.
+     */
+    action: z.enum(['view', 'request_access', 'cli_copy', 'agent_prompt_copy', 'create_entry']),
+    /**
+     * Which of the page's three states the viewer was in. Mirrors `AppsBuildState` in
+     * `~/components/Apps/appsBuildState`; the two are pinned together by
+     * `components/Apps/__tests__/appsBuildState.test.ts` so a renamed state cannot
+     * silently start posting a value this enum rejects (a rejected POST is dropped with
+     * a 200, so the loss would be invisible).
+     */
+    state: z.enum(['pitch', 'first-app', 'workbench']),
+  }),
+});
+
+// User menu v2 item opens, collected to choose the default pins from use. Client-postable like
+// `AppsBuild_Action`: it feeds an internal ranking nobody benefits from inflating. Every field is
+// closed, so a tampered client cannot put text in the `details` column.
+const userMenuClickSchema = z.object({
+  type: z.literal('UserMenu_Click'),
+  details: z.object({
+    item: z.enum(USER_MENU_ITEM_IDS),
+    // The item's home group in the layout, also when it was opened from the Pinned section;
+    // `header` for the profile and Buzz rows above the menu. Null for a top-level item.
+    group: z.enum([...USER_MENU_GROUP_IDS, USER_MENU_HEADER_GROUP]).nullable(),
+    // Opened from the Pinned section, not merely an item that is pinned.
+    pinned: z.boolean(),
+    surface: z.enum(['desktop', 'mobile']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -719,7 +911,15 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   generatorSubmitSchema,
   feedTagBarClickSchema,
   announcementClickSchema,
+  appsBuildActionSchema,
+  userMenuClickSchema,
 ]);
+// What `track.addAction` parses: the action, with its whole JSON length capped at
+// `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through
+// `.options`.
+export const trackActionInputSchema = trackActionSchema.refine(
+  ...withinChars(TRACK_DETAILS_MAX_CHARS)
+);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to
 // opened. `views` only records the latter, so every view count on the platform
@@ -773,6 +973,15 @@ export const IMPRESSION_SURFACES = [
   'bounties',
   'search',
   'user',
+  'hubs',
+  'challenges',
+  '3d-models',
+  'ecosystems',
+  'tag',
+  'tools',
+  'comics',
+  'crucibles',
+  'events',
   'other',
 ] as const;
 export type ImpressionSurface = (typeof IMPRESSION_SURFACES)[number];
@@ -869,3 +1078,66 @@ export const IMMEDIATE_FLUSH_ACTION_TYPES = new Set<TrackActionInput['type']>([
 export function isImmediateFlushTrackEvent(event: TrackBatchEvent): boolean {
   return event.kind === 'action' && IMMEDIATE_FLUSH_ACTION_TYPES.has(event.data.type);
 }
+
+// ── App Blocks postMessage BRIDGE message counts ─────────────────────────────
+//
+// The wire shape for /api/track/block-message: a COALESCED batch of
+// {appBlockId, type, host, outcome, count} rows, each incrementing
+// `civitai_app_block_bridge_messages_total` by `count`.
+//
+// 🔴 `count` IS WHY THE BEACON IS AFFORDABLE. The bridge's own inbound rate limit
+// is 30 messages/sec/host, so a per-message beacon would be a ~30 req/s/tab
+// channel. The quantity prom needs is a count, and a count aggregates losslessly:
+// the resulting series is byte-identical to a per-message beacon's. The cap keeps
+// one tampered request from asking for an unbounded single increment.
+//
+// 🔴 NOTHING HERE IS A LABEL BOUND. `type` is capped only in LENGTH; the
+// cardinality bound is `boundBridgeMessageType` in the route (clamped against the
+// code-owned protocol inventory), exactly as `appBlockId` is bounded by
+// `boundAppBlockIdLabel` rather than by this schema. A length cap on a public body
+// is not a cardinality bound — 128 characters is still unbounded distinct values.
+export type BlockMessageBatchInput = z.infer<typeof blockMessageBatchSchema>;
+export const blockMessageBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        type: z.string().trim().min(1).max(128),
+        // 🔴 BUILT FROM THE EMITTER'S OWN CONST ARRAYS, never re-spelled. A zod
+        // array rejects WHOLESALE, so an outcome added client-side but not here
+        // would 400 the entire batch and silently destroy every good row riding
+        // with it. Same shape as `IMPRESSION_SURFACES` -> `z.enum(...)` above.
+        host: z.enum(BRIDGE_HOSTS),
+        outcome: z.enum(BRIDGE_MESSAGE_OUTCOMES),
+        count: z.number().int().positive().max(BRIDGE_MESSAGE_COUNT_MAX),
+      })
+    )
+    .min(1)
+    .max(BRIDGE_MESSAGE_BATCH_MAX),
+});
+
+// ── App Blocks custom events ─────────────────────────────────────────────────
+//
+// The wire shape for /api/track/block-event: one row per `track()` call. Unknown keys are
+// stripped, which is how a client-sent `userId`, `isOwner` or `ts` is ignored: identity and time
+// are stamped by the server.
+//
+// `eventName` and `properties` are deliberately NOT bounded or shaped here. A zod array rejects
+// wholesale, and one batch can carry rows from several apps on a page, so a strict rule would
+// let one app's malformed event discard its neighbours'. Neither is stored unless it equals
+// something the app's manifest declares. The route's body-size limit bounds them.
+export const BLOCK_EVENT_BATCH_MAX = 50;
+export type BlockEventBatchInput = z.infer<typeof blockEventBatchSchema>;
+export const blockEventBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        blockInstanceId: z.string().trim().min(1).max(256),
+        eventName: z.unknown(),
+        properties: z.unknown().optional(),
+      })
+    )
+    .min(1)
+    .max(BLOCK_EVENT_BATCH_MAX),
+});

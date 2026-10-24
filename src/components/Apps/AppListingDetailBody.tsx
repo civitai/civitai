@@ -13,16 +13,20 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
   IconApps,
   IconArrowLeft,
   IconDownload,
+  IconEyeOff,
   IconFlask,
   IconInfoCircle,
   IconPlugConnected,
+  IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -35,7 +39,9 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
   type DetailActionMode,
@@ -55,14 +61,19 @@ import {
 import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
+import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
+import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { ListingForkAttribution } from '~/components/Apps/ListingForkAttribution';
+import { ListingForksSection } from '~/components/Apps/ListingForksSection';
+import { ListingForkButton } from '~/components/Apps/ForkAppAction';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import {
@@ -138,9 +149,8 @@ import type {
  * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because the
- * browser `component` suite runs only in the PR preview pipeline — report-only, and not a
- * required check — so a guard pinned only there is not reliably exercised.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), as well as in
+ * the browser `component` suite (`Component tests` in CI).
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
@@ -301,8 +311,7 @@ function HeroCover({
  * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
  * tier. That this component hands the view-model the REAL `preview` value, rather than
  * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
- * which runs solely as `preview / component-tests` in the PR preview pipeline — report-only,
- * not a required check, and not reported at all when the preview build fails. Mutating the
+ * which runs in CI as `Component tests`. Mutating the
  * call site to `{ preview: false }` leaves the whole node suite green. Rule and wiring are
  * separate claims; only the first one is gated.
  *
@@ -351,7 +360,9 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
  */
 function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
   if (!creator || !creator.username) return null;
-  const avatarSrc = creator.image ? getEdgeUrl(creator.image, { width: 64 }) : undefined;
+  const avatarSrc = creator.image
+    ? getEdgeUrl(creator.image, { width: 64, optimized: true })
+    : undefined;
   return (
     <Anchor
       component={Link}
@@ -762,17 +773,45 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                   // look-alike. The href is already host-allowlisted and normalised
                   // server-side (`validateRepositoryUrl`); this is the second control, and
                   // `appListingDetailRows.ts` documents the contract on `href`.
-                  <Text
+                  // 🔴 `Anchor`, NOT `Text component="a"` — this is an AFFORDANCE fix,
+                  // not a component preference. As a `Text` the value rendered in the
+                  // body colour with no underline, so it was visually identical to the
+                  // non-link values sitting directly above and below it in the same
+                  // rail. Reported by a tester 2026-09-10: "I see that 'Source' is
+                  // clickable, but there is no indication." `Anchor` is the repo's
+                  // inline-link idiom (used throughout this file and the sibling Apps
+                  // components) and carries the link colour; `underline="always"` is
+                  // explicit because a colour difference alone is not an accessible
+                  // affordance — it fails for a viewer who cannot separate the two hues.
+                  <Anchor
                     size="sm"
-                    component="a"
                     href={row.href}
                     target="_blank"
                     rel="noopener noreferrer"
+                    underline="always"
                     data-listing-detail-link={row.key}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {row.value}
-                  </Text>
+                  </Anchor>
+                ) : row.anchorId ? (
+                  // SAME-PAGE jump — deliberately NOT `target="_blank"`/`noopener`.
+                  // Those belong to `row.href` (an outbound third-party URL) and would
+                  // open this page's own reviews section in a new tab. See the two
+                  // fields' docstrings in `appListingDetailRows.ts`.
+                  // A real fragment link rather than a scroll handler: it works with
+                  // the keyboard, with middle-click, before hydration, and it can be
+                  // copied.
+                  <Anchor
+                    size="sm"
+                    href={`#${row.anchorId}`}
+                    underline="always"
+                    c={row.color}
+                    tt={row.key === 'reviews' ? 'capitalize' : undefined}
+                    data-listing-detail-anchor={row.key}
+                  >
+                    {row.value}
+                  </Anchor>
                 ) : (
                   <Text
                     size="sm"
@@ -801,6 +840,15 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
+   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
+   *     rather than an omission that was missed. It renders under a DIFFERENT HEADING
+   *     here ("Currently granted permissions", not "This app can…") because the review
+   *     modal shows it beside the pending version's REQUESTED scopes, and mislabelling
+   *     the currently-approved set is how a moderator under-reads an escalation.
+   *     🔴 It DOES render here: the owner-republish re-review produces a
+   *     `kind: 'onsite'` request against a LIVE listing with a non-null `appBlockId`.
+   *     An intermediate revision of this ledger claimed it rendered nothing — that was
+   *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -891,6 +939,7 @@ export function AppListingDetailBody({
     !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
       ? primaryAction.href
       : null;
+  const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
 
   return (
     <Stack gap="lg">
@@ -962,12 +1011,33 @@ export function AppListingDetailBody({
                     Beta
                   </Badge>
                 )}
+                {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
+                    reason Beta is here: preview renders this block. `restrictedAudience` is
+                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="sm"
+                      leftSection={<IconEyeOff size={12} aria-hidden />}
+                      style={{ flexShrink: 0, cursor: 'help' }}
+                      data-testid="apps-listing-detail-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
+                )}
               </Group>
               {detail.tagline && (
                 <Text c="dimmed" size="sm" className="line-clamp-2">
                   {detail.tagline}
                 </Text>
               )}
+              {/* FORK PROVENANCE — "Forked from …". In the identity block, and rendered in preview
+                  too: it is presentational, and the server has already decided whether the
+                  parent may be named for this viewer. Not behind the fork rollout flag. */}
+              <ListingForkAttribution forkOf={detail.forkOf} />
               {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
                   filtered server-side to ACCEPTED **and** `displayed` seats and projected
                   to `{id, username, image}` — this renders it verbatim and applies no
@@ -1059,6 +1129,9 @@ export function AppListingDetailBody({
                 </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">
                   <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
+                      flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
+                  <ListingForkButton listing={detail} />
                 </Card.Section>
               </Card>
             )}
@@ -1146,6 +1219,11 @@ export function AppListingDetailBody({
 
             <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
+            {/* "N forks" + the published forks. Live surface only (a preview's `detail.id` is not
+                guaranteed to be a listing id), and the section gates itself on the fork rollout
+                flag — it issues no request while the flag is off. */}
+            {!preview && <ListingForksSection listingId={detail.id} />}
+
             {/* Off-site external destination disclosure (mirrors the live detail).
                 🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —
                 it makes a security claim ("no account access, or permissions")
@@ -1188,6 +1266,109 @@ export function AppListingDetailBody({
                 asked to sign in and approve access.
               </Alert>
             )}
+
+            {/* WHAT that connect will actually ASK FOR — the enumeration behind the
+                sentence immediately above.
+                🔴 A FOURTH permission surface, and like the on-site `scopes` section
+                below it does NOT belong to the mutually-exclusive off-site pair. Those
+                two answer "does this leave the platform, and can it reach my account at
+                all?"; this one enumerates the ask. Do not fold it into either predicate
+                — they are exact complements over one domain and a third condition there
+                breaks the invariant pinned in `__tests__/appListingDetailView.test.ts`.
+                🔴 IT IS GATED ON THE DATA, NOT ON `shouldShowConnectCapability`, AND
+                THAT IS NOT AN OVERSIGHT. Reusing the predicate would couple the
+                enumeration to the sentence and reintroduce exactly the third-condition
+                pressure the pair's docstring warns about. Same `length > 0` reasoning as
+                the on-site section: on a store page, "no permissions" is better said by
+                the absence of the section than by an empty box.
+                ⚠ THE DATA GATE IS NARROWER THAN THE PREDICATE ONLY BECAUSE THE
+                PROJECTION MAKES IT SO — an earlier draft of this comment asserted
+                `connectScopes` is "[] for every listing that is not an off-site connect
+                listing" as though it were free, and it was FALSE: a deleted OAuth client
+                strands the mask (`onDelete: SetNull` nulls only `connectClientId`), and
+                the projection then published scopes while the mutually-exclusive pair
+                flipped to the "no account access, or permissions" sentence — two
+                contradictory security claims stacked on one public page. The projection
+                now gates on the client's presence too; read its comment before
+                loosening either side.
+                🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
+                emphasis reads identically here and on the moderator review surface. It
+                cannot render `connectScopeJustifications` — see its docblock; that is
+                structural, not a convention. */}
+            {detail.connectScopes.length > 0 && (
+              <ConnectScopesDisclosure scopes={detail.connectScopes} preview={preview} />
+            )}
+
+            {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,
+                shown BEFORE the viewer opens it.
+                🔴 This is the third permission surface on this page and it does NOT
+                belong to the mutually-exclusive off-site pair above. Those two answer
+                "does this leave the platform, and can it reach my account at all?" for
+                an OFF-SITE listing; this one enumerates the granted capabilities of an
+                ON-SITE app, which the pair is silent about by construction. Do not fold
+                it into either predicate — `shouldShowOffsiteDisclosure` and
+                `shouldShowConnectCapability` are exact complements over one domain and a
+                third condition there would break the invariant pinned in
+                `__tests__/appListingDetailView.test.ts`.
+                🔴 Rendered ONLY when there is something to disclose: an app approved with
+                no scopes gets no section at all, rather than a reassuring empty box. That
+                is why the guard is `length > 0` and not `BlockScopeList`'s own
+                `emptyLabel` path — on a store listing, "no permissions" is better said by
+                the absence of a permissions section than by a sentence nobody reads.
+                Ported from the disclosure on the retired `/apps/<appBlockId>` route,
+                which `blocks.getAppDetail` still serves.
+                🔴 THE `preview` HEADING IS A CORRECTNESS FIX ON A REACHABLE PATH, NOT
+                COPY AND NOT AN INVARIANT GUARD. `detail.scopes` is what is CURRENTLY
+                approved; the review modal shows it beside `ManifestScopes`, the scopes
+                the pending version is REQUESTING. Those differ exactly when a version
+                escalates, and the confident natural-language heading was on the wrong
+                one — so a moderator could read "This app can…" as the set they are
+                approving and under-read the escalation, on the one surface where that
+                call is made.
+                🔴 REACHED VIA THE OWNER-REPUBLISH RE-REVIEW, which is why a
+                "preview means an off-site shadow" reading is wrong. There are FOUR
+                writers of `AppListingPublishRequest.appListingId`, and two copy the
+                kind from the target rather than hardcoding `'offsite'`:
+                `offsite-moderation.service.ts`'s `routeRepublishToReviewInTx` writes
+                `kind: listing.kind` against the LIVE listing id — so an approved
+                ON-SITE app that is self-unpublished and republished with a changed
+                asset produces a `kind: 'onsite'`, non-shadow request whose
+                `appListingId` is a live on-site listing WITH a non-null `appBlockId`.
+                `getListingPreviewForReview` is deliberately not status-filtered and
+                runs `projectListingDetail` verbatim, so `scopes` is non-empty and this
+                section renders. `OffsiteReviewQueue` renders `ListingPreviewSection`
+                with no kind gate, and already carries its own 🔴 comment that
+                "`kind === 'onsite'` NO LONGER IMPLIES 'a media revision'" for exactly
+                this producer; its `ONSITE_REPUBLISH_ROW` fixture is that shape.
+                ⚠ An intermediate version of this comment claimed the branch was
+                UNREACHABLE and that the heading was therefore an invariant guard. That
+                was wrong, and wrong in the dangerous direction — it licensed deleting a
+                heading and a test that both guard a live moderator-facing path. It
+                counted two of the four writers.
+                🔴 DO NOT RESTATE THE WRITER COUNT HERE — an earlier draft said "four",
+                and nothing asserted it. The set is pinned as `LISTING_REQUEST_PRODUCERS`
+                in `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`,
+                which fails on GROWTH and SHRINK. What matters for THIS branch is not the
+                number but that AT LEAST ONE writer copies the kind from a LIVE listing —
+                that is what makes it reachable, and it stays true however many exist.
+                ✅ The contradiction this comment used to flag is RESOLVED (2026-09-12).
+                `app-listing-history.service.ts` no longer asserts "exactly THREE create
+                sites" / "the ONLY writer that can emit `onsite`" / "every on-site row is
+                a shadow"; it now points at the same ledger. The two files no longer
+                disagree, so there is nothing left to reconcile by hand. */}
+            {detail.scopes.length > 0 && (
+              <Stack gap="xs" data-testid="apps-listing-permissions">
+                <Group gap="xs">
+                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                    <IconShieldCheck size={14} />
+                  </ThemeIcon>
+                  <Title order={4}>
+                    {preview ? 'Currently granted permissions' : 'This app can…'}
+                  </Title>
+                </Group>
+                <BlockScopeList scopes={detail.scopes} />
+              </Stack>
+            )}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
@@ -1210,7 +1391,14 @@ export function AppListingDetailBody({
           heading. Omitted in preview: a shadow listing has no review rows and we must
           not query them. */}
       {!preview && (
-        <Stack gap="md">
+        // 🔴 `id` is the jump TARGET for the Details rail's "Reviews" row, which is a
+        // link a viewer can follow (a tester found the rail's reviews line and
+        // reasonably expected it to take them somewhere). Renaming or removing this id
+        // silently breaks that link — an `href="#…"` to a missing id is inert with no
+        // error — so it is pinned by `appListingReviewsAnchor.test.ts`.
+        // Not a `scrollIntoView` handler: a real fragment link works with the keyboard,
+        // with middle-click, and before hydration, and it survives being copied.
+        <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
           <Title order={2}>Reviews</Title>
           <AppListingReviews appListingId={detail.id} />

@@ -45,9 +45,15 @@
   <!-- One key over every panel: a `?q=` navigation does not remount, so an expanded reaction list or
        event log would otherwise carry across to the next image. -->
   {#key result.image.id}
-    <ImageDetailPanel image={result.image} civitaiUrl={data.civitaiUrl} canAct={data.canAct} />
+    <ImageDetailPanel
+      image={result.image}
+      approvedAppeal={result.approvedAppeal}
+      civitaiUrl={data.civitaiUrl}
+      canAct={data.canAct}
+    />
     <TagsPanel tags={result.tags} shadowTags={result.shadowTags} />
     <ActivityPanel
+      imageId={result.image.id}
       reports={result.reports}
       modActivity={result.modActivity}
       reactions={result.reactions}

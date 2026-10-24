@@ -1,5 +1,6 @@
 import {
   IconLayoutDashboard,
+  IconCalendarEvent,
   IconSpeakerphone,
   IconLicense,
   IconCoin,
@@ -18,6 +19,8 @@ type NavIcon = typeof IconLayoutDashboard;
 export type NavChild = { href: string; label: string; flag?: string };
 /** The flag gating the Sales subpage — the same key its route and every one of its actions read. */
 export const SALES_FLAG = 'scheduled-model-sales';
+/** 🔴 Must stay the main app's `postPlanner` fliptKey: one flag drives the planner in both apps. */
+export const POST_PLANNER_FLAG = 'post-planner';
 
 export type NavItem = {
   href: string;
@@ -57,8 +60,10 @@ export const NAV: NavItem[] = [
       { href: '/analytics/engagement', label: 'Engagement' },
       { href: '/analytics/content', label: 'Content' },
       { href: '/analytics/audience', label: 'Audience' },
+      { href: '/analytics/storage', label: 'Storage' },
     ],
   },
+  { href: '/calendar', label: 'Calendar', icon: IconCalendarEvent, flag: POST_PLANNER_FLAG },
   {
     href: '/announcements',
     label: 'Announcements',

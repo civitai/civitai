@@ -35,6 +35,7 @@ import {
   getResourceStatus,
   ResourceItemContent,
 } from '~/components/generation_v2/inputs/ResourceItemContent';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { extractSourceMetadata } from '~/utils/metadata/extract-source-metadata';
@@ -319,33 +320,35 @@ export function ImageMetadataModal({ url, apply }: ImageMetadataModalProps) {
                 </Card.Section>
                 <Card.Section>
                   <div className="p-3">
-                    <Stack gap="xs">
-                      {resources.map((resource) => {
-                        const usable =
-                          !!apply?.onAddResource &&
-                          getResourceStatus(resource, apply.resourceOptions) !== 'incompatible';
-                        return (
-                          <ResourceItemContent
-                            key={resource.id}
-                            resource={resource}
-                            options={apply?.resourceOptions}
-                            actions={
-                              usable ? (
-                                <Tooltip label="Add to generation">
-                                  <ActionIcon
-                                    size="md"
-                                    variant="subtle"
-                                    onClick={() => handleAddResource(resource)}
-                                  >
-                                    <IconPlus size={14} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              ) : undefined
-                            }
-                          />
-                        );
-                      })}
-                    </Stack>
+                    <ResidencyBatchProvider modelVersionIds={resources.map((r) => r.id)}>
+                      <Stack gap="xs">
+                        {resources.map((resource) => {
+                          const usable =
+                            !!apply?.onAddResource &&
+                            getResourceStatus(resource, apply.resourceOptions) !== 'incompatible';
+                          return (
+                            <ResourceItemContent
+                              key={resource.id}
+                              resource={resource}
+                              options={apply?.resourceOptions}
+                              actions={
+                                usable ? (
+                                  <Tooltip label="Add to generation">
+                                    <ActionIcon
+                                      size="md"
+                                      variant="subtle"
+                                      onClick={() => handleAddResource(resource)}
+                                    >
+                                      <IconPlus size={14} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                ) : undefined
+                              }
+                            />
+                          );
+                        })}
+                      </Stack>
+                    </ResidencyBatchProvider>
                   </div>
                 </Card.Section>
               </Card>

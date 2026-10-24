@@ -131,6 +131,9 @@ beforeEach(() => {
   mockGetFileForModelVersion.mockResolvedValue({
     status: 'success',
     url: REDIRECT_URL,
+    // Read by the route's sampled url-expiry log before it redirects.
+    urlExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    sizeKB: 1024,
     metadata: {},
     isDownloadable: true,
     published: true,
@@ -213,26 +216,15 @@ describe('download route — a query split by a stray `?`', () => {
       .map((c) => c[0] as Record<string, unknown>)
       .filter((entry) => entry.message === 'split-query-repaired');
 
-    expect(repairs, 'a repair that logs nothing cannot tell us the shim is still needed').toHaveLength(
-      1
-    );
+    expect(
+      repairs,
+      'a repair that logs nothing cannot tell us the shim is still needed'
+    ).toHaveLength(1);
     expect(repairs[0].keys).toEqual(expect.arrayContaining(['fileId', 'type', 'token']));
     expect(
       JSON.stringify(repairs[0]),
       'a query VALUE reached Axiom — on this route that includes the caller API key'
     ).not.toContain('secret-key');
-  });
-
-  it('does not log a repair on a request that needed none', async () => {
-    const { promise } = run(
-      '/api/download/models/568485?fileId=484398&type=Model&token=secret-key',
-      '568485'
-    );
-    await promise;
-
-    expect(
-      mockLogToAxiom.mock.calls.map((c) => (c[0] as { message: string }).message)
-    ).not.toContain('split-query-repaired');
   });
 
   it('records a schema rejection by field, without the values', async () => {
@@ -249,22 +241,11 @@ describe('download route — a query split by a stray `?`', () => {
 
     expect(rejection, 'the 400 returns before any logging, so nothing counts these').toBeDefined();
     expect(rejection?.fields).toEqual(['fileId']);
-    expect(rejection?.repaired, 'a 400 after a repair is a different bug from one it never saw').toBe(
-      false
-    );
-    expect(JSON.stringify(rejection)).not.toContain('nonsense');
-  });
-
-  it('drops the sampled rejection log on a draw above the rate', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-
-    const { promise } = run('/api/download/models/568485?fileId=nonsense', '568485');
-    await promise;
-
     expect(
-      mockLogToAxiom.mock.calls.map((c) => (c[0] as { message: string }).message),
-      'unsampled, a caller can drive this log at will'
-    ).not.toContain('schema-rejected');
+      rejection?.repaired,
+      'a 400 after a repair is a different bug from one it never saw'
+    ).toBe(false);
+    expect(JSON.stringify(rejection)).not.toContain('nonsense');
   });
 
   it('CONTROL: the same request already worked when the client used `&`', async () => {

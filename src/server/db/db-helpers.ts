@@ -4,7 +4,12 @@
 // checkNotUpToDate(lsn), dbKV) keep their signatures.
 export * from '@civitai/db/db-helpers';
 
-import { createPool } from '@civitai/db/db-helpers';
+import {
+  createPgPoolAcquireHistogram,
+  createPool,
+  PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+} from '@civitai/db/db-helpers';
+import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
 import { loadDbEnv, type DbConfig, type DbLogFn } from '@civitai/db';
 import {
   getCurrentLSN as _getCurrentLSN,
@@ -26,13 +31,20 @@ export type ClientInstanceType =
   | 'primaryRead'
   | 'primaryReadLong'
   | 'datapacketRead'
-  | 'apps';
+  | 'apps'
+  | 'appdata';
 
 export type GetClientOptions = Partial<DbConfig> & {
   instance?: ClientInstanceType;
   /** Debug logger (app-defined). Defaults to a no-op. */
   log?: DbLogFn;
 };
+
+// The pools are process-global (pgDb.ts), so whichever module graph builds them first owns their
+// closures; the acquire histogram must therefore live in the cross-graph registry /api/metrics reads.
+const pgPoolAcquireHistogram = registerInstrumentationMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME, () =>
+  createPgPoolAcquireHistogram([instrumentationRegistry])
+);
 
 export function getClient(options: GetClientOptions = {}) {
   const { instance = 'primary', log: logOption, ...envOverrides } = options;
@@ -47,11 +59,20 @@ export function getClient(options: GetClientOptions = {}) {
     // App Blocks KV datastore — empty-string sentinel when unset; appsDb never calls getClient
     // unless APPS_DATABASE_URL is configured (see src/server/db/appsDb.ts).
     apps: config.appsUrl ?? '',
+    // App Blocks document store (least-privilege role) — same sentinel; appdataDb
+    // never calls getClient unless APPDATA_DATABASE_URL is configured.
+    appdata: config.appdataUrl ?? '',
   };
 
   const envUrl = instanceUrlMap[instance];
   const appBaseName =
-    instance === 'datapacketRead' ? 'dp-read-pg' : instance === 'apps' ? 'apps-pg' : 'node-pg';
+    instance === 'datapacketRead'
+      ? 'dp-read-pg'
+      : instance === 'apps'
+      ? 'apps-pg'
+      : instance === 'appdata'
+      ? 'appdata-pg'
+      : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter — datapacketRead sets
   // it per-connection via SET instead (createPool wires it).
@@ -77,5 +98,6 @@ export function getClient(options: GetClientOptions = {}) {
         : config.writeTimeout,
     perConnectionStatementTimeout,
     log,
+    acquireHistogram: pgPoolAcquireHistogram,
   });
 }

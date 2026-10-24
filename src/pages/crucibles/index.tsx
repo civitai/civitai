@@ -1,0 +1,83 @@
+import { Button, Group, Stack, Text, Title } from '@mantine/core';
+import { IconPlus } from '@tabler/icons-react';
+import Link from 'next/link';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
+import { CrucibleFiltersDropdown } from '~/components/Crucible/CrucibleFiltersDropdown';
+import { CrucibleJudgeNextButton } from '~/components/Crucible/CrucibleJudgeNextButton';
+import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
+import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
+import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
+import { SortFilter } from '~/components/Filters/SortFilter';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client';
+import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+function CruciblesPage() {
+  const filters = useCrucibleFilters();
+  const currentUser = useCurrentUser();
+
+  return (
+    <>
+      <Meta
+        title="Civitai Crucibles | Head-to-Head Image Competitions"
+        description="Compete in head-to-head image competitions, vote on entries, and win prizes in Buzz. Join active crucibles or create your own."
+        canonical={`${env.NEXT_PUBLIC_BASE_URL as string}/crucibles`}
+      />
+
+      <MasonryContainer>
+        <Stack gap="md">
+          {/* Page header with title and Create button */}
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Title order={1}>Crucible Discovery</Title>
+            {currentUser && (
+              <Group gap="sm">
+                {!currentUser.muted && !requiresEmailVerification(currentUser) && (
+                  <CrucibleJudgeNextButton />
+                )}
+                <Button
+                  component={Link}
+                  href="/crucibles/create"
+                  leftSection={<IconPlus size={18} />}
+                  radius="xl"
+                >
+                  Create Crucible
+                </Button>
+              </Group>
+            )}
+          </Group>
+
+          {/* User welcome section with stats */}
+          <UserCrucibleWelcome />
+
+          {/* Featured crucible hero card */}
+          <FeaturedCrucibleHero />
+
+          <Group justify="space-between" align="center" mt="md">
+            <Text fz="xl" fw={600}>
+              Discover Crucibles
+            </Text>
+            <Group gap={8} wrap="nowrap">
+              <SortFilter type="crucibles" />
+              <CrucibleFiltersDropdown />
+            </Group>
+          </Group>
+
+          <CruciblesInfinite filters={filters} />
+        </Stack>
+      </MasonryContainer>
+    </>
+  );
+}
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.crucible) return { notFound: true };
+  },
+});
+
+export default Page(CruciblesPage, { InnerLayout: FeedLayout, announcements: true });

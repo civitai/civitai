@@ -15,7 +15,7 @@ happened"**, so treat it as unfinished until all three are done.
 CREATE TABLE IF NOT EXISTS default.chatAuditEvents
 (
     `createdAt` DateTime64(3) DEFAULT now64(3),
-    `type` LowCardinality(String),        -- 'delete' | 'clear' | 'edit'
+    `type` LowCardinality(String),        -- 'delete' | 'clear' | 'edit' | 'read'
     `chatId` Int32,
     `messageId` Int32 DEFAULT 0,          -- 0 for 'clear', which acts on the conversation
     `actorId` Int32,                      -- who performed the act
@@ -86,10 +86,42 @@ and event type; keyset-paginated. Backed by `chat.getAudit`
 (`moderatorProcedure`), which returns empty rather than throwing when ClickHouse
 is absent, so the page reads as unconfigured rather than broken in dev.
 
+### In the moderator app
+
+`/retool/chat-audit-log` is the same list: filter by chat id, actor and event
+type, keyset-paginated. It shows **no message text**; each row links to the
+transcript, which shows the text and records the read. It has its own page grant,
+separate from Chat Audit's, because it shows which moderator read whose
+conversations.
+
+Moderator-app surfaces that return message bodies write a `read` row: the Chat
+Audit transcript, search excerpts, user-messages panel, newest feed and spam
+groups, the report queue's chat preview, User Lookup's sent messages, and Text
+Scan Lab lookups of chat messages. Some restricted review surfaces are
+deliberately left out of this log, and so is `/audit/text-relabel`, whose
+chat excerpts are anonymised copies. One row per chat (and sender, where the surface shows several) per
+read, no dedupe. A spam group spans chats it does not name, so it is recorded as a
+read of the sender with `chatId = 0`.
+
+These writes are **not** behind the `chat-audit-log` flag, and they fail open: if
+ClickHouse is down or stalls past 2s, the read goes ahead and a
+`chat-read-audit-failed` error is logged. The client inserts asynchronously
+without waiting for the flush, so a failure on the server's side of the flush is
+not caught.
+
 ## Known gaps
 
-- **`edit` has no emitter.** `updateMessage` is still unrouted, so the type is
-  declared and unused.
+- **Two readers, and only one is in this repo's main app.** `chat.getAudit` backs
+  `/moderator/chat-audit`; `apps/moderator`'s Chat Audit transcript reads every
+  `type = 'edit'` row for a message, oldest first, to show each superseded
+  version. Since `ChatMessageEdit` shipped, Postgres keeps the replaced text too,
+  written in the same statement as the edit; the transcript reads both and drops
+  the log row that duplicates a recorded edit, so the log now matters only for
+  edits made before that table existed. The rows chain (each `oldValue` equals the previous `newValue`, verified
+  across every multi-edit message), so the log is a full history rather than a
+  before/after pair: 144 of 1,025 edited messages have more than one edit and one
+  has 21. Reducing it to first-and-last is what the reader used to do, and it
+  also mis-dated the surviving text — see `message-edit-chain.test.ts`.
 - **Retention is not absolute.** Account deletion and the auto-mute-scam cron
   both hard-delete `ChatMessage` rows from Postgres. The audit row survives with
   its content copy, but the thread around it does not.

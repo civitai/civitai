@@ -11,16 +11,21 @@ import type * as TrpcMod from '~/utils/trpc';
  * Regression: the DOUBLE RULE under the `/apps` sub-nav.
  *
  * `AppsPageLayout` wrapped its header band in a `borderBottom` hairline, and
- * Mantine's `Tabs.List` (inside `AppsSubNav`) already draws its OWN bottom
+ * Mantine's `Tabs.List` (inside the old `AppsSubNav`) already drew its OWN bottom
  * border — so every `/apps` page rendered two parallel lines ~8px apart under
- * the tabs. The band's rule is gone; the tabs' rule is the separator.
+ * the tabs. The band's rule is gone.
  *
- * These assert BOTH sides. "The band has no border" alone would also pass if
- * someone deleted the tabs' border instead (leaving no separator at all), so the
- * tabs' rule is pinned as present in the same test.
+ * ⚠️ THE "BOTH SIDES" CLAIM THIS HEADER MADE IS RETIRED, AND SAYING SO MATTERS MORE THAN
+ * DELETING IT. It read: "'the band has no border' alone would also pass if someone
+ * deleted the TABS' border instead (leaving no separator at all), so the tabs' rule is
+ * pinned as present in the same test." There is no tab strip any more and the rail draws
+ * no rule at all, so there is no second border for this file to pin — the separator the
+ * band relied on is gone by design, and PROXIMITY (the 16/32 pair below) is the whole
+ * replacement. The rail's own "draws no rule either" guard lives in
+ * `__tests__/appsPageLayout.test.ts`.
  */
 
-// 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` now hides itself
+// 🔴 The viewer MUST be one the rail renders for. `AppsPageLayout` hides the rail
 // entirely below two qualifying tabs, and the summary query is stubbed empty here, so
 // an anonymous / non-author viewer would render NO `<nav>` at all and every assertion
 // below would fail on a null lookup rather than on the geometry it is about. An author
@@ -44,10 +49,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
 
-/** The header band = the element that directly contains the sub-nav `<nav>`. */
+/**
+ * The header band.
+ *
+ * 🔴 RESOLVED BY THE LAYOUT'S OWN MARKER SINCE THE TAB STRIP BECAME A RAIL, NOT BY
+ * `nav.parentElement`. The nav used to be the band's first child; it is in a SIBLING
+ * COLUMN now, so that walk would hand back the rail's sticky wrapper and every assertion
+ * below would be about the wrong element while still looking well-formed.
+ */
 function headerBand(): HTMLElement {
-  const nav = document.querySelector('nav[aria-label="App sections"]');
-  return nav?.parentElement as HTMLElement;
+  return document.querySelector('[data-apps-chrome="band"]') as HTMLElement;
 }
 
 /**

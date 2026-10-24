@@ -1,15 +1,15 @@
+import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
+  GrantedBox as GrantedBoxRow,
   UserReview,
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
-  ReactionSummary,
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
-// The `/api/user-account` payload, declared once. Two panels render slices of it — Subscription takes
-// the Buzz balance, UserContent takes the lists — and each previously declared its own copy and issued
-// its own fetch, so every lookup ran the whole endpoint twice, including the 744M-row reaction scan.
+// The `/api/user-account` payload, declared once. Several panels render slices of it, and each used to
+// declare its own copy and issue its own fetch, so every lookup ran the whole endpoint more than once.
 //
 // The row shapes are DERIVED from the service's, through `Jsonified` for the Date→string boundary.
 // Hand-copied duplicates drifted within a day: `nsfw` and `details` were added to the query and stayed
@@ -54,8 +54,6 @@ export type Cosmetic = {
   equipped: boolean;
   obtainedAt: string | null;
 };
-
-export type Reactions = Jsonified<ReactionSummary>;
 
 export type TrainingRun = {
   modelVersionId: number;
@@ -122,36 +120,36 @@ export type ShopPurchase = {
 
 export type AvailableCosmetic = { id: number; name: string };
 
+export type GrantedBox = Jsonified<GrantedBoxRow>;
+
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
-  /** Mirrors `UserBuzz` in `user-account.service.ts` — the client type for the same payload. */
-  buzz: {
-    balance: number;
-    lifetimeBalance: number;
-    /** Null when the colour-balance read failed; yellow survives on its own. */
-    blue: number | null;
-    green: number | null;
-    blueLifetime: number | null;
-    greenLifetime: number | null;
-  } | null;
   reviews: Capped<Review>;
   receivedReviews: Capped<ReceivedReview>;
   comments: Capped<Comment>;
   commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
-  reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
+  grantedBoxes: Capped<GrantedBox>;
+  grantableBoxes: GrantableBox[];
 };
 
 /** `version` is part of the URL so bumping it rebuilds the derived promise — a Buzz send has to move
  *  the balance above the form, and this data does not come from `load`. */
 export async function fetchAccount(userId: number, version = 0): Promise<Account> {
   const r = await fetch(`/api/user-account/${userId}?v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+/** Review id → image count. Its own endpoint — see `/api/user-review-image-counts`. */
+export async function fetchReviewImageCounts(userId: number): Promise<Record<number, number>> {
+  const r = await fetch(`/api/user-review-image-counts/${userId}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

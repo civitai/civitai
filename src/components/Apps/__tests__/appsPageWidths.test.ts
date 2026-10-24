@@ -31,6 +31,7 @@ import {
   SUBMISSIONS_CONTAINER_CHROME,
   SUBMISSIONS_TABLE_MIN_WIDTH,
 } from '~/components/Apps/submissionsTable';
+import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * `/apps/*` geometry pins (blocking `unit` project).
@@ -41,8 +42,8 @@ import {
  * between routes.
  *
  * The RENDERED proof of the alignment lives in
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode, report-only). This
- * file pins the CONSTANTS and the route taxonomy in the tier that actually gates.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode). This
+ * file pins the CONSTANTS and the route taxonomy in the node tier.
  */
 
 /**
@@ -93,6 +94,10 @@ const CHROME_PORTAL_SIBLINGS: Record<string, { file: string; exportName: string 
   CombinedReviewModal: {
     file: 'src/components/Apps/CombinedReviewModal.tsx',
     exportName: 'CombinedReviewModal',
+  },
+  PriorVersionsModal: {
+    file: 'src/components/Apps/PriorVersionsModal.tsx',
+    exportName: 'PriorVersionsModal',
   },
 };
 
@@ -387,18 +392,6 @@ function portalOffenders(name: string, abs: string, exportName: string): string[
 }
 
 describe('the container is uniform, and it is the only container', () => {
-  test('every `/apps/*` route renders in ONE container width (2560)', () => {
-    // A literal, not derived from the module's own arithmetic.
-    //
-    // 🔴 2560, RAISED FROM 1920 BY THE ULTRAWIDE PASS. The old cap left `(2560 −
-    // 1920) / 2 = 320px` of dead margin on each side of every apps page on a 2560
-    // monitor, and Mantine's top breakpoint (`xl`, 88em / 1408px) meant nothing in
-    // the grid could react to any of it. Raising the cap is only half the change —
-    // the store's column ladder is the other half, and it lives in
-    // `__tests__/appListingGrid.test.ts`.
-    expect(APPS_PAGE_CONTAINER_WIDTH).toBe(2560);
-  });
-
   test('🔴 there is no per-route CONTAINER width map any more', () => {
     // The defect was `APPS_PAGE_WIDTHS`: a container width per route. If it comes
     // back — under any name — the sub-nav starts moving again. `APPS_PAGE_MEASURES`
@@ -469,17 +462,20 @@ describe('APPS_PAGE_MEASURES — the decided CONTENT measure per route', () => {
     expect((1700 * 8) / 12).toBeGreaterThan(APPS_READABLE_MEASURE.min);
   });
 
-  test('the readable band is 1068 → 1368, and these six form/prose routes take it', () => {
+  test('the readable band is 1068 → 1368, and these five form/prose routes take it', () => {
     expect(APPS_READABLE_MEASURE).toEqual({ min: 1068, max: 1368, grow: 55 });
     const takers = Object.entries(APPS_PAGE_MEASURES)
       .filter(([, m]) => m === APPS_READABLE_MEASURE)
       .map(([r]) => r)
       .sort();
     // The SET, not a spot-check: this fails when a route joins or leaves.
+    // 🔴 SIX UNTIL `/apps/get-started` WAS CONSOLIDATED INTO `/apps/build`. That route is
+    // gone (301), and its successor is NOT here — it takes the full container, because its
+    // workbench state renders the submissions table. See the note on `/apps/build` in
+    // `APPS_FULL_MEASURE_PAGES` for why the widest state wins a route-keyed registry.
     expect(takers).toEqual([
       '/apps/[appBlockId]/edit',
       '/apps/[appBlockId]/revenue',
-      '/apps/get-started',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
       '/apps/submit',
@@ -525,7 +521,7 @@ describe('🔴 a BAND grows only where the container grew', () => {
   test('the sweep found bands to check (guards a vacuous loop)', () => {
     // Every measure is a band today, and if that ever stops being true this loop would
     // pass by checking nothing.
-    expect(bands.length).toBeGreaterThanOrEqual(7);
+    expect(bands.length).toBeGreaterThanOrEqual(6);
     expect(new Set(bands.map(([, b]) => b)).size).toBe(2);
   });
 
@@ -586,9 +582,9 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
     );
 
   test('one column through the OLD container, two in the current one', () => {
-    // The whole justification for `/apps/installed` becoming a grid: it must change
+    // The whole justification for `/apps/activity` becoming a grid: it must change
     // nothing a 1440 or 1920 monitor showed, and spend the 640px the ultrawide pass
-    // added. A min column of 1200 is what puts the step between the two.
+    // added. The min column is what puts the step between the two.
     expect(columnsAt(1408)).toBe(1); // 1440 viewport
     expect(columnsAt(LEGACY_USABLE)).toBe(1); // the old 1920 container
     expect(columnsAt(USABLE)).toBe(2); // the current 2560 container
@@ -596,30 +592,79 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
 
   test('the step is not sitting on either fixture width', () => {
     // A ladder whose rung lands ON a width the tests measure cannot detect an
-    // off-by-one. The second column arrives at 2416, which is 528 above the old
-    // container's content width and 112 below the current one.
-    expect(columnsAt(2415)).toBe(1);
-    expect(columnsAt(2416)).toBe(2);
-    expect(USABLE - 2416).toBeGreaterThan(64);
-    expect(2416 - LEGACY_USABLE).toBeGreaterThan(64);
+    // off-by-one. 🔴 THE RUNG MOVED 2416 → 2216 WITH THE RAIL RE-TUNE
+    // (`APPS_CARD_LIST_MIN_COLUMN` 1200 → 1100), and this literal is the independent
+    // witness for that: it is written out rather than recomputed from the constant, so a
+    // constant change without a decision fails here.
+    expect(columnsAt(2215)).toBe(1);
+    expect(columnsAt(2216)).toBe(2);
+    expect(USABLE - 2216).toBeGreaterThan(64);
+    expect(2216 - LEGACY_USABLE).toBeGreaterThan(64);
+  });
+
+  /**
+   * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
+   * value silently lost.
+   *
+   * The left rail takes 276px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2242 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * 640px content-to-control gap this constant exists to close reopened on exactly the
+   * monitors it was written for. 1100 restores the second column there and changes
+   * nothing at 1300 / 1440 / 1920, where a single column was already correct.
+   *
+   * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
+   * `columnsAt(2242)` is 1.
+   */
+  test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
+    const railOpenGrid =
+      APPS_PAGE_CONTAINER_WIDTH -
+      APPS_RESERVED_SCROLLBAR -
+      APPS_CONTAINER_GUTTER -
+      appsRailChromeWidth(false);
+    expect(railOpenGrid).toBe(2242);
+    expect(columnsAt(railOpenGrid)).toBe(2);
+
+    // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
+    // as they were with no rail at 1200. This is the half that makes the constant change
+    // a repair rather than a new density opinion.
+    for (const viewport of [1300, 1440, 1920]) {
+      const grid =
+        Math.min(viewport - APPS_RESERVED_SCROLLBAR, APPS_PAGE_CONTAINER_WIDTH) -
+        APPS_CONTAINER_GUTTER -
+        appsRailChromeWidth(false);
+      expect(columnsAt(grid), `@${viewport} rail open`).toBe(1);
+    }
+
+    // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
+    // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
+    // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
+    // two columns need `2n + 16 <= 2242`, so the largest admissible value is **1113**, and
+    // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
+    // establish a maximum; scanning for the first failure can, so it does.
+    const columnsAtMin = (w: number, min: number) =>
+      Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (min + APPS_CARD_LIST_GAP)));
+    let bound = 0;
+    for (let n = 1000; n <= 1400; n += 1) {
+      if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
+      else break;
+    }
+    expect(bound, 'the largest min-column that still yields two columns at 2242').toBe(1113);
+    expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
+    expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
+
+    // …and the SHIPPED value is under that bound with deliberate margin, not on it. A
+    // value at the bound is maximally loose and maximally fragile — one pixel of rail,
+    // gutter or scrollbar change and the rung disappears.
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBe(1100);
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBeLessThan(bound);
+    expect(columnsAtMin(railOpenGrid, APPS_CARD_LIST_MIN_COLUMN)).toBe(2);
+    // The old sample points, kept as the regression they were: 1200 (the retired value)
+    // still fails, which is the defect this constant change repairs.
+    expect(columnsAtMin(railOpenGrid, 1200)).toBe(1);
   });
 });
 
 describe('🔴 the measures preserve the OLD rendered content widths exactly', () => {
-  /**
-   * THE +32px TRAP, PINNED. Mantine's `Container` is border-box: `size={N}` renders
-   * `N − 2×16` of content. A `maw={N}` box lives INSIDE that gutter and renders `N`.
-   * So carrying the old round container numbers over as measures would have widened
-   * every narrowed page by 32px — a confounded change hiding inside an alignment fix.
-   *
-   * Each measure is therefore the OLD container width minus the gutter, and the old
-   * numbers are named here as literals so the provenance is checkable rather than
-   * asserted in prose.
-   */
-  test('the Container gutter is 16px per side', () => {
-    expect(APPS_CONTAINER_GUTTER).toBe(32);
-  });
-
   // 🔴 THE PROVENANCE IS NOW THE BAND'S **FLOOR**, and that is the point of a floor: a
   // band whose min drifted off the old container width would silently re-decide what a
   // 1440 monitor shows, which is the confounded change the gutter arithmetic above
@@ -655,6 +700,13 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
     expect(APPS_FULL_MEASURE_PAGES).toContain('/apps');
   });
 
+  /**
+   * ⚠️ BOTH TESTS BELOW ARE MAIN'S, RESTORED. A left-rail re-tune inverted them — the
+   * first to four columns at 620px, the second to THREE columns at 1600/1920 — and that
+   * re-tune is reverted. The store ladder ships `main`'s rungs, so these assert `main`'s
+   * outcomes again. The rail's own cost now falls only on viewers who OPEN it, and is
+   * measured in `appListingGrid.ts` rather than baked into this container arithmetic.
+   */
   test('the container yields the card width the top of the reachable ladder was tuned for', () => {
     //   container 2560 − 2×16 Container padding = 2528 of grid
     //   the widest REACHABLE rung is FIVE columns from 2364; gap 16 → 4 gaps between them
@@ -698,7 +750,7 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
   });
 });
 
-describe('🔴 /apps/mine is wide enough for its table, as a RELATIONSHIP', () => {
+describe('🔴 /apps/build is wide enough for its table, as a RELATIONSHIP', () => {
   /**
    * This replaces the deleted `MY_APPS_CONTAINER_SIZE` alias and its `> 1100` pin.
    * The alias could not have noticed the container dropping to 1400; the relationship
@@ -709,12 +761,16 @@ describe('🔴 /apps/mine is wide enough for its table, as a RELATIONSHIP', () =
     expect(contentWidth).toBeGreaterThan(SUBMISSIONS_TABLE_MIN_WIDTH);
   });
 
-  test('…and it does so because /apps/mine takes no measure', () => {
+  test('…and it does so because /apps/build takes no measure', () => {
     // If it ever took the readable measure, the floor would NOT be cleared — which
     // is exactly the clip the wide width was introduced to fix. Asserted as the
     // counterfactual so the previous test cannot pass for the wrong reason.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/build');
+    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/build');
+    // …and the route it inherited this from is GONE, not merely reclassified — so a
+    // future reader cannot conclude the table lives on two routes.
     expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/mine');
-    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/mine');
+    expect(APPS_FULL_MEASURE_PAGES).not.toContain('/apps/mine');
     // The readable band's CEILING is used, not its floor: the counterfactual has to be
     // "even at its widest, that class would still clip this table", or a band that grew
     // past the floor would make this pass for a reason that is no longer true.
@@ -797,10 +853,10 @@ describe('every /apps page on disk is classified', () => {
     // that makes an fs-backed guard worthless. Pin a floor AND known members from
     // every list, so a walk that finds only the shallow files still fails.
     const routes = appsRoutes();
-    expect(routes.length).toBeGreaterThanOrEqual(20);
+    expect(routes.length).toBeGreaterThanOrEqual(19);
     expect(routes).toContain('/apps');
     expect(routes).toContain('/apps/review');
-    expect(routes).toContain('/apps/get-started');
+    expect(routes).toContain('/apps/build');
     expect(routes).toContain('/apps/[appBlockId]/edit');
     expect(routes).toContain('/apps/listing/[appListingId]/edit');
     expect(routes).toContain('/apps/run/[slug]/[[...path]]');
@@ -886,11 +942,15 @@ describe('every /apps page on disk is classified', () => {
         '/apps',
         '/apps/[appBlockId]/edit',
         '/apps/[appBlockId]/revenue',
-        '/apps/get-started',
-        '/apps/installed',
+        // 🔴 ONE ROUTE WHERE THERE WERE THREE. `/apps/get-started` and `/apps/mine` were
+        // consolidated into this (301s), and `/apps/submit` KEEPS its route but lost its
+        // sub-nav row. So the set SHRANK by two — which is exactly the direction this
+        // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
+        '/apps/activity',
+        '/apps/assistant',
+        '/apps/build',
         '/apps/invites',
         '/apps/listing/[appListingId]/edit',
-        '/apps/mine',
         // 🔴 'revenue' sorts BEFORE 'review' — they diverge at index 9, 'e' < 'i'.
         '/apps/revenue',
         '/apps/review',

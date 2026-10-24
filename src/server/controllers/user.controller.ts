@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
+import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
-import type { NotificationCategory } from '~/server/common/enums';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -13,9 +14,12 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
+import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
@@ -45,10 +49,12 @@ import type {
   UserByReferralCodeSchema,
   UserOnboardingSchema,
   UserUpdateInput,
+  GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -56,7 +62,13 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { countUnclaimedPrizes } from '~/server/services/prize.service';
+import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
+import { countHeldMysteryBoxes } from '~/server/services/mystery-box-inventory.service';
+import { mysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -80,6 +92,7 @@ import {
   getUserBookmarkCollections,
   getBanContentPreview,
   getUserById,
+  getProfilePicturesForUsers,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
@@ -96,6 +109,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
   patchUserSettings,
@@ -115,6 +129,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
@@ -127,7 +142,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { refreshSession } from '~/server/auth/session-invalidation';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -140,13 +159,16 @@ import type { FeatureAccess } from '../services/feature-flags.service';
 import {
   computeUserFeatureFlagsOverlay,
   defaultToggleableFeatures,
+  getFliptGatedEligibility,
 } from '../services/feature-flags.service';
 import {
   getEntityCoverImage,
-  ingestImage,
+  ingestImageById,
   queueReplacedImageDeletion,
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 export const getAllUsersHandler = async ({
   input,
@@ -244,6 +266,32 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
   }
 };
 
+/**
+ * The authoritative avatar for a set of users, for search results to render.
+ *
+ * The search indexes carry a COPY of this, baked in when the document was last built, and
+ * nothing rebuilds an existing document when the user changes their avatar — so the copy
+ * is stale for as long as the document is not otherwise touched, and becomes a broken
+ * image once `remove-replaced-images` reaps the original. Measured on production: 100 of
+ * 120 sampled `collections_v3` documents, and 69 of 120 `models_v9`.
+ *
+ * Reads through `profilePictureCache`, so this is a Redis hit rather than a query.
+ *
+ * Public because search is public, and this returns nothing a search hit does not already
+ * expose. The id list is capped in the schema.
+ */
+export const getUserSearchHydrationHandler = async ({
+  input,
+}: {
+  input: GetUserSearchHydrationInput;
+}) => {
+  try {
+    return { profilePictures: await getProfilePicturesForUsers([...new Set(input.ids)]) };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const getNotificationSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   const { id } = ctx.user;
 
@@ -264,28 +312,28 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
+    const unopenedBoxes = countHeldMysteryBoxes(mysteryBoxViewer(ctx)).catch(() => 0);
+    const unclaimedPrizes = ctx.features.userMenuV2
+      ? countUnclaimedPrizes(id).catch(() => 0)
+      : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
     // notifications service over HTTP (with its own retries) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
-    const [unreadCount, placementCounts] = await Promise.all([
+    const [unreadCount, placementCounts, collectionReviewCounts] = await Promise.all([
       getUserNotificationCount({ userId: id, unread: true }),
       // Degrades to zeroes rather than failing the request, matching
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+      getPendingCollectionReviewCounts({ userId: id, levels: requestServableLevels(ctx) }).catch(
+        () => ({
+          total: 0,
+          byCollection: {},
+        })
+      ),
     ]);
-
-    const reduced = unreadCount.reduce(
-      (acc, { category, count }) => {
-        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = Number(count);
-        acc['all'] += Number(count);
-        return acc;
-      },
-      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
-    );
 
     // `pendingPlacements` rides along here rather than getting its own query:
     // this is the one request that already runs once per session for every
@@ -300,13 +348,21 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
     // invariant for adding another non-category key to this payload lives.
     return {
-      ...reduced,
+      ...summarizeUnreadCounts(unreadCount),
       // One number for the menu entry, and the split for the segmented control
       // on the placements page — the entry points at both queues now, so a
       // sticker-only count would under-report the thing it links to.
       pendingPlacements: placementCounts.sticker + placementCounts.remix,
       pendingStickerPlacements: placementCounts.sticker,
       pendingRemixSubmissions: placementCounts.remix,
+      // The sum only. The per-collection breakdown rides `collection.getAllUser`
+      // instead: `applyMarkReadToCounts` is typed over a Record<string, number>,
+      // so an object here breaks that generic — and if it ever fell out of
+      // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
+      // rather than merely zero a count.
+      pendingCollectionReviews: collectionReviewCounts.total,
+      unopenedBoxes: await unopenedBoxes,
+      unclaimedPrizes: await unclaimedPrizes,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -314,16 +370,14 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   }
 };
 
-const validAvatarUrlPrefixes = [
-  'https://cdn.discordapp.com/avatars/',
-  'https://cdn.discordapp.com/embed/avatars/',
-  'https://avatars.githubusercontent.com/u/',
-  'https://lh3.googleusercontent.com/a/',
-];
+// 🔴 Shares the PREDICATE with the image-scan ingestion allowlist
+// (`isAllowedAvatarUrl` in ~/server/utils/image-scan-url), not just the host list. Sharing
+// only the list left each side open-coding the test that applies it, and they diverged:
+// the ingestion side checks the normalized href while this one checked the raw string, so
+// `…/avatars/../attachments/x` was refused there and accepted here.
 const verifyAvatar = (avatar: string) => {
-  if (avatar.startsWith('http')) {
-    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
-  } else if (isUUID(avatar)) return true; // Is a CF Images UUID
+  if (avatar.startsWith('http')) return isAllowedAvatarUrl(avatar);
+  else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
 };
 
@@ -446,6 +500,8 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
+        if (input.username && input.username !== current?.username)
+          queueScamScan({ entityType: 'User', entityId: id });
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
@@ -561,6 +617,7 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
+    cardDecorationId,
     username,
     source,
     landingPage,
@@ -587,8 +644,22 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
-    const user = await getUserById({ id, select: { profilePictureId: true } });
+    const user = await getUserById({
+      id,
+      select: {
+        username: true,
+        profilePictureId: true,
+        profilePicture: { select: { userId: true } },
+      },
+    });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
+    // so any other picture is always created as a new row.
+    const newPicture =
+      profilePicture && profilePicture.id !== user.profilePictureId
+        ? { ...profilePicture, id: undefined }
+        : undefined;
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -612,6 +683,12 @@ export const updateUserHandler = async ({
         unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground })
       );
 
+    if (cardDecorationId) payloadCosmeticIds.push(cardDecorationId);
+    else if (cardDecorationId === null)
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
+      );
+
     await Promise.all(unequipPromises);
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
@@ -621,20 +698,17 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        profilePicture: profilePicture
+        profilePicture: newPicture
           ? {
-              connectOrCreate: {
-                where: { id: profilePicture.id ?? -1 },
-                create: {
-                  ...profilePicture,
-                  metadata: {
-                    ...profilePicture.metadata,
-                    profilePicture: true,
-                    userId: id,
-                    username,
-                  },
+              create: {
+                ...pickClientImageColumns(newPicture),
+                metadata: {
+                  ...stripBlockProvenanceMetadata(newPicture.metadata),
+                  profilePicture: true,
                   userId: id,
+                  username,
                 },
+                userId: id,
               },
             }
           : undefined,
@@ -654,25 +728,17 @@ export const updateUserHandler = async ({
     // of those are bugs on their own; they only became user-visible breakage because the
     // target was *gone* rather than merely *stale*. Queuing instead keeps the old picture
     // fetchable for the retention window, so every one of those caches self-corrects.
-    if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
+    //
+    // Only a picture this user owns is ever queued.
+    if (newPicture && user.profilePictureId && user.profilePicture?.userId === id) {
       postUpdatePromises.push(queueReplacedImageDeletion([user.profilePictureId]));
     }
 
-    if (
-      profilePicture &&
-      updatedUser.profilePictureId &&
-      user.profilePictureId !== profilePicture?.id
-    ) {
+    if (newPicture && updatedUser.profilePictureId) {
       postUpdatePromises.push(
-        ingestImage({
-          image: {
-            id: updatedUser.profilePictureId,
-            url: profilePicture.url,
-            type: profilePicture.type,
-            height: profilePicture.height,
-            width: profilePicture.width,
-          },
-        }).then(() => deleteUserProfilePictureCache(id))
+        ingestImageById({ id: updatedUser.profilePictureId }).then(() =>
+          deleteUserProfilePictureCache(id)
+        )
       );
     }
 
@@ -704,7 +770,8 @@ export const updateUserHandler = async ({
       usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
     );
 
-    purgeCache({ tags: [`user-creator-${id}`] }).catch();
+    // The name before this save, so a rename also purges responses cached under the old name.
+    await bustUserCreator(id, { usernames: user.username ? [user.username] : [] });
 
     // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
     // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
@@ -721,6 +788,8 @@ export const updateUserHandler = async ({
   }
 };
 
+export const SELF_DELETE_RESTRICTED_MESSAGE = `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`;
+
 export const deleteUserHandler = async ({
   ctx,
   input,
@@ -730,8 +799,17 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  const canRemoveAsModerator = !isProd && currentUser.isModerator;
-  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
+  // Self-only, in every environment. A moderator deleting somebody else's account goes through
+  // `/api/mod/user/delete`, which writes a ModActivity row.
+  if (id !== currentUser.id) throw throwAuthorizationError();
+
+  // A muted account can't close itself: deletion nulls the email and OAuth links, so the person
+  // could sign up again without the mute. Read from the primary, not the session, so a mute that
+  // landed after the session was issued still counts. Banned accounts never get here (`isAuthed`).
+  // Erasure stays available through support, which deletes via `/api/mod/user/delete`.
+  const self = await dbWrite.user.findUnique({ where: { id }, select: { muted: true } });
+  if (self?.muted)
+    throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
     const user = await deleteUser(input);
@@ -744,6 +822,9 @@ export const deleteUserHandler = async ({
 
     return user;
   } catch (error) {
+    // The same refusal as a restricted account, so the two cannot be told apart.
+    if (error instanceof LegalHoldError)
+      throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
@@ -864,6 +945,20 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: ProtectedConte
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const getFollowsMeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await getFollowsViewer({ viewerId: ctx.user.id, userId: input.id });
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
 
@@ -1098,7 +1193,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
           },
         },
         cosmetics: {
-          where: { equippedAt: { not: null } },
+          where: { equippedAt: { not: null }, equippedToId: null },
           select: {
             cosmetic: {
               select: {
@@ -1164,22 +1259,22 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const date = new Date();
-
-  const updatedUser = await updateUserById({
-    id,
-    data: {
-      muted: !user.muted,
-      mutedAt: !user.muted ? date : undefined,
-    },
-    updateSource: 'toggleMute',
-  });
-  await invalidateSession(id, 'moderation');
-
-  await ctx.track.userActivity({
-    type: user.muted ? 'Unmuted' : 'Muted',
-    targetUserId: id,
-  });
+  const updatedUser = user.muted
+    ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
+    : await setUserMuted({ userId: id, muted: true });
+  // The toggle has committed. A failure below must not surface, or a retried click flips it back.
+  try {
+    if (!user.muted)
+      await trackModActivity(ctx.user.id, { entityType: 'user', entityId: id, activity: 'mute' });
+    await ctx.track.userActivity({ type: user.muted ? 'Unmuted' : 'Muted', targetUserId: id });
+  } catch (error) {
+    logToAxiom({
+      name: 'toggle-mute-audit-failed',
+      type: 'error',
+      message: (error as Error).message,
+      details: { userId: id },
+    }).catch(() => undefined);
+  }
 
   return updatedUser;
 };
@@ -1218,6 +1313,8 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean; withheld: boolean };
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1238,13 +1335,18 @@ export const getUserCosmeticsHandler = async ({
           : null
       )
       .filter(isDefined);
-    const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
+    const coverImages = await getEntityCoverImage({
+      entities: inUseCosmeticEntities,
+      viewer: ctx.user,
+    });
+    const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
     const cosmetics = user.cosmetics.reduce(
       (
         acc,
         {
           obtainedAt,
+          equippedAt,
           equippedToId,
           equippedToType,
           claimKey,
@@ -1261,6 +1363,12 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          // Also set while a content decoration is placed (that is `inUse`). A withheld cosmetic still
+          // worn from before withholding unequipped it shows to nobody, so it isn't equipped here either.
+          equipped: !!equippedAt && !withheld.has(rest.id),
+          withheld: withheld.has(rest.id),
+          equippedToId,
+          equippedToType,
           entityImage: coverImages.find(
             (x) => x.entityId === equippedToId && x.entityType === equippedToType
           ),
@@ -1294,16 +1402,19 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
+        else if (type === CosmeticType.CardDecoration)
+          acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
 
         return acc;
       },
       {
-        badges: [] as WithClaimKey<BadgeCosmetic>[],
-        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
-        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
-        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        sticker: [] as WithClaimKey<StickerCosmetic>[],
+        badges: [] as OwnedCosmetic<BadgeCosmetic>[],
+        nameplates: [] as OwnedCosmetic<NamePlateCosmetic>[],
+        profileDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        profileBackground: [] as OwnedCosmetic<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        sticker: [] as OwnedCosmetic<StickerCosmetic>[],
+        cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
       }
     );
 
@@ -1459,7 +1570,11 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContex
 
     // Shared pure overlay computation — also used by the SSR seed in _app
     // getInitialProps so the injected initialData byte-matches this response.
-    return computeUserFeatureFlagsOverlay(features, ctx.features);
+    return computeUserFeatureFlagsOverlay(
+      features,
+      ctx.features,
+      getFliptGatedEligibility({ user: ctx.user, req: ctx.req })
+    );
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1480,13 +1595,13 @@ export const toggleUserFeatureFlagHandler = async ({
     // written. Only the toggled flag is sent, merged into `settings.features` by the
     // database, so a concurrent write to any other setting — or to another flag —
     // survives instead of being reverted to its read-time value.
-    const value = isDefined(features[input.feature])
-      ? input.value ?? !features[input.feature]
-      : input.value ?? !defaultToggleableFeatures[input.feature];
+    const current = features[input.feature] ?? defaultToggleableFeatures[input.feature];
+    const value = input.value ?? !current;
 
     const settings = await patchUserSettings(id, {
       mergeInto: { features: { [input.feature]: value } },
     });
+    if (value !== current) recordUserFeatureToggle(input.feature, value);
 
     return (settings.features ?? { [input.feature]: value }) as Partial<FeatureAccess>;
   } catch (error) {
@@ -1510,12 +1625,16 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
 /**
  * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
  * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
- * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `allowAds`, `isEarlyAdopter`). Writing one of these without busting
  * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
- * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
- * endpoint cannot write it (see the gate below).
+ * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
+const TOS_ACCEPTANCE_KEYS = [
+  'tosLastSeenDate',
+  'tosGreenLastSeenDate',
+  'tosRedLastSeenDate',
+] as const;
 
 export const setUserSettingHandler = async ({
   input,
@@ -1553,7 +1672,7 @@ export const setUserSettingHandler = async ({
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
-    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and
     // folds them into the SessionUser — and the hub caches that projection in
     // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
     // client-side (the `getSettings` cache is patched optimistically) while every session
@@ -1567,8 +1686,6 @@ export const setUserSettingHandler = async ({
     // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
     // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
     // silent re-introduction of the same bug (#4298's defect class).
-    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
-    // it is written by `updateContentSettings`, which performs its own bust.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the
@@ -1584,6 +1701,12 @@ export const setUserSettingHandler = async ({
     // the cached entry's own TTL; a misreported write is not bounded by anything.
     if (sessionProjectedSettingChanged)
       await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
+
+    // The site-wide ToS-update modal records acceptance through this write alone, so the strike-mute
+    // release must run here too.
+    const acceptedTos = TOS_ACCEPTANCE_KEYS.some((key) => restInput[key] !== undefined);
+    if (acceptedTos && couldAwaitTosReacceptance(ctx.user))
+      await releaseStrikeMuteOnTosAcceptance(id).catch(handleLogError);
 
     return newSettings;
   } catch (error) {

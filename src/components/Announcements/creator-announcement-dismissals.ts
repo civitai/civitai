@@ -1,3 +1,4 @@
+import { recordAnnouncementDismissals } from '~/components/Announcements/announcement-dismissal-sync';
 import { createDismissalStore, localStorageDismissalStorage } from '~/store/dismissal-store';
 
 /**
@@ -26,6 +27,15 @@ const store = createDismissalStore<number, typeof BUCKET>({
 export const useDismissedCreatorAnnouncements = () => store.useDismissed();
 
 export function dismissCreatorAnnouncements(ids: number | number[]) {
+  store.dismiss(ids);
+  recordAnnouncementDismissals(ids);
+}
+
+/**
+ * The account-level merge's way in. Local only: routing it through `dismissCreatorAnnouncements`
+ * would send every merged id back to the server it just came from.
+ */
+export function mergeDismissedCreatorAnnouncements(ids: number[]) {
   store.dismiss(ids);
 }
 

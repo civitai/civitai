@@ -106,7 +106,7 @@ export const MembershipUpsell = ({
 
         {image && (
           <Box className={classes.imageFloat}>
-            <EdgeMedia src={image} width={80} />
+            <EdgeMedia src={image} width={80} optimized />
           </Box>
         )}
 

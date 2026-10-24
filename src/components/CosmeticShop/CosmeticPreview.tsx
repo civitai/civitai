@@ -34,7 +34,8 @@ export const CosmeticPreview = ({
     cosmetic.type === CosmeticType.Badge ||
     cosmetic.type === CosmeticType.NamePlate ||
     cosmetic.type === CosmeticType.ProfileBackground ||
-    cosmetic.type === CosmeticType.ProfileDecoration;
+    cosmetic.type === CosmeticType.ProfileDecoration ||
+    cosmetic.type === CosmeticType.CardDecoration;
 
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery(
@@ -80,6 +81,7 @@ export const CosmeticPreview = ({
     case CosmeticType.ProfileDecoration:
     case CosmeticType.NamePlate:
     case CosmeticType.ProfileBackground:
+    case CosmeticType.CardDecoration:
       if (!userWithEquippedCosmetics) {
         return null;
       }
@@ -120,6 +122,7 @@ export const CosmeticPreview = ({
                 alt={stickerData.slug ? `:${stickerData.slug}:` : cosmetic.name}
                 width={size}
                 anim={stickerData.animated}
+                optimized
                 style={{ width: size, height: size, objectFit: 'contain' }}
               />
             ))}
@@ -175,6 +178,7 @@ export const CosmeticPreview = ({
                     style={{ objectFit: 'cover', width: '100%', height: '100%' }}
                     src={image.url}
                     width={100}
+                    optimized
                   />
                 </UnstyledButton>
               );

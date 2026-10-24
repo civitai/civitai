@@ -13,7 +13,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
  * FULLY GENERIC — there is NO "generator" concept. Every app block that drives
  * budgeted generation writes exactly one row per submit, keyed on the
  * orchestrator workflow id. No generator/content columns live here (content-
- * author / bounty attribution already lives in `block_spend_attribution`, G5).
+ * author / spend attribution already lives in `block_spend_attribution`, G5 —
+ * "bounty" was the removed platform-funded rail, not this table's purpose).
  *
  * Accessed via raw SQL (no Prisma delegate) so the read-model ships without a
  * Prisma client regen — see the `20260715130000_block_workflows` migration.
@@ -66,9 +67,24 @@ export type BlockWorkflowQueueItem = {
  * violating the CHECK constraint (defensive; the caller passes a snapshot status
  * that is always in-set).
  *
- * The CALLER excludes dev/live-harness tokens (`claims.dev === true`, synthetic
- * non-FK appBlockId) — this only ever runs for a real deployed app block, so the
- * `app_block_id` FK never sees a synthetic id.
+ * The CALLER excludes dev/live-harness tokens (`claims.dev === true`), so this only ever
+ * runs for a real deployed app block and the `app_block_id` FK never sees a synthetic id.
+ *
+ * 🔴 DO NOT READ THAT BACKWARDS, and an earlier revision of this sentence invited it:
+ * `claims.dev === true` does NOT imply a synthetic `appBlockId`. At least two mint paths sign
+ * the app's REAL `AppBlock.id` with `dev: true` — `dev-token.ts`'s APPROVED mode
+ * (`signAppBlockId: block.id`) and `block-tokens/index.ts`'s dev-tunnel branch for an owned
+ * but NON-approved app, whose own comment says "SIGN with the app's REAL ids" — and
+ * `signDevScopedPageToken` stamps `dev: true` unconditionally, so such a token matches rows
+ * that same user's ordinary submits wrote. Both of those paths sign the real `appId` too, so
+ * a token that matches a row also carries the tag that row's submit stamped.
+ *
+ * The synthetic ids come from the other paths: `pending.id` / `page_local_<slug>` /
+ * `ephemeral-<slug>`. Those are `appBlockId` values — `pending-…`/`local-…` are the `appId`
+ * prefixes, a different field. Read the list as "at least these" rather than an enumeration;
+ * the load-bearing part is that no downstream check may assume a dev token cannot match a
+ * row, not the membership of the set. The exclusion above is the caller's choice, not
+ * something the id shape enforces.
  */
 export async function upsertBlockWorkflowOnSubmit(input: {
   workflowId: string;
@@ -258,6 +274,7 @@ export async function listMyBlockWorkflows(input: {
       updatedAt: r.updatedAt,
     })
   );
-  const nextCursor = rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
+  const nextCursor =
+    rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
   return { items: page, nextCursor };
 }

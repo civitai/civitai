@@ -20,9 +20,9 @@
  * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` is the guard
  * that proves they resolve. Measured there, with and without the injection:
  * `--header-height` `""` → `60px`, and `calc(100dvh - var(--header-height))`
- * `0px` → `viewport − 60`. ⚠️ That guard lives in `preview / component-tests`,
- * which is REPORT-ONLY and does not block a merge — so it tells you, it does not
- * stop you. The CSS↔TS value binding it leans on is in the gating tier
+ * `0px` → `viewport − 60`. ⚠️ That guard runs in CI as `Component tests`, which,
+ * like every check here, does not block a merge — so it tells you, it does not
+ * stop you. The CSS↔TS value binding it leans on is pinned in the node `unit` tier
  * (`pageRunScrollContract.test.ts`).
  *
  * So `var(--header-height)` is now safe in a component that a browser test
@@ -85,3 +85,17 @@ export const tourClickThroughZIndex = tourOverlayZIndex + tourTooltipZIndexOffse
  * on mount order. This clears a few levels of dialog stacking outright.
  */
 export const remixMenuZIndex = 310;
+
+/**
+ * The bottom sheet `MobileMenuDrawer` opens into on touch. It has to clear
+ * everything a sheet can be opened from inside: the generation panel, which goes
+ * fullscreen at `z-[210]` on a phone (`GenerationSidebar`), that panel's own menus
+ * at `imageGenerationDrawerZIndex + 2`, and routed dialogs, which stack at
+ * `300 + index` (`DialogProvider`).
+ *
+ * 🔴 It only works through Mantine's `zIndex` PROP. A `classNames.root` rule is
+ * inert — the Drawer root is `position: static` and carries nothing but custom
+ * properties, while the stacking lives on `inner` and `overlay` via
+ * `var(--mb-z-index)`. A sheet styled that way reads as lifted and is not.
+ */
+export const mobileMenuSheetZIndex = 400;

@@ -9,8 +9,15 @@ import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 
-export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean }) {
+export function HiddenTagsSection({
+  withTitle = true,
+  flat,
+}: {
+  withTitle?: boolean;
+  flat?: boolean;
+}) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -41,6 +48,44 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
     await toggleHiddenMutation.mutateAsync({ kind: 'tag', data: [tag] });
     setSearch('');
   };
+
+  const searchField = (
+    <Autocomplete
+      name="tag"
+      ref={searchInputRef}
+      placeholder="Search tags to hide"
+      data={modelTags}
+      value={search}
+      onChange={setSearch}
+      leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+      onOptionSubmit={(value: string) => {
+        const record = modelTags.find((x) => x.value === value);
+        if (!record) return;
+        handleToggleBlockedTag({ id: record.id, name: record.value });
+        searchInputRef.current?.focus();
+      }}
+      limit={10}
+    />
+  );
+
+  if (flat)
+    return (
+      <SettingsSection
+        title="Hidden tags"
+        description="Content with these tags is hidden from you."
+      >
+        <div className="flex flex-col gap-3">
+          {searchField}
+          <BasicMasonryGrid
+            items={hiddenTags}
+            render={TagBadge}
+            maxHeight={250}
+            columnGutter={4}
+            columnWidth={140}
+          />
+        </div>
+      </SettingsSection>
+    );
 
   return (
     <Card withBorder>

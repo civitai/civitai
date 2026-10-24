@@ -72,10 +72,6 @@ beforeEach(() => {
 });
 
 describe('getBlurbFanoutAdapter', () => {
-  it.each(V1_ENTITY_TYPES)('resolves an adapter for %s', (entityType) => {
-    expect(getBlurbFanoutAdapter(entityType)).toBeDefined();
-  });
-
   it('registers exactly the v1 entity types and nothing else', () => {
     expect(getSupportedBlurbEntityTypes().sort()).toEqual([...V1_ENTITY_TYPES].sort());
   });

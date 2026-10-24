@@ -40,8 +40,8 @@ const fixture = (name: string) =>
 
 /**
  * Every fixture declares the SAME two lists, in a different shape:
- *   RESTRICTION_TYPES   = generation, bot-account, spam-account   (main app: generation, bot-account)
- *   RULINGS_WIRED_FOR   = generation, bot-account                 (main app: generation)
+ *   RESTRICTION_TYPES   = generation, bot-account, spam-account   (main app: generation, bot-account, scam)
+ *   RULINGS_WIRED_FOR   = generation, bot-account                 (main app: generation, scam)
  * so one expectation covers all of them and a reader that silently returns something else fails.
  */
 const FIXTURE_TYPES = ['generation', 'bot-account', 'spam-account'];

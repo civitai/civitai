@@ -92,7 +92,11 @@ vi.mock('~/server/utils/apps-catalog-rate-limit', () => ({
   enforceAppsCatalogRateLimit: mockRateLimit,
 }));
 vi.mock('~/server/utils/pagination-helpers', () => ({ getNextPage: mockGetNextPage }));
-vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: mockIsHostForColor }));
+vi.mock('~/server/utils/server-domain', () => ({
+  isHostForColor: mockIsHostForColor,
+  // The consolidated red-host test, driven by the same mock as `isHostForColor`.
+  isRedCapableHost: (host: string | null | undefined) => !!host && mockIsHostForColor(host, 'red'),
+}));
 // The public-catalog kill switch is a Flipt flag; spread the real module so this
 // mock does not go silently stale if the decision reads another export.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({

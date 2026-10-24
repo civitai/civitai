@@ -1,87 +1,43 @@
-import { Button, Card, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconLayoutGrid, IconPlus, IconUsers } from '@tabler/icons-react';
+import { Container } from '@mantine/core';
 import { Page } from '~/components/AppLayout/Page';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { hubUrl } from '~/components/Hubs/hub.utils';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
-import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { HubsLanding } from '~/components/Hubs/HubsLanding';
+import { hubUrl, LAST_HUB_COOKIE } from '~/components/Hubs/hub.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { getUserHubs } from '~/server/services/user-hub.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, features }) => {
+  resolver: async ({ ctx, session, features }) => {
     if (!features?.userHubs) return { notFound: true };
-    if (!session?.user) return { redirect: { destination: '/login', permanent: false } };
+    if (!session?.user) return;
 
-    // An entry point, not a page: it lands on a hub. Only someone with no hubs
-    // sees this.
+    // `?all` is how anyone reaches this page past the redirects below — for the
+    // templates and the explainer. The sidebar's header links here with it.
+    if (ctx.query.all !== undefined) return;
+
     const hubs = await getUserHubs({ userId: session.user.id });
-    if (hubs.length) return { redirect: { destination: hubUrl(hubs[0]), permanent: false } };
+    if (!hubs.length) return;
+
+    // One hub is not a choice to be offered: its owner came here to read it. With
+    // several, the hub they last opened is the better guess than this page — and
+    // matched against their OWN hubs, so a stale or borrowed cookie falls through to
+    // the page rather than redirecting anywhere.
+    const lastViewed = hubs.find((hub) => hub.key === ctx.req.cookies[LAST_HUB_COOKIE]);
+    const destination = hubs.length === 1 ? hubs[0] : lastViewed;
+    if (destination) return { redirect: { destination: hubUrl(destination), permanent: false } };
   },
 });
 
-const points = [
-  {
-    icon: IconUsers,
-    title: 'Pick who fills it',
-    text: 'Creators and models you already follow, gathered into one feed.',
-  },
-  {
-    icon: IconLayoutGrid,
-    title: 'Keep them apart',
-    text: 'One hub per interest, each with its own sort and time range.',
-  },
-];
-
 export default Page(
-  function HubsEmptyPage() {
+  function HubsPage() {
     return (
       <>
-        <Meta title="My Hubs | Civitai" deIndex />
-        <MasonryContainer className="min-h-full">
-          <div className="py-6">
-            <Card withBorder p={0} radius="md" className="overflow-hidden">
-              <div className="flex flex-col md:flex-row">
-                <div className="flex flex-col gap-4 border-gray-3 bg-gray-0 p-6 md:w-72 md:border-r dark:border-dark-4 dark:bg-dark-6">
-                  {points.map(({ icon: Icon, title, text }) => (
-                    <div key={title} className="flex gap-3">
-                      <ThemeIcon variant="light" size="lg" radius="md">
-                        <Icon size={18} />
-                      </ThemeIcon>
-                      <div>
-                        <Text fw={600} size="sm">
-                          {title}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {text}
-                        </Text>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <Stack gap="md" p="xl" className="min-w-0 flex-1" justify="center">
-                  <Title order={2}>You don&apos;t have any hubs yet</Title>
-                  <Text c="dimmed">
-                    A hub is a feed you compose yourself, from the creators, models and collections
-                    you want to keep an eye on. Make one and it shows up in the rail on the left.
-                  </Text>
-                  <Button
-                    size="md"
-                    className="self-start"
-                    leftSection={<IconPlus size={18} />}
-                    onClick={() => dialogStore.trigger({ component: HubUpsertModal })}
-                  >
-                    Create a hub now
-                  </Button>
-                </Stack>
-              </div>
-            </Card>
-          </div>
-        </MasonryContainer>
+        <Meta title="Hubs | Civitai" deIndex />
+        <Container size="lg" py="md">
+          <HubsLanding />
+        </Container>
       </>
     );
   },

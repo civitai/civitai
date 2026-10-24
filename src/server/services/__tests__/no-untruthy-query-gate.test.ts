@@ -76,7 +76,7 @@ const COMMENT_LINE = /^\s*(\/\/|\/?\*)/;
  */
 const EXEMPT = /no-untruthy-query-gate-exempt:/;
 /** The only site allowed to stay uncoerced, and why — see the marker there for the pending call. */
-const EXEMPTED = ['src/components/Resource/Forms/TrainingSelectFile.tsx:438'];
+const EXEMPTED = ['src/components/Resource/Forms/TrainingSelectFile.tsx:439'];
 
 function uncoerced(value: string) {
   return UNCOERCED.test(value.replace(COERCED_GROUP, ''));

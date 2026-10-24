@@ -13,8 +13,9 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -78,6 +79,18 @@ export async function addApiKey(
   return key;
 }
 
+/**
+ * The spend limit of an API key, read from the PRIMARY. `/api/v1/me` hands this to the orchestrator,
+ * which caches it for its own TTL, so it must never come from the bearer path's short-lived row cache:
+ * a lowered limit whose cache eviction failed would otherwise be picked up stale and held there.
+ * `undefined` when the key no longer exists (revoked mid-request) — never `null`, which means "no cap".
+ */
+export async function readApiKeyBuzzLimit(id: number): Promise<BuzzLimit | null | undefined> {
+  const row = await dbWrite.apiKey.findUnique({ where: { id }, select: { buzzLimit: true } });
+  if (!row) return undefined;
+  return (row.buzzLimit as BuzzLimit | null) ?? null;
+}
+
 export async function setApiKeyBuzzLimit({
   id,
   userId,
@@ -89,11 +102,13 @@ export async function setApiKeyBuzzLimit({
 }) {
   // Caller already verified the key belongs to the user; this update is the
   // source of truth that the orchestrator will re-fetch via /api/v1/me.
-  const updated = await dbWrite.apiKey.update({
+  const { key, ...updated } = await dbWrite.apiKey.update({
     where: { id, userId },
     data: { buzzLimit: buzzLimit ?? Prisma.DbNull },
-    select: { id: true, userId: true, buzzLimit: true },
+    select: { id: true, userId: true, buzzLimit: true, key: true },
   });
+  // The bearer path caches `buzzLimit` with the rest of the row.
+  await evictCachedApiKeys([key]);
 
   // Best-effort: invalidate the orchestrator's cached limit. Failure is logged
   // but doesn't fail the user-facing mutation — the orchestrator's cache TTL
@@ -132,10 +147,30 @@ export async function getTemporaryUserApiKey(
   return key;
 }
 
-export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
-  const result = await dbWrite.apiKey.deleteMany({
-    where: { userId, id },
+/**
+ * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
+ * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
+ * that can REVOKE a personal or system key; `api-key-principal-cache.ledger.test.ts` lists every
+ * ApiKey write in the repo and fails when one is added.
+ */
+export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
+  const rows = await dbWrite.apiKey.findMany({
+    where,
+    select: { id: true, key: true, userId: true },
   });
+  if (!rows.length) return { count: 0 };
+  const result = await dbWrite.apiKey.deleteMany({
+    where: { AND: [where, { id: { in: rows.map((row) => row.id) } }] },
+  });
+  await evictCachedApiKeys(rows.map((row) => row.key));
+  // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
+  const userIds = [...new Set(rows.map((row) => row.userId))];
+  await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
+  return result;
+}
+
+export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
+  const result = await deleteApiKeys({ userId, id });
 
   // Best-effort: tell the orchestrator the subject is gone so its Mongo
   // doesn't accumulate dangling spend records. Skipped silently if the
@@ -148,11 +183,6 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         error: safeError(err),
       }).catch(() => {});
     });
-
-    // Expire the deleted key in the orchestrator: it caches the user's API
-    // keys for auth, so without this the key keeps working until the cache
-    // TTL lapses. invalidateCivitaiUser swallows its own errors.
-    await invalidateCivitaiUser({ userId });
   }
 
   return result;

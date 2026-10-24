@@ -80,7 +80,6 @@ Ordered by how many pages they unblock — port these before the page-specific o
 3. **`user.service.ts`** (subset) — grant, generation-restrictions, csam
 4. **`notification.service.ts`** + **`auth/session-invalidation.ts`** — strikes, generation-restrictions
 5. **Orchestrator client** (`orchestrator/workflows.ts` `getWorkflow`) — scanner detail, training-data
-6. **`utils/metadata/audit.ts`** (`debugAuditPrompt`) — prompt-audit-test
 
 ---
 
@@ -266,7 +265,8 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - ~~`getGenerationResources`~~ — **removed** along with the `/moderator/generation` page; the
   generation blacklist now lives on the `ModelVersion.flags` `GenerationDisabled` bit.
 - [ ] `getGateRules` — *Redis sysRedis; audience tiers resolve via `resolveTestingAccess` (Flipt `GENERATION_TESTING`)*
-- [ ] `setGateRules`
+- [ ] `saveGateRule` / `deleteGateRule`
+- [ ] `getGeneratorMessages` / `saveGeneratorMessage` / `deleteGeneratorMessage`
 
 ### User-restriction service  ·  used by: generation-restrictions, prompt-audit-test  ·  **NEW service (extract)**
 > Logic is **inline in `user-restriction.router.ts`** today — extract into a service.
@@ -286,7 +286,7 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 
 ### `cosmetic.service.ts`  ·  used by: cosmetics/grant  ·  *Postgres*  ·  ✅ migrated (spoke Kysely)
 - [x] `getPaginatedCosmetics` — ported to `apps/moderator/src/lib/server/cosmetics.service.ts` (main-app copy kept: shared with the cosmetic shop / cosmetic-store pages)
-- [x] `grantCosmeticsToUsers` — ported (raw `ON CONFLICT DO NOTHING`); main-app `grantCosmeticsToUsers` + `cosmetic.grantToUsers` removed as orphaned. `grantCosmetics` helper kept (payments/referrals use it).
+- [x] `grantCosmeticsToUsers` — ported (raw `ON CONFLICT DO NOTHING`); main-app `grantCosmeticsToUsers` + `cosmetic.grantToUsers` removed as orphaned. `grantCosmetics` helper kept (payments/referrals use it). One transaction per user under the item holder lock; a user whose lock is busy is skipped and returned in `busyUserIds` (the page names them and leaves only them selected), and granting them again is safe.
 
 ---
 
@@ -307,8 +307,11 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - [ ] `getWorkflow` (`orchestrator/workflows.ts`) — scanner detail, training-data
 - [ ] `resetProhibitedRequestCount` + `bustPromptAllowlistCache` (`orchestrator/promptAuditing.ts`) — generation-restrictions
 
-### `utils/metadata/audit.ts`  *(SHARED)*
-- [ ] `debugAuditPrompt` — prompt-audit-test (and the client-only auditor page)
+### `utils/metadata/audit.ts`  *(NOT SHARED — resolved)*
+- [x] `debugAuditPrompt` — **not ported.** Both consumers migrated and the spoke highlights via
+  `@civitai/mod-utils/prompt-audit` `getPromptHighlightSegments` instead; `debugAuditPrompt` stays
+  main-app-only (`user-restriction.router.ts`). See `page-migration-checklist.md` §`/moderator/auditor`
+  and §`/moderator/prompt-audit-test`.
 
 ---
 

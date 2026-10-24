@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Center,
@@ -19,6 +18,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { NoContent } from '~/components/NoContent/NoContent';
 import { getModelWizardUrl } from '~/server/common/model-helpers';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -94,6 +94,18 @@ export function UserDraftModels() {
                 const hasVersion = model._count.modelVersions > 0;
                 const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
                 const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
+                const pendingVersions = model.modelVersions.filter(
+                  (version) =>
+                    version.status === ModelStatus.Scheduled ||
+                    version.status === ModelStatus.Draft
+                );
+                // The whole-model delete below destroys every version, so hide it
+                // whenever any version is already Published — version status is
+                // independent of model status, so a non-Published model can still
+                // hold a live version worth protecting.
+                const canDeleteModel = !model.modelVersions.some(
+                  (version) => version.status === ModelStatus.Published
+                );
 
                 return (
                   <Table.Tr key={model.id}>
@@ -121,6 +133,14 @@ export function UserDraftModels() {
                             </Group>
                           </Anchor>
                         </Link>
+                        {pendingVersions.map((version) => (
+                          <Text key={version.id} size="xs" c="dimmed">
+                            {version.name}:{' '}
+                            {version.status === ModelStatus.Scheduled && version.publishedAt
+                              ? `Scheduled for ${formatDate(version.publishedAt, 'MMMM D, h:mma')}`
+                              : 'Draft'}
+                          </Text>
+                        ))}
                       </Stack>
                     </Table.Td>
                     <Table.Td>
@@ -145,14 +165,16 @@ export function UserDraftModels() {
                     </Table.Td>
                     <Table.Td>
                       <Group justify="flex-end" pr="xs">
-                        <LegacyActionIcon
-                          color="red"
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => handleDeleteModel(model)}
-                        >
-                          <IconTrash />
-                        </LegacyActionIcon>
+                        {canDeleteModel && (
+                          <LegacyActionIcon
+                            color="red"
+                            variant="subtle"
+                            size="sm"
+                            onClick={() => handleDeleteModel(model)}
+                          >
+                            <IconTrash />
+                          </LegacyActionIcon>
+                        )}
                       </Group>
                     </Table.Td>
                   </Table.Tr>

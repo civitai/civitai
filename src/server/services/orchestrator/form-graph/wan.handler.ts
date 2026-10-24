@@ -1,6 +1,6 @@
 /**
  * Wan handler for the form-graph lane. Converts `generationHub.parse().data`
- * into @civitai/client steps. Video only — WanImage27 routes to
+ * into @civitai/orchestration-client steps. Video only — WanImage27 routes to
  * wan-image.handler.ts in the dispatcher, so `data.ecosystem` here is always
  * a Wan VIDEO backend key (the derived value the family's `backendEcosystem`
  * emits).
@@ -9,8 +9,6 @@
 import type {
   Wan21CivitaiVideoGenInput,
   Wan22ComfyVideoGenInput,
-  Wan22FalTextToVideoInput,
-  Wan22FalImageToVideoInput,
   Wan225bFalTextToVideoInput,
   Wan225bFalImageToVideoInput,
   Wan25FalTextToVideoInput,
@@ -23,13 +21,12 @@ import type {
   Wan30ImageToVideoInput,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { ecosystemToVersionDef } from '~/shared/form-graph/generation/video/wan.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 export type WanGenerationData = EcosystemData<
@@ -51,7 +48,7 @@ type WanSteps =
 
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5' | 'v2.7' | 'v3.0';
 
-// Supported aspect ratios per version (from @civitai/client types)
+// Supported aspect ratios per version (from @civitai/orchestration-client types)
 const v21AspectRatiosByResolution: Record<
   string,
   { value: string; width: number; height: number }[]
@@ -139,7 +136,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
     quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
-    frameRate: 24,
+    fps: 24,
   };
 
   // `wanVersion` (the branch tag) and the backend-ecosystem lookup agree by
@@ -167,75 +164,37 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
     }
 
     case 'v2.2': {
-      // Multi-step vs legacy is driven entirely by the flipt flag
-      const useMultiStep = await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP, 'global', {
-        userId: String(ctx.user.id),
-        isModerator: String(ctx.user.isModerator),
-      });
-
-      if (useMultiStep) {
-        // Multi-step comfy workflow: 12fps videoGen + VFIMamba frame interpolation
-        const resolution = data.resolution ?? '480p';
-        const ratioEntries = v22AspectRatioEntries(resolution);
-        const dims = hasImages
-          ? findClosestAspectRatio(data.images![0], ratioEntries)
-          : ratioEntries.find((e) => e.value === data.aspectRatio?.value) ?? ratioEntries[0];
-        const videoGenStep: VideoGenStepTemplate & { metadata: { suppressOutput: true } } = {
-          $type: 'videoGen',
-          input: removeEmpty({
-            ...baseInput,
-            provider: 'comfy' as const,
-            frameRate: 12,
-            width: dims?.width,
-            height: dims?.height,
-            duration: data.duration ?? 5,
-            steps: steps ?? 20,
-            negativePrompt: data.negativePrompt,
-            shift: data.shift,
-            images: hasImages ? data.images?.map((x) => x.url) : undefined,
-          }) as Wan22ComfyVideoGenInput,
-          metadata: { suppressOutput: true },
-        };
-        const videoInterpolationStep: VideoInterpolationStepTemplate = {
-          $type: 'videoInterpolation',
-          input: {
-            video: { $ref: '$0', path: 'output.video.url' } as unknown as string,
-            interpolationFactor: 2,
-            model: 'VFIMamba',
-          },
-        };
-        return [videoGenStep, videoInterpolationStep];
-      }
-
-      // Legacy single-step fal workflow
-      const operation = hasImages ? 'image-to-video' : 'text-to-video';
-      const input = {
-        ...baseInput,
-        provider: 'fal' as const,
-        operation,
-        negativePrompt: data.negativePrompt,
-        resolution: data.resolution,
-        aspectRatio: (hasImages
-          ? getImageAspectRatio(data.images, v225bAspectRatios)
-          : data.aspectRatio?.value) as Wan22FalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
-        shift: data.shift,
-        interpolatorModel: data.interpolatorModel,
-        useTurbo: data.draft,
+      // 12fps generation, then VFIMamba interpolation to 24fps
+      const resolution = data.resolution ?? '480p';
+      const ratioEntries = v22AspectRatioEntries(resolution);
+      const dims = hasImages
+        ? findClosestAspectRatio(data.images![0], ratioEntries)
+        : ratioEntries.find((e) => e.value === data.aspectRatio?.value) ?? ratioEntries[0];
+      const videoGenStep: VideoGenStepTemplate & { metadata: { suppressOutput: true } } = {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...baseInput,
+          provider: 'comfy' as const,
+          fps: 12,
+          width: dims?.width,
+          height: dims?.height,
+          duration: data.duration ?? 5,
+          steps: steps ?? 20,
+          negativePrompt: data.negativePrompt,
+          shift: data.shift,
+          images: hasImages ? data.images?.map((x) => x.url) : undefined,
+        }) as Wan22ComfyVideoGenInput,
+        metadata: { suppressOutput: true },
       };
-
-      if (hasImages) {
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              ...input,
-              images: data.images?.map((x) => x.url),
-            }) as Wan22FalImageToVideoInput,
-          },
-        ];
-      }
-      return [{ $type: 'videoGen', input: removeEmpty(input) as Wan22FalTextToVideoInput }];
+      const videoInterpolationStep: VideoInterpolationStepTemplate = {
+        $type: 'videoInterpolation',
+        input: {
+          video: { $ref: '$0', path: 'output.video.url' } as unknown as string,
+          interpolationFactor: 2,
+          model: 'VFIMamba',
+        },
+      };
+      return [videoGenStep, videoInterpolationStep];
     }
 
     case 'v2.2-5b': {
@@ -249,7 +208,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         aspectRatio: (hasImages
           ? getImageAspectRatio(data.images, v225bAspectRatios)
           : data.aspectRatio?.value) as Wan225bFalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
+        enhancePrompt: false,
         shift: data.shift,
         numInferenceSteps: data.steps,
         interpolatorModel: data.interpolatorModel,
@@ -275,7 +234,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         aspectRatio: (hasImages
           ? getImageAspectRatio(data.images, v25AspectRatios)
           : data.aspectRatio?.value) as Wan25FalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
+        enhancePrompt: false,
       };
       return [
         {
@@ -288,7 +247,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
     }
 
     // v2.7 video (WanImage27 routes to wan-image.handler).
-    // Per fal spec: cfgScale, steps, frameRate, loras are NOT supported for v2.7.
+    // Per fal spec: cfgScale, steps, fps, loras are NOT supported for v2.7.
     case 'v2.7': {
       const v27Base = {
         engine: 'wan' as const,
@@ -352,7 +311,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
               endImage,
               duration,
               negativePrompt,
-              enablePromptExpansion: data.enablePromptEnhancer,
+              enhancePrompt: data.enablePromptEnhancer,
             }) as Wan27FalImageToVideoInput,
           },
         ];
@@ -368,7 +327,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
             aspectRatio,
             duration,
             negativePrompt,
-            enablePromptExpansion: data.enablePromptEnhancer,
+            enhancePrompt: data.enablePromptEnhancer,
           }) as Wan27FalTextToVideoInput,
         },
       ];
@@ -384,7 +343,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         negativePrompt: data.negativePrompt,
         duration: data.duration,
         resolution: data.resolution,
-        enablePromptExpansion: data.enablePromptEnhancer,
+        enhancePrompt: data.enablePromptEnhancer,
         usePrime: data.usePrime,
         seed: data.seed,
       };

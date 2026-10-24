@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ShellLink } from '~/components/AppLayout/ShellDs/ShellDs';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
 import { navRegistry, type NavRegistryEntry } from '~/components/HomeContentToggle/nav-registry';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
@@ -36,6 +37,7 @@ export function HomeTabs() {
   const router = useRouter();
   const activePath = router.pathname.split('/')[1] || 'home';
   const { bar, more, showLabels } = useResolvedNav();
+  const ds = !!useFeatureFlags().shellDesignSystemMarkup;
 
   const [moreOpened, setMoreOpened] = useState(false);
   const [lastSeenChangelog] = useLocalStorage<number>({
@@ -60,14 +62,54 @@ export function HomeTabs() {
   };
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black @md:overflow-visible dark:text-white">
+    // Horizontal padding only, and it is load-bearing: `overflow-x: auto` clips at the padding box,
+    // and an outline contributes no scrollable overflow, so without it the first pill's focus ring
+    // is cut on the left and the last control's on the right with no way to scroll them into view.
+    // No VERTICAL padding — it would make the bar taller on every page, which Justin declined on
+    // review, so the ring is clipped top and bottom.
+    //
+    // Not `px-1`: Mantine's ring is a `2px` outline at `calc(0.125rem * var(--mantine-scale))`
+    // offset, so a pure-rem class matches the ink only at a 16px root with scale 1. 4px at
+    // defaults.
+    //
+    // `flex-1` keeps `SubNav2`'s feed filters on this same line. That container wraps, and a
+    // wrapping container places items at their flex BASIS before shrinking any of them, so at the
+    // default `basis: auto` this row's ~1334px of content does not fit and the filters wrap to a
+    // second line. `basis: 0` lets both share the line and this row absorb the shortfall by
+    // scrolling. `shrink-0` on the More button below is the other half: the shrink then lands on
+    // the children, and More is the one that collapses — to an empty 28px circle.
+    <div className="flex flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden px-[calc(0.125rem*var(--mantine-scale,1)+2px)] text-black dark:text-white">
       {bar.map((entry) => {
         const label = getDisplayName(entry.key);
         // Mantine's `disabled` only gates the Transition, not the portal — a disabled Tooltip
         // still appends a div to document.body per item and pays useFloating on every render of
         // a component that re-renders on every navigation. Nobody has a saved config on day one,
         // so `showLabels` is true for everyone: wrap only when the tooltip can actually open.
-        const button = (
+        const pillClassName = clsx('h-8 overflow-visible rounded-full border-none py-2', {
+          ['pl-3 pr-4']: showLabels,
+          ['px-3']: !showLabels,
+          ['bg-gray-4 dark:bg-dark-4']: isActive(entry),
+          [classes.tabHighlight]: entry.key === 'shop',
+        });
+        const button = ds ? (
+          <ShellLink
+            key={entry.key}
+            variant="default"
+            size="sm"
+            href={entry.url}
+            aria-label={showLabels ? undefined : label}
+            // Mantine's label slot carried `flex gap-2 items-center capitalize`; the design-system
+            // button is already an `inline-flex` row with an 8px gap, so only `capitalize` moves.
+            className={clsx(pillClassName, 'capitalize')}
+          >
+            {navIcons[entry.key]({ size: 16 })}
+            {/* NO `text-base font-medium` here, unlike the Mantine branch: those never rendered
+                there (see that branch's comment), and with no `.mantine-Button-label` ancestor
+                they WOULD render here, as 16px/500 against the pill's 14px/600. */}
+            {showLabels && <span>{label}</span>}
+            {dot(entry, '-ml-1 -mr-2')}
+          </ShellLink>
+        ) : (
           <Button
             key={entry.key}
             variant="default"
@@ -75,15 +117,14 @@ export function HomeTabs() {
             href={entry.url}
             // Icon-only tabs lose their accessible name with the text, so it moves to the label.
             aria-label={showLabels ? undefined : label}
-            className={clsx('h-8 overflow-visible rounded-full border-none py-2', {
-              ['pl-3 pr-4']: showLabels,
-              ['px-3']: !showLabels,
-              ['bg-gray-4 dark:bg-dark-4']: isActive(entry),
-              [classes.tabHighlight]: entry.key === 'shop',
-            })}
+            className={pillClassName}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >
             {navIcons[entry.key]({ size: 16 })}
+            {/* These two do NOT render: `globals.css`'s `.mantine-Button-label *` sets `font-size`
+                and `font-weight` to `inherit`, is unlayered, and sits after `@tailwind utilities`,
+                so the span inherits Mantine's `size="sm"` 14px/600. Three reviewers have read this
+                as 16px/500 in one day. Measured 2026-09-15. */}
             {showLabels && <span className="text-base font-medium capitalize">{label}</span>}
             {dot(entry, '-ml-1 -mr-2')}
           </Button>
@@ -114,7 +155,7 @@ export function HomeTabs() {
               color="gray"
               variant="subtle"
               data-active={moreOpened}
-              className={classes.moreButton}
+              className={clsx('h-8 shrink-0', classes.moreButton)}
             >
               <Group gap={4} wrap="nowrap">
                 More

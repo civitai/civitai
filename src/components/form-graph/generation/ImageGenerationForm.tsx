@@ -1,14 +1,16 @@
 import { Checkbox, Input, Select, Stack, Switch } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
+import { TurboRow } from '~/components/form-graph/generation/TurboRow';
+import { additionalResources, turboMetaOf } from '~/shared/form-graph/generation/turbo';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
 
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
@@ -17,6 +19,8 @@ import { Krea2StyleReferencesInput } from '~/components/generation_v2/inputs/Kre
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
+import { MissingPreprocessorExamplesAlert } from '~/components/generation_v2/inputs/MissingPreprocessorExamplesAlert';
+import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
 import { UpscaleDimensionsInput } from '~/components/generation_v2/inputs/UpscaleDimensionsInput';
@@ -28,7 +32,16 @@ import {
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
-import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
+import {
+  ControllerLabel,
+  PromptLabel,
+  VersionGroupSelector,
+  useWildcardHandlers,
+} from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
+import { AvatarFormFields } from '~/components/AvatarGen/AvatarFormFields';
 import type { GenerationStore } from './store';
 
 /**
@@ -84,20 +97,56 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           }}
         />
       </div>
+      <GateRuleWarnings />
       <Controller
         graph={imageHub}
         name="resources"
-        render={({ value, meta, onChange }) => (
-          <ResourceSelectMultipleInput
-            value={value}
-            onChange={onChange}
-            label="Additional Resources"
-            buttonLabel="Add LoRA"
-            modalTitle="Select Resources"
-            options={meta?.options}
-            limit={meta?.limit}
-          />
-        )}
+        render={({ meta, onChange: setResources }) => {
+          const turbo = turboMetaOf(meta);
+          if (!turbo) return null;
+          return (
+            <Controller
+              graph={imageHub}
+              name="turboLora"
+              render={({ value: pick, meta: loraMeta, onChange: setPick }) =>
+                pick && loraMeta ? (
+                  <TurboRow
+                    turbo={turbo}
+                    pick={pick}
+                    familyDefaultId={loraMeta.familyDefaultId}
+                    options={loraMeta.options}
+                    onToggle={(on, lora) =>
+                      setResources(on && lora ? [...turbo.withoutTurbo, lora] : turbo.withoutTurbo)
+                    }
+                    onChange={(lora) => {
+                      setPick(lora);
+                      if (turbo.enabled) setResources([...turbo.withoutTurbo, lora]);
+                    }}
+                  />
+                ) : null
+              }
+            />
+          );
+        }}
+      />
+      <Controller
+        graph={imageHub}
+        name="resources"
+        render={({ value, meta, onChange }) => {
+          const list = additionalResources(turboMetaOf(meta), value, meta?.limit);
+          return (
+            <ResourceSelectMultipleInput
+              value={list.value}
+              onChange={(next) => onChange(list.commit(next as NonNullable<typeof value>))}
+              label="Additional Resources"
+              buttonLabel="Add LoRA"
+              modalTitle="Select Resources"
+              options={meta?.options}
+              limit={list.limit}
+              role="resource"
+            />
+          );
+        }}
       />
       <MultiController
         graph={imageHub}
@@ -142,6 +191,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                   />
                 }
               />
+              <MissingPreprocessorExamplesAlert />
             </div>
           );
         }}
@@ -150,18 +200,16 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}
       />
+      <AvatarFormFields store={store} />
       <Controller
         graph={generationHub}
         name="upscaler"
@@ -206,55 +254,9 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={generationHub}
         name="kindParams"
-        render={({ value, meta, onChange }) => {
-          const specs = meta?.specs;
-          if (!specs?.length) return null;
-          const params = value ?? {};
-          const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
-          return (
-            <div className="flex flex-col gap-2">
-              {specs.map((spec) => {
-                if (spec.type === 'slider') {
-                  const current = (params[spec.key] as number | undefined) ?? spec.defaultValue;
-                  return (
-                    <SliderInput
-                      key={spec.key}
-                      label={spec.label}
-                      value={current}
-                      onChange={(v) => setParam(spec.key, v)}
-                      min={spec.min}
-                      max={spec.max}
-                      step={spec.step ?? 1}
-                    />
-                  );
-                }
-                if (spec.type === 'boolean') {
-                  const current = (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
-                  return (
-                    <Switch
-                      key={spec.key}
-                      label={spec.label}
-                      checked={current}
-                      onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
-                    />
-                  );
-                }
-                const current = (params[spec.key] as string | undefined) ?? spec.defaultValue;
-                return (
-                  <Select
-                    key={spec.key}
-                    label={spec.label}
-                    data={spec.options.map((o) => ({ label: o, value: o }))}
-                    value={current}
-                    onChange={(v) => v && setParam(spec.key, v)}
-                    allowDeselect={false}
-                    comboboxProps={{ withinPortal: true }}
-                  />
-                );
-              })}
-            </div>
-          );
-        }}
+        render={({ value, meta, onChange }) => (
+          <PreprocessKindParamsInput value={value} onChange={onChange} specs={meta?.specs} />
+        )}
       />
       <Controller
         graph={imageHub}
@@ -271,22 +273,30 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            snippets={meta?.snippets}
-            triggerWords={meta?.triggerWords}
-            attentionEdit
+          <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
                 required={meta?.required}
               />
             }
-            placeholder="Your prompt goes here..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              snippets={meta?.snippets}
+              triggerWords={meta?.triggerWords}
+              attentionEdit
+              placeholder="Your prompt goes here..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller<boolean | undefined, undefined>
@@ -319,56 +329,54 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={imageHub}
-        name="aspectRatio"
-        render={({ value, meta, onChange }) => {
-          const priorityOptions =
-            meta && meta.options.length > 5
-              ? meta.options.slice(1, 6).map((o) => o.value)
-              : undefined;
-          return (
-            <AspectRatioInput
-              value={value}
-              onChange={onChange}
-              label="Aspect Ratio"
-              options={meta?.options ?? []}
-              priorityOptions={priorityOptions}
-              maxVisible={5}
-            />
-          );
-        }}
+        name="resolution"
+        render={({ value, meta, onChange, note }) => (
+          <SegmentedEnumField
+            label="Resolution"
+            value={value}
+            onChange={onChange}
+            options={(meta as SegmentedEnumMeta).options}
+            note={note}
+          />
+        )}
       />
       <Controller
         graph={imageHub}
-        name="resolution"
+        name="aspectRatio"
         render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
+          <AspectRatioInput
+            value={value}
+            onChange={onChange}
+            label="Aspect Ratio"
+            options={meta?.options ?? []}
+            priorityOptions={meta?.priorityOptions}
+            custom={meta?.custom}
+            maxVisible={5}
+          />
         )}
       />
       <Controller
         graph={imageHub}
         name="creativity"
         render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Creativity</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={meta.options.map((o: { label: string; value: string }) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
+          <SegmentedEnumField
+            label="Creativity"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="thinkingMode"
+        render={({ value, meta, onChange }) => (
+          <SegmentedEnumField
+            label="Thinking"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
         )}
       />
       <div className="flex gap-4">
@@ -416,6 +424,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }
@@ -473,6 +482,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }
@@ -480,8 +490,11 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={imageHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
@@ -580,8 +593,16 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={imageHub}
           name="quality"
-          render={({ value, meta, onChange }) => (
-            <SelectInput value={value} onChange={onChange} label="Quality" options={meta.options} />
+          render={({ value, meta, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SelectInput
+                value={value}
+                onChange={onChange}
+                label="Quality"
+                options={meta.options}
+              />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
@@ -622,5 +643,33 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         />
       </AccordionLayout>
     </Stack>
+  );
+}
+
+type SegmentedEnumMeta = { options: readonly { label: string; value: string }[] };
+
+function SegmentedEnumField<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  note,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: SegmentedEnumMeta['options'];
+  note?: React.ComponentProps<typeof FieldCorrectionNote>['note'];
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Input.Label>{label}</Input.Label>
+      <SegmentedControlWrapper
+        value={value}
+        onChange={(v) => onChange(v as T)}
+        data={options.map((o) => ({ label: o.label, value: o.value }))}
+      />
+      <FieldCorrectionNote note={note} />
+    </div>
   );
 }

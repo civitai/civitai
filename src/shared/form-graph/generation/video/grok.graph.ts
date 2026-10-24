@@ -15,12 +15,10 @@ import { grokHead, grokTextBlock, isGrokV15 } from '../grok-shared';
 import { familyScope, modelIdOf, type FamilyExt } from '../shared';
 
 /**
- * Grok's VIDEO arm, ported from `grok-graph.ts`. The image arm is
+ * Grok's VIDEO arm. The image arm is
  * `../image/grok.graph.ts`; the version-locked head and the text block they
  * share live in `../grok-shared.ts`.
  */
-
-// ---- copied from grok-graph.ts, which dies with the data-graph engine -------
 
 const grokVideoAspectRatioList: GenerationAspectRatio[] = [
   '16:9',
@@ -38,8 +36,6 @@ const grokResolutions = [
 ] as const;
 
 const grokV15Resolutions = [...grokResolutions, { label: '1080p', value: '1080p' }] as const;
-
-// ---- end of grok-graph.ts copies --------------------------------------------
 
 const DURATION = refusingRangeDef({ min: 6, max: 15, default: 6 });
 
@@ -61,10 +57,15 @@ export const grokVideo = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resolution', ({ model, _ext }) => {
     const supports1080p = isGrokV15(modelIdOf(model)) && _ext.workflow !== 'img2vid:ref2vid';
-    return enumDef({
-      options: supports1080p ? grokV15Resolutions : grokResolutions,
-      default: '720p',
-    });
+    // scoped per option set: a 1080p pick must not ride onto a configuration
+    // whose enum lacks it (trusted values skip the input remap)
+    return {
+      ...enumDef({
+        options: supports1080p ? grokV15Resolutions : grokResolutions,
+        default: '720p',
+      }),
+      scope: supports1080p ? 'hires' : 'base',
+    };
   })
   .field('duration', DURATION)
   .field('aspectRatio', ({ resolution, images, video, _ext }) => {

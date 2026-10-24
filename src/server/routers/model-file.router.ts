@@ -22,13 +22,30 @@ import {
 } from '~/server/services/model-file.service';
 import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt } from '~/server/middleware.trpc';
+import { dbRead } from '~/server/db/client';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const fileUrlsForOwner = ownerOnlyFileUrls<
+  Awaited<ReturnType<typeof getFilesByVersionIdHandler>>,
+  { id: number }
+>({
+  ownerId: async ({ input }) =>
+    (
+      await dbRead.modelVersion.findUnique({
+        where: { id: input.id },
+        select: { model: { select: { userId: true } } },
+      })
+    )?.model.userId,
+  strip: (data) => data && { ...data, files: withoutFileUrls(data.files) as typeof data.files },
+});
 
 export const modelFileRouter = router({
   getByVersionId: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(fileUrlsForOwner)
     .query(getFilesByVersionIdHandler),
   getOptions: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

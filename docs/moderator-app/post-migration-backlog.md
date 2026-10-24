@@ -26,11 +26,28 @@ improvement gets moved down here rather than copied.
       API base and the session cookie those calls relay is issued for `.civitai.com`. It deliberately
       does NOT fall back to `CIVITAI_APP_URL` — when it did, every moderator link went to `.com`.
       **Do not "fix" a `.red` link back to `.com`.**
-- [ ] **Model Notes on civitai.com**: they were exported from Retool; show them on `/models/`, and let
-      mods add notes and edit their own. The table is `ModelNotes` in the Retool database.
-      ⚠️ **"Edit their own" has no owner key today.** `ModelNotes.createdBy` is a `String`, not a userId
-      (`apps/moderator/prisma/schema.prisma:284`), so ownership can only be matched on a display name.
-      Decide that before scoping the UI.
+- [x] **Model Notes** — on **Model Lookup**, not civitai.com (`868mb8h0y`). A "Moderator notes" panel
+      fetched from `/api/model-notes/<modelId>`, with add and edit-own, beside the content scan.
+      The original ask said `/models/` on the site; that surface is still open, and the service and
+      endpoint here are what it would call.
+      **"Edit their own" is matched on a NAME, and that is the whole authorisation.**
+      `ModelNotes.createdBy` is a `String`, not a userId, so the `UPDATE` is scoped by
+      `where "createdBy" = <username>` and `isMine` on the read is only advice — the row id travels
+      through a form. Pinned against the compiled SQL by
+      `apps/moderator/src/lib/server/__tests__/model-notes.test.ts`, with the same test now added for
+      `UserNotes`, which ran the same rule unpinned.
+      ⚠️ **The name match reaches the imported rows.** Measured 2026-09-29: of the nine Retool display
+      names in the table, two exactly equal the Civitai username of an account that is a moderator
+      today — 127 of the 938 rows. That is most likely those moderators' own notes, and it is the same
+      rule `UserNotes` has always run on, so it is not a new hole. But the table has **no `updatedAt`**,
+      so a rewritten note keeps its original author and date. Both writes therefore record to
+      `ModActivity` (`addNote` / `editNote`, against the model), which the same page renders in its
+      Activity panel — that is the only trace an edit leaves. They also reach the dashboard's
+      "Recently worked" panel as "Model add note" / "Model edit note", since `modActivityLabel`
+      humanises anything unmapped; that panel is about queue work, so if the rows become noise the fix
+      is a filter there, not here. Adding an `updatedAt` column, or the id backfill in
+      [retool-exports/moderator-id-mapping.md](retool-exports/moderator-id-mapping.md), would each
+      close this properly.
 - [ ] **Per-mod app permissions**: *"Allow admin to give access to apps to individual mods instead of
       only relying on roles."* `AppPageAccess` grants per page **per role** today — individual grants
       are the delta.
@@ -45,10 +62,14 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
 - [x] **A reported account or post opens the queue that rules on it.** *"In the urgent reports, user
       should link to the User Report page and highlight/pick that User Report"*, and *"when we have the
       post reports page, same as above"* — which became possible the day Post Reports shipped. The Most
-      reported table now sends `reportedUser` rows to `/retool/user-reports?user=` and `post` rows to
-      `/retool/post-reports?post=`, falling back to the site link for anyone whose `data.nav` says they
+      reported table now sends `reportedUser` rows to `/reports/user/<id>` and `post` rows to
+      `/reports/post/<id>` (the Retool paths until 2026-10-14/15), falling back to the site link for anyone whose `data.nav` says they
       cannot open that queue. Every other entity keeps the site link — that is where it gets judged.
-- [ ] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
+- [x] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
+      **Closed 2026-10-15:** the grid moved to `/reports/image`, replacing the table there, and left the
+      Images nav, so there is one image-report page and one count (`report:image`). The note below is
+      the history of why the two numbers differed. The grid lists the same reasons the badge counts;
+      the one difference left is the grid's rating filter, which a moderator narrows by hand.
       *"No reason to show image reports here, they're listed under images."* Both are real queues
       (`/reports/image` is the report; `/images/reported` is the triage grid), so this is a decision
       about which one the dashboard should carry, not a removal anyone should make unilaterally.
@@ -111,7 +132,7 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       every gallery image via `UPDATE "Image" SET minor = …, poi = …`, queueing those ids into the image
       index. `poi` is on `modelUpsertSchema` beside `minor` and `upsertModel` calls that fan-out, so
       flipping poi today already does all of it. Image-level `poi` also excludes from the image search
-      index and is re-derived from the parent model at scan time (`image-scan-result.service.ts:1089`).
+      index and is re-derived from the parent model at scan time (`getAssociatedEntities` in `image-scan-pipeline.ts`).
 
       What `poi` genuinely lacks against `minor` is narrower, and is a build list rather than a question:
       **no dedicated setter / `moderatorProcedure`**, **no snapshot** (so no rollback), **absent from
@@ -305,8 +326,12 @@ findings are done — see the parity checklist.
       2026-08-24 it is what removes the comment, and a ban purge can set it across an account in one
       action. Wants the mirror of the flag — a moderator-only unflag that also reopens the reports the
       ToS action closed.
-- [ ] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
-      troubleshoot issues."* (The Payments/Receipts split and filters are parity; raising the cap is not.)
+- [x] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
+      troubleshoot issues."* The quoted 50 was already wrong — the cap was 200 — but the real defect
+      was that one cap covered both sides, so a reward-earning account's receipts consumed all of it
+      and its payments were unreachable at any window. Now capped **per side**, with `?limit=` on
+      `/api/user-buzz-history/[userId]` (clamped 1..2000) and a "Load 200 more" per column. Each
+      column states its own truncation; a full receipts column no longer implies a full payments one.
 - [ ] 🎥 **Ban-evasion view**: other accounts sharing an ISP, and whether action has been taken on each.
       *"Very important to track down people who try to avoid bans, repeat abusers."* We show shared
       IPs/socials; the same-ISP dimension and the per-account action state are extra.
@@ -322,7 +347,9 @@ findings are done — see the parity checklist.
 ## Models
 
 - [ ] 🎥 **Model notes in the main app.** *"Mods can leave notes on models, and it would be nice to have
-      that in the main app."* Retool has model notes; surfacing them in civitai.com is the ask.
+      that in the main app."* The notes now live on Model Lookup (see Misc Mod Asks above, shipped
+      2026-09-29); surfacing them on `civitai.com/models/<id>` is what is left, and
+      `model-notes.service.ts` + `/api/model-notes/[modelId]` are what it would call.
 - [ ] Mod-made changes to a user's models, visible in their activity. *"If possible, it would be nice."*
 
 ## Dashboard
@@ -341,8 +368,8 @@ findings are done — see the parity checklist.
 Recorded so nobody ports them by reflex:
 
 - 🎥 **Model reports** — *"No, we don't need this one, actually."*
-- 🎥 **Moderation rules UI** — *"Moderation rules live here. We don't really use them though."* Retool
-      has the UI; the team does not use it. Confirm before porting.
+- 🎥 **Moderation rules UI** — superseded for Model rules, which are managed on
+      `/text-scan/model-rules`. Image rules stay in Retool; confirm before porting them.
 - 🎥 **Front Page Audit may be obsolete** — *"I'm not sure if we need to do this anymore… only a few
       videos per day get flagged."* Ask before investing further. (Listed in parity too, because it is
       built and half-finished — the decision governs both.)

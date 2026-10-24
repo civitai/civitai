@@ -26,7 +26,7 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * `isAppListingsEnabled`, which ORs both flags), which is why this query DOES
  * widen with the store — in deliberate contrast to `blocks.getNavSummary`, whose
  * `enabled` stays on `appBlocks` alone because ITS proc gates on
- * `enforceAppBlocksFlag`. See `AppsSubNav.storeGate.browser.test.tsx`.
+ * `enforceAppBlocksFlag`. See `AppsRailNav.storeGate.browser.test.tsx`.
  */
 
 function makeCard(id: string, name: string): ListingCard {
@@ -45,6 +45,7 @@ function makeCard(id: string, name: string): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -81,7 +82,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => mocks.flags,
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-
 // mock): a hand-written replacement silently breaks every importer the day

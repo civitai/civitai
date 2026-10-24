@@ -40,17 +40,17 @@ import {
 // MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
 // on an article), which is irrelevant for the once-per-challenge content stages.
 //
-// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
-// pass the URN as `input.model` from the call site or the Playground; the
-// `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
+// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator), pass its URN or
+// `civitai/*` alias as `input.model` from the call site or the Playground.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
+export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
 
-// URN-prefixed models go through the orchestrator's OpenAI-compatible endpoint
-// (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,
-// moonshotai/*, stepfun/*) stays on OpenRouter.
+function isCivitaiHostedModel(model: string) {
+  return model.startsWith('urn:air:') || model.startsWith('civitai/');
+}
+
 function pickClient(model: string) {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     return civitaiLLM;
   }
@@ -60,7 +60,8 @@ function pickClient(model: string) {
 
 // $/M-token rates for models used in the daily-challenge pipeline (verified 2026-07-13).
 // estimateBuzzCost returns 0 for any model absent here — notably the Civitai-hosted urn:air:*
-// models, which don't report token usage through the orchestrator's completion endpoint yet.
+// models. The orchestrator does return `usage` for those; it is civitai-llm's
+// ChatCompletionResponse type that omits the field, so it never reaches this file.
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
   [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
   [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
@@ -91,16 +92,17 @@ export function estimateBuzzCost(model: string, usage: TokenUsage): number {
 
 /**
  * Route a JSON completion to the model's client and normalize the usage shape. Civitai-hosted
- * models (urn:air:*) go through the orchestrator client, which doesn't report token usage —
- * estimateBuzzCost returns 0 for those regardless (no MODEL_BUZZ_RATES entry), so the zeroed
- * usage never under/over-counts tracked spend.
+ * models (urn:air:*) do report usage; civitai-llm discards it, so the zeros below are this
+ * repo's doing rather than the orchestrator's. Harmless only because estimateBuzzCost returns 0
+ * for those models anyway (no MODEL_BUZZ_RATES entry) — giving them a rate without first
+ * plumbing usage through would silently price every call at zero.
  */
 export async function getCompletionWithUsage<T>(
   model: AIModel,
   messages: SimpleMessage[],
   retries: number
 ): Promise<{ content: T; usage: TokenUsage }> {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
     return { content, usage: { promptTokens: 0, completionTokens: 0 } };

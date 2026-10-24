@@ -63,11 +63,10 @@ describe('canSeePostDrafts', () => {
     expect(moderator.isOwnerRequest).toBe(false);
   });
 
-  it('grants the creator even when the scope has not been resolved', () => {
-    // The control for the moderator case above. `isOwnerRequest` is computed from
-    // the username comparison directly and does not depend on the `targetUser`
-    // lookup having succeeded, so requiring a scope for BOTH arms would break the
-    // owner path — a plausible over-correction that this pins against.
-    expect(canSeePostDrafts({ ...owner, targetUser: undefined })).toBe(true);
+  it('requires a resolved creator scope for the creator too', () => {
+    // `isOwnerRequest` is derived from the resolved `targetUser`, so an owner request
+    // with no scope cannot arise; refusing it keeps every grant tied to one account.
+    expect(canSeePostDrafts({ ...owner, targetUser: undefined })).toBe(false);
+    expect(canSeePostDrafts({ ...owner, targetUser: null })).toBe(false);
   });
 });

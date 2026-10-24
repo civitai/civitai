@@ -343,7 +343,7 @@ function RecentTile({
             broken build.
 
             `renderRoot` rather than the polymorphic `component=` prop for the
-            reason `AppsSubNav` documents: mounting a typed Next `<Link>` (or
+            reason `AppsRailNav` documents: mounting a typed Next `<Link>` (or
             branching the root element at all) through `component=` produces a
             generic-component TS2322, because the two branches are a union of
             two different polymorphic prop shapes. `renderRoot` keeps the root

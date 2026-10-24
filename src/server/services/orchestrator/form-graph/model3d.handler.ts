@@ -1,7 +1,7 @@
 /**
  * The 3D families' handlers for the form-graph lane. Each converts parsed
  * data into a `PolyGenStepTemplate` via the same shared schema builders the
- * v1 handlers use, then chains the `model3DPreview` step. PolyGen branches on
+ * the 3D handlers share, then chains the `model3DPreview` step. PolyGen branches on
  * `polygenVersion` (v6 text/image vs v7 image/multi-image); Hunyuan3D maps
  * its `hunyuan*`-prefixed fields back to schema names; the trellis-pipeline
  * pair (Pixal3D / Trellis.2) and Tripo map `images[0]` → `sourceImage`.
@@ -16,7 +16,7 @@ import type {
   PolyGenStepTemplate,
   Trellis2ImageTo3dComfyPolyGenInput,
   TripoFalPolyGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   toMeshyPolyGenInput,
   type Model3DGenerationSchema,
@@ -41,14 +41,14 @@ import {
   toTrellis2PolyGenInput,
   type Trellis2GenerationSchema,
 } from '~/server/orchestrator/trellis2/trellis2.schema';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildModel3DPreviewStep } from '../ecosystems/model3d-preview';
-import type { StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildModel3DPreviewStep } from '../handlers/model3d-preview';
+import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
 // The shared `StepInput` union lists neither `PolyGenStepTemplate` nor the
 // (client-untyped) `model3DPreview` step, but the orchestrator queue accepts
-// both natively — same cast the v1 handlers carry.
+// both natively.
 const withPreview = (step: PolyGenStepTemplate, baseStepIndex: number): StepInput[] =>
   [step, buildModel3DPreviewStep(baseStepIndex)] as unknown as StepInput[];
 
@@ -89,6 +89,8 @@ export const createTripoInput = defineHandler<EcosystemData<'Tripo'>, StepInput[
     ...data,
     ...(sourceImage ? { sourceImage } : {}),
   } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput;
+  // Quad topology is FBX-only: there is no GLB for the preview renderer to load.
+  if (input.quad) return [{ $type: 'polyGen', input }] as unknown as StepInput[];
   return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
 });
 

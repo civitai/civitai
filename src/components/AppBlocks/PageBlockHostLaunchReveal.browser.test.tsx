@@ -72,6 +72,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -84,7 +90,7 @@ vi.mock('~/utils/trpc', () => ({
         // Was MISSING: PageBlockHost calls `trpc.apps.shared.report.useMutation()`
         // unconditionally at render, so without this stub every test in this file
         // crashed at mount with "Cannot read properties of undefined (reading
-        // 'useMutation')". These checks are report-only, so the whole suite — the
+        // 'useMutation')". These checks were report-only, so the whole suite — the
         // guard for the launch-reveal invariants — had been silently red.
         report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },

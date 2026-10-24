@@ -2,9 +2,8 @@ import type { InferArm, InferData, InferLooseData } from 'form-graph';
 import type { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
 /**
- * Types for the form-graph handler lane. Handlers consume `parse().data` —
- * the WIRE shape, differentially pinned against the data-graph oracle — so a
- * handler here receives exactly what its data-graph counterpart receives.
+ * Types for the generation handlers. They consume `parse().data` — the WIRE shape,
+ * which is narrower than the store's state: `emit: false` fields are absent.
  */
 
 /** The composed root's parsed wire data — a union over every family arm. */

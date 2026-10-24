@@ -5,12 +5,11 @@ import { BlockedReason } from '~/server/common/enums';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
- * 🔴 REACHABILITY GUARD for a cross-account destructive capability.
+ * 🔴 REACHABILITY GUARD for blob retraction.
  *
- * `remove-blocked-images` is the one flow allowed to pass `retractPublicBlobs`, which asks the
- * image-cache service to destroy the SHARED, content-addressed stored object behind an image —
- * removing the full-resolution original for every byte-identical image of every OTHER owner,
- * irreversibly, with no way to enumerate or notify them.
+ * `remove-blocked-images` passes `retractPublicBlobs`, which asks the image-cache service to
+ * delete an image's public copies and purge them from the CDN. Only a moderator's takedown of that
+ * image may turn it on.
  *
  * The job reads a QUEUE that a database trigger fills on any write landing
  * `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified'. So the population that
@@ -108,6 +107,16 @@ const { mockDeleteImages } = vi.hoisted(() => ({
 
 // `isProd` alone is overridden; the rest of the module is spread so nothing else in the graph
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
+// The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
+// has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/services/image-removal-hold.service', () => ({
+  canConfirmReRemoval: async () => false,
+  holdRemovals: async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  }),
+  heldRemovalSummary: () => [],
+}));
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
@@ -217,9 +226,15 @@ function presenceTest(sql: string, key: string) {
 }
 
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
+  // The hold marker's view exists, as on prod, and holds nobody.
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
   // `toggleBan`'s pre-block read: the rows its remove-all-media UPDATE is about to block that
   // still carry a grace breadcrumb. Narrowly scoped on purpose — see the note at that call site.
@@ -352,9 +367,13 @@ beforeEach(async () => {
     store.images.filter((i) => matches(i, where))
   );
   dbMock.dbWrite.image.create.mockImplementation(async ({ data }: any) => {
-    const row = image(data.id, data.userId, {
+    // `createImage` never writes an `id`; the store assigns it from the `key-<id>/` url.
+    if (data.id !== undefined) throw new Error('createImage wrote a caller-supplied id');
+    const key = /^key-(\d+)\//.exec(data.url ?? '');
+    if (!key) throw new Error(`fixture url must be key-<id>/…, got ${data.url}`);
+    const row = image(Number(key[1]), data.userId, {
       metadata: data.metadata ?? null,
-      url: data.url ?? `key-${data.id}/original.jpeg`,
+      url: data.url,
       ingestion: data.ingestion ?? 'Pending',
     });
     store.images.push(row);
@@ -505,7 +524,6 @@ describe('who can reach blob retraction, driven through the real block writers',
   ] as const) {
     it(`ignores a forged marker (${label}) carried through the real upload path`, async () => {
       await createImage({
-        id: 2,
         userId: TAKEDOWN_USER,
         url: 'key-2/original.jpeg',
         type: 'image',
@@ -535,11 +553,10 @@ describe('who can reach blob retraction, driven through the real block writers',
   }
 
   // The other direction of the same forgery, and the more dangerous one under a POSITIVE
-  // discriminator: a marker that turns retraction ON would let an uploader destroy the shared
-  // object behind any byte-identical image simply by getting their own copy blocked.
+  // discriminator: a marker that turns retraction ON would let an uploader make an automated
+  // block read as a moderator takedown.
   it('a forged marker cannot make an automated block retract', async () => {
     await createImage({
-      id: 3,
       userId: SCANNED_USER,
       url: 'key-3/original.jpeg',
       type: 'image',
@@ -614,8 +631,8 @@ describe('who can reach blob retraction, driven through the real block writers',
       expect(retractionFor(id), `image ${id} was not deleted at all`).not.toBeUndefined();
       expect(
         retractionFor(id),
-        'a whole-library ban block reached the retracting call: banning an account must not ' +
-          'destroy other owners’ stored bytes'
+        'a whole-library ban block reached the retracting call: banning an account is not a ' +
+          'per-image takedown'
       ).toBe(false);
     }
   });
@@ -672,10 +689,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(10), 'the image was not deleted at all').not.toBeUndefined();
-    expect(
-      retractionFor(10),
-      'a rating change was read as a decision to destroy the shared stored object'
-    ).toBe(false);
+    expect(retractionFor(10), 'a rating change was read as a takedown decision').toBe(false);
   });
 
   // Not a retraction claim. `unblockAccountDeletionImages` restores an image on the presence of

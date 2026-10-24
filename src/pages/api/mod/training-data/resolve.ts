@@ -5,6 +5,7 @@ import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 
 export default defineModeratorEndpoint('trainingData.resolve', {
   summary: "Resolve a version's training data to a signed download URL.",
@@ -21,10 +22,16 @@ export default defineModeratorEndpoint('trainingData.resolve', {
       .positive()
       .describe('The version whose training data to resolve.'),
   }),
-  async handler(input) {
+  async handler(input, { actor }) {
     const files = await dbRead.modelFile.findMany({
       where: { modelVersionId: input.modelVersionId, type: 'Training Data', dataPurged: false },
-      select: { id: true, url: true, name: true, metadata: true },
+      select: {
+        id: true,
+        url: true,
+        name: true,
+        metadata: true,
+        modelVersion: { select: { model: { select: { meta: true } } } },
+      },
     });
 
     // The same scoring the review pages use, so the bytes match the workflow the page is showing.
@@ -32,9 +39,28 @@ export default defineModeratorEndpoint('trainingData.resolve', {
     // Thrown, not returned: the wrapper maps a TRPCError to its status, and a returned `{error}` would
     // be sent as a 200 with an error-shaped body.
     if (!file) throw throwNotFoundError('No training data on this version');
+    // A Training Studio `Training Data` row's URL is the trained epoch, not a zip. Keyed on the
+    // server-owned model meta because the row's own metadata is the owner's to edit.
+    const studioWorkflowId = (
+      file.modelVersion.model.meta as { trainingStudioWorkflowId?: string } | null
+    )?.trainingStudioWorkflowId;
+    const { selectedEpochUrl, trainingResults } = (file.metadata ?? {}) as {
+      selectedEpochUrl?: string;
+      trainingResults?: { workflowId?: string };
+    };
+    if (
+      studioWorkflowId &&
+      (file.url === selectedEpochUrl || trainingResults?.workflowId === studioWorkflowId)
+    )
+      throw throwNotFoundError(
+        'This version was trained in the Training Studio, so its dataset is not a zip. Open it on the training data review page.'
+      );
 
     try {
-      const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
+      const { url } = await resolveDownloadUrl(file.id, file.url, file.name, {
+        caller: 'training-data',
+        actor: resolveActorFor(actor),
+      });
       return { url, name: file.name, affected: { modelVersionIds: [input.modelVersionId] } };
     } catch (e) {
       // Storage resolver and delivery-worker fallback both rejected it: registered but not deliverable.

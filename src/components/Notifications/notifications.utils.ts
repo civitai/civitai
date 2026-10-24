@@ -1,5 +1,5 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import type { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -134,6 +134,25 @@ export function clearAnnouncements(
   dismiss.creator(creatorIds);
 }
 
+// A floor is a lower bound from a recount that stopped at its row limit, hence the "+".
+export function formatUnreadCount(count: number, isFloor: boolean): string {
+  if (count >= 1000) return '1k+';
+  return isFloor ? `${count}+` : `${count}`;
+}
+
+export function formatBellCount(counts: { all: number; unreadCountsAreFloors?: number }): string {
+  if (counts.all > 99) return '99+';
+  return counts.unreadCountsAreFloors ? `${counts.all}+` : `${counts.all}`;
+}
+
+// Announcements are counted client-side and exactly; only the server's notification counts can be floors.
+export function formatTabCount(tab: string, counts: Record<string, number>): string {
+  return formatUnreadCount(
+    counts[tab.toLowerCase()] ?? 0,
+    tab !== 'announcements' && !!counts.unreadCountsAreFloors
+  );
+}
+
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -167,12 +186,16 @@ export const useQueryNotificationsCount = () => {
         system: 0,
         buzz: 0,
         announcements: 0,
-        // Placements waiting on this user, for the user menu badge. Carried on
+        unreadCountsAreFloors: 0,
+        // Queues waiting on this user, for the user-menu badges. Carried on
         // this query rather than its own, and kept out of `all` — `all` is the
         // bell, and a pending placement is not an unread notification.
         pendingPlacements: 0,
         pendingStickerPlacements: 0,
         pendingRemixSubmissions: 0,
+        pendingCollectionReviews: 0,
+        unopenedBoxes: 0,
+        unclaimedPrizes: 0,
       }
     : withAnnouncementCounts(data, {
         platform: announcements.length,
@@ -185,13 +208,17 @@ export const useQueryNotificationsCount = () => {
  * Keys on the `checkNotifications` payload that are NOT notification category
  * counts, and must survive "mark all as read".
  *
+ * `unreadCountsAreFloors` is the one non-category key deliberately NOT listed:
+ * mark-all-read zeroes every count, a zero is exact, so the flag must be wiped
+ * with them.
+ *
  * 🔴 This set is load-bearing, and the reason is not obvious from the code it
  * guards. The two branches that key off a category name are safe only because
- * they test `category.toLowerCase() in counts` and this key is camelCase —
- * `'pendingplacements'` matches nothing. That is a casing accident, not a
- * design. Rename this field to lowercase, or add a NotificationCategory that
- * lowercases into it, and the category branch would start subtracting a
- * placement count out of the bell's total.
+ * they test `category.toLowerCase() in counts` and every key here (and
+ * `unreadCountsAreFloors`) is camelCase — `'pendingplacements'` matches
+ * nothing. That is a casing accident, not a design. Rename one of these keys
+ * to lowercase, or add a NotificationCategory that lowercases into one, and
+ * the category branch would start subtracting it out of the bell's total.
  *
  * The blanket branch has no such accident protecting it: it iterates every key,
  * so a non-category count added to this payload is zeroed by one click on "mark
@@ -205,6 +232,9 @@ export const NON_CATEGORY_COUNT_KEYS: ReadonlySet<string> = new Set([
   'pendingPlacements',
   'pendingStickerPlacements',
   'pendingRemixSubmissions',
+  'pendingCollectionReviews',
+  'unopenedBoxes',
+  'unclaimedPrizes',
 ]);
 
 type NotificationCounts = Record<string, number>;
@@ -298,46 +328,94 @@ export const useMarkReadNotification = () => {
   return mutation;
 };
 
+/**
+ * The cached notification lists a newly-signalled notification is written into: All + its category.
+ *
+ * One list for both the write and the question "is there anything to write into", so the two cannot
+ * drift — see `hasLoadedNotificationList`.
+ */
+export function notificationListFilters(listKey: QueryKey[number], category: string) {
+  return [
+    { queryKey: [listKey, { input: { category: null } }], exact: false },
+    { queryKey: [listKey, { input: { category } }], exact: false },
+  ];
+}
+
+/**
+ * Whether any of those lists holds a page — the same condition the write below applies per list.
+ *
+ * The detail fetch on a new-notification signal exists only to enrich the row that gets written into a
+ * loaded list. A tab that has never opened its notifications has no such list, so the response would
+ * be thrown away: one authenticated request per signal, per open tab, for nothing. This is what lets
+ * the signal handler skip it. A list loaded later is fetched from the server and already carries the
+ * notification, enriched.
+ */
+export function hasLoadedNotificationList(
+  queryClient: Pick<QueryClient, 'getQueriesData'>,
+  filters: ReturnType<typeof notificationListFilters>
+): boolean {
+  return filters.some((filter) =>
+    queryClient
+      .getQueriesData<InfiniteData<NotificationGetAll>>(filter)
+      .some(([, old]) => !!old?.pages?.length)
+  );
+}
+
+/**
+ * Puts a newly-signalled notification into every loaded list it belongs in, enriched by the detail
+ * endpoint when — and only when — there is such a list to put it in.
+ *
+ * Out of the hook so the gate can be exercised where it is applied, not just as a helper: `fetchImpl`
+ * is the seam.
+ */
+export async function insertSignalledNotification(
+  queryClient: Pick<QueryClient, 'getQueriesData' | 'setQueriesData'>,
+  listKey: QueryKey[number],
+  updated: NotificationGetAllItem,
+  fetchImpl: typeof fetch = fetch
+) {
+  const listFilters = notificationListFilters(listKey, updated.category);
+
+  let newUpdated = updated;
+  if (hasLoadedNotificationList(queryClient, listFilters)) {
+    try {
+      const newUpdatedResp = await fetchImpl('/api/notification/getDetails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updated),
+      });
+      if (newUpdatedResp.ok) {
+        const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
+        newUpdated = { ...newUpdated, ...newUpdatedJson };
+      }
+    } catch {}
+  }
+
+  // update All + "Category" cache
+  for (const filter of listFilters) {
+    queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+      filter,
+      produce((old) => {
+        if (!old || !old.pages || !old.pages.length) return;
+        const firstPage = old.pages[0];
+        firstPage.items.unshift(newUpdated);
+      })
+    );
+  }
+}
+
 export const useNotificationSignal = () => {
   const queryClient = useQueryClient();
   const queryUtils = trpc.useUtils();
 
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
-      const queryKey = getQueryKey(trpc.notification.getAllByUser)[0];
-
-      // nb: this shouldn't run if "old" doesn't exist, but can't test that yet, and produce doesn't allow async
-      let newUpdated = updated;
-      try {
-        const newUpdatedResp = await fetch('/api/notification/getDetails', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(updated),
-        });
-        if (newUpdatedResp.ok) {
-          const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
-          newUpdated = { ...newUpdated, ...newUpdatedJson };
-        }
-      } catch {}
-
-      // update All + "Category" cache
-      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-        { queryKey: [queryKey, { input: { category: null } }], exact: false },
-        produce((old) => {
-          if (!old || !old.pages || !old.pages.length) return;
-          const firstPage = old.pages[0];
-          firstPage.items.unshift(newUpdated);
-        })
-      );
-      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-        { queryKey: [queryKey, { input: { category: updated.category } }], exact: false },
-        produce((old) => {
-          if (!old || !old.pages || !old.pages.length) return;
-          const firstPage = old.pages[0];
-          firstPage.items.unshift(newUpdated);
-        })
+      await insertSignalledNotification(
+        queryClient,
+        getQueryKey(trpc.notification.getAllByUser)[0],
+        updated
       );
 
       queryUtils.user.checkNotifications.setData(undefined, (old) => {

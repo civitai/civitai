@@ -19,21 +19,37 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
-import { isEqual, uniq } from 'lodash-es';
+import { uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { EarlyAccessLockedRow } from '~/components/CreatorJourney/EarlyAccessLockedRow';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
+import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { RecommendedRangeInputs } from '~/components/Resource/Forms/RecommendedRangeInputs';
+import { scopeRecommendedSettings } from '~/components/Resource/Forms/model-version-settings';
+import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import {
+  getMetricVisibilityChoices,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -55,6 +71,16 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
+import {
+  getBaseModelConfig,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
+import {
+  BASE_MODEL_ATTESTATION_STATEMENT,
+  hasBaseModelAttestation,
+  requiresBaseModelAttestation as requiresBaseModelAttestationFor,
+} from '~/shared/constants/base-model-attestation.constants';
 import {
   baseModelSupportsClipSkip,
   defaultBaseModel,
@@ -64,16 +90,13 @@ import { useLastUsedBaseModelStore } from '~/store/last-used-base-model.store';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
-  ModelVersionMeta,
   ModelVersionPaidAccessDto,
-  ModelVersionPaidAccessInputSchema,
   ModelVersionUpsertInput,
-  RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
   baseModelToTraningDetailsBaseModelMap,
   modelVersionUpsertSchema2,
-  recommendedSettingsSchema,
+  TURBO_VARIANT_MODEL_TYPES,
 } from '~/server/schema/model-version.schema';
 import {
   type ModelVersionTerms,
@@ -83,8 +106,6 @@ import {
   PRICING_SLOT_EXPLAINER,
   DEFAULT_FEE_IMAGES,
   MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT,
-  acceptsBlueBuzz,
-  buildModelVersionTerms,
   feeMaxFor,
   hasCurrentRightsAffirmation,
   paidAccessCharges,
@@ -92,9 +113,9 @@ import {
   formatPricingAllowance,
   monetizationLimits,
   pricingAllowanceState,
+  feeAllowanceBoostNote,
   ratioToFee,
   resolveCapTier,
-  separateGenerationPriceMissing,
   seedFeeRatio,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -105,6 +126,7 @@ import {
 import {
   Availability,
   LicensingFeeSettlementCurrency,
+  ModelStatus,
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
@@ -122,73 +144,13 @@ import {
 } from '~/components/Resource/Forms/model-version-monetization-defaults';
 import { monetizationDefaultsStore } from '~/store/model-version-monetization-defaults.store';
 
-// Wrap the terms in the permanent/timed gate shape (or null for an off/invalid gate).
-function toGate(
-  config: FormPaidAccessConfig,
-  terms: ModelVersionTerms
-): ModelVersionPaidAccessInputSchema | null {
-  if (config.permanent) return { permanent: true, terms };
-  const timeframeDays = config.timeframe ?? 0;
-  if (timeframeDays <= 0) return null;
-  return { permanent: false, timeframeDays, terms };
-}
-
-function toPaidAccessInput(
-  config: FormPaidAccessConfig | null | undefined,
-  usageControl: ModelUsageControl | undefined
-): ModelVersionPaidAccessInputSchema | null {
-  if (!config || config.accessPrice == null) return null;
-  // Only downloadable or on-site-generation versions can be gated; other usage controls (internal /
-  // external API) can't set paid access at all.
-  if (
-    usageControl &&
-    usageControl !== ModelUsageControl.Download &&
-    usageControl !== ModelUsageControl.Generation
-  )
-    return null;
-  const terms = buildModelVersionTerms({
-    accessPrice: config.accessPrice,
-    generationPrice: config.generationPrice,
-    freePreviewGenerations: config.freePreviewGenerations,
-    genOnly: usageControl === ModelUsageControl.Generation,
-    freeGeneration: config.freeGeneration,
-    acceptsBlueBuzz: config.acceptsBlueBuzz,
-  });
-  return toGate(config, terms);
-}
-
-type GenerationMode = 'bundled' | 'separate' | 'free';
-const generationModeOf = (config: FormPaidAccessConfig | null | undefined): GenerationMode =>
-  config?.freeGeneration ? 'free' : config?.generationPrice != null ? 'separate' : 'bundled';
-
-function toDonationGoalInput(config: FormPaidAccessConfig | null | undefined) {
-  // A donation goal only makes sense for a timed gate (it ends the window early); permanent never ends.
-  if (config?.permanent || !config?.donationGoalEnabled || !config.donationGoal) return null;
-  return { amount: config.donationGoal };
-}
-
-function toFormPaidAccessConfig(
-  paidAccess: { timeframeDays: number | null; terms: ModelVersionTerms } | null | undefined,
-  donationGoal: { goalAmount: number } | null | undefined
-): FormPaidAccessConfig | null {
-  if (!paidAccess) return null;
-  const terms = paidAccess.terms ?? {};
-  const paidGen = terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
-  return {
-    // No timeframeDays on the row => a permanent (never-expiring) gate.
-    permanent: paidAccess.timeframeDays == null,
-    timeframe: paidAccess.timeframeDays ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
-    // "Price for access" is the download price when downloadable; for a gen-only version (no download
-    // tier) it's the generation price. The separate generation-only tier only exists with a download bundle.
-    accessPrice: terms.download?.price ?? paidGen?.price,
-    generationPrice: terms.download ? paidGen?.price : undefined,
-    freeGeneration: !!terms.generation && `free` in terms.generation,
-    acceptsBlueBuzz: acceptsBlueBuzz(terms),
-    freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
-    donationGoalEnabled: !!donationGoal,
-    donationGoal: donationGoal?.goalAmount,
-  };
-}
+import {
+  type GenerationMode,
+  decideModelVersionSubmit,
+  generationModeOf,
+  toFormPaidAccessConfig,
+  toPaidAccessInput,
+} from '~/components/Resource/Forms/model-version-submit';
 
 const schema = modelVersionUpsertSchema2
   .omit({ paidAccess: true, donationGoal: true })
@@ -205,10 +167,7 @@ const schema = modelVersionUpsertSchema2
       )
       .nullish(),
     useMonetization: z.boolean().default(false),
-    recommendedResources: generationResourceSchema
-      .merge(recommendedSettingsSchema)
-      .array()
-      .nullish(),
+    recommendedResources: generationResourceSchema.array().nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     error: 'You need to specify at least one trained word',
@@ -282,11 +241,24 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { hideDonationGoals } = useCurrentUserSettings();
+  const userSettings = useCurrentUserSettings();
+  const { hideDonationGoals } = userSettings;
   const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
     useMutateUserSettings();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const isModelOwner = !model?.user || model.user.id === currentUser?.id;
+  const inheritedMetrics = inheritedMetricPrivacy({
+    level: 'version',
+    userSettings,
+    modelMeta: model?.meta,
+    isOwner: isModelOwner,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
+  });
+  const metricPrivacyAccess = metricPrivacyAccessFor({
+    isOwner: isModelOwner,
+    ownerHasMembership: isActiveCreatorMember,
+  });
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
   // For a brand-new version, seed the base model from the previous version (if any),
@@ -311,6 +283,7 @@ export function ModelVersionUpsertForm({
   // the control out mid-edit.
   const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
+  const isCheckpointVersion = model?.type === ModelType.Checkpoint;
   // "Over" means a TIMED window that has ended. A permanent gate (endsAt null) never ends, and a version
   // with no gate has nothing to be over — neither should lock the controls.
   const isEarlyAccessOver =
@@ -358,11 +331,8 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
-    meta: {
-      hideBuzz: (version?.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
-      hideDownloads: (version?.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
-      hideGenerations: (version?.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
-    },
+    // The form holds the schema INPUT (choices, including inherit); Schema is typed as its output.
+    meta: { metricVisibility: getMetricVisibilityChoices(version?.meta) } as Schema['meta'],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -383,6 +353,25 @@ export function ModelVersionUpsertForm({
     'settings.minStrength',
     'settings.maxStrength',
   ]) as number[];
+  const isTurbo = !!form.watch('settings.turbo');
+  const ecosystemTurboSettings = getEcosystemTurboSettings(
+    getBaseModelConfig(baseModel).ecosystemId
+  );
+  const showTurboSection =
+    !!ecosystemTurboSettings && TURBO_VARIANT_MODEL_TYPES.includes(model?.type as ModelType);
+  const showTurboLoraPicker = isCheckpointVersion && !!ecosystemTurboSettings;
+  // The form keeps only the id; the card needs the resource, picked here or fetched for a stored id.
+  const turboLoraId = form.watch('settings.generation.turboLora')?.id;
+  const [pickedTurboLora, setPickedTurboLora] = useState<GenerationResource | null>(null);
+  const { data: storedTurboLora } = trpc.generation.getResourceDataByIds.useQuery(
+    { ids: [turboLoraId ?? 0] },
+    { enabled: isCheckpointVersion && !!turboLoraId && pickedTurboLora?.id !== turboLoraId }
+  );
+  const turboLora = !turboLoraId
+    ? null
+    : pickedTurboLora?.id === turboLoraId
+    ? pickedTurboLora
+    : storedTurboLora?.find((r) => r.id === turboLoraId) ?? null;
   const { isDirty } = form.formState;
   const paidAccessConfig = form.watch('paidAccessConfig');
   // The three generation grants the terms model supports. Seeded from the stored config so an existing
@@ -486,6 +475,21 @@ export function ModelVersionUpsertForm({
     !!currentUser?.isModerator && modelOwnerId != null && modelOwnerId !== currentUser.id;
   const requiresRightsAffirmation =
     !alreadyAffirmed && !moderatingSomeoneElsesModel && (submittedFee > 0 || gateCharges);
+  // Owner-only, as on the server: a moderator can't give this statement on the creator's behalf.
+  // A version already public on this base model is grandfathered, so its edits don't ask.
+  const attestingOwnerId = modelOwnerId ?? currentUser?.id;
+  const attestationGrandfathered =
+    requiresBaseModelAttestationFor({ baseModel: version?.baseModel, modelType: model?.type }) &&
+    !!version?.status &&
+    version.status !== ModelStatus.Draft &&
+    version.status !== ModelStatus.Scheduled &&
+    version.status !== ModelStatus.Training;
+  const requiresBaseModelAttestation =
+    !attestationGrandfathered &&
+    requiresBaseModelAttestationFor({ baseModel, modelType: model?.type }) &&
+    attestingOwnerId != null &&
+    attestingOwnerId === currentUser?.id &&
+    !hasBaseModelAttestation(version?.meta, { baseModel, ownerId: attestingOwnerId });
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
   // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
@@ -687,99 +691,45 @@ export function ModelVersionUpsertForm({
     recommendedResources: rawRecommendedResources,
     ...data
   }: Schema) => {
-    // Validate NSFW + restricted base model combination
-    if (
-      model?.nsfw &&
-      data.baseModel &&
-      nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-    ) {
-      showErrorNotification({
-        error: new Error(
-          `NSFW models cannot use base models with license restrictions. The base model "${
-            data.baseModel
-          }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-            ', '
-          )}`
-        ),
-        title: 'Base Model License Restriction',
-      });
-      return;
-    }
+    const schemaResult = querySchema.safeParse(router.query);
+    const settings = scopeRecommendedSettings(data.settings, {
+      turboSection: showTurboSection,
+      turboLoraPicker: showTurboLoraPicker,
+    });
+    const decision = decideModelVersionSubmit(
+      { ...data, settings, recommendedResources: rawRecommendedResources },
+      {
+        modelId: model?.id,
+        modelNsfw: !!model?.nsfw,
+        gateSuppressed,
+        monetizationBlocked,
+        showClipSkip,
+        genMode,
+        requiresRightsAffirmation,
+        requiresBaseModelAttestation,
+        isDirty,
+        versionId: version?.id,
+        storedPaidAccessConfig: toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal),
+        templateId: schemaResult.success ? schemaResult.data.templateId : undefined,
+        bountyId: schemaResult.success ? schemaResult.data.bountyId : undefined,
+      }
+    );
 
-    const gatedConfig = gateSuppressed ? null : data.paidAccessConfig;
-    // Keyed to the gate the submit actually sends, not to the config: a usage control that can't be gated
-    // leaves the pricing controls unmounted with their values intact, and refusing over a price nobody can
-    // see (for a gate that would be dropped anyway) is a save the creator has no way to unblock.
-    const submittedGate = toPaidAccessInput(gatedConfig, data.usageControl);
-
-    // A generation grant with no price of its own is charged at the DOWNLOAD price (see `generationPrice`),
-    // so an empty box under "a cheaper generation-only price" bills the full access price while the screen
-    // says cheaper. Nothing downstream can tell that apart from a deliberate "same as access price", so the
-    // refusal has to happen here, where the creator's choice still exists.
-    if (
-      genMode === 'separate' &&
-      submittedGate &&
-      data.usageControl !== ModelUsageControl.Generation &&
-      separateGenerationPriceMissing(data.paidAccessConfig?.generationPrice)
-    ) {
-      const message = 'Enter a generation-only price, or choose "Same as the access price"';
-      form.setError('paidAccessConfig.generationPrice', { message });
-      showErrorNotification({ error: new Error(message), title: 'Generation price required' });
-      return;
-    }
-
-    if (requiresRightsAffirmation && !data.rightsAffirmed) {
-      const message = 'You must confirm you hold the rights to monetize this model';
-      form.setError('rightsAffirmed', { message });
-      // The checkbox can be well below the fold, and this also blocks wizard step navigation — an
-      // inline-only error reads as the button doing nothing.
-      showErrorNotification({ error: new Error(message), title: 'Confirmation required' });
+    if (decision.kind === 'refuse') {
+      // The offending control can be well below the fold, and a refusal also blocks wizard step
+      // navigation — an inline-only error reads as the button doing nothing, so both surface.
+      if (decision.field) form.setError(decision.field, { message: decision.message });
+      showErrorNotification({ error: new Error(decision.message), title: decision.title });
       return;
     }
 
     if (data.baseModel) setLastUsedBaseModel(data.baseModel);
 
-    const schemaResult = querySchema.safeParse(router.query);
-    const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
-    const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
-
-    if (
-      isDirty ||
-      !version?.id ||
-      templateId ||
-      bountyId ||
-      !isEqual(
-        data.paidAccessConfig,
-        toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
-      )
-    ) {
-      const recommendedResources =
-        rawRecommendedResources?.map(({ id, strength }) => ({
-          resourceId: id,
-          settings: { strength },
-        })) ?? [];
-
-      const result = await upsertVersionMutation.mutateAsync({
-        ...data,
-        // Don't persist a stale clip skip for base models that don't use it.
-        clipSkip: showClipSkip ? data.clipSkip ?? null : null,
-        epochs: data.epochs ?? null,
-        steps: data.steps ?? null,
-        modelId: model?.id ?? -1,
-        // A POI model earns nothing: the fee editor is unmounted for one, so its stored value would
-        // otherwise ride along untouched behind a section that shows no controls at all.
-        licensingFee: submittedFee,
-        paidAccess: submittedGate,
-        // Keyed to the gate that is actually sent: a goal ends a timed window early, so writing one for a
-        // version whose gate was just rejected leaves a goal against nothing to end.
-        donationGoal: submittedGate ? toDonationGoalInput(gatedConfig) : null,
-        trainedWords: skipTrainedWords ? [] : trainedWords,
-        baseModelType: data.baseModelType,
-        monetization: monetizationBlocked ? null : data.monetization,
-        recommendedResources,
-        templateId,
-        bountyId,
-      });
+    if (decision.kind === 'submit') {
+      const { payload, submittedFee, submittedGate, gatedConfig } = decision;
+      const result = await upsertVersionMutation.mutateAsync(
+        payload as Parameters<typeof upsertVersionMutation.mutateAsync>[0]
+      );
 
       // Remembered only once the server has taken it, so what comes back next time is a configuration
       // that already cleared the eligibility floor, the fee ceiling and the affirmation — and read off
@@ -832,11 +782,7 @@ export function ModelVersionUpsertForm({
           ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
           : null,
         recommendedResources: version.recommendedResources ?? [],
-        meta: {
-          hideBuzz: (version.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
-          hideDownloads: (version.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
-          hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
-        },
+        meta: { metricVisibility: getMetricVisibilityChoices(version.meta) } as Schema['meta'],
       });
       // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
       setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));
@@ -902,6 +848,16 @@ export function ModelVersionUpsertForm({
     !isNonCommercial && // Non-commercial base models can't be monetized.
     paidAccessUsageOk &&
     canConfigurePaidAccess;
+  // Where the score alone keeps the timed window shut, say so instead of leaving no section at all.
+  const showEarlyAccessLocked =
+    !showPaidAccessInput &&
+    !currentUser?.isModerator &&
+    features.earlyAccessModel &&
+    !gateSuppressed &&
+    paidAccessUsageOk &&
+    !isPublished &&
+    !atEarlyAccess &&
+    (maxEarlyAccessModels === 0 || earlyAccessUnlockedDays.length === 0);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -914,14 +870,24 @@ export function ModelVersionUpsertForm({
     enabled: showPaidAccessInput || showLicensingFeeBlock,
   });
   // A version that already carries a price is exempt, so the counter must not read "used up" while the
-  // edit in front of the creator is free.
+  // edit in front of the creator is free (a boosted licensed version gaining a gate aside).
   const allowanceState = pricingAllowance
     ? pricingAllowanceState({
         used: pricingAllowance.used,
-        limit: pricingAllowance.limit,
+        limit: pricingAllowance.baseLimit,
         exempt: hasExistingCharge,
       })
     : null;
+  // Held to baseLimit above, which is what a paid-access gate is enforced against; only a licensing fee
+  // may spend the boost.
+  const feeAllowanceState =
+    pricingAllowance && pricingAllowance.feeBoost > 0
+      ? pricingAllowanceState({
+          used: pricingAllowance.used,
+          limit: pricingAllowance.feeLimit,
+          exempt: hasExistingCharge,
+        })
+      : null;
   // Not waived for moderators, and not applied to a version that already charges. Absent while the
   // query is in flight, so the control stays enabled rather than flickering shut; the server refuses anyway.
   const eligibility = pricingAllowance?.eligibility;
@@ -1114,6 +1080,9 @@ export function ModelVersionUpsertForm({
                   />
                 )}
               </Group>
+              {requiresBaseModelAttestation && (
+                <InputCheckbox name="baseModelAttested" label={BASE_MODEL_ATTESTATION_STATEMENT} />
+              )}
               {showLicensingPicker && (
                 <Stack gap="xs">
                   <Select
@@ -1177,35 +1146,6 @@ export function ModelVersionUpsertForm({
                 includeControls={['formatting', 'list', 'link', 'blurb']}
                 editorSize="xl"
               />
-              <Stack gap="xs">
-                <Divider label="Version metric privacy" />
-                <Text size="xs" c="dimmed">
-                  Hide these stats in this version&apos;s details card. This is a sub-option of the
-                  model-level controls — hiding at the model level already hides the model page
-                  totals and cards.{' '}
-                  {isActiveCreatorMember
-                    ? 'You and moderators always see your real stats.'
-                    : 'Requires an active Creator Program membership.'}
-                </Text>
-                <InputSwitch
-                  name="meta.hideBuzz"
-                  label="Hide earned Buzz"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideDownloads"
-                  label="Hide download count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideGenerations"
-                  label="Hide generation count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-              </Stack>
               {acceptsTrainedWords && (
                 <Stack gap="xs">
                   {!skipTrainedWords && (
@@ -1233,6 +1173,21 @@ export function ModelVersionUpsertForm({
                   )}
                 </Stack>
               )}
+              {modelDownloadEnabled && (
+                <InputSwitch
+                  name="requireAuth"
+                  label="Require users to be logged in to download this asset"
+                  description={
+                    <>
+                      This limits a bots ability to download the files associated with this
+                      resource.
+                      <br />
+                      This will also require third-party applications to utilize a user API key to
+                      download the asset files.
+                    </>
+                  }
+                />
+              )}
               <Stack gap={4}>
                 <Divider label="Training Params" />
                 <Group gap="xs" grow>
@@ -1254,10 +1209,75 @@ export function ModelVersionUpsertForm({
                   />
                 </Group>
               </Stack>
-              {(showClipSkip || showStrengthInput || showRecommendedResources) && (
+              {(showClipSkip ||
+                showStrengthInput ||
+                showRecommendedResources ||
+                showTurboLoraPicker) && (
                 <Stack gap={4}>
                   <Divider label="Recommended Settings" />
                   <Group gap="xs" className="*:grow">
+                    {showTurboLoraPicker && (
+                      <Stack gap="xs" w="100%">
+                        <ResourceSelect
+                          buttonLabel={
+                            <Stack gap={2} align="center" py="xs">
+                              <Group gap={6}>
+                                <IconPlus size={18} />
+                                <Text fw={600}>Default turbo LoRA</Text>
+                              </Group>
+                              <Text size="xs" c="dimmed" ta="center" fw={400}>
+                                What the generator&apos;s Turbo picker starts on with this
+                                checkpoint. Leave empty for the ecosystem&apos;s default.
+                              </Text>
+                            </Stack>
+                          }
+                          buttonProps={{
+                            variant: 'default',
+                            h: 'auto',
+                            leftSection: null,
+                            className: 'border-2 border-dashed',
+                            styles: {
+                              root: { borderColor: 'var(--mantine-color-default-border)' },
+                              label: { whiteSpace: 'normal' },
+                            },
+                          }}
+                          value={turboLora}
+                          onChange={(resource) => {
+                            setPickedTurboLora(resource);
+                            form.setValue(
+                              'settings.generation.turboLora',
+                              resource ? { id: resource.id } : null,
+                              { shouldDirty: true }
+                            );
+                          }}
+                          selectSource="modelVersion"
+                          options={{
+                            resources: TURBO_VARIANT_MODEL_TYPES.map((type) => ({
+                              type,
+                              baseModels: [baseModel],
+                            })),
+                            turboOnly: true,
+                          }}
+                        />
+                        {turboLora && (
+                          <InputNumber
+                            name="settings.generation.turboLora.strength"
+                            label="Turbo LoRA strength"
+                            description={`Leave empty for the LoRA's own default (${turboLora.settings.strength.default}).`}
+                            min={turboLora.settings.strength.min}
+                            max={turboLora.settings.strength.max}
+                            decimalScale={2}
+                            step={0.05}
+                          />
+                        )}
+                        {turboLora && (turboLora.isPrivate || !turboLora.canGenerate) && (
+                          <Text size="xs" c="yellow.6">
+                            This LoRA is not published or not generatable right now. The generator
+                            uses the ecosystem default until it is, and your pick is kept.
+                          </Text>
+                        )}
+                      </Stack>
+                    )}
                     {showClipSkip && (
                       <InputNumber
                         name="clipSkip"
@@ -1288,8 +1308,8 @@ export function ModelVersionUpsertForm({
                         <InputNumber
                           name="settings.strength"
                           label="Strength"
-                          min={minStrength ?? -1}
-                          max={maxStrength ?? 2}
+                          min={minStrength ?? LORA_STRENGTH_BOUNDS.min}
+                          max={maxStrength ?? LORA_STRENGTH_BOUNDS.max}
                           decimalScale={1}
                           step={0.1}
                         />
@@ -1313,28 +1333,47 @@ export function ModelVersionUpsertForm({
                   </Group>
                 </Stack>
               )}
-              {modelDownloadEnabled && (
-                <Stack gap={8}>
-                  <Divider label="Additional options" />
-
-                  <InputSwitch
-                    name="requireAuth"
-                    label="Require users to be logged in to download this asset"
-                    description={
-                      <>
-                        This limits a bots ability to download the files associated with this
-                        resource.
-                        <br />
-                        This will also require third-party applications to utilize a user API key to
-                        download the asset files.
-                      </>
+              {showTurboSection && (
+                <Stack gap="xs">
+                  <Divider label="Turbo" />
+                  <Checkbox
+                    label="Turbo variant"
+                    description="A distillation LoRA for fewer steps. The generator's Turbo picker lists it and applies these settings when it is on."
+                    checked={isTurbo}
+                    onChange={(e) =>
+                      form.setValue(
+                        'settings.turbo',
+                        e.currentTarget.checked ? ecosystemTurboSettings ?? null : null,
+                        { shouldDirty: true, shouldValidate: true }
+                      )
                     }
                   />
+                  {isTurbo && (
+                    <>
+                      <RecommendedRangeInputs
+                        name="settings.turbo.steps"
+                        label="Steps"
+                        min={1}
+                        max={100}
+                        required
+                      />
+                      <RecommendedRangeInputs
+                        name="settings.turbo.cfgScale"
+                        label="CFG scale"
+                        min={0}
+                        max={30}
+                        step={0.5}
+                        decimalScale={1}
+                        required
+                      />
+                    </>
+                  )}
                 </Stack>
               )}
             </Stack>
           </Card>
           {(showPaidAccessInput ||
+            showEarlyAccessLocked ||
             showLicensingFeeBlock ||
             requiresRightsAffirmation ||
             removingStoredCharge ||
@@ -1349,6 +1388,11 @@ export function ModelVersionUpsertForm({
                       <Group gap={6}>
                         <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
                           {formatPricingAllowance(allowanceState)}
+                          {feeAllowanceState && pricingAllowance
+                            ? ` · licensing fees: ${feeAllowanceState.used} of ${
+                                feeAllowanceState.limit
+                              }, ${feeAllowanceBoostNote(pricingAllowance.feeBoost)}`
+                            : ''}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
                         <Popover width={320} withArrow withinPortal shadow="sm">
@@ -1370,7 +1414,7 @@ export function ModelVersionUpsertForm({
                         {!allowanceState.unlimited && (
                           <CapUpsell
                             used={allowanceState.used}
-                            limit={pricingAllowance?.limit ?? Infinity}
+                            limit={pricingAllowance?.baseLimit ?? Infinity}
                             capTier={feeCapTier}
                           />
                         )}
@@ -1384,10 +1428,21 @@ export function ModelVersionUpsertForm({
                     <Alert
                       color="yellow"
                       icon={<IconAlertTriangle size={18} />}
-                      title="You've priced all this month's versions"
+                      title={
+                        feeAllowanceState && !feeAllowanceState.atLimit
+                          ? "You've used this month's paid-access allowance"
+                          : "You've priced all this month's versions"
+                      }
                       mb="sm"
                     >
                       <Text size="sm">{PRICING_SLOT_EXPLAINER}</Text>
+                      {feeAllowanceState && !feeAllowanceState.atLimit && (
+                        <Text size="sm" mt={4}>
+                          You can still add a licensing fee: your extra slots cover{' '}
+                          {feeAllowanceState.remaining} more this month. They don&apos;t cover
+                          permanent paid access.
+                        </Text>
+                      )}
                       {showPaidAccessInput && canChooseTimed && (
                         <Text size="sm" mt={4}>
                           You can still put this version on a timed Early Access window — that
@@ -1397,7 +1452,7 @@ export function ModelVersionUpsertForm({
                       <Box mt="xs">
                         <CapUpsell
                           used={allowanceState.used}
-                          limit={pricingAllowance?.limit ?? Infinity}
+                          limit={pricingAllowance?.baseLimit ?? Infinity}
                           capTier={feeCapTier}
                           expanded
                         />
@@ -1437,15 +1492,16 @@ export function ModelVersionUpsertForm({
                   <Alert
                     color="yellow"
                     icon={<IconAlertTriangle size={18} />}
-                    title="You can't monetize this version yet"
+                    title={`Monetizing a model needs a Creator Score of ${eligibility.required.toLocaleString()}`}
                     mb="sm"
                   >
                     <Text size="sm">
-                      Monetizing a model version needs a creator score of{' '}
-                      {eligibility.required.toLocaleString()}. Yours is{' '}
-                      {eligibility.score.toLocaleString()} —{' '}
-                      {eligibility.shortfall.toLocaleString()} to go. Prices you have already set
-                      are unaffected.
+                      <CreatorScoreGateMessage
+                        score={eligibility.score}
+                        total={creatorScoreFromSession(currentUser)}
+                        required={eligibility.required}
+                      />{' '}
+                      Prices you have already set are unaffected.
                     </Text>
                   </Alert>
                 )}
@@ -1511,6 +1567,9 @@ export function ModelVersionUpsertForm({
                     label={MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}
                     mt="sm"
                   />
+                )}
+                {showEarlyAccessLocked && (
+                  <EarlyAccessLockedRow score={creatorScoreFromSession(currentUser)} />
                 )}
                 {showChargeSettings && showPaidAccessInput && (
                   <Stack gap={0} mt="md">
@@ -1652,7 +1711,13 @@ export function ModelVersionUpsertForm({
                                       </Popover>
                                     </Group>
                                   }
-                                  description="When the window ends the version becomes free. Up to 30 days at your current Creator Program score."
+                                  description={`When the window ends the version becomes free.${
+                                    earlyAccessUnlockedDays.length > 0
+                                      ? ` You can set up to ${Math.max(
+                                          ...earlyAccessUnlockedDays
+                                        )} days.`
+                                      : ''
+                                  }`}
                                   error={form.formState.errors.paidAccessConfig?.message}
                                 >
                                   <SegmentedControl
@@ -2000,7 +2065,8 @@ export function ModelVersionUpsertForm({
                                 />
                                 <Text size="xs" c="yellow">
                                   With a license fee set, this version stops earning creator
-                                  compensation and tips — you earn through the license fee instead.
+                                  compensation — you earn through the license fee instead. It can
+                                  still receive creator tips.
                                 </Text>
                               </Group>
                             )}
@@ -2013,6 +2079,16 @@ export function ModelVersionUpsertForm({
               </Stack>
             </Card>
           )}
+          <Card withBorder p="md">
+            <Stack gap="sm">
+              <Text fw={600}>Version metric privacy</Text>
+              <MetricPrivacyControls
+                level="version"
+                inherited={inheritedMetrics}
+                access={metricPrivacyAccess}
+              />
+            </Stack>
+          </Card>
         </Stack>
         {children({ loading: upsertVersionMutation.isPending, canSave })}
       </Form>
@@ -2025,11 +2101,7 @@ type VersionInput = Omit<
   'recommendedResources' | 'paidAccess' | 'donationGoal'
 > & {
   createdAt: Date | null;
-  recommendedResources?: (Omit<
-    GenerationResourceSchema,
-    'strength' | 'minStrength' | 'maxStrength'
-  > &
-    RecommendedSettingsSchema)[];
+  recommendedResources?: GenerationResourceSchema[];
   // The DTO shape the version is loaded with (getById), NOT the write-input shape.
   paidAccess: ModelVersionPaidAccessDto | null;
   donationGoal: { goalAmount: number } | null;
@@ -2041,7 +2113,13 @@ type Props = {
   // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. The edit
   // page and both wizards pass a query result carrying it; ModelWizard's template/bounty paths don't, but
   // those carry no version `meta` either, so the check lands on asking rather than on a silent bypass.
-  model?: Partial<ModelUpsertInput & { publishedAt: Date | null; user: { id: number } | null }>;
+  model?: Partial<
+    ModelUpsertInput & {
+      publishedAt: Date | null;
+      user: { id: number } | null;
+      ownerMetricPrivacyDefaults: HiddenModelMetrics | null;
+    }
+  >;
   // Base model of the model's most recent existing version; used to default the
   // picker when adding a brand-new version to an existing model.
   previousBaseModel?: string | null;

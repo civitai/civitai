@@ -1,7 +1,8 @@
-import type {
-  NavGateContext,
-  NavGroup,
-  NavRegistryEntry,
+import {
+  isNavEntryVisible,
+  type NavGateContext,
+  type NavGroup,
+  type NavRegistryEntry,
 } from '~/components/HomeContentToggle/nav-registry';
 import type { NavKey } from '~/shared/constants/nav.constants';
 
@@ -132,7 +133,7 @@ export function resolveNavItems(
     keys
       .filter((key) => !hidden.has(key))
       .map((key) => byKey.get(key))
-      .filter((entry): entry is NavRegistryEntry => !!entry && (entry.visible?.(ctx) ?? true));
+      .filter((entry): entry is NavRegistryEntry => !!entry && isNavEntryVisible(entry, ctx));
 
   return {
     bar: resolve(groups.bar),

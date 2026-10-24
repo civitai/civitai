@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { useRouter } from 'next/router';
 import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
@@ -88,17 +89,22 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
 }));
 
-// 🔴 THE SHARED SUB-NAV IS STUBBED, and that is a scoping decision rather than
-// convenience. `/apps/listing/[appListingId]/edit` moved onto `AppsPageLayout`, which
-// mounts `AppsSubNav` — a component with three context/data inputs of its own
+// 🔴 THE SHARED NAV'S DATA HOOK IS STUBBED, and that is a scoping decision rather than
+// convenience. `/apps/listing/[appListingId]/edit` renders `AppsPageLayout`, which calls
+// `useAppsNavSections` — a hook with three context/data inputs of its own
 // (`useIsClient`, `useCurrentUser`, `blocks.getNavSummary`). Wiring them here would
 // make this suite, which is about the listing editor, fail the next time the nav
 // gains an input. The ADOPTION is covered where it belongs: structurally in
 // `__tests__/appsPageWidths.test.ts` (every rendering /apps page mounts the layout),
 // as pixels in `AppsPageLayout.chromeAlignment.browser.test.tsx`, and end-to-end on
 // one page in `AppEditPage.browser.test.tsx`.
-vi.mock('~/components/Apps/AppsSubNav', () => ({
-  AppsSubNav: () => <div data-testid="stub-apps-subnav" />,
+//
+// ⚠️ AN EMPTY SECTION LIST MEANS NO RAIL AT ALL — the `< 2 sections` collapse — so this
+// stub also removes the 276px of rail chrome from the tree. That is the right scoping
+// for a suite about the editor's own body, and it is why the stub returns `[]` rather
+// than a placeholder element: the layout, not the nav, decides whether the rail exists.
+vi.mock('~/components/Apps/useAppsNavSections', () => ({
+  useAppsNavSections: () => [],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -181,40 +187,49 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   });
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appCollaborators: {
-          list: { invalidate: vi.fn().mockResolvedValue(undefined) },
-          getPendingTransfer: { invalidate: vi.fn().mockResolvedValue(undefined) },
-        },
-      }),
-      appListings: {
-        getAuthoringContext: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.getAuthoringContext': {
           useQuery: () => ({
             data: state.context,
             isLoading: state.context == null,
             error: null,
           }),
         },
-      },
-      appCollaborators: {
-        list: { useQuery: () => ({ data: state.rows, isLoading: false, error: null }) },
-        getPendingTransfer: {
+        // The page asks whether the listing has feedback before deriving its tabs; not this
+        // suite's subject, so the answer is "none" and no Feedback tab renders.
+        'appFeedback.hasAnyForListing': {
+          useQuery: () => ({ data: { hasAny: false }, isLoading: false, error: null }),
+        },
+        'appCollaborators.list': {
+          useQuery: () => ({ data: state.rows, isLoading: false, error: null }),
+        },
+        'appCollaborators.getPendingTransfer': {
           useQuery: () => ({ data: state.pendingTransfer, isLoading: false, error: null }),
         },
         // The invite picker screens the candidates it is offering against the server. Nothing
         // here exercises that answer — these cases are about transfer — but the panel calls it
         // on every render, so an absent entry renders the whole tab as an empty <div>.
-        ineligibleTargets: { useQuery: () => ({ data: [], isLoading: false, error: null }) },
-        invite: mutation(),
-        remove: mutation(),
-        setDisplayed: mutation(),
-        leave: mutation(),
+        'appCollaborators.ineligibleTargets': {
+          useQuery: () => ({ data: [], isLoading: false, error: null }),
+        },
+        'appCollaborators.invite': mutation(),
+        'appCollaborators.remove': mutation(),
+        'appCollaborators.setDisplayed': mutation(),
+        'appCollaborators.leave': mutation(),
         // 🔴 Recorded, and asserted EMPTY. A refused listing must not be able to submit.
-        initiateTransfer: mutation((args) => state.initiateCalls.push(args)),
-        cancelTransfer: mutation(),
+        'appCollaborators.initiateTransfer': mutation((args) => state.initiateCalls.push(args)),
+        'appCollaborators.cancelTransfer': mutation(),
       },
-    },
+      {
+        useUtils: () => ({
+          appCollaborators: {
+            list: { invalidate: vi.fn().mockResolvedValue(undefined) },
+            getPendingTransfer: { invalidate: vi.fn().mockResolvedValue(undefined) },
+          },
+        }),
+      }
+    ),
   };
 });
 

@@ -22,7 +22,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * the actual clamp on a real `modelLocked` ecosystem — not by hand-feeding a
  * collector — so a change to the graph that stops recording also fails here.
  *
- * 🔴 `TimeSpan` IS STUBBED, AND HAS TO BE. `@civitai/client`'s entry does
+ * 🔴 `TimeSpan` IS STUBBED, AND HAS TO BE. `@civitai/orchestration-client`'s entry does
  * `export * from './generated'` — a directory specifier Node ESM rejects — so
  * under vitest `TimeSpan` resolves to an OBJECT, not a constructor, and
  * `new TimeSpan(...)` throws at import time. `vi.importActual` fails the same
@@ -32,114 +32,9 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * more mocking here.
  */
 
-vi.mock('@civitai/client', () => {
-  // 🔴 EVERY name this repo imports from the package, stubbed.
-  //
-  // vitest validates each NAMED import against the mock and refuses the module
-  // if one is missing — including names used only as types, which esbuild does
-  // not always elide. A missing one DOES fail the run (`Test Files 1 failed`,
-  // non-zero exit) — an earlier version of this comment wrongly said it did
-  // not — but the `Tests` line reads `no tests`, which is uninformative: it is
-  // a collection error, not an assertion failure, so nothing tells you WHICH
-  // symbol is missing until you read the error above it. Hence an exhaustive
-  // list rather than discovering them one error at a time.
-  //
-  // Regenerate with:
-  //   grep -rhoP "import\s+(type\s+)?\{\K[^}]*(?=\}\s+from\s+'@civitai/client')" src \
-  //     | tr ',' '\n' | sed 's/type //; s/ as .*//' | tr -d ' ' | sort -u
-  //
-  // 🔴 A PROXY WAS TRIED FIRST AND HUNG collection indefinitely (a
-  // self-referential `get` trap plus `has: () => true` defeats vitest's ESM
-  // interop probing). Explicit is uglier and terminates.
-  const stub = (() => undefined) as never;
-  const names = `
-    AceStepAudioInput AceStepAudioStepTemplate AiToolkitTrainingInput Air AssistantMessage
-    AudioBlob AudioCaptioningStepTemplate BasicAnimationsBlobs Blob BuzzClientAccount
-    ChatCompletionChoice ChatCompletionInput ChatCompletionOutput ChatCompletionStep
-    ChatCompletionStepTemplate ComfyAnimaCreateImageGenInput
-    ComfyBooguBaseCreateImageGenInput ComfyBooguEditImageInput ComfyBooguEditTurboImageInput
-    ComfyBooguTurboCreateImageGenInput ComfyErnieStandardCreateImageGenInput
-    ComfyErnieTurboCreateImageGenInput ComfyHiDreamO1CreateImageGenInput
-    ComfyHiDreamO1DevCreateImageGenInput ComfyHiDreamO1DevEditImageGenInput
-    ComfyHiDreamO1EditImageGenInput ComfyKrea2RawCreateImageGenInput
-    ComfyKrea2TurboCreateImageGenInput ComfyLensNormalCreateImageGenInput
-    ComfyLensTurboCreateImageGenInput ComfyLtx23CreateVideoInput ComfyLtx23EditVideoInput
-    ComfyLtx23ExtendVideoInput ComfyLtx23FirstLastFrameToVideoInput
-    ComfyLtx2CreateVideoInput ComfyLtx2FirstLastFrameToVideoInput
-    ComfyMageFlow4bCreateImageGenInput ComfyMageFlow4bEditImageInput
-    ComfyMageFlow4bEditTurboImageInput ComfyMageFlow4bTurboCreateImageGenInput ComfySampler
-    ComfyScheduler ComfyStepTemplate ConsumerBlobPresignResponse ConvertImageOutput
-    ConvertImageStep ConvertImageStepTemplate CustomComfyStepTemplate
-    Flux1KontextMaxImageGenInput Flux1KontextProImageGenInput Flux2DevImageGenInput
-    Flux2FlexImageGenInput Flux2KleinCreateImageInput Flux2KleinEditImageInput
-    Flux2MaxImageGenInput Flux2ProImageGenInput FluxDevFastImageResourceTrainingInput
-    Gemini25FlashCreateImageGenInput Gemini25FlashEditImageGenInput GetWorkflowData
-    GetWorkflowStepData GrokCreateImageGenInput GrokEditImageGenInput GrokEditVideoInput
-    GrokImageToVideoInput GrokTextToVideoInput GrokV15ImageToVideoInput
-    GrokV15ReferenceToVideoInput GrokV15TextToVideoInput HappyHorseV11ImageToVideoInput
-    HappyHorseV11ReferenceToVideoInput HappyHorseV11TextToVideoInput
-    HappyHorseV1ImageToVideoInput HappyHorseV1ReferenceToVideoInput
-    HappyHorseV1TextToVideoInput HappyHorseV1VideoEditInput
-    Hunyuan3dImageTo3dComfyPolyGenInput HunyuanVdeoGenInput ImageBlob ImageGenInput
-    ImageGenStepTemplate ImageJobControlNet ImageJobNetworkParams
-    ImageResourceTrainingOutput ImageResourceTrainingStep ImageResourceTrainingStepTemplate
-    ImageTransformer Imagen4ImageGenInput JsonPatchFactory KlingModel KlingV3VideoGenInput
-    KlingVideoGenInput KohyaImageResourceTrainingInput Krea2FalImageGenInput
-    Krea2StyleReference MaiImageCreateFalImageGenInput MaiImageEditFalImageGenInput
-    MediaCaptioningStepTemplate MediaHashStep MediaHashStepTemplate MediaRatingOutput
-    MeshyImageTo3dFalPolyGenInput MeshyTextTo3dFalPolyGenInput
-    MeshyV7ImageTo3dFalPolyGenInput MeshyV7MultiImageTo3dFalPolyGenInput MiniMaxH3VideoGenInput
-    MochiVideoGenInput Model3dBlob MusubiImageResourceTrainingInput NanoBanana2ImageGenInput
-    NanoBanana2LiteImageGenInput NanoBananaProImageGenInput NsfwLevel
-    OpenAiGpt15CreateImageInput OpenAiGpt15EditImageInput OpenAiGpt1CreateImageInput
-    OpenAiGpt1EditImageInput OpenAiGpt1ImageGenInput OpenAiGpt2CreateImageInput
-    OpenAiGpt2EditImageInput Options PolyGenOutput PolyGenStep PolyGenStepTemplate
-    PreprocessImageInput PreprocessImageStepTemplate Priority PromptEnhancementInput
-    PromptEnhancementOutput PromptEnhancementStep PromptEnhancementStepTemplate
-    Qwen20bCreateImageGenInput Qwen20bEditImageGenInput Qwen2CreateFalImageGenInput
-    Qwen2EditFalImageGenInput ResizeTransform ResourceInfo ReveCreateFalImageGenInput
-    ReveEditFalImageGenInput Scheduler Sd1AiToolkitTrainingInput SdCppSampleMethod
-    SdCppSchedule SdxlAiToolkitTrainingInput SeedanceVideoGenInput SeedreamImageGenInput
-    SeedreamVersion Sora2ImageToVideoInput Sora2TextToVideoInput SubmitWorkflowData
-    TextToImageStep TextToImageStepTemplate TrainingOutput TrainingStep TrainingStepTemplate
-    TransactionInfo TransactionType Trellis2ImageTo3dComfyPolyGenInput
-    TripoFalPolyGenInput UpdateWorkflowRequest
-    Veo3VideoGenInput VideoBlob VideoEnhancementInput VideoEnhancementStepTemplate
-    VideoGenStepTemplate VideoInterpolationStepTemplate VideoUpscalerStepTemplate
-    ViduQ3VideoGenInput ViduVideoGenInput Wan21CivitaiVideoGenInput
-    Wan225bFalImageToVideoInput Wan225bFalTextToVideoInput Wan22ComfyVideoGenInput
-    Wan22FalImageToVideoInput Wan22FalTextToVideoInput Wan25FalImageToVideoInput
-    Wan25FalTextToVideoInput Wan27FalEditVideoInput Wan27FalImageEditInput
-    Wan27FalImageToVideoInput Wan27FalReferenceToVideoInput Wan27FalTextToImageInput
-    Wan27FalTextToVideoInput WdTaggingStepTemplate Workflow WorkflowCallback WorkflowCost
-    WorkflowEvent WorkflowStatus WorkflowStep WorkflowStepEvent WorkflowStepJobQueuePosition
-    WorkflowStepTemplate WorkflowTemplate XGuardLabelResult XGuardModerationOutput
-    XGuardModerationStep XGuardModerationStepTemplate ZImageBaseCreateImageGenInput
-    ZImageTurboCreateImageGenInput ZipTrainingData addWorkflowTag applyPatch
-    createCivitaiClient deleteWorkflow getConsumerBlobUploadUrl getResource getWorkflow
-    getWorkflowStep handleError invokeImageUploadStepTemplate
-    invokeVideoEnhancementStepTemplate invokeVideoMetadataStepTemplate patchWorkflow
-    patchWorkflowStep queryWorkflows refreshBlob removeWorkflowTag submitWorkflow
-    updateWorkflow updateWorkflowStep
-  `
-    .split(/\s+/)
-    .filter(Boolean);
-  const mod: Record<string, unknown> = Object.fromEntries(names.map((n) => [n, stub]));
-  // The only export actually CONSTRUCTED by the code under test:
-  // `new TimeSpan(0, 20, 0)` then `.addMinutes(n)` then `.toString([...])`,
-  // used to compute a submit timeout. Nothing here asserts on the value.
-  mod.TimeSpan = class {
-    constructor(public h = 0, public m = 0, public s = 0) {}
-    addMinutes(n: number) {
-      this.m += n;
-      return this;
-    }
-    toString() {
-      return `${this.h}:${this.m}:${this.s}`;
-    }
-  };
-  return mod;
-});
+vi.mock('@civitai/orchestration-client', async () =>
+  (await import('./civitai-client.stub')).civitaiClientStub()
+);
 
 // `vi.hoisted` because `vi.mock` factories are lifted above every top-level
 // binding — referencing a plain `const` from one throws "Cannot access
@@ -233,9 +128,10 @@ import {
 import {
   createModelSubstitutionCollector,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
-} from '~/shared/data-graph/generation/model-substitution';
-import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
-import { getWorkflowCapability } from '~/shared/data-graph/generation/workflow-capability';
+} from '~/shared/generation/model-substitution';
+import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
+import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
+import { getResourceData } from '~/server/services/generation/generation.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -244,7 +140,7 @@ const UNRECOGNIZED_ID = 987654321;
 const QWEN_DEFAULT = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
 
 /** A server-shaped context carrying a fresh per-request collector. */
-function ctx() {
+function ctx(overrides: Record<string, unknown> = {}) {
   return {
     limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
     user: { isMember: false, tier: 'free' },
@@ -253,6 +149,7 @@ function ctx() {
     selfHostedMode: 'enabled',
     gateRules: [],
     modelSubstitutions: createModelSubstitutionCollector(classifyModelSubstitutionReason, 'api'),
+    ...overrides,
   } as never;
 }
 
@@ -272,12 +169,52 @@ function input(modelVersionId?: number) {
 
 const common = { userId: 1, isModerator: false, token: 't', experimental: false } as const;
 
-describe('the graph fixture is still what these tests assume', () => {
-  it('Qwen/txt2img is modelLocked with a default', () => {
-    // Guard the guard: if Qwen stops being modelLocked, nothing below
-    // substitutes and every assertion would pass vacuously.
-    expect(getWorkflowCapability('Qwen', 'txt2img')?.modelLocked).toBe(true);
-    expect(typeof QWEN_DEFAULT).toBe('number');
+// A `disabled` version is deliberately still selectable and still parses, so
+// this refusal is the ONLY thing between it and a billed submit. `QWEN_DEFAULT`
+// rather than an arbitrary id: an unrecognised one is substituted away before
+// the refusal is reached, and the test would pass for the wrong reason.
+describe('gate rules — a disabled version is refused, not costed', () => {
+  const disabledRule = {
+    id: 'gate-1',
+    name: 'maintenance',
+    availableTo: 'nobody',
+    presentation: 'disabled',
+    message: 'Back Monday.',
+    ecosystems: [],
+    workflows: [],
+    modelVersionIds: [QWEN_DEFAULT],
+  };
+
+  it('🔴 refuses the zero-spend estimate', async () => {
+    await expect(
+      whatIfFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  it('🔴 refuses the submit', async () => {
+    await expect(
+      generateFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  // Negative control: the same input with no rules must get past the refusal,
+  // or the two assertions above would pass on any unrelated failure.
+  it('lets the same request through when no rule targets it', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { modelSubstitutions?: unknown };
+
+    expect(result.modelSubstitutions).toBeUndefined();
   });
 });
 
@@ -302,6 +239,44 @@ describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => 
     } as never)) as Record<string, unknown>;
 
     expect('modelSubstitutions' in result).toBe(false);
+  });
+});
+
+describe('whatIfFromGraph — reply carries the orchestrator step warnings', () => {
+  const retiring = {
+    code: 'modelDeprecated',
+    message: "Model 'max' is deprecated and will be retired on 2026-10-09.",
+  };
+
+  // The reply is the ONLY carrier: read off the steps the ORCHESTRATOR returned, not the step
+  // templates this service built — those never carry warnings, and reading them compiles.
+  it('🔴 reports one warning per distinct code + message', async () => {
+    submitWorkflow.mockImplementationOnce(async () => ({
+      id: '1-20260101000000000',
+      status: 'succeeded',
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      steps: [{ warnings: [retiring] }, { warnings: [{ ...retiring }] }],
+      cost: { total: 60 },
+      transactions: { list: [] },
+    }));
+
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { warnings?: unknown };
+
+    expect(result.warnings).toEqual([retiring]);
+  });
+
+  it('omits the key when the orchestrator sends no warnings', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as Record<string, unknown>;
+
+    expect('warnings' in result).toBe(false);
   });
 });
 
@@ -403,5 +378,62 @@ describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
     expect(deleteWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: strangersWorkflow, throwOnError: true })
     );
+  });
+});
+
+describe('generateFromGraph — creator tip vs resource eligibility', () => {
+  const tips = { civitaiTip: 0.05, creatorTip: 0.25 };
+
+  /** The resolved Qwen checkpoint, generatable, with its owner's tip eligibility. */
+  const resource = (tipsEnabled: boolean, isOwnedByUser = false) => ({
+    id: QWEN_DEFAULT,
+    name: 'Qwen',
+    air: `urn:air:qwen:checkpoint:civitai:1@${QWEN_DEFAULT}`,
+    baseModel: 'Qwen',
+    trainedWords: [],
+    availability: 'Public',
+    canGenerate: true,
+    hasAccess: true,
+    strength: 1,
+    settings: { strength: { min: -1, max: 2, default: 1 } },
+    model: { id: 1, name: 'Qwen', type: 'Checkpoint', poi: false },
+    tipsEnabled,
+    isOwnedByUser,
+  });
+
+  beforeEach(() => {
+    setEnv({ ORCHESTRATOR_MODE: 'prod' });
+    submitWorkflow.mockClear();
+  });
+  afterAll(() => {
+    resetEnv();
+  });
+
+  async function submittedTips(resources: unknown[]) {
+    vi.mocked(getResourceData).mockResolvedValueOnce(resources as never);
+    await generateFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+      ...tips,
+    } as never);
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+    return (submitWorkflow.mock.calls[0][0].body as Record<string, unknown>).tips;
+  }
+
+  it('drops the creator tip when the only resource is tip-exempt, keeping the Civitai tip', async () => {
+    expect(await submittedTips([resource(false)])).toEqual({ civitai: 0.05, creators: 0 });
+  });
+
+  it('passes the creator tip through when a resource is tip-eligible', async () => {
+    expect(await submittedTips([resource(true)])).toEqual({ civitai: 0.05, creators: 0.25 });
+  });
+
+  it("drops the creator tip when the only eligible resource is the user's own", async () => {
+    expect(await submittedTips([resource(true, true)])).toEqual({ civitai: 0.05, creators: 0 });
+  });
+
+  it('drops the creator tip when no resource resolves', async () => {
+    expect(await submittedTips([])).toEqual({ civitai: 0.05, creators: 0 });
   });
 });

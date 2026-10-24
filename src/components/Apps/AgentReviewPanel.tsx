@@ -1,9 +1,26 @@
 import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
-import { useEffect, useRef } from 'react';
-import { IconInfoCircle, IconRefresh, IconRobot, IconX } from '@tabler/icons-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconRefresh,
+  IconRobot,
+  IconX,
+} from '@tabler/icons-react';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  degradedReportSummary,
+  failedAgentReportSections,
+  hasUsableAgentReportSection,
+  missingAgentReportSections,
+  type AgentReportSection,
+} from '~/components/Apps/agentReviewReport';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -81,7 +98,12 @@ export function isOnsiteReviewRequest(request: {
   if (topKind && topKind !== 'onsite') return false;
   const m = (request.manifest ?? {}) as Record<string, unknown>;
   const mKind = typeof m.kind === 'string' ? m.kind : typeof m.type === 'string' ? m.type : null;
-  if (mKind === 'external' || mKind === 'external-link' || mKind === 'connect' || mKind === 'offsite')
+  if (
+    mKind === 'external' ||
+    mKind === 'external-link' ||
+    mKind === 'connect' ||
+    mKind === 'offsite'
+  )
     return false;
   return true;
 }
@@ -121,17 +143,36 @@ export function AgentReviewPanel({
     }
   );
 
+  // Which single analysis a targeted re-run is in flight for, so the per-section control
+  // can show its own spinner rather than the whole panel going busy.
+  const [rerunningSection, setRerunningSection] = useState<AgentReportSection | null>(null);
+
   const startMut = trpc.blocks.startAgentReview.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: `Agentic review started for ${slug}.` });
+      setRerunningSection(null);
       await utils.blocks.getAgentReview.invalidate({ publishRequestId });
     },
     onError: (e) => {
+      // 🔴 CLEAR THE TARGETED MARKER ON THE ERROR PATH TOO. It was cleared only in
+      // `onSuccess`, so after a FAILED targeted re-run the stale section survived — and the
+      // next "Re-run all analyses" painted its spinner on that one section's button while a
+      // whole-report run was in flight.
+      setRerunningSection(null);
       // A CONFLICT ("a review is already running for this request") is EXPECTED
       // when a run is already in flight — refetch so the panel falls into the
       // running state instead of surfacing an error / crashing.
       if (isAlreadyRunningError(e)) {
-        showSuccessNotification({ message: 'A review is already running for this request.' });
+        // 🔴 NOT A SUCCESS TOAST. This path means the request was DROPPED — the server
+        // refused it because a run is already in flight — and a green "a review is already
+        // running" told a moderator their re-run was fine. It is not: the section they asked
+        // for is never re-run, the next report still shows it failed, and that reads as "the
+        // re-run didn't help" and earns another click. Say what happened instead.
+        showWarningNotification({
+          title: 'Not re-run',
+          message:
+            'A review is already running for this submission, so this request was dropped. Wait for it to finish, then try again.',
+        });
         void utils.blocks.getAgentReview.invalidate({ publishRequestId });
         return;
       }
@@ -148,6 +189,27 @@ export function AgentReviewPanel({
   const hasReport = status === 'complete' || status === 'cost-capped';
   const failed = status === 'failed';
   const tornDown = status === 'torn-down';
+
+  /**
+   * 🔴 A `failed` REPORT IS USUALLY A PARTIAL ONE, AND THIS IS THE FIX FOR IT.
+   *
+   * The runner's own `any_failed()` marks the WHOLE report `failed` when any ONE of its
+   * three analyses fails, and this panel took that at face value: it rendered a red "the
+   * agentic review failed" banner and NOTHING ELSE — so a mod lost a complete security
+   * audit and a complete scope trace because the code review came back as prose. Measured
+   * on live rows: 4 of 11 runs were `failed`, and the most recent of them had
+   * `code_review = {"error":"non-json-response"}` beside two sections with real content.
+   *
+   * So the banner is now a degraded HEADER over the report body rather than a replacement
+   * for it, whenever at least one section survived. `hasUsableAgentReportSection` reads the
+   * RAW slots (the tolerant parse would flatten an `{ error }` to an empty section and make
+   * "broken" indistinguishable from "found nothing"), so this cannot be satisfied by a
+   * report where everything failed — that case keeps the plain banner, which is then the
+   * honest surface.
+   */
+  const partiallyUsable = failed && !!report && hasUsableAgentReportSection(report);
+  const failedSections = report ? failedAgentReportSections(report) : [];
+  const missingSections = report ? missingAgentReportSections(report) : [];
 
   // Mark / clear the per-run poll start so the time ceiling is measured per-run.
   useEffect(() => {
@@ -169,13 +231,35 @@ export function AgentReviewPanel({
       elapsedMs: pollStartedAt.current != null ? Date.now() - pollStartedAt.current : 0,
     }) === false;
 
+  /**
+   * 🔴 ONE FLAG FOR EVERY DISPATCH CONTROL ON THIS SURFACE — the whole-report button AND the
+   * three per-section ones, which is the half that was open.
+   *
+   * `ReportTabs` disabled only the SECTION YOU CLICKED (`disabled={rerunning}`), so while a
+   * targeted re-run was in flight the other two stayed live and each would dispatch its own.
+   * That costs a second ephemeral agent and a second full model run over the bundle, against
+   * a server pre-check that is a replica read and cannot see the row just written. `loading`
+   * stays per-section so only the clicked one spins.
+   *
+   * ⚠️ IT IS `isPending` ALONE, AND AN EARLIER REVISION ADDED `|| reportQuery.isFetching` ON
+   * A MECHANISM THAT IS NOT REAL. The claim was that `onSuccess` clears the pending flag and
+   * THEN awaits the invalidation, leaving a live button over a stale row. `@tanstack/query-core`
+   * does the opposite: `Mutation.execute` awaits `options.onSuccess` (mutation.js:123) and
+   * dispatches `{type:'success'}` only afterwards (mutation.js:144) — so `isPending` already
+   * spans the invalidate and its awaited refetch. Measured with a live observer: the flag is
+   * still true on `onSuccess` EXIT. The extra term bought nothing and added a failure the
+   * flag alone cannot produce — `retry: false` plus a hung request holds `isFetching` true
+   * for as long as the socket hangs, disabling the primary action with no mutation in flight.
+   */
+  const dispatchBusy = startMut.isPending;
+
   const runButton = (label: string) => (
     <Button
       size="xs"
       variant="light"
       leftSection={<IconRobot size={14} />}
-      loading={startMut.isPending}
-      disabled={startMut.isPending}
+      loading={dispatchBusy}
+      disabled={dispatchBusy}
       onClick={() => startMut.mutate({ publishRequestId })}
     >
       {label}
@@ -200,8 +284,8 @@ export function AgentReviewPanel({
         )}
       </Group>
       <Text size="xs" c="dimmed">
-        Dispatch an ephemeral, sandboxed agent to code-review + security-audit this
-        pending bundle. Advisory decision-support only.
+        Dispatch an ephemeral, sandboxed agent to code-review + security-audit this pending bundle.
+        Advisory decision-support only.
       </Text>
 
       {reportQuery.isLoading ? (
@@ -245,6 +329,52 @@ export function AgentReviewPanel({
             </Text>
           </Group>
         )
+      ) : partiallyUsable ? (
+        <Stack gap={6}>
+          {/*
+            A DEGRADED HEADER, NOT A REPLACEMENT FOR THE REPORT. It names WHICH analyses
+            failed — the mod's next question — and the body below renders the ones that did
+            not, each failed tab carrying its own reason and its own re-run control.
+          */}
+          <Alert
+            color="orange"
+            variant="light"
+            icon={<IconAlertTriangle size={14} />}
+            data-testid="apps-agent-partial-failure"
+          >
+            <Text size="xs">{degradedReportSummary(failedSections, missingSections)}</Text>
+            {/*
+              🔴 `summaryMd` IS RENDERED HERE AND NOWHERE ELSE ON THIS BRANCH. It is the
+              only place a PROVISIONING failure says what went wrong ("Provisioning failed:
+              …", written by `startAgentReview`'s catch), and a provisioning failure on a
+              targeted re-run produces exactly this shape — one carried-forward section
+              complete, the retried ones missing. Dropping it left the moderator with a
+              partially-rendered report and no account of why it is partial.
+              Inert text, like every other value from this row.
+            */}
+            {report.summaryMd && (
+              <Text
+                size="xs"
+                mt={4}
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                data-testid="apps-agent-partial-summary"
+              >
+                {report.summaryMd}
+              </Text>
+            )}
+          </Alert>
+          <ReportTabs
+            report={report}
+            costCapped={false}
+            onRerunSection={(section) => {
+              setRerunningSection(section);
+              startMut.mutate({ publishRequestId, sections: [section] });
+            }}
+            rerunningSection={dispatchBusy ? rerunningSection : null}
+            dispatchBusy={dispatchBusy}
+          />
+          <Group gap="xs">{runButton('Re-run all analyses')}</Group>
+        </Stack>
       ) : failed ? (
         <Stack gap={6}>
           <Alert color="red" variant="light" icon={<IconX size={14} />}>
@@ -261,14 +391,42 @@ export function AgentReviewPanel({
           <Group gap="xs">{runButton('Run again')}</Group>
         </Stack>
       ) : hasReport ? (
-        <ReportTabs report={report} costCapped={status === 'cost-capped'} />
+        <Stack gap={6}>
+          <ReportTabs
+            report={report}
+            costCapped={status === 'cost-capped'}
+            onRerunSection={(section) => {
+              setRerunningSection(section);
+              startMut.mutate({ publishRequestId, sections: [section] });
+            }}
+            rerunningSection={dispatchBusy ? rerunningSection : null}
+            dispatchBusy={dispatchBusy}
+          />
+          {/*
+            🔴 A `complete` REPORT CAN STILL BE MISSING AN ANALYSIS, and until this was added
+            that mod had no way to run it. `buildReportUpdate` writes only the fields the
+            callback body carries, so a runner reporting `status: 'complete'` while omitting
+            one section produces a green-badged report with a "not run" tab — and this branch
+            rendered `ReportTabs` and nothing else, so the only re-run affordance on the whole
+            panel was the per-section one inside the missing tab. It becomes the COMMON shape
+            once the pod honours `AGENT_REVIEW_SECTIONS`, because a targeted re-run's callback
+            reports on one section by design.
+          */}
+          <Group gap="xs">{runButton('Re-run all analyses')}</Group>
+        </Stack>
       ) : null}
 
-      {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal chat with the agent.
-          Shown ONLY while the agent POD is up: running (mid-analysis), complete,
-          or cost-capped. Hidden for failed / torn-down / no-report (no pod to
-          talk to). Inherits the panel's client-flag + onsite-pending gate. */}
-      {(running || hasReport) && <AgentReviewChat publishRequestId={publishRequestId} />}
+      {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — chat with the agent about its report.
+          🔴 THE GATE IS "IS THERE SOMETHING TO GROUND ON", NOT "IS A POD UP" — chat was
+          decoupled from the live pod (it is a stateless civitai→LLM completion grounded on
+          the PERSISTED report), and the service's own `CHAT_GROUNDABLE_STATUSES` already
+          includes `failed` for exactly that reason. So a PARTIALLY failed report — whose
+          surviving sections are precisely what a mod would want to ask about — is chattable
+          too. Still hidden for no-report and torn-down: there is nothing persisted to ground
+          on. Inherits the panel's client-flag + onsite-pending gate. */}
+      {(running || hasReport || partiallyUsable) && (
+        <AgentReviewChat publishRequestId={publishRequestId} />
+      )}
     </Stack>
   );
 }

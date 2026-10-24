@@ -7,7 +7,7 @@ import { getClientIp } from '$lib/server/auth/request';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '$lib/server/oauth/constants';
-import { hasScope } from '$lib/server/oauth/scope';
+import { isScopeGrantable } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
@@ -36,30 +36,49 @@ export const POST: RequestHandler = async ({ request, url }) => {
 
   const body = await request.formData().then(
     (f) => Object.fromEntries([...f.entries()].map(([k, v]) => [k, String(v)])),
-    () => ({}) as Record<string, string>
+    () => ({} as Record<string, string>)
   );
   const client_id = body.client_id;
   const scope = body.scope;
 
   if (!client_id) {
-    return json({ error: 'invalid_request', error_description: 'Missing client_id' }, { status: 400, headers });
+    return json(
+      { error: 'invalid_request', error_description: 'Missing client_id' },
+      { status: 400, headers }
+    );
   }
   // SECURITY (A1): app-block clients can never use the device flow (they carry grants:[] too, but reject
   // explicitly before the DB lookup).
   if (isAppBlockOauthClientId(client_id)) {
-    return json({ error: 'invalid_client', error_description: 'This client cannot be used for the device flow' }, { status: 400, headers });
+    return json(
+      {
+        error: 'invalid_client',
+        error_description: 'This client cannot be used for the device flow',
+      },
+      { status: 400, headers }
+    );
   }
 
   if (!(await checkOAuthRateLimit('device', getClientIp(request)))) {
     return json({ error: 'rate_limited' }, { status: 429, headers });
   }
 
-  const client = await db.selectFrom('OauthClient').selectAll().where('id', '=', client_id).executeTakeFirst();
+  const client = await db
+    .selectFrom('OauthClient')
+    .selectAll()
+    .where('id', '=', client_id)
+    .executeTakeFirst();
   if (!client) {
-    return json({ error: 'invalid_client', error_description: 'Unknown client' }, { status: 400, headers });
+    return json(
+      { error: 'invalid_client', error_description: 'Unknown client' },
+      { status: 400, headers }
+    );
   }
   if (!client.grants.includes('urn:ietf:params:oauth:grant-type:device_code')) {
-    return json({ error: 'unauthorized_client', error_description: 'Client not authorized for device flow' }, { status: 400, headers });
+    return json(
+      { error: 'unauthorized_client', error_description: 'Client not authorized for device flow' },
+      { status: 400, headers }
+    );
   }
 
   const rawScope = parseInt(scope, 10) || 0;
@@ -69,9 +88,11 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
   // UserRead baseline, always allowed.
   const requestedScope = rawScope | TokenScope.UserRead;
-  const allowedScopes = client.allowedScopes | TokenScope.UserRead;
-  if (requestedScope > 0 && !hasScope(allowedScopes, requestedScope)) {
-    return json({ error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' }, { status: 400, headers });
+  if (!isScopeGrantable(client.allowedScopes, requestedScope, 'user')) {
+    return json(
+      { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
+      { status: 400, headers }
+    );
   }
 
   const redis = getRedis();

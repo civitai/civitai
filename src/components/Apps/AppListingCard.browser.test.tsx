@@ -50,11 +50,18 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * P2b AppListingCard component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gate is appListingCardView.test.ts). These pin the
+ * P2b AppListingCard component tests (`Component tests` in CI; the node-tier
+ * gate is appListingCardView.test.ts). These pin the
  * rendered kind badge, recommend label, and kind-aware CTA affordance for a few
- * representative cards, PLUS the owner "Edit" deep-link gating (Item 2) and the
- * long-username tooltip fallback (Item 1).
+ * representative cards, PLUS the owner "Edit" deep-link gating (Item 2), the
+ * clamped-title tooltip fallback, the card's LAYOUT contract (a two-line reserved
+ * title, a 46px action row, and the stats line BELOW that row) and the play
+ * count's null-vs-zero rule.
+ *
+ * ⚠️ "PLUS the long-username tooltip fallback (Item 1)" USED TO BE THE LAST CLAUSE
+ * HERE. That test is deleted with its subject — the card no longer renders an
+ * author chip (2026-09-06) — and the surviving tooltip coverage is the TITLE's, so
+ * the sentence is re-derived rather than trimmed.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -75,6 +82,13 @@ const mocks = vi.hoisted(() => ({
   delistMutate: vi.fn(),
   resetOffsiteMutate: vi.fn(),
   resetOnsiteMutate: vi.fn(),
+  // The owner "Visibility" item's lazy read. Every `useQuery` call is recorded with its
+  // `enabled`, so a test can show the read is OFF until the item is clicked. The stub
+  // returns data only when enabled, matching React Query's behaviour for a disabled query.
+  authoringCalls: [] as { input: unknown; enabled: boolean | undefined }[],
+  authoringContext: null as null | Record<string, unknown>,
+  setVisibilityMutate: vi.fn(),
+  setVisibilityAsModMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -98,7 +112,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 /**
  * 🔴 tRPC IS REACHED ONLY THROUGH THE `⋮` MENU'S MODALS, AND ONLY AFTER IT IS OPENED.
  *
- * The card itself makes no request. The shared `AppListingActionsMenu` mounts its four
+ * The card itself makes no request. The shared `AppListingActionsMenu` mounts its
  * modals lazily — the first time the menu opens — so a test that never opens it needs
  * none of this. It is mocked anyway because several tests below DO open the menu, and
  * because a suite that would explode the moment someone adds such a test is a trap.
@@ -161,12 +175,31 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 THE TWO VISIBILITY PICKERS' HOOKS. Both modals mount (lazily) the first time an
+      // owner's or moderator's menu opens, so a missing key here throws AT MOUNT and fails
+      // every test that opens the menu — not just the visibility ones.
+      getAuthoringContext: {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          mocks.authoringCalls.push({ input, enabled: opts?.enabled });
+          return opts?.enabled
+            ? { data: mocks.authoringContext ?? undefined, isError: false }
+            : { data: undefined, isError: false };
+        },
+      },
+      setListingVisibility: {
+        useMutation: () => ({ mutate: mocks.setVisibilityMutate, isPending: false }),
+      },
+      setListingVisibilityAsModerator: {
+        useMutation: () => ({ mutate: mocks.setVisibilityAsModMutate, isPending: false }),
+      },
     },
     useUtils: () => ({
       appListings: {
         getMyReview: { invalidate: async () => undefined },
         listReviews: { invalidate: async () => undefined },
         getAppDetail: { invalidate: async () => undefined },
+        getAuthoringContext: { invalidate: async () => undefined },
+        listMine: { invalidate: async () => undefined },
       },
     }),
   },
@@ -178,6 +211,10 @@ const { AppListingCard } = await import('./AppListingCard');
 beforeEach(() => {
   mocks.currentUser = null;
   mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
+  mocks.authoringCalls = [];
+  mocks.authoringContext = null;
+  mocks.setVisibilityMutate.mockClear();
+  mocks.setVisibilityAsModMutate.mockClear();
 });
 
 /** A signed-in moderator who is NOT the fixture's owner (`base().creator.id === 5`). */
@@ -233,6 +270,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
@@ -338,12 +376,22 @@ function actionRow(ctaName: string) {
 
 /** The recommend rollup, wherever it is. Used for BOTH presence and absence. */
 const ROLLUP_SELECTOR = '[data-testid="apps-listing-recommend-rollup"]';
+/** The play count, wherever it is. Used for BOTH presence and absence. */
+const PLAY_COUNT_SELECTOR = '[data-testid="apps-listing-play-count"]';
 
 /**
- * The card's META BLOCK — the `Stack` holding title / creator / rollup / badges,
- * reached from the title's own `Anchor`. Located structurally rather than by a
- * test id so a change that MOVES the rollup out of it cannot be papered over by
- * moving an id with it.
+ * The card's META BLOCK — the `Stack` holding the title and the two conditional
+ * badges, reached from the title's own `Anchor`. Located structurally rather than
+ * by a test id so a change that MOVES something out of it cannot be papered over
+ * by moving an id with it.
+ *
+ * 🔴 THE LOCATOR IS UNCHANGED BY THE ROLLUP'S SECOND MOVE, and that is exactly
+ * what the structural resolution bought. The block used to hold title / creator /
+ * rollup / badges; the creator chip is deleted and the rollup now renders below the
+ * action row, so today it holds title + badges. Walking from the title's `<a>` to
+ * `anchor.parentElement` still lands on the same `Stack` either way — which is why
+ * the guard below can assert the rollup is OUTSIDE it without the block having to
+ * be re-located.
  */
 function metaBlock(titleText: string): HTMLElement {
   const title = page.getByText(titleText, { exact: true }).element() as HTMLElement;
@@ -379,7 +427,6 @@ describe('AppListingCard', () => {
   test('on-site page app + canOpenPage → Open link to the run route', async () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
-    await expect.element(page.getByText('by alice')).toBeInTheDocument();
     const open = page.getByRole('link', { name: 'Open' });
     await expect.element(open).toBeInTheDocument();
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
@@ -610,8 +657,8 @@ describe('AppListingCard', () => {
    * silently wrong. Both are one `getComputedStyle` away in a tier that already
    * renders the card, so there is no excuse for leaving them unpinned.
    *
-   * 🔴 REPORT-ONLY TIER, stated: this is the browser project, so these do not gate
-   * a merge. They are still the only place either number is checked at all.
+   * 🔴 NOT A MERGE GATE: no check in this repo blocks a merge. They are still the only place either
+   * number is checked at all.
    */
   describe('🔴 the Mantine tokens the geometry comments quote', () => {
     test('the next button size up (`md`) is 42px — taller than the 46px row can afford', async () => {
@@ -696,11 +743,27 @@ describe('AppListingCard', () => {
    * ALIGNMENT claim between two cards, not as a style read on one.
    *
    * The defect this fixes is only visible in a ROW: a one-line title is 24px and a
-   * wrapped one is 48px, so the creator chip — and everything under it — lands at a
-   * different y on every card. A `min-height` on a single card is a fact about that
-   * card; "the chips line up" is the property a shopper actually sees, and it is a
+   * wrapped one is 48px, so everything under it lands at a different y on every
+   * card. A `min-height` on a single card is a fact about that card; "the lines up
+   * under the title line up" is the property a shopper actually sees, and it is a
    * RELATIONSHIP, so it has to be measured across two cards in one flex row rather
    * than inferred from a computed style.
+   *
+   * 🔴 THE PROBE MOVED FROM THE CREATOR CHIP TO THE TAGLINE, AND THAT IS A
+   * NARROWING OF THE CLAIM, NOT A SUBSTITUTION OF CONVENIENCE. This suite used to
+   * measure two cards' `a[href^="/user/"]` chips. The store card no longer renders
+   * an author chip at all, and the recommend rollup left the meta block in the same
+   * change — so the only content still positioned by the title's height is the
+   * conditional badge row (Beta / restricted-visibility / owner Incomplete) and the
+   * tagline. The action row and the stats line below it
+   * are bottom-pinned by `mt="auto"`, so measuring THEM would pass with the
+   * reservation deleted and would be a guard on nothing. The tagline is the
+   * shallowest thing the reservation still moves, so it is what this measures.
+   *
+   * 🔴 THE FIXTURES THEREFORE CARRY A TAGLINE, unlike `base()`'s default use
+   * elsewhere in this file — one that is SHORT enough to occupy one line under the
+   * `line-clamp-3`, and IDENTICAL on both cards, so a difference in its `top` can
+   * only come from the title box above it.
    *
    * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND OFF THE BOUNDARY, deliberately. A
    * 1-line title against a 2-line one would sit exactly ON the reservation and the
@@ -709,26 +772,37 @@ describe('AppListingCard', () => {
    * width, which is asserted below rather than assumed, so the clamp is doing real
    * work and the short card is genuinely a line short of the reservation.
    */
-  describe('🔴 the title reserves its two lines, so creator chips align', () => {
+  describe('🔴 the title reserves its two lines, so the rows under it align', () => {
     /** One line at the width used below. */
     const SHORT_TITLE = 'Ink';
     /** Long enough to wrap past the clamp — proven, not assumed, in the test. */
     const LONG_TITLE =
       'Procedurally Generated Landscape Compositor With Depth Aware Relighting And Batch Export';
+    /**
+     * The probe. IDENTICAL on both cards and short enough to be one line under the
+     * `line-clamp-3`, so its `top` is a function of the title box alone.
+     */
+    const TAGLINE = 'Quick tools';
 
     /** The two cards' roots, in DOM order: [short-title card, long-title card]. */
     function cardRoots(): HTMLElement[] {
       return Array.from(document.querySelectorAll('[class*="Card-root"]')) as HTMLElement[];
     }
 
-    test('a 1-line title and a 3-line title put their creator chips at the SAME y', async () => {
+    test('a 1-line title and a 3-line title put their TAGLINES at the SAME y', async () => {
       renderWithProviders(
         <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
           <div style={{ width: 320 }}>
-            <AppListingCard card={base({ name: SHORT_TITLE, slug: 'short-title' })} canOpenPage />
+            <AppListingCard
+              card={base({ name: SHORT_TITLE, slug: 'short-title', tagline: TAGLINE })}
+              canOpenPage
+            />
           </div>
           <div style={{ width: 320 }}>
-            <AppListingCard card={base({ name: LONG_TITLE, slug: 'long-title' })} canOpenPage />
+            <AppListingCard
+              card={base({ name: LONG_TITLE, slug: 'long-title', tagline: TAGLINE })}
+              canOpenPage
+            />
           </div>
         </div>
       );
@@ -766,16 +840,69 @@ describe('AppListingCard', () => {
       expect(Math.round(shortTitle.getBoundingClientRect().height)).toBe(48);
 
       // 🔴 THE CLAIM THIS TEST IS FOR. `top`, not centre: a difference here is
-      // exactly the visible defect, and the two chips are the same height so a
+      // exactly the visible defect, and the two taglines are the same height so a
       // centre comparison would say nothing extra.
-      const shortChip = shortCard.querySelector('a[href^="/user/"]') as HTMLElement;
-      const longChip = longCard.querySelector('a[href^="/user/"]') as HTMLElement;
-      expect(shortChip).not.toBeNull();
-      expect(longChip).not.toBeNull();
+      //
+      // 🔴 THE PROBE IS RESOLVED FROM EACH CARD'S OWN SUBTREE, and both are asserted
+      // present BEFORE they are compared — a `null` on either side would otherwise
+      // throw on `.getBoundingClientRect()` and read as a harness fault rather than
+      // as the tagline having stopped rendering.
+      const shortTagline = Array.from(shortCard.querySelectorAll('p')).find(
+        (el) => el.textContent === TAGLINE
+      ) as HTMLElement | undefined;
+      const longTagline = Array.from(longCard.querySelectorAll('p')).find(
+        (el) => el.textContent === TAGLINE
+      ) as HTMLElement | undefined;
+      expect(shortTagline, 'the short-title card rendered no tagline').toBeTruthy();
+      expect(longTagline, 'the long-title card rendered no tagline').toBeTruthy();
+      // NON-VACUITY: the probes are two DIFFERENT elements, one per card. A `find`
+      // that landed on the same node twice would compare a box with itself.
+      expect(shortTagline).not.toBe(longTagline);
       expect(
-        shortChip.getBoundingClientRect().top,
-        'the creator chip must land at the same y whatever the title length'
-      ).toBeCloseTo(longChip.getBoundingClientRect().top, 0);
+        shortTagline!.getBoundingClientRect().top,
+        'the tagline must land at the same y whatever the title length — the title box ' +
+          'reserves LISTING_CARD_TITLE_LINES x LISTING_CARD_TITLE_LINE_HEIGHT for every card'
+      ).toBeCloseTo(longTagline!.getBoundingClientRect().top, 0);
+    });
+
+    /**
+     * 🔴 AND THE AUTHOR CHIP THIS SUITE USED TO MEASURE IS REALLY GONE, asserted
+     * here rather than left implicit in the rewrite above — otherwise "we now
+     * measure the tagline" would be indistinguishable from "we stopped measuring
+     * the chip because it was inconvenient".
+     *
+     * The absence is a `querySelector` returning `null`, NOT
+     * `expect.element(...).not.toBeInTheDocument()`, which is INERT in this repo
+     * (civitai/civitai#4197). It is controlled by a POSITIVE read of the same
+     * shape first: the card's title anchor IS found by an equivalent
+     * `querySelector`, so a `null` for the profile link is a real read of a
+     * rendered card and not a selector that matches nothing anywhere.
+     */
+    test('🔴 the card renders NO author chip — no profile link, no "by <name>"', async () => {
+      renderWithProviders(
+        <Sized width={320} card={base({ creator: { id: 5, username: 'alice', image: null } })} />
+      );
+      await expect.element(page.getByText('My App', { exact: true })).toBeInTheDocument();
+      const [card] = cardRoots();
+      expect(card, 'the card did not render').toBeTruthy();
+
+      // POSITIVE CONTROL, same call shape as the absence below.
+      expect(
+        card.querySelector('a[href^="/apps/store-preview/"]'),
+        'the title anchor is missing — this card did not render, so the absence below is vacuous'
+      ).not.toBeNull();
+
+      expect(
+        card.querySelector('a[href^="/user/"]'),
+        'the author chip is back on the store card — attribution belongs on the DETAIL ' +
+          'surfaces (AppDetailsModal / appDetailAuthorView / AppListingDetailBody), not here'
+      ).toBeNull();
+      // …and not as un-linked text either, which a chip stripped of its Anchor
+      // would be. Read off `textContent`, for the same #4197 reason.
+      expect(
+        card.textContent,
+        'the card still prints a "by <creator>" byline, just without the link'
+      ).not.toContain('by alice');
     });
 
     /**
@@ -816,18 +943,28 @@ describe('AppListingCard', () => {
     });
   });
 
-  test('🔴 S5: the author line is sm/500 and STAYS dimmed (accepted contrast residual)', async () => {
-    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await expect.element(page.getByText('by alice')).toBeInTheDocument();
-    const author = page.getByText('by alice').element() as HTMLElement;
-    const style = author.getAttribute('style') ?? '';
-    expect(style).toContain('--text-fz: var(--mantine-font-size-sm)');
-    expect(style).toContain('font-weight: 500');
-    // 🔴 The accepted trade (decision 3): size + weight only. Taking the author to
-    // white too would flatten the title-over-author hierarchy on a dark-6 body.
-    // If this ever starts asserting white, decision 3 was changed without notice.
-    expect(style).not.toContain('color: var(--mantine-color-white)');
-  });
+  /**
+   * 🔴 THE RETIRED S5 AUTHOR-LINE ASSERTION, AND WHY IT IS DELETED RATHER THAN
+   * RELAXED.
+   *
+   * A test here pinned the author line's typography — `sm` / `fw 500`, and NOT
+   * white — as decision 3 of the S5 chrome pass ("size + weight only; taking both
+   * title and author to white flattens the hierarchy on a dark-6 body"), together
+   * with an ACCEPTED contrast residual of 4.73 (AA pass by 0.23, AAA fail).
+   *
+   * There is no author line on this card any more, so that assertion has no
+   * subject. Leaving it asserting the old typography against a card that renders no
+   * such element would be a test that can only fail; relaxing it into something
+   * that passes either way would be worse — a green claim about a hierarchy that no
+   * longer exists reads as coverage and stops anyone looking. What replaces it is
+   * the ABSENCE guard above ("the card renders NO author chip"), which is the claim
+   * that is now true and is mutation-visible.
+   *
+   * 🔴 THE CONTRAST RESIDUAL IS NOT SILENTLY RESOLVED — IT MOVED. The detail
+   * surfaces still render attribution and are untouched by this change, so if that
+   * 4.73 mattered it matters THERE now (`AppListingDetailBody`'s own `CreatorChip`),
+   * not here. This paragraph exists so nobody reads the deletion as a fix.
+   */
 
   // 🔴 ONE render per test. An earlier version rendered all three variants in a
   // single body and called `.unmount()` between them; that fights the scaffold's
@@ -993,6 +1130,108 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage preview />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
+  });
+
+  // ── Visibility items ─────────────────────────────────────────────────────────
+
+  test('the OWNER gets a Visibility item; a moderator who is not the owner does not', async () => {
+    mocks.currentUser = OWNER;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect.element(page.getByTestId('apps-listing-owner-visibility')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility'))
+      .toHaveTextContent('Visibility');
+    // Not a moderator, so no moderator copy of the control.
+    expect(page.getByTestId('apps-listing-mod-visibility').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR (not the owner) gets "Set visibility" and NOT the owner item', async () => {
+    mocks.currentUser = MODERATOR;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    const item = page.getByTestId('apps-listing-mod-visibility');
+    await expect.element(item).toBeInTheDocument();
+    await expect.element(item).toHaveTextContent('Set visibility');
+    expect(page.getByTestId('apps-listing-owner-visibility').elements()).toHaveLength(0);
+  });
+
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    mocks.currentUser = { ...OWNER, isModerator: true };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility'))
+      .toHaveTextContent('Visibility');
+    // The rest of the moderator section is present, so the absence below is about
+    // set-visibility alone and not a missing moderator section.
+    await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-hide-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-unpublish-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-mod-visibility').elements()).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Set visibility');
+  });
+
+  test('🔴 the owner picker’s read is OFF until the item is clicked, then loads that listing', async () => {
+    mocks.currentUser = OWNER;
+    mocks.authoringContext = {
+      status: 'approved',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: 'testers',
+      visibilityAvailable: true,
+    };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect.element(page.getByTestId('apps-listing-owner-visibility')).toBeInTheDocument();
+    // Mounted with the menu, but never enabled: opening the menu requests nothing.
+    expect(mocks.authoringCalls.length).toBeGreaterThan(0);
+    expect(mocks.authoringCalls.every((c) => c.enabled === false)).toBe(true);
+
+    await page.getByTestId('apps-listing-owner-visibility').click();
+    // The REAL `ListingVisibilityModal`, fed from the fetched context.
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-save').first())
+      .toBeInTheDocument();
+    expect(mocks.authoringCalls.some((c) => c.enabled === true)).toBe(true);
+    expect(mocks.authoringCalls.filter((c) => c.enabled).map((c) => c.input)).toContainEqual({
+      appListingId: 'l1',
+    });
+  });
+
+  test('🔴 an INELIGIBLE fetched row gets an explanation, not the picker', async () => {
+    // `rejected` carries no settable level (`showVisibility` is false), which no store
+    // surface would normally render — the point is that the fetched status decides.
+    mocks.currentUser = OWNER;
+    mocks.authoringContext = {
+      status: 'rejected',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: null,
+      visibilityAvailable: true,
+    };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await page.getByTestId('apps-listing-owner-visibility').click();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-unavailable').first())
+      .toBeInTheDocument();
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-owner-visibility-save"]')
+    ).toHaveLength(0);
+  });
+
+  test('the moderator item opens the moderator picker for this listing', async () => {
+    mocks.currentUser = MODERATOR;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await page.getByTestId('apps-listing-mod-visibility').click();
+    // The REAL `ModListingVisibilityModal` — its reason field and title.
+    await expect
+      .element(page.getByTestId('apps-mod-visibility-reason').first())
+      .toBeInTheDocument();
+    expect(document.body.textContent).toContain('Set visibility for my-app');
   });
 
   test('🔴 EXACTLY ONE Edit affordance in the accessibility tree', async () => {
@@ -1567,66 +1806,293 @@ describe('AppListingCard', () => {
     });
 
     /**
-     * 🔴 THE RECOMMEND ROLLUP MOVED — present in the meta block, ABSENT from the
+     * 🔴 THE RECOMMEND ROLLUP MOVED AGAIN — OUTSIDE the meta block, and BELOW the
      * action row.
      *
-     * Both halves in one test on purpose: "it is in the meta block" is also true
-     * of a card that renders it TWICE, and "it is not in the action row" is also
-     * true of a card that does not render it at all.
+     * ⚠️ THIS TEST IS RETARGETED, NOT RELAXED, AND THE DISTINCTION IS THE WHOLE
+     * REASON IT EXISTS. It previously asserted "in the meta block and NOT in the
+     * action row", written specifically so that a change moving the rollup out of
+     * the meta block could not be papered over. This change IS that move, so the
+     * old assertion went red BY DESIGN. The response is a new invariant that is at
+     * least as strong — the rollup is in NEITHER of the two containers, and it is
+     * positioned BELOW the row — and emphatically not an assertion that would pass
+     * under either arrangement.
      *
-     * 🔴 THE ABSENCE IS `querySelector(...) === null` WITHIN THE ROW ELEMENT, NOT
+     * Every half is in one test on purpose: "it is below the action row" is also
+     * true of a card that renders it TWICE (once below, once in the meta block),
+     * and "it is not in the meta block" is also true of a card that does not render
+     * it at all.
+     *
+     * 🔴 EVERY ABSENCE IS `querySelector(...) === null`, NOT
      * `expect.element(...).not.toBeInTheDocument()`. That matcher is INERT in this
      * repo (civitai/civitai#4197) — it passes whether or not the element is there.
-     * The form used here is controlled BOTH ways in the same test: the identical
-     * `querySelector` call against the meta block returns the node, so a `null`
-     * from the row is a real read and not a selector that matches nothing.
+     * The form used here is controlled in the same test: the identical
+     * `querySelector(ROLLUP_SELECTOR)` call against the CARD ROOT returns the node,
+     * so a `null` from the meta block or the row is a real read and not a selector
+     * that matches nothing.
+     *
+     * 🔴 EACH HALF CARRIES ITS OWN MESSAGE, so a mutant rendering the rollup in
+     * BOTH places fails naming which place is wrong rather than on an ambiguous
+     * count.
      */
-    test('🔴 the rollup renders in the meta block and NOT in the action row', async () => {
+    test('🔴 the rollup renders BELOW the action row — not in it, and not in the meta block', async () => {
       mocks.currentUser = OWNER; // the widest row — if it fits anywhere, it fits here
       renderWithProviders(<Sized width={314} card={base({ ...REVIEWED_ROLLUP })} />);
       // 🔴 THE BARRIER IS THE CTA, NOT THE ROLLUP'S OWN TEXT. `getByText` is
-      // strict-mode: a mutation that renders the rollup in BOTH places resolves to
-      // two nodes and THROWS here, so the test goes red for a locator reason
-      // before either assertion below runs. Measured — that is exactly what the
-      // "rollup back in the action row" mutation did on this test's first run, and
-      // a red for the wrong reason proves nothing about the guard.
+      // strict-mode: a mutation that renders the rollup in TWO places resolves to
+      // two nodes and THROWS at the locator, so the test would go red for a locator
+      // reason before any assertion ran — and a red for the wrong reason proves
+      // nothing about the guard. The CTA is unique under every arrangement of the
+      // rollup, so it is the barrier.
       await expect
         .element(page.getByRole('link', { name: 'Open', exact: true }))
         .toBeInTheDocument();
 
       // 🔴 POSITIVE CONTROL FIRST, using the SAME `querySelector(ROLLUP_SELECTOR)`
-      // call shape as the absence below — so a `null` from the row is a real read
-      // and not a selector that matches nothing anywhere.
-      const meta = metaBlock('My App');
-      const inMeta = meta.querySelector(ROLLUP_SELECTOR) as HTMLElement | null;
-      expect(inMeta, 'the rollup is not in the meta block at all').not.toBeNull();
+      // call shape as the two absences below — so a `null` from either container is
+      // a real read and not a selector that matches nothing anywhere.
+      const card = document.querySelector('[class*="Card-root"]') as HTMLElement;
+      expect(card, 'the card did not render').not.toBeNull();
+      const rollup = card.querySelector(ROLLUP_SELECTOR) as HTMLElement | null;
+      expect(
+        rollup,
+        'the recommend rollup is not on the card at all — either it stopped rendering or ' +
+          'ROLLUP_SELECTOR matches nothing, and both absences below would then be vacuous'
+      ).not.toBeNull();
 
       const { row } = actionRow('Open');
       assertLayoutIsReal(row);
+      const meta = metaBlock('My App');
 
-      // 🔴 THE CLAIM THIS TEST EXISTS FOR, asserted BEFORE the count below so a
-      // mutation that renders the rollup in BOTH places fails on THIS message
-      // rather than on a duplicate-count assertion that would mask it.
+      // 🔴 THE TWO CLAIMS THIS TEST EXISTS FOR, each with its own message.
+      expect(
+        meta.querySelector(ROLLUP_SELECTOR),
+        'the recommend rollup is back in the META BLOCK — the operator moved it below the CTA'
+      ).toBeNull();
       expect(
         row.querySelector(ROLLUP_SELECTOR),
-        'the recommend rollup is back in the action row'
+        'the recommend rollup is inside the ACTION ROW — that row holds the CTA and the ⋮ ' +
+          'trigger and nothing else, and sharing it is what cost a min-width floor, a ' +
+          '@container breakpoint and a derived threshold constant last time'
       ).toBeNull();
-      expect(row.contains(inMeta!)).toBe(false);
+      expect(meta.contains(rollup!)).toBe(false);
+      expect(row.contains(rollup!)).toBe(false);
       // The row is exactly the CTA + the trigger's box, nothing else.
       expect(row.children).toHaveLength(2);
 
-      // …and exactly ONE in the whole document — not zero (which would satisfy the
-      // absence vacuously) and not two (a copy left behind in the row).
+      // …and exactly ONE in the whole document — not zero (which would satisfy both
+      // absences vacuously) and not two (a copy left behind in either container).
       expect(document.querySelectorAll(ROLLUP_SELECTOR)).toHaveLength(1);
-      const rollup = inMeta!;
 
-      // It sits BELOW the creator chip (the meta block's reading order), not above
-      // the title — a position claim a containment check alone cannot make.
-      const creator = meta.querySelector('a[href^="/user/"]') as HTMLElement;
-      expect(creator).not.toBeNull();
-      expect(rollup.getBoundingClientRect().top).toBeGreaterThan(
-        creator.getBoundingClientRect().top
+      // 🔴 AND IT IS *BELOW* THE ROW, not merely outside it — a position claim no
+      // containment check can make, and the half of the operator's ask ("move
+      // reviews + plays below the CTA") that containment alone does not express.
+      // `top` against the row's `bottom`, so "below" means genuinely after it in
+      // the block flow rather than merely lower-topped inside an overlap.
+      expect(
+        rollup!.getBoundingClientRect().top,
+        'the rollup does not start below the action row — "below the CTA" is the ask, and ' +
+          'being outside the row is not the same claim'
+      ).toBeGreaterThanOrEqual(row.getBoundingClientRect().bottom);
+
+      // 🔴 AND `mt="auto"` STILL BOTTOM-PINS THE PAIR. The action row carries the
+      // auto top margin and is no longer the Stack's LAST child, so "the row is at
+      // the bottom" has to be re-measured rather than inherited from before the
+      // move: a column flex container's single auto margin absorbs all free space,
+      // which should push the row AND everything after it down together. What that
+      // means observably is that the STATS LINE — now the last child — ends flush
+      // with the Stack's content box.
+      //
+      // Measured against the Stack rather than the Card, because `Card padding="md"`
+      // sits outside the Stack and would put a constant 16px in the comparison.
+      const stack = row.parentElement as HTMLElement;
+      expect(stack.contains(rollup!), 'the stats line is not a sibling of the action row').toBe(
+        true
       );
+      expect(
+        stack.getBoundingClientRect().bottom - rollup!.getBoundingClientRect().bottom,
+        'the bottom-pinned group is not flush with the bottom of the card body. `mt="auto"` ' +
+          'must stay on the FIRST of the bottom-pinned children (the action row) — moved to a ' +
+          'later one, or removed, a gap opens under the stats line and the CTA floats up.'
+      ).toBeLessThan(1);
+    });
+
+    /**
+     * 🔴 THE PLAY COUNT — RENDERED ONLY FOR A COUNT OF ONE OR MORE. BOTH
+     * `openCount === null` AND `openCount === 0` RENDER NOTHING.
+     *
+     * 🔴 THAT IS AN OPERATOR OVERRIDE, NOT A DERIVATION — and the two inputs reach
+     * the same pixels for DIFFERENT reasons, which is why they get separate tests
+     * with separate names rather than one "falsy is absent" case:
+     *   · `null` is STRUCTURALLY UNMEASURABLE (an off-site listing's CTA is a
+     *     third-party `target="_blank"` anchor; nothing on-platform observes it);
+     *   · `0` is MEASURED AND EMPTY (an on-site app nobody has opened yet).
+     * Operator, 2026-09-06: "dont show 0 plays (just show nothing)".
+     *
+     * ⚠️ THE ZERO CASE IS INVERTED FROM ROUND 1 OF THIS PR, which asserted here that
+     * an on-site `0` DOES render "0 plays" because a zero is a measurement rather
+     * than an absence. That is still true of the DATA — `cardOpenCount`'s "do not
+     * over-null" rule is untouched — and was only ever wrong about the SCREEN. Said
+     * out loud so the next reader does not read the inversion as a regression.
+     *
+     * 🔴 EVERY ABSENCE TEST BELOW CARRIES ITS OWN POSITIVE CONTROL **ON THE SAME
+     * SELECTOR, IN THE SAME RENDER**, and that is a change forced by this reversal
+     * rather than a stylistic choice. With TWO of the three inputs now rendering
+     * nothing, `document.querySelector(PLAY_COUNT_SELECTOR) === null` is what a
+     * BROKEN SELECTOR looks like as well as what correct behaviour looks like — and
+     * the previous version leaned on a sibling test having shown the selector works,
+     * which is not a control at all once most fixtures produce nothing. So each
+     * absence test renders a `>0` card ALONGSIDE the absent one and proves the
+     * selector matches the former before believing the `null` from the latter.
+     *
+     * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND DISTINCT FROM EVERY CONSTANT THESE
+     * ASSERTIONS NAME. 4821 is not 0, not 1, not a row/control/gap px value, and
+     * abbreviates to a string ("4.8k") that shares no characters-in-order with the
+     * raw number — so a mutant that printed the raw value, or that hardcoded any
+     * geometry literal, cannot produce it.
+     */
+    describe('🔴 the play count', () => {
+      /** A card with real plays — the positive arm of every pairing below. */
+      const BUSY = { name: 'Busy App', slug: 'busy-app', openCount: 4821 };
+
+      /**
+       * The one card in `document` whose subtree matches `sel`, or `null`. Used for
+       * BOTH presence and absence, so an absence is always read the same way a
+       * presence is.
+       */
+      function cardNamed(title: string): HTMLElement {
+        const heading = page.getByText(title, { exact: true }).element() as HTMLElement;
+        const card = heading.closest('[class*="Card-root"]') as HTMLElement | null;
+        expect(card, `no card root around the title "${title}"`).not.toBeNull();
+        return card!;
+      }
+
+      test('an on-site listing with plays renders the count beside the rollup', async () => {
+        renderWithProviders(<Sized width={314} card={base(BUSY)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'Open', exact: true }))
+          .toBeInTheDocument();
+        const play = document.querySelector(PLAY_COUNT_SELECTOR) as HTMLElement | null;
+        expect(play, 'the play count did not render for a listing with plays').not.toBeNull();
+        expect(play!.textContent).toContain('4.8k plays');
+        // BESIDE the rollup, i.e. on the SAME line — not a second line, which would
+        // make the card taller than the skeleton reserves.
+        const rollup = document.querySelector(ROLLUP_SELECTOR) as HTMLElement;
+        expect(rollup, 'the rollup did not render').not.toBeNull();
+        expect(
+          sameLine(rollup, play!),
+          'the play count wrapped onto its own line — that makes the card ~17px taller than ' +
+            'AppListingCardSkeleton reserves, on every card in the h-full grid row'
+        ).toBe(true);
+        // …and both sit below the action row.
+        const { row } = actionRow('Open');
+        expect(play!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+          row.getBoundingClientRect().bottom
+        );
+      });
+
+      test('🔴 openCount 0 (MEASURED AND EMPTY) renders NO play count — no "0 plays" chip', async () => {
+        // Two cards in ONE render: the control and the case. `Sized` takes a single
+        // card, so they are laid out side by side here.
+        renderWithProviders(
+          <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
+            <div style={{ width: 314 }}>
+              <AppListingCard card={base(BUSY)} canOpenPage />
+            </div>
+            <div style={{ width: 314 }}>
+              <AppListingCard
+                card={base({ name: 'Quiet App', slug: 'quiet-app', openCount: 0 })}
+                canOpenPage
+              />
+            </div>
+          </div>
+        );
+        await expect.element(page.getByText('Busy App', { exact: true })).toBeInTheDocument();
+        await expect.element(page.getByText('Quiet App', { exact: true })).toBeInTheDocument();
+
+        // 🔴 POSITIVE CONTROL, SAME SELECTOR, SAME RENDER, FIRST.
+        const busy = cardNamed('Busy App');
+        const quiet = cardNamed('Quiet App');
+        expect(busy).not.toBe(quiet); // two distinct cards, not one matched twice
+        expect(
+          busy.querySelector(PLAY_COUNT_SELECTOR),
+          'PLAY_COUNT_SELECTOR matched nothing even on a card WITH plays — the absence ' +
+            'assertion below would be a fact about the selector, not about openCount 0'
+        ).not.toBeNull();
+
+        // THE CLAIM.
+        expect(
+          quiet.querySelector(PLAY_COUNT_SELECTOR),
+          'an on-site listing with openCount 0 rendered a play count. Operator override ' +
+            '2026-09-06: "dont show 0 plays (just show nothing)". The likely cause is ' +
+            '`getPlayCountLabel` guarding on `openCount == null` alone again.'
+        ).toBeNull();
+        // …and not as bare text either, which a node stripped of its testid would be.
+        expect(
+          quiet.textContent,
+          'the zero card prints a play count without its testid'
+        ).not.toContain('play');
+        // Exactly one in the document: the control's. Not zero (which would satisfy
+        // the absence vacuously) and not two.
+        expect(document.querySelectorAll(PLAY_COUNT_SELECTOR)).toHaveLength(1);
+      });
+
+      test('🔴 openCount null (UNMEASURABLE — off-site) renders NO play count either', async () => {
+        renderWithProviders(
+          <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
+            <div style={{ width: 314 }}>
+              <AppListingCard card={base(BUSY)} canOpenPage />
+            </div>
+            <div style={{ width: 314 }}>
+              <AppListingCard
+                card={base({
+                  name: 'Away App',
+                  slug: 'away-app',
+                  kind: 'offsite',
+                  openCount: null,
+                  kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
+                })}
+              />
+            </div>
+          </div>
+        );
+        await expect.element(page.getByText('Busy App', { exact: true })).toBeInTheDocument();
+        await expect.element(page.getByText('Away App', { exact: true })).toBeInTheDocument();
+
+        // 🔴 POSITIVE CONTROL, SAME SELECTOR, SAME RENDER, FIRST.
+        const busy = cardNamed('Busy App');
+        const away = cardNamed('Away App');
+        expect(busy).not.toBe(away);
+        expect(
+          busy.querySelector(PLAY_COUNT_SELECTOR),
+          'PLAY_COUNT_SELECTOR matched nothing even on a card WITH plays — the absence ' +
+            'assertion below would be a fact about the selector, not about openCount null'
+        ).not.toBeNull();
+
+        // THE CLAIM.
+        expect(
+          away.querySelector(PLAY_COUNT_SELECTOR),
+          'an off-site listing rendered a play count. `openCount === null` means the number ' +
+            'is STRUCTURALLY UNMEASURABLE (no on-platform request follows a third-party CTA), ' +
+            'so there is nothing honest to print — this is a DIFFERENT reason from the zero ' +
+            'case, with the same rendering.'
+        ).toBeNull();
+        expect(
+          away.textContent,
+          'the off-site card prints a play count without its testid'
+        ).not.toContain('play');
+        expect(document.querySelectorAll(PLAY_COUNT_SELECTOR)).toHaveLength(1);
+
+        // 🔴 AND THE STATS LINE ITSELF IS STILL THERE on the absent card — the rollup
+        // half is unconditional. Without this, "no play count" would also be
+        // satisfied by a card that rendered no stats line at all, which would be a
+        // height regression against the skeleton rather than the behaviour under test.
+        expect(
+          away.querySelector(ROLLUP_SELECTOR),
+          'the off-site card rendered no stats line at all — that is shorter than its ' +
+            'skeleton reserves, not "the play count is omitted"'
+        ).not.toBeNull();
+      });
     });
 
     /**
@@ -1646,26 +2112,22 @@ describe('AppListingCard', () => {
     });
   });
 
-  test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
-    const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
-    // The tooltip is overflow-GATED (TruncatedText disables it unless the label
-    // actually clips — a runtime scrollWidth/scrollHeight measurement). Constrain
-    // the card to a narrow column so the long username really overflows; without a
-    // width bound the label never clips and the tooltip stays disabled.
-    renderWithProviders(
-      <div style={{ width: 200 }}>
-        <AppListingCard
-          card={base({ creator: { id: 5, username: longName, image: null } })}
-          canOpenPage
-        />
-      </div>
-    );
-    const label = page.getByText(`by ${longName}`);
-    await expect.element(label).toBeInTheDocument();
-    await label.hover();
-    // The Tooltip renders the full username (portal) once the label overflows.
-    await expect.element(page.getByText(longName, { exact: true })).toBeInTheDocument();
-  });
+  /**
+   * 🔴 THE RETIRED LONG-USERNAME TOOLTIP TEST, DELETED WITH ITS SUBJECT.
+   *
+   * A test here rendered a card at 200px with a 76-character creator username and
+   * proved the author chip's `TruncatedText` revealed the full value in a portalled
+   * Tooltip on hover — the overflow-GATED behaviour (a runtime
+   * scrollWidth/scrollHeight measurement, so the tooltip stays disabled unless the
+   * label really clips).
+   *
+   * The card renders no author chip, so there is nothing to clip and nothing to
+   * reveal. The `TruncatedText` component is untouched and is STILL exercised on
+   * this card by the TITLE's own tooltip test above ("a clamped title reveals its
+   * full value in a tooltip on hover"), so deleting this one loses no coverage of
+   * that component's overflow gate — it loses coverage of a chip that no longer
+   * exists.
+   */
 });
 
 /**
@@ -1704,5 +2166,76 @@ describe('AppListingCard — the beta badge', () => {
     renderWithProviders(<AppListingCard card={card as never} canOpenPage />);
     await expect.element(page.getByTestId('apps-listing-card-beta')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('this must never render on a card');
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
+ *
+ * The label/tooltip decisions are pinned in the BLOCKING unit tier
+ * (`__tests__/listingVisibilityCopy.test.ts` → `visibilityBadgeFor`); this suite pins only
+ * that the card renders what that function returns, where, and that it does not add a
+ * stacked row to the meta block. Absences are read off `querySelector` / `textContent`
+ * (the `.not.toBeInTheDocument()` matcher is inert here — civitai/civitai#4197), each
+ * after a positive control.
+ */
+describe('AppListingCard — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience })} canOpenPage />);
+    const badge = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience: null })} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-visibility"]')).toBeNull();
+    for (const label of ['Testers only', 'Moderators only', 'Unlisted']) {
+      expect(document.body.textContent).not.toContain(label);
+    }
+  });
+
+  test('🔴 shares ONE line with the Beta badge — the meta block grows no stacked row', async () => {
+    renderWithProviders(
+      <Sized width={494} card={base({ isBeta: true, restrictedAudience: 'testers' })} />
+    );
+    const beta = page.getByTestId('apps-listing-card-beta');
+    const vis = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(beta).toBeInTheDocument();
+    await expect.element(vis).toBeInTheDocument();
+    // Same wrapping row element, and the same visual line at a width with room for both.
+    const row = page.getByTestId('apps-listing-card-badges').element();
+    expect(beta.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(vis.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(sameLine(beta.element(), vis.element()), 'Beta and the visibility badge wrapped').toBe(
+      true
+    );
+  });
+
+  test('🔴 adding the visibility badge beside Beta does not move the TAGLINE', async () => {
+    // The relationship the title reservation protects is "the tagline sits at one y". A
+    // second badge stacked as its own row would push it down by a badge height; in the
+    // shared row it must not move at all.
+    renderWithProviders(
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Sized width={494} card={base({ slug: 'one', name: 'One', isBeta: true })} />
+        <Sized
+          width={494}
+          card={base({ slug: 'two', name: 'Two', isBeta: true, restrictedAudience: 'moderators' })}
+        />
+      </div>
+    );
+    await expect.element(page.getByTestId('apps-listing-card-visibility')).toBeInTheDocument();
+    const taglines = Array.from(document.querySelectorAll('p, div')).filter(
+      (el) => el.children.length === 0 && el.textContent === 'A handy app'
+    );
+    expect(taglines, 'expected one tagline per card').toHaveLength(2);
+    const [a, b] = taglines.map((el) => el.getBoundingClientRect().top);
+    expect(Math.abs(a - b), 'the visibility badge pushed the tagline down').toBeLessThan(1);
   });
 });

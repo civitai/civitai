@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 // One candidate slot, in stable orchestrator order. Either:
 //  - clean (downloaded to S3, picker may select it), or
@@ -24,6 +25,11 @@ export type CandidateSlot =
       blurredPreviewUrl?: string | null;
       nsfwLevel?: number | null;
     };
+
+/** A capped slot stays hidden whatever is paid: the unlock never lifts the workflow's rating cap. */
+export function isUnlockableSlot(slot: CandidateSlot): boolean {
+  return !!slot.requiresUnlock && slot.blockedReason !== NSFW_CAPPED;
+}
 
 function isCandidateMature(slot: CandidateSlot): boolean {
   // Locked slots always render as mature (they ARE mature — that's why
@@ -93,7 +99,7 @@ export function CandidateImageModal({
 
   const effectiveSelection = selectedKey ?? currentImageUrl;
   const hasNewSelection = selectedKey != null && selectedKey !== currentImageUrl;
-  const hasLocked = candidates.some((c) => c.requiresUnlock);
+  const hasUnlockable = candidates.some(isUnlockableSlot);
   const hasMature = useMemo(() => candidates.some(isCandidateMature), [candidates]);
   // CTA selection is driven by the parent's domain — `onUnlock` is
   // populated only on red, `unlockHref` only on green. We never combine
@@ -118,12 +124,12 @@ export function CandidateImageModal({
           Select an image for this panel. Click the magnifier to zoom in.
           {showMatureBlurNotice && (
             <>
-              {' '}Mature results are blurred — click <em>Show</em> on a tile
-              before selecting it.
+              {' '}
+              Mature results are blurred — click <em>Show</em> on a tile before selecting it.
             </>
           )}
         </Text>
-        {hasLocked && (
+        {hasUnlockable && (
           <div
             className="rounded-md p-3 mb-md flex flex-col items-center gap-2 mb-2"
             style={{
@@ -134,9 +140,9 @@ export function CandidateImageModal({
             {showInPlaceUnlock ? (
               <>
                 <Text size="sm" c="white" ta="center">
-                  Some results contain mature content. Unlock once to reveal
-                  every locked result from this generation — the preview is
-                  blurred and the full URL is never stored on the panel.
+                  Some results contain mature content. Unlock once to reveal every locked result
+                  from this generation — the preview is blurred and the full URL is never stored on
+                  the panel.
                 </Text>
                 <Button
                   size="compact-sm"
@@ -152,9 +158,8 @@ export function CandidateImageModal({
             ) : (
               <>
                 <Text size="sm" c="white" ta="center">
-                  Some results contain mature content and can only be viewed
-                  on civitai.red. Open the project there to unlock and pick
-                  them.
+                  Some results contain mature content and can only be viewed on civitai.red. Open
+                  the project there to unlock and pick them.
                 </Text>
                 {unlockHref ? (
                   <Button
@@ -215,7 +220,9 @@ export function CandidateImageModal({
                         Mature — Locked
                       </Badge>
                       <Text size="xs" c="white" ta="center">
-                        Use the unlock button above to reveal.
+                        {isUnlockableSlot(slot)
+                          ? 'Use the unlock button above to reveal.'
+                          : NSFW_CAPPED_MESSAGE}
                       </Text>
                     </div>
                   </div>
@@ -230,8 +237,7 @@ export function CandidateImageModal({
             // the blur+Show treatment is unnecessary friction; on green
             // mature outputs would normally arrive locked, but if a clean
             // mature one slips through we keep the blur as a safety net.
-            const showBlur =
-              blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
+            const showBlur = blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
             return (
               <div key={slot.key} className="relative">
                 <button
@@ -241,8 +247,8 @@ export function CandidateImageModal({
                     border: isSelected
                       ? '3px solid var(--mantine-color-blue-6)'
                       : matureClean && showBlur
-                        ? '3px solid var(--mantine-color-yellow-6)'
-                        : '3px solid transparent',
+                      ? '3px solid var(--mantine-color-yellow-6)'
+                      : '3px solid transparent',
                     padding: 0,
                     cursor: isSelecting || showBlur ? 'wait' : 'pointer',
                     background: '#2C2E33',
@@ -258,7 +264,7 @@ export function CandidateImageModal({
                   disabled={isSelecting}
                 >
                   <img
-                    src={getEdgeUrl(slot.key, { width: 400 })}
+                    src={getEdgeUrl(slot.key, { width: 400, optimized: true })}
                     alt="Candidate"
                     style={{
                       width: '100%',
@@ -383,7 +389,7 @@ export function CandidateImageModal({
       >
         {zoomedKey && (
           <img
-            src={getEdgeUrl(zoomedKey, { width: 1024 })}
+            src={getEdgeUrl(zoomedKey, { width: 1024, optimized: true })}
             alt="Zoomed candidate"
             style={{ width: '100%', borderRadius: 'var(--mantine-radius-md)' }}
           />

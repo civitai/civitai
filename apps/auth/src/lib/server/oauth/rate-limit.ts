@@ -29,6 +29,14 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 //                off the single 'unknown' key, not per-tenant abuse-proofing — client_id is unvalidated here).
 //                The limit is a generous gross-abuse ceiling that never throttles legit traffic. Invalid codes
 //                already bail cheaply at the redis lookup.
+//   - worker-token: per-IP (600/min) — the worker token-exchange grant, in place of `token`. A pool of
+//                workers can share one egress IP, each exchanging about every 15 minutes.
+//   - worker-device: per-(client, device) (10/min) — charged after client auth, so the device id is
+//                bound to an authenticated client before it is used as a key.
+//   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
+//                which checks each worker that registers.
+//   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
+//                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
   token: { limit: 20, windowSeconds: 60 },
   device: { limit: 30, windowSeconds: 60 },
@@ -39,6 +47,10 @@ const OAUTH_RATE_LIMITS = {
   session: { limit: 300, windowSeconds: 60 },
   introspect: { limit: 60, windowSeconds: 60 },
   'introspect-anon': { limit: 120, windowSeconds: 60 },
+  'app-token': { limit: 60, windowSeconds: 60 },
+  'worker-token': { limit: 600, windowSeconds: 60 },
+  'worker-device': { limit: 10, windowSeconds: 60 },
+  'introspect-worker': { limit: 1200, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;

@@ -2,6 +2,7 @@ import { Menu } from '@mantine/core';
 import { IconBabyCarriage, IconShieldCheck, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -21,7 +22,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
@@ -112,6 +113,18 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
             />
           ),
         },
+        {
+          key: 'add-event-decoration',
+          component: (
+            <AddEventDecorationMenuItem
+              key="add-event-decoration"
+              entityType={CosmeticEntity.Model}
+              entityId={data.id}
+              image={data.images[0]}
+              currentCosmetic={data.eventDecoration}
+            />
+          ),
+        },
       ]
     );
   }
@@ -132,7 +145,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
       ...[
         {
           key: 'hide-model',
-          component: <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+          component: <HideModelButton key="hide-model" as="menu-item" model={data} />,
         },
         {
           key: 'hide-button',
@@ -156,10 +169,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
     contextMenuItems.unshift({
       key: 'lookup-model',
       component: (
-        <ModeratorLookupMenuItem
-          key="lookup-model"
-          path={moderatorBulkImageManagerPath('model', data.id)}
-        >
+        <ModeratorLookupMenuItem key="lookup-model" path={moderatorModelLookupPath(data.id)}>
           Lookup Model
         </ModeratorLookupMenuItem>
       ),

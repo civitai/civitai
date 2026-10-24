@@ -190,6 +190,18 @@ export const grantsGeneration = (
   { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
 ): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
 
+/**
+ * Whether this viewer will have to BUY generation access. A trial user is granted generation —
+ * `grantsGeneration` is true — and still answers true here, because the grant is finite. Conflating the
+ * two is what left a spent trial with nowhere to go: every surface knew the user could generate, none
+ * knew they were on a clock. Says nothing about whether the trial is already spent, which only the
+ * orchestrator counts.
+ */
+export const requiresGenerationPurchase = (
+  terms: ModelVersionTerms,
+  { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
+): boolean => !isOwnerOrMod && !hasBought && !isFreeGeneration(terms);
+
 // Tiers a creator can actually be shown, cheapest first. `founder` is omitted deliberately: it's a legacy
 // tier nobody can buy, and every cap it has matches bronze — listing it would imply a choice that isn't one.
 export const CAP_TIERS = ['free', 'bronze', 'silver', 'gold'] as const;
@@ -288,12 +300,8 @@ export const SALE_DAYS_BY_TIER: Record<string, number> = {
 /**
  * The floor required to charge for anything — a new price, or a sale.
  *
- * The two gates do not read the same number, and this constant cannot make them. The PRICING gate
- * compares `User.meta.scores.total`, the figure `/user/account` shows. The SALE gate compares the
- * spoke's aggregate, `GREATEST(sum of the six categories, total)`, which is >= it — so a small
- * cohort sits below this floor for pricing and at or above it for sales (46 accounts when measured
- * 2026-09-04). Reconciling them is a
- * separate decision; until it is made, do not read this comment as one definition.
+ * Both gates compare `User.meta.scores.total`, the figure `/user/account` shows — not the aggregate
+ * `GREATEST(sum of the six categories, total)` the Creator Program reads.
  *
  * Deliberately NOT waived for moderators: it states who may sell here, not a permission level.
  * The two paths do not resolve their input identically — see the private operations note before

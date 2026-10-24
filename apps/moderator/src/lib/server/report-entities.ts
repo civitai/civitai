@@ -20,7 +20,7 @@ export type ReportEntityMeta = {
   /** Column on `table` naming the account the report is ABOUT. `null` where no single column says
    *  that: `reportedUser` (the reported thing IS an account) and `chat`, whose subject is inferred by
    *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites. */
-  ownerColumn: 'userId' | 'ownerId' | null;
+  ownerColumn: 'userId' | 'ownerId' | 'createdById' | 'sellerId' | null;
   label: string;
 };
 
@@ -82,6 +82,44 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     reportTable: 'Model3DReviewReport',
     fk: 'model3dReviewId',
     table: 'Model3DReview',
+    ownerColumn: 'userId',
+  },
+  announcement: {
+    reportTable: 'AnnouncementReport',
+    fk: 'announcementId',
+    table: 'Announcement',
+    ownerColumn: 'userId',
+  },
+  crucible: {
+    reportTable: 'CrucibleReport',
+    fk: 'crucibleId',
+    table: 'Crucible',
+    ownerColumn: 'userId',
+  },
+  storyline: {
+    reportTable: 'StorylineReport',
+    fk: 'storylineId',
+    table: 'Storyline',
+    ownerColumn: 'userId',
+  },
+  // A Creator Services offering; its owner is the seller.
+  serviceOffering: {
+    reportTable: 'ServiceOfferingReport',
+    fk: 'serviceOfferingId',
+    table: 'ServiceOffering',
+    ownerColumn: 'sellerId',
+  },
+  challenge: {
+    reportTable: 'ChallengeReport',
+    fk: 'challengeId',
+    table: 'Challenge',
+    ownerColumn: 'createdById',
+  },
+  // `userId` is the game's author; null for Civitai's own bundled games.
+  gameFrameGame: {
+    reportTable: 'GameFrameGameReport',
+    fk: 'gameFrameGameId',
+    table: 'GameFrameGame',
     ownerColumn: 'userId',
   },
   // `ownerId` is who OPENED the conversation, which is not who was reported — see
@@ -152,5 +190,6 @@ export const chatReportSubject = (
 /** Every type whose row names its owner in one column — i.e. all but `reportedUser` (the reported
  *  thing IS an account) and `chat` (no single column says it; see `chatReportSubject`). */
 export const OWNED_REPORT_ENTITIES = REPORT_ENTITIES.filter(
-  (e): e is ReportEntityMeta & { ownerColumn: 'userId' | 'ownerId' } => e.ownerColumn !== null
+  (e): e is ReportEntityMeta & { ownerColumn: NonNullable<ReportEntityMeta['ownerColumn']> } =>
+    e.ownerColumn !== null
 );

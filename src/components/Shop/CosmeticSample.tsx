@@ -1,8 +1,13 @@
 import type { MantineSize } from '@mantine/core';
-import { Text } from '@mantine/core';
+import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { FeedCard } from '~/components/Cards/FeedCard';
+import { cardGlowOf } from '~/components/CreatorCard/card-glow';
+import creatorCardClasses from '~/components/CreatorCard/CreatorCard.module.css';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { NamePlateText } from '~/components/User/NamePlateText';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -10,6 +15,8 @@ import type {
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticGetById } from '~/types/router';
 
 const cosmeticSampleSizeMap: Record<
@@ -53,10 +60,13 @@ export const CosmeticSample = ({
             alt={cosmetic.name}
             width={values.badgeSize}
             loading={loading}
+            optimized
           />
         </div>
       );
     case CosmeticType.ContentDecoration:
+      if (isEventDecorationData(cosmetic.data))
+        return <EventDecorationSample decoration={cosmetic.data} size={size} />;
       const contentDecorationData = cosmetic.data as ContentDecorationCosmetic['data'];
       if (!contentDecorationData.url && !contentDecorationData.cssFrame) return null;
 
@@ -82,15 +92,16 @@ export const CosmeticSample = ({
           width={values.badgeSize}
           anim={stickerData.animated}
           loading={loading}
+          optimized
           style={{ width: values.badgeSize, height: values.badgeSize, objectFit: 'contain' }}
         />
       );
     case CosmeticType.NamePlate:
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
-        <Text fw="bold" {...data} size={values.textSize}>
+        <NamePlateText fw="bold" nameplate={data} size={values.textSize}>
           Sample Text
-        </Text>
+        </NamePlateText>
       );
     case CosmeticType.ProfileBackground:
       const backgroundData = cosmetic.data as ProfileBackgroundCosmetic['data'];
@@ -111,6 +122,7 @@ export const CosmeticSample = ({
             type={backgroundData.type}
             anim={true}
             width={450}
+            optimized
             // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only,
             // so EdgeVideo never sees this. Its poster is eager regardless, and the video is
             // preload="none" except on Safari, which forces 'auto'.
@@ -128,7 +140,72 @@ export const CosmeticSample = ({
           />
         </div>
       );
+    case CosmeticType.CardDecoration: {
+      const glow = cardGlowOf(cosmetic.data);
+      if (!glow) return null;
+
+      return (
+        <div
+          data-testid="card-glow-sample"
+          className={clsx(
+            'flex flex-col justify-end gap-1.5 rounded-md border border-solid bg-gray-2 p-[8%] dark:bg-dark-4',
+            creatorCardClasses.glow,
+            glow.animated && creatorCardClasses.glowAnimated
+          )}
+          style={{ ...glow.style, width: values.badgeSize, height: values.badgeSize * 0.6 }}
+        >
+          <div className="h-1.5 w-3/4 rounded-full bg-gray-3 dark:bg-dark-3" />
+          <div className="h-1.5 w-1/2 rounded-full bg-gray-3 dark:bg-dark-3" />
+        </div>
+      );
+    }
     default:
       return null;
   }
 };
+
+// A hat's sample card. At the largest size the hat is worn at full feed size, so it reads as the hat
+// you get; smaller samples shrink it with the card. Square, like the frame samples beside it.
+const HAT_SAMPLE_WIDTH = { sm: 64, md: 96, lg: 140 } as const;
+// Room past the card's top-left corner for the hat to hang into, as on a feed card.
+const HAT_SAMPLE_ROOM = 28;
+
+/**
+ * An event decoration (a hat) worn on a skeleton feed card, so it reads as a hat on content rather
+ * than art floating beside nothing. Drawn by the feed's own wrapper; it does not grow on hover.
+ */
+function EventDecorationSample({
+  decoration,
+  size,
+}: {
+  decoration: EventDecorationData;
+  size: 'sm' | 'md' | 'lg';
+}) {
+  const width = HAT_SAMPLE_WIDTH[size];
+  return (
+    <div
+      style={
+        {
+          // Matched on the right, so the card itself sits centred where the sample is placed.
+          paddingInline: HAT_SAMPLE_ROOM,
+          paddingTop: HAT_SAMPLE_ROOM,
+          '--event-decoration-allowance': `${HAT_SAMPLE_ROOM}px`,
+          '--event-decoration-grow': 1,
+        } as CSSProperties
+      }
+      data-testid="hat-sample"
+    >
+      <div style={{ width }}>
+        <TwCosmeticWrapper
+          eventDecoration={decoration}
+          cardWidth={size === 'lg' ? undefined : width}
+        >
+          <div className="flex aspect-square w-full flex-col justify-end gap-1.5 rounded-md bg-gray-2 p-[8%] dark:bg-dark-4">
+            <div className="h-2 w-3/4 rounded-full bg-gray-3 dark:bg-dark-3" />
+            <div className="h-2 w-1/2 rounded-full bg-gray-3 dark:bg-dark-3" />
+          </div>
+        </TwCosmeticWrapper>
+      </div>
+    </div>
+  );
+}

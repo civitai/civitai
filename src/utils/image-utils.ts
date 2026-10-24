@@ -108,13 +108,19 @@ export async function createImageElement(
   const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
 
   let lastError: unknown;
-  for (let attempt = 0; attempt <= loadRetries; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, loadRetryDelayMs));
-    try {
-      return await loadImageElement(objectUrl);
-    } catch (error) {
-      lastError = error;
+  try {
+    for (let attempt = 0; attempt <= loadRetries; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, loadRetryDelayMs));
+      try {
+        return await loadImageElement(objectUrl);
+      } catch (error) {
+        lastError = error;
+      }
     }
+  } finally {
+    // A url made here is released once the element has loaded (it keeps what it decoded) or
+    // failed for good, so it does not hold the blob's bytes for the life of the page.
+    if (objectUrl !== src) URL.revokeObjectURL(objectUrl);
   }
 
   console.error(
@@ -124,8 +130,11 @@ export async function createImageElement(
   throw lastError;
 }
 
-export async function getImageDimensions(src: string | Blob | File) {
-  const img = await createImageElement(src);
+export async function getImageDimensions(
+  src: string | Blob | File,
+  options?: CreateImageElementOptions
+) {
+  const img = await createImageElement(src, options);
   return {
     width: img.width,
     height: img.height,

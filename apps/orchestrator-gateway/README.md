@@ -23,12 +23,14 @@ drained (5→4). Success is **isolation + node-drain**, not raw CPU reduction.
   - `orchestrator.ping` — **protected**; verifies the incoming `__Secure-civ-token` / `Bearer` token
     LOCALLY via `@civitai/auth` (ES256/JWKS + injected sysRedis revocation, fail-open) and returns `{ userId }`.
 - Wired-but-unused clients (construct + connect-config, no features on them yet): `@civitai/db` (Prisma via
-  the shared pooler), `@civitai/redis` (cache + sysRedis), `@civitai/client` (external orchestrator SDK).
+  the shared pooler), `@civitai/redis` (cache + sysRedis), `@civitai/orchestration-client` (external orchestrator SDK).
 
 ## What P0 deliberately does NOT do
 
 - No generation code moved (`workflows.ts`, `orchestration-new.service.ts`, ecosystems) — that's P1/P2.
-- No `@civitai/prompt-audit` / `@civitai/generation-graph` carve-outs — next P0 increment, separate PR.
+- No prompt-audit / generation-graph carve-outs — next P0 increment, separate PR. Prompt audit already
+  has a home: `@civitai/mod-utils/prompt-audit` (+ `/lists`, `/word-regex`). The carve-out is pointing
+  this service at it, not a new package.
 - No live traffic routing — the monolith still serves `/api/trpc/orchestrator`. The same-origin
   `PathPrefix(/api/trpc/orchestrator)` Traefik cutover is P2. In prod this is ClusterIP + ServiceMonitor
   only, reachable via port-forward.

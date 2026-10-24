@@ -43,6 +43,9 @@ import {
   useUserCash,
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { BankableBuzzMeter } from '~/components/Buzz/CreatorProgramV2/BankableBuzzMeter';
+import type { GetPaidCard } from '~/components/Buzz/CreatorProgramV2/getPaidCards';
+import { getPaidCards } from '~/components/Buzz/CreatorProgramV2/getPaidCards';
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
@@ -61,6 +64,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { BankingChangeNoticeAlert } from '~/components/Buzz/CreatorProgramV2/BankingChangeNoticeAlert';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
@@ -76,8 +82,10 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
+import { getBankCardLimits } from '~/shared/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
+  MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
@@ -131,9 +139,6 @@ export const CreatorProgramV2 = () => {
     return null;
   }
 
-  // Onboarded but their membership lapsed — keep the flag, but gate the
-  // earning actions and tell them to renew (withdrawing already-earned cash
-  // stays available).
   const membershipLapsed = hasOnboardedInProgram && !!requirements?.membershipLapsed;
 
   return (
@@ -149,29 +154,23 @@ export const CreatorProgramV2 = () => {
         </div>
       </div>
 
+      {hasOnboardedInProgram && <BankingChangeNoticeAlert />}
+
       {!hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
           <JoinCreatorProgramCard />
           <CompensationPoolCard />
         </div>
       )}
-      {hasOnboardedInProgram &&
-        (membershipLapsed ? (
-          <div className="flex flex-col gap-4 md:flex-row">
-            {/* Extraction stays available: extractBuzz doesn't require an active
-                membership, so a lapsed member can still reclaim Buzz they banked. */}
-            {phase === 'extraction' && <ExtractBuzzCard />}
-            <MembershipLapsedCard />
-            <WithdrawCashCard />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4 md:flex-row">
-            {phase === 'bank' && <BankBuzzCard />}
-            {phase === 'extraction' && <ExtractBuzzCard />}
-            <EstimatedEarningsCard />
-            {<WithdrawCashCard />}
-          </div>
-        ))}
+      {hasOnboardedInProgram && membershipLapsed && <MembershipLapsedCard />}
+      {hasOnboardedInProgram && (
+        <div className="flex flex-col gap-4 md:flex-row">
+          {getPaidCards({ phase, membershipLapsed }).map((card) => {
+            const Card = GET_PAID_CARDS[card];
+            return <Card key={card} />;
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -197,9 +196,11 @@ const MembershipLapsedCard = () => {
         <Text fw={700} size="lg">
           Membership lapsed
         </Text>
-        <Text size="sm" c="dimmed" maw={320}>
-          Your Creator Program membership isn&apos;t active, so banking and earning are paused. You
-          can still withdraw any cash you&apos;ve already earned.
+        <Text size="sm" c="dimmed" maw={360}>
+          Your Creator Program membership isn&apos;t active, so you can&apos;t bank more Buzz. Buzz
+          you&apos;ve already banked still pays out at the end of the month. To withdraw cash, you
+          need ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} ready to
+          withdraw and your payment details set up; no membership is needed.
         </Text>
       </div>
 
@@ -263,6 +264,7 @@ const JoinCreatorProgramCard = () => {
     isLoading: buzzAccountsLoading,
   } = useQueryBuzz([domainBuzzType]);
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
+  const currentUser = useCurrentUser();
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
   const isLoading = buzzAccountsLoading || isLoadingRequirements || isLoadingCompensationPool;
@@ -338,20 +340,16 @@ const JoinCreatorProgramCard = () => {
         <div className="flex flex-col gap-4 sm:flex-row">
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
-            title={`Have a Creator Score higher than ${abbreviateNumber(
-              requirements?.score.min ?? 10000
+            title={`Have a Creator Score of at least ${numberWithCommas(
+              requirements?.score.min ?? MIN_CREATOR_SCORE
             )}`}
             content={
               <p className="my-0">
-                Your current{' '}
-                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-                  Creator Score
-                </Anchor>{' '}
-                is{' '}
-                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-                  {abbreviateNumber(requirements?.score.current ?? 0)}
-                </Anchor>
-                .
+                <CreatorScoreGateMessage
+                  score={requirements?.score.current}
+                  total={creatorScoreFromSession(currentUser)}
+                  required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                />
               </p>
             }
           />
@@ -510,8 +508,14 @@ const BankBuzzCard = () => {
     }
   };
 
-  const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = Math.min(remainingCap, buzzAccount.balance ?? 0);
+  const { maxBankable, meterBalance, meterCapRemaining } = getBankCardLimits({
+    accountBalances: accounts.map((account) => account.balance ?? 0),
+    selectedBalance: buzzAccount.balance ?? 0,
+    cap: banked?.cap?.cap,
+    bankedThisMonth: banked?.total ?? 0,
+    bankableRemaining: banked?.bankable?.remaining,
+    hasActiveMembership: !!hasActiveMembership,
+  });
 
   if (isLoading) {
     return (
@@ -620,6 +624,14 @@ const BankBuzzCard = () => {
         >
           Max
         </Button>
+        {banked?.bankable && (
+          <BankableBuzzMeter
+            balance={meterBalance}
+            bankableRemaining={banked.bankable.remaining}
+            capRemaining={meterCapRemaining}
+            onOpenInfo={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
+          />
+        )}
 
         <div className="mb-2 flex items-center gap-2">
           <p className="text-sm">
@@ -1309,4 +1321,11 @@ const ExtractBuzzCard = () => {
       </div>
     </div>
   );
+};
+
+const GET_PAID_CARDS: Record<GetPaidCard, React.ComponentType> = {
+  bank: BankBuzzCard,
+  extract: ExtractBuzzCard,
+  estimatedEarnings: EstimatedEarningsCard,
+  withdraw: WithdrawCashCard,
 };

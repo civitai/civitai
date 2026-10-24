@@ -1,4 +1,5 @@
-import type { NsfwLevel, WorkflowCost } from '@civitai/client';
+import type { NsfwLevel, WorkflowCost } from '@civitai/orchestration-client';
+import { isGlbFormat } from '~/shared/orchestrator/model3d-output';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,
@@ -12,8 +13,18 @@ import type {
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
-import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
-import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
+import {
+  exceedsNsfwLevel,
+  isPrivateMature,
+  isMature,
+} from '~/shared/constants/orchestrator.constants';
+import { canUseWorkflowOutput } from '~/shared/generation/config/output-uses';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
+import type { OutputUse } from '~/shared/generation/config/types';
+import {
+  orchestratorCompletedStatuses,
+  orchestratorRefundableStatuses,
+} from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Defaults
@@ -32,9 +43,91 @@ export const defaultWorkflowCost: WorkflowCost = {
 export interface WorkflowDataOptions {
   domain: Record<ColorDomain, boolean>;
   nsfwEnabled: boolean;
+  holdUnrated?: boolean;
 }
 
-type BlobOptions = WorkflowDataOptions & { allowMatureContent?: boolean | null };
+export const PENDING_RATING = 'pendingRating';
+export const NSFW_CAPPED = 'nsfwCapped';
+/** Paying the yellow unlock never lifts the workflow's cap, so a capped output offers no unlock. */
+export const NSFW_CAPPED_MESSAGE =
+  "This generation is limited to a lower rating, so its mature result can't be shown.";
+
+/**
+ * Video engines the orchestrator never rates (the provider moderates its own output), so a hold
+ * on them never releases. Remove once it writes `nsfwLevel: 'na'` on unscanned outputs.
+ */
+const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['Grok', 'Kling', 'Veo3', 'Vidu']);
+
+type StepParamsSource = {
+  $type?: string;
+  metadata?: Pick<NormalizedStep['metadata'], 'params' | 'partialParams'> | null;
+};
+
+/**
+ * A step's effective form params. The server flags whether `step.metadata.params` is a partial
+ * DELTA vs a complete snapshot, so this never has to *decide* — it just applies the directive:
+ *
+ * - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
+ *   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
+ *   variant's effective params. The server sends only the delta — we complete it here, which
+ *   keeps the API payload small (no full params duplicated per variant).
+ * - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
+ *   generation here) is used verbatim; an absent one falls back to workflow params. We must
+ *   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
+ *   `img2img:*` workflow key) would leak into a remix of the original.
+ *
+ * See docs/generation-metadata-architecture.md.
+ */
+export function resolveStepParams(
+  stepMetadata: StepParamsSource['metadata'],
+  wfParams: NormalizedWorkflowMetadata['params'] | null | undefined
+): Partial<NormalizedWorkflowMetadata['params']> {
+  const stepParams = stepMetadata?.params;
+  if (stepMetadata?.partialParams && stepParams && Object.keys(stepParams).length > 0) {
+    return { ...wfParams, ...stepParams };
+  }
+  if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
+  return wfParams ?? {};
+}
+
+/**
+ * Whether a step is one of those engines generating video. An upscale or interpolation step
+ * carries its source's ecosystem in its params, but the orchestrator scans what it produces.
+ */
+export function isNeverRatedVideoStep(
+  step: StepParamsSource,
+  wfParams: NormalizedWorkflowMetadata['params'] | null | undefined
+) {
+  if (step.$type !== 'videoGen') return false;
+  const ecosystem = resolveStepParams(step.metadata, wfParams).ecosystem;
+  return typeof ecosystem === 'string' && NEVER_RATED_VIDEO_ECOSYSTEMS.has(ecosystem);
+}
+
+/**
+ * An output reported available before it is rated. Audio is never rated. A GLB mesh takes its
+ * rating from its preview render; a non-GLB mesh (Tripo quad FBX) has no preview render, so it
+ * counts as unrated until its auto-thumbnail's rating reaches it.
+ */
+export function isUnratedOutput(
+  output: Pick<
+    NormalizedWorkflowStepOutput,
+    'type' | 'available' | 'nsfwLevel' | 'blockedReason'
+  > & {
+    format?: string;
+  },
+  neverRatedVideoStep = false
+) {
+  if (output.type === 'model3d' && isGlbFormat(output.format)) return false;
+  if (output.type === 'audio') return false;
+  if (output.type === 'video' && neverRatedVideoStep) return false;
+  if (!output.available || output.nsfwLevel != null) return false;
+  return !output.blockedReason || output.blockedReason === 'none';
+}
+
+type BlobOptions = WorkflowDataOptions & {
+  allowMatureContent?: boolean | null;
+  nsfwCap?: NsfwLevel | null;
+};
 
 // =============================================================================
 // WorkflowData
@@ -60,7 +153,11 @@ export class WorkflowData {
     Object.assign(this, workflow);
 
     // Initialize chain: StepData → BlobData with parent refs
-    const blobOptions: BlobOptions = { allowMatureContent: this.allowMatureContent, ...options };
+    const blobOptions: BlobOptions = {
+      allowMatureContent: this.allowMatureContent,
+      nsfwCap: this.nsfwCap,
+      ...options,
+    };
     this.steps = (this.steps ?? []).map((rawStep: any) => {
       if (rawStep instanceof StepData) {
         rawStep._setWorkflow(this);
@@ -94,6 +191,9 @@ export class WorkflowData {
   get displayOutput() {
     return this.steps.flatMap((s) => s.displayOutput);
   }
+  get pendingRatingOutput() {
+    return this.steps.flatMap((s) => s.pendingRatingOutput);
+  }
 
   /** Total completed outputs across all steps. */
   get completedCount() {
@@ -110,6 +210,12 @@ export class WorkflowData {
   /** Blocked reason strings across all steps. */
   get blockedReasons(): string[] {
     return this.steps.flatMap((s) => s.blockedReasons);
+  }
+
+  /** Whether any step still owes the user an output. See `StepData.awaitingOutput`. */
+  get awaitingOutput(): boolean {
+    if (!this.steps.length) return true;
+    return this.steps.some((s) => s.awaitingOutput);
   }
 
   /** Create a StepData bound to this workflow. */
@@ -161,27 +267,7 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    const stepParams = this.metadata.params;
-    const wfParams = this.#workflow.metadata?.params;
-
-    // The server flags whether `step.metadata.params` is a partial DELTA vs a complete snapshot,
-    // so this getter never has to *decide* — it just applies the directive:
-    //
-    // - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
-    //   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
-    //   variant's effective params. The server sends only the delta — we complete it here, which
-    //   keeps the API payload small (no full params duplicated per variant).
-    // - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
-    //   generation here) is used verbatim; an absent one falls back to workflow params. We must
-    //   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
-    //   `img2img:*` workflow key) would leak into a remix of the original.
-    //
-    // See docs/generation-metadata-architecture.md.
-    if (this.metadata.partialParams && stepParams && Object.keys(stepParams).length > 0) {
-      return { ...wfParams, ...stepParams };
-    }
-    if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
-    return wfParams ?? {};
+    return resolveStepParams(this.metadata, this.#workflow.metadata?.params);
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;
@@ -195,12 +281,19 @@ export class StepData {
   }
 
   /**
-   * Whether this step's output should be hidden from the user.
-   * Set to true for intermediate steps in multi-step workflows (e.g., Wan 2.2 low-fps videoGen
-   * before frame interpolation).
+   * Whether this step's output should be hidden from the user: an intermediate step (a ControlNet
+   * preprocess, Wan 2.2's 12fps pass) — unless a later step failed, in which case the intermediate
+   * result is all the user got for what they were charged, so it is shown.
    */
   get suppressOutput(): boolean {
-    return (this.metadata as any)?.suppressOutput === true;
+    if ((this.metadata as any)?.suppressOutput !== true) return false;
+    if (this.status !== 'succeeded' || this.output.length === 0) return true;
+    const steps = this.#workflow.steps ?? [];
+    const index = steps.indexOf(this);
+    if (index < 0) return true;
+    return !steps
+      .slice(index + 1)
+      .some((s) => s.status && orchestratorRefundableStatuses.includes(s.status));
   }
 
   /**
@@ -214,9 +307,13 @@ export class StepData {
       case 'videoUpscaler':
       case 'videoEnhancement':
       case 'videoInterpolation':
+      // preprocessVideo emits a VideoBlob.
+      case 'preprocessVideo':
         return 'video';
       case 'aceStepAudio':
       case 'miniMaxMusic3':
+      case 'yuE2':
+      case 'soniloAudioGen':
         return 'audio';
       default:
         return 'image';
@@ -233,6 +330,10 @@ export class StepData {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }
+  get pendingRatingOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
+    if (this.suppressOutput) return [];
+    return this.output.filter((x) => x.pendingRating && !x.hidden);
+  }
   /** Count of outputs that have landed (available). */
   get completedCount(): number {
     return this.output.filter((x) => x.available).length;
@@ -244,11 +345,23 @@ export class StepData {
   }
   /** Count of outputs with a blockedReason. */
   get blockedCount(): number {
-    return this.output.filter((x) => !!x.blockedReason).length;
+    return this.blockedReasons.length;
   }
-  /** Blocked reason strings (for display grouping). */
+  /** Blocked reason strings (for display grouping), not counting those only waiting on a rating. */
   get blockedReasons(): string[] {
-    return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
+    return this.output
+      .map((x) => x.blockedReason)
+      .filter((x): x is string => !!x && x !== PENDING_RATING);
+  }
+  /**
+   * Whether this step still owes the user an output. A non-terminal status is not
+   * enough on its own: the orchestrator holds a workflow at `processing` indefinitely
+   * when a mature result needs the owner to unlock it (`allowMatureContent: false` +
+   * `upgradeMode: 'manual'`), and every output has already landed by then.
+   */
+  get awaitingOutput(): boolean {
+    if (this.status && orchestratorCompletedStatuses.includes(this.status)) return false;
+    return !this.output.length || this.processingCount > 0;
   }
 }
 
@@ -289,7 +402,16 @@ export abstract class BlobData {
   #step: StepData;
   #index: number;
 
-  constructor({ data, allowMatureContent, step, index, domain, nsfwEnabled }: BlobConstructorArgs) {
+  constructor({
+    data,
+    allowMatureContent,
+    nsfwCap,
+    step,
+    index,
+    domain,
+    nsfwEnabled,
+    holdUnrated,
+  }: BlobConstructorArgs) {
     Object.assign(this, data);
     this.#step = step;
     this.#index = index;
@@ -312,7 +434,15 @@ export abstract class BlobData {
     if (data.blockedReason === 'none') this.blockedReason = null;
 
     if (!this.blockedReason) {
-      if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
+      // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
+      // not yet shown.
+      const neverRated = isNeverRatedVideoStep(step, step.workflow?.metadata?.params);
+      if (holdUnrated && isUnratedOutput(data, neverRated)) {
+        this.blockedReason = PENDING_RATING;
+      } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
+        // The orchestrator reports these available but serves a placeholder in their place.
+        this.blockedReason = NSFW_CAPPED;
+      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';
@@ -347,6 +477,26 @@ export abstract class BlobData {
 
   get canUpgrade() {
     return this.blockedReason === 'canUpgrade';
+  }
+
+  get pendingRating() {
+    return this.blockedReason === PENDING_RATING;
+  }
+
+  /** The workflow that made this output: the generation's key, over a step's. */
+  #workflowKey() {
+    return this.#step.workflow.params.workflow ?? this.params.workflow;
+  }
+
+  /** Whether this output can be used for `use`, by the workflow that made it. */
+  canUse(use: OutputUse) {
+    return canUseWorkflowOutput(this.#workflowKey(), use);
+  }
+
+  /** Whether the workflow that made this output keeps its prompt and details hidden. */
+  get hideDetails() {
+    const key = this.#workflowKey();
+    return typeof key === 'string' && !!workflowConfigByKey.get(key)?.hideDetails;
   }
 
   /** Whether this image's block can be resolved in-place (upgrade or redirect). */

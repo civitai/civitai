@@ -30,6 +30,19 @@ export function sanitizeAppSlug(input: string): string | null {
 }
 
 /**
+ * Why a NEW blockId may not be registered, or `null` when it may.
+ *
+ * `sanitizeAppSlug` folds a run of hyphens to one `_`, so `my-app` and `my--app` would
+ * share one storage schema. Among blockIds that match the manifest pattern and contain no
+ * `--`, the mapping is a plain `-` to `_` substitution and cannot collide. Apply this only
+ * where a blockId is first registered, never to a new version of an existing app.
+ */
+export function newBlockIdHyphenRunError(blockId: string): string | null {
+  if (!blockId.includes('--')) return null;
+  return `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`;
+}
+
+/**
  * Strict validation gate — every DDL site must verify a slug with this
  * before interpolating it. Returns false for null/undefined/non-string.
  */
@@ -79,7 +92,10 @@ const REVIEW_PREVIEW_ID_RE = /^[a-z0-9]{3,48}$/;
  *  schema. Lowercases + strips non-alnum; returns null if the result is unusable. */
 export function normalizeReviewPreviewId(publishRequestId: unknown): string | null {
   if (typeof publishRequestId !== 'string') return null;
-  const norm = publishRequestId.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 48);
+  const norm = publishRequestId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 48);
   return REVIEW_PREVIEW_ID_RE.test(norm) ? norm : null;
 }
 

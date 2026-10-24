@@ -66,7 +66,7 @@ export async function getRouteUserBreakdown(
     query_params: { location, days },
     format: 'JSONEachRow',
   });
-  const rows = await resultSet.json<{ userId: number; visits: number; lastVisit: string }[]>();
+  const rows = await resultSet.json<{ userId: number; visits: number; lastVisit: string }>();
   if (!rows.length) return [];
 
   const nameById = await usersByIds(rows.map((r) => r.userId));

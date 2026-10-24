@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as CfImages from '~/client-utils/cf-images-utils';
@@ -95,7 +96,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 const renderTray = async () => {
   renderWithProviders(
     <IsClientProvider>
-      <StickerPlacementTray imageId={IMAGE_ID} />
+      <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
     </IsClientProvider>
   );
   await expect.element(page.getByText('Drag a sticker onto the image.')).toBeInTheDocument();

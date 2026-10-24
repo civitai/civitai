@@ -6,31 +6,39 @@ import {
   useGenerationConfig,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { getWorkflowModes } from '~/shared/data-graph/generation/config';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { getWorkflowModes } from '~/shared/generation/config';
 import {
   workflowConfigByKey,
   shouldShowBackButton,
   shouldReturnAfterSubmit,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import { useWorkflowHistoryStore } from '~/store/workflow-history.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 
 import { GenerationLayout, GenerationFooter } from '~/components/generation_v2/GenerationLayout';
+import {
+  GrokEcosystemAlert,
+  SeedanceImg2VidAlert,
+} from '~/components/generation_v2/ResourceAlerts';
+import { useCompatibilityInfo } from '~/components/generation_v2/hooks/useCompatibilityInfo';
+import { useGenerationTour } from '~/components/generation_v2/hooks/useGenerationTour';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
-import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import {
   WorkflowInput,
   SelectedWorkflowDisplay,
 } from '~/components/generation_v2/inputs/WorkflowInput';
+import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
+import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
-import { MetadataExtractionFooter } from '~/components/generation_v2/FormFooter';
+import { MetadataExtractionFooter } from '~/components/Generation/footer-parts';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
@@ -49,11 +57,13 @@ import { WhatIfProvider } from './WhatIfProvider';
 import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
 import { useOutputType, type GenerationStore } from './store';
+import { useWhatIfContext } from './WhatIfProvider';
+import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 
 /**
  * The BASE generation form: the entry component. Owns the store over the
  * composed root (`generationHub`) and mirrors GenerationFormV2's shell —
- * GenerationLayout chrome, preset strip, the workflow+ecosystem selector row,
+ * GenerationLayout chrome, preset strip, the workflow + ecosystem row,
  * SelectedWorkflowDisplay with back-nav and workflow modes, the img2meta /
  * prompt:enhance self-contained panels, and the footer slot. The per-output
  * bodies below all receive the SAME store — the graph is one form; only the
@@ -110,9 +120,14 @@ export function BaseGenerationForm() {
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  useEffect(() => {
+    useActiveGenerationForm.setState({ store });
+    return () => useActiveGenerationForm.setState({ store: undefined });
+  }, [store]);
 
   return (
     <FormProvider store={store}>
+      <ExperimentalRulesSync />
       <WhatIfProvider store={store} ext={ext}>
         <GenerationFormBody store={store} isMember={ext.user?.isMember ?? false} />
       </WhatIfProvider>
@@ -120,8 +135,24 @@ export function BaseGenerationForm() {
   );
 }
 
+/** A checkpoint's own turbo LoRA rides on its hydrated data, but the store holds a default checkpoint as a bare id, so the graph would never see it. */
+function useModelWriteBack(store: GenerationStore) {
+  const { getResourceData } = useResourceDataContext();
+  useEffect(() => {
+    function writeBack() {
+      const state = store.getSnapshot().state as Record<string, unknown>;
+      const model = state.model as PartialResourceValue | undefined;
+      if (!model?.id || !needsHydration(model)) return;
+      const data = getResourceData(model.id);
+      if (data) store.set({ model: asResourceValue(data) });
+    }
+    writeBack();
+    return store.subscribe(writeBack);
+  }, [store, getResourceData]);
+}
+
 /**
- * v1 InnerProvider's resource-hydration sync: register the ids of PARTIAL
+ * Resource-hydration sync: register the ids of PARTIAL
  * resource values (a default model is just `{id, model:{type}}`) with
  * ResourceDataProvider so the pickers can render them — without this an
  * ecosystem switch auto-sets the model but the selector looks empty.
@@ -161,20 +192,27 @@ function useResourceHydrationSync(store: GenerationStore) {
     const registered = registeredIdsRef.current;
     return () => {
       for (const id of registered) unregisterResourceId(id);
+      // Without this the sync above skips every id it believes it already registered, so a
+      // teardown-and-remount — every strict-mode mount — leaves them registered by nobody and
+      // stuck on their skeletons.
+      registered.clear();
     };
   }, [unregisterResourceId]);
 }
 
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
   useResourceHydrationSync(store);
+  useModelWriteBack(store);
   useGenerationIngestion(store);
+  useGenerationTour();
   const output = useOutputType(store);
   const workflow = useField<string>(store, 'workflow')?.value;
   const ecosystem = useField<string>(store, 'ecosystem')?.value;
   const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
+  const compatibility = useCompatibilityInfo({ workflow, ecosystem });
 
   // Track workflow/ecosystem history for enhancement-workflow back-nav —
-  // same store v1 pushes to, skipping the entries created by Back itself.
+  // skipping the entries created by Back itself.
   const workflowHistory = useWorkflowHistoryStore();
   const isNavigatingRef = useRef(false);
   useEffect(() => {
@@ -196,7 +234,6 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   return (
     <GenerationLayout>
       <PresetControl />
-      {/* Workflow and ecosystem selectors — always visible, single row */}
       <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden sm:gap-4">
         <Controller
           graph={generationHub}
@@ -206,6 +243,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
               value={value}
               ecosystemId={ecosystemId}
               onChange={(graphKey) => onChange(graphKey)}
+              isCompatible={compatibility.isWorkflowCompatible}
               isMember={isMember}
             />
           )}
@@ -220,6 +258,8 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
               compatibleEcosystems={meta?.compatibleEcosystems}
               excludeEcosystems={meta?.hiddenEcosystems}
               ecosystemStates={meta?.ecosystemStates}
+              isCompatible={compatibility.isEcosystemKeyCompatible}
+              getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
               outputType={meta?.mediaType}
             />
           )}
@@ -276,12 +316,14 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
               );
             }}
           />
+          <GrokEcosystemAlert ecosystem={ecosystem} />
+          <SeedanceImg2VidAlert ecosystem={ecosystem} workflow={workflow} />
           {output === 'image' ? (
             <ImageGenerationForm store={store} />
           ) : output === 'video' ? (
             <VideoGenerationForm store={store} />
           ) : output === 'audio' ? (
-            <AudioGenerationForm />
+            <AudioGenerationForm store={store} />
           ) : (
             <Model3dGenerationForm store={store} />
           )}

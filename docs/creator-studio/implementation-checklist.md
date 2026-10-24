@@ -40,6 +40,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 - [x] Shell: headline stat cards + section link cards + member badge
 - [x] Content-activity row (30d reactions/followers/images/posts/profile views, `getContentTotals`)
 - [x] Buzz earned (30d) + CP cash cards (ready / pending / withdrawn, authoritative via `@civitai/buzz`); cash cards gated to CP members
+- [x] "Banked this month" card (Buzz in this month's `creatorProgramBank`, `$lib/server/banked.ts`) + a note for a CP member whose membership lapsed: banked Buzz still pays out at month end
 
 ### `/earnings` — Earnings by source (A1 Part 1)
 - [x] By-source breakdown (comp / license / tip / access / cosmetic) — reads `buzzTransactions` directly (already owner-keyed); `licenseFee`+`'27'` filter, early-access prefix, cosmetic `sell`
@@ -79,7 +80,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 ## Blocked — backend / main-app dependency
 - 🚧 **A1 Part 2 — owner-keyed `modelVersionId→ownerUserId` dictionary (Koen / CDC).** Unblocks per-model earnings, `/analytics` model section (generations/downloads/top-models), and the dashboard top-earning-models widget. Ask is written: [cdc-koen.md](cdc-koen.md). **In-spoke fallback is viable now** (Postgres version-ids → `IN()` over pre-aggregated daily MVs; ~820ms for a 349-version creator, capped for mega-creators) — see "Deferred" below.
 - 🚧 **A4 — Sell access indefinitely.** Reuse early-access uncapped; needs the main-app representation (nullable `timeframe`/`indefinite` flag). Write path already exists (the B12 endpoint). ([decisions A4](pre-implementation-decisions.md))
-- 🚧 **`licenseFee` type is `'27'` (ingest bug, Justin owns).** We filter `type IN ('licenseFee','27')` until the MV fix + backfill lands, then drop `'27'`. ([owner-rollup-handoff §🔴](owner-rollup-handoff.md))
+- 🚧 **Every type above 26 lands as its number (ingest bug, Justin owns).** `licenseFee` is `'27'` and the App Blocks author fee is `'28'`. We filter `type IN ('licenseFee','27')` until the MV fix + backfill lands, then drop `'27'`; whether `'28'` belongs in this page's earnings at all is a separate product decision. ([owner-rollup-handoff §🔴](owner-rollup-handoff.md))
 - 🚧 **B4 — owner-keyed daily SummingMergeTree MVs (perf, not correctness).** The content-analytics 90-day reads scan raw event tables (cached, but heavy). Backend MVs would remove the raw-scan load. Not blocking any feature. ([feedback #10](feedback-justin-round-2.md))
 
 ## Flagged bugs — upstream (shape the numbers, not ours to fix)

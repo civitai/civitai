@@ -1,4 +1,5 @@
 import { Checkbox, NumberInput, Stack, Textarea } from '@mantine/core';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
@@ -9,7 +10,8 @@ import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { model3dHub } from '~/shared/form-graph/generation/model3d/hub.graph';
 
-import { ControllerLabel } from './form-helpers';
+import { ControllerLabel, PromptLabel } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import type { GenerationStore } from './store';
 
 /**
@@ -46,6 +48,7 @@ function OptionButtons({
 export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
+      <GateRuleWarnings />
       <Controller
         graph={model3dHub}
         name="polygenVersion"
@@ -91,7 +94,9 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
             value={value}
             onChange={onChange}
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Describe the 3D model you want to generate."
                 required={meta?.required}
@@ -511,8 +516,11 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={model3dHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
       </AccordionLayout>

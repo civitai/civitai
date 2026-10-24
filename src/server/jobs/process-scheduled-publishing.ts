@@ -9,6 +9,7 @@ import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/ca
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { publishDueScheduledArticles } from '~/server/services/article-schedule.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustMvCache,
@@ -16,6 +17,7 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -89,11 +91,11 @@ export const processScheduledPublishing = createJob(
 
     // Standalone scheduled posts go live passively once feeds stop filtering on
     // "publishedAt" — no status flips, so this window is the only publish-time hook.
-    // The createdAt offset can't exclude a scheduled post (the offset is enforced at
-    // schedule time) but it does let through drafts that sat over an hour before
-    // being published normally — roughly a sixth of all publishes. They're harmless
-    // to the reward, which dedups per post, but any further side effect added to this
-    // sweep fires on them too.
+    // The createdAt offset must never exceed the schedule minimum: post.controller treats
+    // anything that far ahead as scheduled and skips the inline reward, so a larger offset
+    // here leaves short schedules unrewarded for good. It also lets through drafts published
+    // normally after sitting that long. They're harmless to the reward, which dedups per
+    // post, but any further side effect added to this sweep fires on them too.
     //
     // Never widen the window past the start of the UTC day: the reward's dedup entry
     // expires then, so a window spanning midnight re-grants yesterday's posts. That
@@ -203,10 +205,13 @@ export const processScheduledPublishing = createJob(
         ];
 
         if (modelsToUpdate.length) {
+          // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
+          // timestamp(3) column rounds a bare NOW() UP about half the time. Either leaves
+          // ModelMetric.lastVersionAt NULL and the model off feeds.
           await tx.$executeRaw`
             -- Update last version of models with versions transitioned to published
             UPDATE "Model"
-            SET "lastVersionAt" = ${now}
+            SET "lastVersionAt" = date_trunc('milliseconds', NOW())
             WHERE id IN (${Prisma.join(modelsToUpdate)})
               AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
           `;
@@ -239,7 +244,7 @@ export const processScheduledPublishing = createJob(
               THEN (p."metadata"->>'prevPublishedAt')::timestamptz
               ELSE mv."publishedAt"
             END,
-            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
@@ -284,6 +289,21 @@ export const processScheduledPublishing = createJob(
       { timeout: 30000 }
     );
 
+    // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
+    // already read Published, so the next run never selects them again — a bust skipped here is lost.
+    // Each bust is guarded so that moving them first cannot let one cache fault cancel the engagements.
+    for (const modelVersion of scheduledModelVersions) {
+      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId).catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'model version cache bust failed',
+          modelVersionId: modelVersion.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+    }
+
     // Process event engagements
     for (const model of scheduledModels) {
       await eventEngine.processEngagement({
@@ -300,7 +320,6 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
     // Neither scheduled path reaches the inline side effects in post.controller, so
     // they land here on the day the post actually goes live. The sweep half of this
@@ -357,11 +376,12 @@ export const processScheduledPublishing = createJob(
       );
     }
 
-    // Reindex the just-published posts' images so the metrics_images feed picks
-    // up their new sort position (GREATEST(publishedAt, scannedAt, createdAt)).
-    if (scheduledPosts.length) {
+    // Both halves, not just the posts this job flips: a standalone scheduled post goes live
+    // by the clock with no write, and images_v6 rejects a future-dated post at pull time —
+    // so the enqueue from schedule time never landed and this sweep is its only hook.
+    if (publishedPosts.length) {
       const images = await dbWrite.image.findMany({
-        where: { postId: { in: scheduledPosts.map((p) => p.id) } },
+        where: { postId: { in: publishedPosts.map((p) => p.id) } },
         select: { id: true },
       });
       if (images.length) {
@@ -370,9 +390,17 @@ export const processScheduledPublishing = createJob(
           action: SearchIndexUpdateQueueAction.Update,
         });
       }
+    }
+
+    if (scheduledPosts.length) {
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      // Undated until now, so never scanned.
+      scanEntitiesInBackground(
+        'Post',
+        scheduledPosts.map((p) => p.id)
+      );
     }
 
     const processedModelIds = [
@@ -387,6 +415,19 @@ export const processScheduledPublishing = createJob(
         processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
     }
+
+    // Last and caught: an article fault must not stop the run being recorded.
+    const goLive = await publishDueScheduledArticles(now).catch((error) =>
+      logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'error',
+        message: 'scheduled article go-live failed',
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
+    // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
+    const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];
+    if (liveArticleIds.length) scanEntitiesInBackground('Article', liveArticleIds);
 
     await setLastRun();
   }

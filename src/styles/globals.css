@@ -102,127 +102,46 @@
      `footer`, so their own markup is the viewport edge at both ends. Every
      other route inherits 0 here and pays nothing, which is correct. */
   --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
-
-  /* THE ULTRAWIDE CAP FOR A FULL-PAGE APP BLOCK — `/apps/run/<slug>` and the
-     other `PageBlockHost` surfaces (the dev tunnel, the moderator preview).
-
-     WHAT IT IS. `PageBlockHost` reads this as
-     `max-width: var(--app-page-max-width, …)` with `margin-inline: auto`, so
-     the app renders as a centred column with a neutral gutter either side once
-     the viewport is wider than this. Below it the declaration is INERT — the box
-     is `width: 100%`, which is already narrower than the cap, and
-     `margin-inline: auto` resolves to 0 on a box that fills its parent. That
-     inertness is the point: the great majority of traffic is below this width
-     and must render byte-identically to before.
-
-     🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT THE LEDGER SELECTS, AND THAT
-     IS DELIBERATE — checking the wrong one in DevTools is the likeliest way to
-     conclude this mechanism is broken when it is not. The host root
-     (`[data-app-page-frame]`, and `data-testid='app-page-frame'` in a dev build
-     only — see the ledger's strip note below) is FULL-BLEED: it carries the app
-     chrome, which spans the page like every other site-level bar. The cap is read
-     one level down, on the content wrapper, which holds the app and its failure
-     card. The ledger below still keys on the FRAME because a custom property
-     INHERITS — set it there and the content wrapper picks it up — so ledger rules
-     are written against the frame and take effect on the content. Inspect
-     `app-page-content` for the resolved `max-width`.
-
-     🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT AN APP CAN OPT OUT — see the
-     ledger below. The host reads it through `var()` rather than writing it as
-     an inline value precisely so a stylesheet rule can override it; an inline
-     custom property on either of those elements would beat every such rule and
-     make the opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
-     same number as the `var()` fallback (CSS cannot import a TS constant), and
-     `__tests__/pageBlockHostMaxWidth.test.ts` is what keeps the two in step —
-     the same arrangement `--header-height`/`HEADER_HEIGHT_PX` uses. The
-     justification for the VALUE lives on that constant. */
-  --app-page-max-width: 1600px;
 }
 
-/* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
-   One member today: `playable-collections` (its reasoning is on the rule itself,
-   below). The membership set is ASSERTED in
-   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if
-   it grows OR shrinks, so adding or removing a rule here without updating that
-   expectation is a test failure, not a silent change.
+/* 🔴 `--app-page-max-width` AND THE PLATFORM WIDTH-CAP LEDGER WERE BOTH DECLARED HERE AND
+   ARE GONE. THE FULL-PAGE APP BLOCK SURFACE HAS NO PLATFORM WIDTH BOUND AT ALL — no
+   custom property, no `var()` read, no per-app rule, no template, and no ledger to add one
+   to. `/apps/run/<slug>` and the other `PageBlockHost` surfaces hand the app the viewport;
+   an app that wants a centred column sets one in its own CSS inside its own iframe
+   document, which it already fully controls.
 
-   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
-   byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
-   CLI, `@civitai/app-sdk`) and has to move in lockstep, and this host is pinned
-   to `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest
-   field would be UNTYPED at exactly the point the host consumes it. A rule here
-   is one line, needs no schema motion, and cannot be forged: the guest is
-   cross-origin and can never reach this cascade.
+   🔴 THE WHOLE RECORD IS IN ONE PLACE, AND IT IS NO LONGER THIS FILE: the tombstone above
+   `PageBlockHostProps` in `src/components/AppBlocks/PageBlockHost.tsx`. It carries the
+   owner decision, why the RETAINED per-app lever was deleted too rather than kept, what
+   the former 1600px cap cost, why this does not reverse PR #4812, and the condensed
+   findings for the two apps this ledger once held. This pointer exists because every other
+   doc in the repo routed readers to THIS file as "the record", and an absence is not an
+   answer. ⚠️ Do not re-create a declaration here to give those readers something to land
+   on — the pointer is the landing.
 
-   🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
-   AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets
-   `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` whenever
-   `NODE_ENV === 'production'`, so every `data-testid` is compiled out of the
-   live DOM. The `playable-collections` rule below used to chain the app-page-frame
-   TESTID with its block id, and therefore matched ZERO elements on civitai.com
-   while matching fine in every test tier, all of which run with
-   `NODE_ENV !== 'production'` — a rule that was present in the deployed
-   stylesheet, verified verbatim, and still did nothing. The frame's
-   production-surviving marker is `data-app-page-frame`, stamped beside
-   `data-block-id` on the same element in `PageBlockHost.tsx`. This is checked
-   mechanically: `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`
-   parses the strip list out of `next.config.mjs` and the selectors out of this
-   file — INCLUDING the ones in these comments, since the template below is what
-   the next entry gets copied from — and fails if any of them depends on an
-   attribute production removes. That is also why the broken selector is described
-   above in words rather than spelled out: a literal example of the wrong shape,
-   even a historical one, is a copyable example.
+   🔴 NEVER KEY A CSS SELECTOR IN THIS FILE ON `data-testid`, AND THE MECHANICAL CHECK THAT
+   USED TO SAY SO IS GONE WITH THE LEDGER — SO THIS IS NOW PROSE ONLY. `next.config.mjs`
+   sets `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` whenever
+   `NODE_ENV === 'production'`, so every `data-testid` is compiled out of the live DOM: a
+   rule keyed on one ships verbatim in the deployed stylesheet, matches ZERO elements on
+   civitai.com, and passes in every test tier (they all run with
+   `NODE_ENV !== 'production'`). That is measured, not hypothetical — the old opt-out
+   ledger shipped exactly that spelling and an app rendered letterboxed in production while
+   nothing was red. `ledgerSelectorSurvivesProdStrip.test.ts` was the guard and it was
+   deleted with its subject, which is a SCOPE REDUCTION rather than a fix: the hazard is
+   generic to any stylesheet here, so the honest replacement is a repo-wide check over
+   every stylesheet, not a ledger-shaped one. Until that exists this paragraph is all there
+   is.
 
-   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
-   same value that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on
-   its root, so:
-
-     [data-app-page-frame][data-block-id='my-canvas-app'] {
-       --app-page-max-width: none;
-     }
-
-   `none` is the full-bleed value; a narrower app can take a px value instead.
-   Add the rule together with a one-line reason, the way every other ledger in
-   this repo is kept — an entry with no stated reason cannot be reviewed later.
-
-   WHEN IT IS WARRANTED: an app whose surface is the canvas — an infinite grid, a
-   timeline, a map, a side-by-side compare — where a centred column is actively
-   worse. NOT for "it looks bigger". The default exists because an app cannot
-   know how wide the viewer's monitor is and almost none of them defend against
-   it themselves.
-
-   The mechanism is MEASURED, not merely written down: the "opt-out" cases in
-   `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
-   rule of exactly this shape at a 2560px viewport and assert the host goes back
-   to full width — so this block cannot rot into a comment describing something
-   that no longer works. */
-
-/* Playable Collections (`playable-collections`) — a collection PLAYER, and every
-   one of its open-collection surfaces is uncapped by the app itself.
-
-   Read at the app's deployed ref (`sync/deployed-0.2.2`), whose manifest declares
-   this same `blockId`. The app does carry a 960px well, but it is `contentStyle`
-   (`App.tsx:972`) applied only to the BROWSE shell (`App.tsx:789`): opening a
-   collection early-returns at `App.tsx:733` past that wrapper into
-   `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
-   `width: 100%; min-height: 100dvh` with no max-width — and that root serves all
-   THREE view modes (classic `Player`, continuous-horizontal, continuous-vertical)
-   plus the ambient "cast" state. So the cap would bind on all of them: the
-   slideshow's media is `object-fit: contain`, so a centred column simply shrinks
-   the player, and the ticker/wall modes are `repeat(cols, minmax(0, 1fr))` grids
-   that spend whatever width they are given.
-
-   The browse list is unaffected either way — it is behind that early return and
-   the app already caps it at 960, well under the default.
-
-   🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
-   which fails if this set GROWS OR SHRINKS, and it is EXERCISED by the red/green
-   pair in `PageBlockHostMaxWidth.browser.test.tsx` — that suite parses THIS file
-   and injects the rule below verbatim, so deleting or mistyping it fails a test
-   rather than silently letterboxing the app again. */
-[data-app-page-frame][data-block-id='playable-collections'] {
-  --app-page-max-width: none;
-}
+   ⚠️ BE ACCURATE ABOUT WHAT WAS LOST, WHICH IS LESS THAN "a guard for a live defect" —
+   MEASURED AT THE DELETING COMMIT: **no `.css`, `.scss` or `.less` file in this repo, and
+   no attribute selector in any source file, keys on `data-testid` outside a comment.** So
+   the coverage that went was PROSPECTIVE: it protected the next such rule, not a present
+   one, and the deleting commit's message claims slightly more danger for itself than the
+   tree supports. That makes the replacement cheaper to defer — and it does not make the
+   warning above optional, because "zero instances" is the state a guard is deleted in and
+   also the state the first instance arrives in. */
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and
@@ -389,6 +308,11 @@ textarea {
                                        further down, because this package
                                        ships UNLAYERED CSS and a layered rule
                                        loses to it no matter how specific.
+     · `@civitai/components`           1 fixed (`toast-region`, `bottom/right:
+                                       16px`) — 0 call sites: the app renders
+                                       only its `button` markup (the
+                                       `shellDesignSystemMarkup` shell). 0
+                                       sticky. All in `@layer civitai.components`.
 
    One more entry point exists and is not in `_app.tsx`:
    `draft-js/dist/Draft.css`, imported by `TrainingImagesCaptionViewer`. 0
@@ -1219,6 +1143,13 @@ div[data-youtube-video] > iframe {
 #adconsent-usp-link {
   border: 1px solid #1971c2 !important;
   color: #1971c2 !important;
+}
+
+/* Admiral's injected "Do Not Sell" footer link (the only <a> directly inside our <footer>) and its
+   floating button, hidden until detectPrivacyUi sets `data-privacy-ui="visible"`. */
+html:not([data-privacy-ui='visible']) footer[data-app-footer] > a,
+html:not([data-privacy-ui='visible']) body > div:has(> #whisper-anchor) {
+  display: none !important;
 }
 
 #adconsent-usp-banner-optout input:checked + .adconsent-usp-slider {

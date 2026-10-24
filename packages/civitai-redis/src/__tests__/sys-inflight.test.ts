@@ -58,14 +58,14 @@ describe('sys-inflight counter (floor)', () => {
 // a wedge → heal → post-heal rejected decrements, and prove a SECOND wedge still triggers a
 // reconnect (the counter re-armed because it floored at 0 instead of going negative). This is the
 // exact mirror of the cluster suite, with the SYS default geometry (threshold 500 vs cluster 50,
-// deadline trigger OFF — the sys client has no per-command deadline).
+// timeout-rate trigger off here, to isolate the inflight path).
 describe('sys self-heal watchdog re-arms after a heal (real sys counter)', () => {
   const CFG: ClusterSelfHealConfig = {
     enabled: true,
     inflightThreshold: 500,
     sustainedMs: 20000,
     cooldownMs: 60000,
-    // Deadline trigger disabled (the sys client has no command deadline); no jitter so the
+    // Timeout-rate trigger disabled (this suite drives the inflight path); no jitter so the
     // reconnect fires synchronously and the assertions stay deterministic.
     deadlineHitThreshold: 0,
     deadlineHitWindowMs: 0,

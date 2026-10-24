@@ -1,9 +1,8 @@
 /**
- * App Store Listings (W13) — /apps/my-submissions table view-model logic (PURE,
- * no React). Shared by BOTH lists (onsite `MySubmissionsList` + offsite
- * `OffsiteSubmissionsList`) so the text filter, the column comparators, and the
- * per-app version-collapse behave IDENTICALLY across them. Extracted so each piece
- * is unit-testable without mounting a table.
+ * App Store Listings (W13) — submissions-table view-model logic (PURE, no React):
+ * the text filter, the column comparators, the per-app version-collapse and the
+ * currently-published version. Extracted so each piece is
+ * unit-testable without mounting a table.
  *
  * The two row shapes differ (onsite has a block id + version; offsite has a slug +
  * external URL), so every helper here is GENERIC over the row type `T` and reads
@@ -15,8 +14,12 @@
 // ── layout ─────────────────────────────────────────────────────────────────────
 
 /**
- * The horizontal floor (px) for BOTH /apps/my-submissions tables, handed to
+ * The horizontal floor (px) for the /apps/my-submissions table, handed to
  * Mantine's `Table.ScrollContainer` as `minWidth`.
+ *
+ * ⚠ The onsite table it was measured on (`MySubmissionsList`) has been deleted; the
+ * prose below is the history of that measurement, and the value now serves only the
+ * offsite table, whose own natural width has never been measured.
  *
  * Why it exists: both lists render `<Table>` inside `<Card withBorder p={0}>`, and
  * Mantine's `.mantine-Card-root` sets `overflow: hidden`. The onsite row's action
@@ -63,6 +66,50 @@
  * constants HERE — do not hardcode a literal at a call site.
  */
 export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
+
+/*
+ * 🔴 THE LEFT RAIL WIDENS THE BAND THAT SCROLLS, AND THAT COST WAS ACCEPTED RATHER THAN
+ * EXEMPTED. Recorded here, at the constant, because "why does `/apps/build` scroll
+ * sideways on my laptop" is a question asked of this number.
+ *
+ * The rail takes 276px off the body on every `/apps/*` route, so the container width the
+ * table sees drops by that much and this floor bites at wider viewports than before.
+ * Measured, as VIEWPORT widths (each already net of a 10px reserved scrollbar and the
+ * Container's 32px gutter):
+ *
+ *   viewport   today      rail OPEN   rail COLLAPSED
+ *   1440       SCROLLS    SCROLLS     SCROLLS
+ *   1600       fits       SCROLLS     fits
+ *   1920       fits       fits        fits
+ *
+ * 🔴 THE FIRST ROW IS THE ONE THAT SETTLES IT: `/apps/build` ALREADY SCROLLS AT 1440
+ * TODAY — by this paragraph's own method (net of the 10px reserved scrollbar and the
+ * 32px gutter) the container yields `1440 − 10 − 32 = 1398` against this 1424 floor,
+ * 26px short — so the rail does not INTRODUCE horizontal scrolling on this page, it
+ * widens a band that already exists by one viewport step (1600).
+ *
+ * ⚠️ An earlier revision wrote "1408 … 16px short", which deducts the gutter but NOT the
+ * scrollbar — inconsistent with the sentence two lines above that says both are already
+ * netted out. The conclusion is unaffected (1398 and 1408 are both below 1424, so the
+ * row still reads SCROLLS); the arithmetic was simply wrong, and a reader re-deriving it
+ * would not reproduce it. The table has carried a real
+ * `Table.ScrollContainer` since it was written, so the affordance is present and works.
+ *
+ * 🔴 NO EXEMPTION WAS ADDED, DELIBERATELY. The two ways to exempt it are both worse than
+ * the scroll. (a) Hiding the rail on `/apps/build` re-creates the per-route chrome that
+ * `AppsPageLayout` exists to have deleted, and would break the 12-route alignment ledger
+ * in `AppsPageLayout.chromeAlignment.browser.test.tsx` by design. (b) Shrinking this
+ * floor is a column-legibility decision about a table nobody re-measured, taken to work
+ * around a layout change — the exact shape of the `/apps/review` cap that had to be
+ * deleted later (see `APPS_PAGE_CONTAINER_WIDTH`). A viewer who wants the width back has
+ * a one-click, persisted answer: collapse the rail, which restores 1600.
+ *
+ * (A plain block comment, deliberately — NOT a JSDoc. It documents the constant ABOVE
+ * it, and a doc comment in this position binds to the declaration BELOW, which is a
+ * different constant. An earlier revision made it a JSDoc and left it dangling between
+ * SUBMISSIONS_TABLE_MIN_WIDTH's own doc comment and the declaration that comment was
+ * written for.)
+ */
 
 /**
  * Chrome (px) that `AppsPageLayout` + the submissions `Card` take out of the

@@ -35,7 +35,7 @@ import {
  * inherit the same import. Keeping every rule that decides WHICH control renders on this
  * side of the line means those rules stay directly testable, and stay reusable.
  *
- * Same View/container idiom as `AppsSubNavView`.
+ * Same View/container idiom as `AppsRailNavView`.
  */
 
 /** One roster row, exactly as `appCollaborators.list` returns it. */

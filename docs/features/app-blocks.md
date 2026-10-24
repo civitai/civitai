@@ -41,12 +41,43 @@ install. Each app is served from its own platform-owned subdomain
 ## Tokens
 
 - RS256, signed by `BLOCK_TOKEN_PRIVATE_KEY`, verified via JWKS.
-- 15-minute lifetime by default; 5-minute lifetime for `block:settings:*` scopes.
+- 15-minute lifetime by default; 5-minute lifetime for `block:settings:*` scopes
+  — a RETIRED scope family (see the Scopes table), so a manifest can no longer
+  declare it and that shorter lifetime is unreachable today.
 - Claims: `iss`, `aud`, `sub` (`user:<id>` or `anon`), `iat`, `nbf`, `exp`,
   `jti`, `blockId`, `appId`, `blockInstanceId`, `ctx`, `scopes`,
   `buzzBudget?`.
 - Per-instance revocation via `BlockRevocation` service — uninstall and
   toggleEnabled(false) write a marker; toggleEnabled(true) clears it.
+
+### OAuth access tokens (manifest `auth: "oauth"`)
+
+A block that declares `"auth": "oauth"` in its manifest gets a real OAuth access
+token instead of the JWT when `APP_BLOCK_OAUTH_TOKENS_ENABLED` is on and the
+viewer is signed in. It is an `ApiKey` row for the block's `OauthClient`, minted
+by the auth hub (`POST /api/auth/oauth/app-token`, internal-only) against an
+`OauthConsent` row that `grantScopes` and the mint keep in step with the
+viewer's `AppUserScopeGrant` (`oauth-consent-sync.service.ts`). `/api/v1`, the
+orchestrator and the MCP accept it unchanged; `withBlockScope` also accepts it
+on the block routes, deriving the block claims from the grant. The mint
+response and `BLOCK_INIT.token` carry `kind: "block" | "oauth"` so
+`@civitai/sdk` can refuse a JWT for a signed-in viewer with a clear message.
+Anonymous viewers and blocks without the field keep the JWT path exactly as
+described above.
+
+In the author's own dev tunnel the same token kind is minted at any app status.
+The CLI sends the local manifest's `auth` at tunnel start (`declaredAuth` on
+the session; an older CLI falls back to the stored or pending manifest). A
+never-submitted app has no `OauthClient`, so it borrows one owned by the author,
+`appdev-<userId>-<slug>`, with no redirect URIs and no grants; a submitted app
+uses its real client. Consent is written for the author directly
+(`dev-tunnel-oauth.service.ts`) with the tunnel's daily Buzz cap as the
+limit, since the author is the only viewer of their tunnel. `withBlockScope`
+binds such a token to the author's active tunnel and derives the block claims
+from the consent, with `dev: true`. Not yet covered for direct-to-orchestrator spend: the
+platform-wide per-user daily cap across blocks and the per-app aggregate cap,
+which still live in the `blocks.submitWorkflow` proxy; keep the flag off for
+spend-driving public apps until they do.
 
 ## Scopes
 
@@ -54,16 +85,43 @@ See `src/shared/constants/block-scope.constants.ts`. Each block scope maps
 to an OAuth bitmask bit (registration-time gate), plus a context-binding
 check at request time (`enforceContextBinding`).
 
-| Scope                            | Bind                                              | Notes                                                                                                                                                                   |
-| -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |
-| `media:read:owned`               | non-anon `sub`                                    |                                                                                                                                                                         |
-| `buzz:read:self`                 | non-anon `sub`                                    |                                                                                                                                                                         |
-| `social:tip:self`                | non-anon `sub`                                    |                                                                                                                                                                         |
-| `user:read:self`                 | non-anon `sub`                                    | viewer identity — read via the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Also gates the **deprecated** `/api/v1/blocks/me` REST route (retiring) |
-| `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
-| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK`                                                                                                                   |
-| `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
+⚠️ **The binding runs for the route's `requiredScope` only, not for every scope
+the token carries** (#5063). A binding is a statement about a request's shape —
+`models:read:self` wants a `modelId` in the query, `apps:storage:shared:write`
+wants a non-anon subject — so running all of them on every request 403'd
+unrelated routes: a manifest declaring `models:read:self` could not call
+`blocks/buzz`, and an anon token 403'd a shared-storage READ because the
+consent-exempt `apps:storage:shared:write` rode along on it. The one gate that
+is still swept across the WHOLE token is the unknown-scope deny-by-default.
+
+A handler that consults a SECOND scope off `claims.scopes` to widen its response
+owns that scope's own check. Today that is exactly one scope,
+`collections:read:private`, at `blocks/collections/index.ts:614` and
+`blocks/collections/[id]/index.ts:132`. Both are safe structurally, without
+relying on a test: the scope is consent-GATED so the anon mint strips it, and
+both routes require `collections:read:self`, whose non-anon binding still runs.
+A third such site has to make its own argument — see the note at the foot of
+`src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
+
+| Scope                                | Bind                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models:read:self`                   | `query.id == ctx.modelId`               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~~`media:read:owned`~~               | —                                       | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `buzz:read:self`                     | non-anon `sub`                          | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `social:tip:self`                    | non-anon `sub`                          |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `user:read:self`                     | non-anon `sub`                          | viewer identity. Gates `GET /api/v1/blocks/me` — the REST read, and the default surface for it (see "Direction" under Routes) — AND its host-mediated twin, the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Neither is deprecated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ai:write:budgeted`                  | positive `buzzBudget`                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~~`block:settings:read` / `:write`~~ | —                                       | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.previewPostFromApp` then `blocks.createPostFromApp`; both also require the viewer's signed-in session and refuse unless it is the token's `sub`), optionally attached to a model version's gallery. Outputs are workflow outputs or — page apps only — images uploaded from the app's own bytes (`OPEN_IMAGE_UPLOAD { bytes }` → the store upload, then `blocks.persistAppUploadImage`, which is gated by this scope); such an image is postable only by the app that uploaded it, only for its owner, only within the SFW ceiling (whatever the viewer's own browsing level allows; bytes uploads are SFW-only in v1), and is never readable through `blocks.getImagesByIds`. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+| `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship in shared storage, the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
+
+⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
+from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
+datastore) and `collections:read:self` / `:write:self` / `:read:private`. Read
+`src/shared/constants/block-scope.constants.ts` for the live set rather than
+inferring absence from this list.
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
 
@@ -71,17 +129,59 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > (`/api/v1/blocks/models`, `/api/v1/blocks/images`) serve public, maturity-clamped
 > data and accept any valid block token for its signed `maxBrowsingLevel` claim, not
 > for authorization (`catalog:read` was added in #2671 and retired the next day).
+> For a signed-in token, `/api/v1/blocks/images` (like `/api/v1/blocks/gated-images` and
+> `/api/v1/blocks/collections/[id]`) also attaches a per-viewer, per-app `reactTicket` to each
+> image — the provenance proof `blocks.setReactionFromApp` requires (see `social:react:self`).
+> It is the one per-viewer field on otherwise public data; block routes answer `private, no-store`.
+> `/api/v1/blocks/models?owner=mine` narrows the same public data to the signed-in
+> viewer's own models, taken from the token `sub` (anon gets 401). It is a filter,
+> not a viewer, so it needs no scope and shows no unpublished or Private-availability
+> versions. `modelVersionIds=1,2,3` (max 100) rehydrates saved cards by version id
+> under the same rules. Every 200 echoes the applied filter as `metadata.owner`
+> (`mine` or `any`); a response without it came from a server that ignored `owner`, so
+> it is not owner-filtered. `/api/v1/blocks/models` and the `search_models` tool
+> on `/api/v1/blocks/tools` both keep only Public-availability versions.
 
 ## Routes
 
-| Route                                            | Auth                 | Scope required                                                                                                        |
-| ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `POST /api/v1/block-tokens`                      | same-origin session  | — (any approved install)                                                                                              |
-| `GET /api/v1/block-tokens/jwks`                  | public               | —                                                                                                                     |
-| `GET /api/v1/blocks/me` _(deprecated, retiring)_ | block JWT            | `user:read:self` — superseded by the `useViewer()` hook (`GET_VIEWER` bridge). Kept live for now; migrate to the hook |
-| `GET /api/v1/models/[id]`                        | session OR block JWT | `models:read:self` (block path)                                                                                       |
-| `POST /api/v1/developer/block-manifests`         | `JOB_TOKEN`          | —                                                                                                                     |
-| `POST /api/internal/blocks/workflow-completed`   | `JOB_TOKEN` + Flipt  | —                                                                                                                     |
+### Direction: the API is the default surface (decided 2026-09-21)
+
+> **An app reaches civitai through the public `/api/v1` API plus the
+> orchestrator** — not through block-only side doors and not through a growing
+> `postMessage` bridge. Koen proposed this on 2026-09-21 and Justin agreed; the
+> operator confirmed it on 2026-09-22 and again on 2026-09-23, in these words:
+>
+> > "if we're going with api as the surface then I think the pattern can just be
+> > **default api, and only things that must be via messaging (ex. opening
+> > resource picker) uses that protocol**"
+>
+> **The test is "can only the host do this?"** If yes, it stays on the bridge:
+> resource picker, Buzz purchase, sign-in, download, navigate, and the host
+> signals (resize / theme / visibility). Everything else — plain **data
+> movement** — goes to the API.
+>
+> 🔴 **This reverses the previous direction, and prose written under that
+> direction is wrong wherever it survives.** Block REST routes used to be
+> documented as retiring once a bridge equivalent shipped; on those grounds
+> `src/pages/api/v1/blocks/buzz.ts` was deleted in `16df584bcd` (2026-07-15,
+> _"buzz self-read page-host bridges … supersedes #3132/#3140"_). **That
+> reasoning is retired.** Where one capability has both a REST route and a bridge
+> message, they are two front doors to one capability — not a predecessor and a
+> successor. Tracking issue: `civitai/civitai-app-starters#437`.
+
+| Route                                          | Auth                 | Scope required                                                                                                                                                                                                        |
+| ---------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)                                                                                                                                                                                              |
+| `GET /api/v1/block-tokens/jwks`                | public               | —                                                                                                                                                                                                                     |
+| `GET /api/v1/blocks/me`                        | block JWT            | `user:read:self` — the viewer self-read, and **not deprecated**: a viewer read is data movement, so the API is its default surface. Its host-mediated twin is the `useViewer()` hook (`GET_VIEWER` bridge); both stay |
+| `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path)                                                                                                                                                                                       |
+| `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                                                                                                                                                                                                                     |
+| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                                                                                                                                                                                                                     |
+
+⚠️ **This table is a sample, not the register.** It carries no count on purpose:
+block-token-authed routes also live under `/api/v1/blocks/*` (the catalog reads
+noted above, among others) and the set moves. `src/pages/api/v1/` is the
+authority.
 
 ## Feature flag
 
@@ -90,6 +190,13 @@ on model pages AND `/api/internal/blocks/workflow-completed`. Off by
 default. The per-block emergency kill list
 (`system:blocks:emergency-kill-list` SET in sys Redis) is the
 fine-grained tool for ops.
+
+Several capabilities also have their own fail-closed flag, independent of
+`app-blocks-enabled`, that ships OFF with no moderator floor (an absent flag is
+off for everyone): `app-blocks-post-creation` (`posts:write:self`),
+`app-blocks-training-kind`, `app-blocks-confirmed-step` and
+`app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
+procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
 ## Threat model highlights
 
@@ -111,7 +218,9 @@ fine-grained tool for ops.
 - **Ownership escalation**: `block:settings:*` tokens require caller
   is the install's `installedByUserId` at issuance. The check is
   authoritative at issue time; deleted-publisher installs (FK SET NULL)
-  fail closed.
+  fail closed. ⚠️ The scope family is RETIRED (see the Scopes table), so this
+  check still exists in `block-tokens/index.ts` but nothing can reach it —
+  the scope cannot be declared, approved or minted.
 
 ## BLOCK_INIT contract
 
@@ -127,7 +236,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     raw: string;                       // RS256 JWT
     scopes: string[];                  // from manifest, e.g. ['models:read:self']
     expiresAt: string;                 // ISO-8601
-    buzzBudget?: number;               // only when manifest includes ai:write:budgeted
+    buzzBudget?: number;               // only when the token carries ai:write:budgeted
   };
   context: SlotContext;                // slotId + per-surface fields
   settings: {
@@ -144,12 +253,16 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
     // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
-    // reads it via the `useViewer()` hook (the `GET_VIEWER` page-host bridge →
-    // `blocks.getMyViewer`), the successor to the deprecated /api/v1/blocks/me
-    // call.
+    // asks for one: `GET /api/v1/blocks/me` (the default surface — see
+    // "Direction" under Routes) or its host-mediated twin, the `useViewer()`
+    // hook (the `GET_VIEWER` page-host bridge → `blocks.getMyViewer`). Neither
+    // is deprecated.
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
+  storageMode?: 'local-preview';       // dev-tunnel frames only; advisory, grants nothing.
+                                       // See BLOCK_HOST_LOCAL_PREVIEW_STORAGE in
+                                       // src/components/AppBlocks/blockInitFragmentGate.ts.
 }
 ```
 
@@ -254,18 +367,30 @@ Two flows, both delivering the same wrapped-token shape:
 
 ### Block↔host message inventory
 
-Blocks do **not** call the orchestrator directly. Generation and every other
-privileged capability is **host-brokered**: the iframe posts a typed message to
-its host, the host performs the action server-side against a block-token-authed
-tRPC mutation (which re-verifies the JWT and re-checks scopes/maturity), and the
-host posts the reply back. This keeps the block token in POST bodies (never in a
-GET URL) and keeps policy enforcement on the platform side of every call.
+Blocks do **not** call the orchestrator directly. Generation, and every other
+capability reached over this bridge, is **host-brokered**: the iframe posts a
+typed message to its host, the host performs the action server-side against a
+block-token-authed tRPC mutation (which re-verifies the JWT and re-checks
+scopes/maturity), and the host posts the reply back. This keeps the block token
+in POST bodies (never in a GET URL) and keeps policy enforcement on the platform
+side of every call.
+
+⚠️ **This bridge is not the general way to reach civitai — the API is** (see
+"Direction" under Routes). A capability belongs here when **only the host can do
+it**: open host chrome (resource picker, Buzz purchase, consent confirm), sign
+the viewer in, download, navigate or resize the host page, or push a host signal
+(theme, visibility). Plain data movement belongs on `/api/v1` plus the
+orchestrator — including where a bridge message for it already exists, in which
+case the two are twins and both are supported. Do not add a new bridge message
+for something the API could serve.
 
 **The single source of truth for the message set is
 `src/components/AppBlocks/hostHandlerParity.ts`** — a compile-time-enforced
 inventory of every block→host message, which hosts must handle it, and whether
 it is REQUEST-style (awaits a `*_RESULT`/ack reply — an unhandled one hangs the
-block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
+block) or fire-and-forget. For a request it also records the top-level payload keys
+of the success and error replies (`replyKeys` / `errorKeys`), which the host tests
+check against real replies. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
@@ -275,31 +400,203 @@ read that file. As of this writing the families are:
 - **Viewer**: `GET_VIEWER` (→ `VIEWER_RESULT`) — the viewer self-read ("who am
   I") backing the SDK `useViewer()` hook, host-mediated via the
   `user:read:self`-gated `blocks.getMyViewer` mutation (token-`sub`-bound
-  server-side). The host-mediated successor to `GET /api/v1/blocks/me` (which
-  stays live for now; migrate to the hook). Page host only today.
+  server-side). The host-mediated **twin** of `GET /api/v1/blocks/me`, not its
+  successor: a viewer read is data movement, so the REST route is the default
+  surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `RUN_TRAINING` (→ `TRAINING_RESULT`) and
+  `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last two page host only — see
+  "Training runs" and "Confirmed steps". `PREPARE_TRAINING_DATASET` is removed: the page
+  host answers it with `TRAINING_DATASET_RESULT { requestId, error: 'removed' }`.
+- **Reactions** (REQUEST-style, both real hosts, `social:react:self`, image only):
+  `SET_ENTITY_REACTION` (→ `ENTITY_REACTION_RESULT`) and `GET_ENTITY_REACTIONS`
+  (→ `ENTITY_REACTIONS_RESULT`), host-brokered via `blocks.setReactionFromApp` /
+  `blocks.getReactionsForApp`. On the bridge because only the host can do it: both
+  procedures require the viewer's own signed-in session to be the token's `sub`, which a
+  block cannot present. Each id needs the `reactTicket` a block image endpoint served.
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
-- **Resource pickers** (host chrome so the iframe only learns the one resource the
+- **Resource pickers** (host chrome so the iframe only learns the resources the
   user picked): `OPEN_CHECKPOINT_PICKER` (model slot) and the wider
   `OPEN_RESOURCE_PICKER` (page host only). `SET_USER_CHECKPOINT` persists to
   `block_user_settings` (model-bound installs only).
+  `OPEN_RESOURCE_PICKER` answers `{ requestId, selected? }` with one resource. With
+  `multiple: { max }` (LoRA-family types only; `max` above 5 is clamped to 5, the
+  `additionalResources` cap) it answers `{ requestId, selectedResources }` instead:
+  the picked resources in pick order, `[]` on dismiss. `multiple` with a
+  Checkpoint, or a `max` that is not a whole number of at least 1, is answered
+  with `{ requestId, error }` and the picker does not open.
+- **Image picker** (host chrome over the viewer's own library; page host only, no
+  scope): `OPEN_IMAGE_PICKER` (→ `IMAGE_PICKER_RESULT`) lets the viewer pick from
+  images they posted and images they made with the on-site generator. The app
+  never lists the library; it receives only the pick. Request
+  `{ requestId, sources?, multiple?, publicOnly? }`: `sources` is a non-empty list of
+  `'posted'` / `'generated'` (omitted = both), `multiple: { max }` asks for
+  several (`max` above 20 is clamped to 20), and `publicOnly: true` lists posted
+  images only from posts that are not `Private` (for an app handing the pick to a
+  surface everyone sees, such as an App Store card, which refuses an image from a
+  Private post; generated images are unaffected; omitted or `false` lists as
+  before). A single pick answers
+  `{ requestId, selected? }` (no `selected` on dismiss); a multi pick answers
+  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`,
+  or a `publicOnly` that is not a boolean, is answered `{ requestId, error }` and
+  the picker does not open. Each pick is
+  `{ source, url, width, height, nsfwLevel, imageId? }`. `imageId` is present for
+  a posted pick only (a generator output has no `Image` row). `nsfwLevel` is never
+  0 and may be a mature level.
+  What is listed is decided by the host, and the ceiling is the **viewer's own
+  browsing level** on the current domain, not a fixed SFW ceiling (a product
+  decision: the viewer is choosing among their own images). Posted: the viewer's
+  own images in a published post, scan complete, with no `needsReview` /
+  `tosViolation` / `poi` / `minor` flag, rated at a level their browsing level
+  includes; an unrated image (level 0) is not listed. With `publicOnly`, the post
+  must also not be `Private` (`publicPostImageWhere`, the Prisma form of the
+  store's `IMAGE_POST_PUBLIC_SQL`; the picker keeps `publishedAt <= now`, the
+  store `< now()`). The rule is one query
+  filter (`postedPickableWhere`), and the level is read server-side from the
+  session and request domain (`getRequestBrowsingLevel`), never from the input.
+  Generated: the viewer's succeeded generator image outputs as the generator
+  lists them, whose rating maps to one known level their browsing level
+  includes; an unrated or unrecognised rating is not listed.
+  A posted pick's `url` is an image-CDN rendition and `width`/`height` are the
+  size that rendition is **requested** at. The CDN normally serves exactly that,
+  but can answer with the original while a rendition is not ready. The width is
+  the widest CDN rung at which both sides fit the generation source-image bounds
+  (64..2048); an image no rung fits is not listed. A generated pick's `url` is the
+  generator's own output URL and may be time-limited.
+  The grid loads further pages on scroll, but stops doing so by itself after
+  `MAX_EMPTY_AUTO_PAGES` consecutive pages add nothing pickable, or after a page
+  fails, and offers a button instead. Review mode and a block that is not ready
+  answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
+  `src/components/AppBlocks/imagePickerLogic.ts` and
+  `src/server/services/blocks/block-image-picker.logic.ts`.
+- **Media upload** (page host only, no scope): `OPEN_MEDIA_UPLOAD`
+  (→ `MEDIA_UPLOAD_RESULT`) uploads an image, video or audio file as a PRIVATE
+  generation input, an orchestrator consumer blob. Nothing is published: no
+  `Image` row and no public scan; the orchestrator scans the generation output.
+  This is how media reaches a step input, since inline data URIs and base64 there
+  are refused (`src/server/schema/blocks/inline-media.ts`). Request
+  `{ requestId, kind, purpose: 'generationSource', bytes?, mimeType? }`. Without
+  `bytes` the host opens its own picker; with `bytes` (an `ArrayBuffer` the app
+  made: canvas, crop, MediaRecorder) it uploads with no modal, only for a block
+  holding a token, at most 8 uploads and 128 MB per 60 s. Content is judged by
+  magic bytes: image PNG / JPEG / WebP (at most 24 MB, resized into 64..2048 and
+  re-encoded as JPEG), video MP4 / WebM and audio MP3 / WAV / WebM (at most
+  64 MB); a declared `mimeType` must match the content.
+  Video and audio must decode in a media element, and video needs a video track.
+  The answer is `{ requestId, selected? }` with
+  `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
+  on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
+  `purpose: 'trainingData'` mode is described under "Training runs". Logic:
+  `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
   not bridge it (an embedded panel navigating the host away is out of remit).
-- **Analytics**: `TRACK_EVENT` — fire-and-forget, **not** host-bridged by either
-  real host today (no analytics sink wired), so it is silently dropped (never
-  hangs the block). Flip the host entries to `required` in the inventory if/when
-  a sink lands.
+- **Analytics**: `TRACK_EVENT` — fire-and-forget (no reply), forwarded by both
+  real hosts to the custom-events ingest; see "Custom events" below.
 
 `SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
 (see "Theme changes") flow the other direction (host→block), which is why they
 are absent from that inventory — it covers block→host only. The SDK degrades
 gracefully when a host does not handle a fire-and-forget surface, and a block
 that ignores a host→block push is equally fine.
+
+### Custom events
+
+The events an app may send are declared in the manifest's optional
+`analytics.events` and validated at submit by `parseManifestAnalytics`
+(`src/shared/constants/block-analytics.constants.ts`). A property is an `enum`
+of declared string values, a `number` or a `boolean`; there is no free-text type.
+The moderator review screen shows the declaration in an "Analytics events" card
+(`ManifestAnalytics` in `src/components/Apps/OnsiteReviewModal.tsx`): every
+event with its description, properties, types and enum values, or the parser's errors if it
+does not validate.
+
+`POST /api/track/block-event` (`src/pages/api/track/block-event.ts`,
+`src/server/services/blocks/block-event-ingest.service.ts`) records them in the
+`appBlockEvents` ClickHouse table
+(`src/server/clickhouse/migrations/2026-10-10-app-block-events.sql`, applied by
+hand before the route deploys).
+
+- **The hosts forward them.** `IframeHost` and `PageBlockHost` handle
+  `TRACK_EVENT` and queue one row per event in `blockEventBeacon.ts`, stamping
+  `appBlockId` and `blockInstanceId` from their own props (the page's `page_…`
+  id on the page host, the install's instance id in a model slot); the block's
+  payload supplies only `eventName` and `properties`, which are forwarded as
+  given for the server to classify. `TRACK_EVENT` does not count against the
+  bridge's shared inbound limit, so a block's events cannot rate-limit its own
+  requests. The queue flushes every 10 s, at 50 rows, and on `pagehide` /
+  `visibilitychange` (hidden), in POSTs of at most 50 rows and 32 KiB; a
+  page-exit flush sends one body at most, and an event larger than a body is
+  dropped. Each host mount may send 10 events a second and 500 in all, so a
+  remount (a new page or app) starts a fresh budget and two mounts of one app
+  do not share one. A moderator's review preview forwards nothing. Nothing is
+  retried, and client-side drops are not counted.
+
+- **Declared events only.** A row is checked against the app's APPROVED manifest.
+  An event the manifest does not declare is stored as one `__undeclared__` row
+  with no properties, so the owner can see that events are being dropped without
+  the name the caller chose ever being stored. An undeclared property, or a value
+  of the wrong type or outside an enum's declared values, is stripped and the
+  rest of the row is kept. An app that is not approved has its rows dropped.
+- **Identity is the server's.** The body carries the app id, the block instance
+  id, the event name and its properties, and nothing else is read from it. The
+  viewer comes from the session, the time from the server clock, and `isOwner`
+  from whether the viewer is on the app's team: its owner or an accepted
+  collaborator (the same seats that can open the app's analytics panel). The
+  team is cached for up to five minutes per process, so a collaborator who was
+  just added or removed is reflected after that; rows already written keep the
+  flag they were written with. A block instance id that is
+  not shaped like a platform id (for a page, not that app's own page id) is
+  stored empty.
+- **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
+  a hash of the user id for a signed-in viewer, and `0` ("unknown viewer") for
+  a signed-out one. Nothing derived from a client address is stored for
+  signed-out viewers; their activity is reported as event counts, never as
+  unique viewers.
+- **Private runs are excluded.** A private run is of an app that is not
+  approved, and those rows are dropped. The impression writers' server-derived
+  predicate is also consulted, for an app that has just left the approved set.
+- **A public beacon.** Like the impression beacon it is same-origin but
+  unauthenticated, so anyone can post events for an approved app. The
+  declared-only filter bounds what can be stored, and a per-process budget per
+  client address and app bounds how much each process accepts. The address is
+  used in memory for that budget only and is never stored.
+- **Only a deployment that says it is production writes.** A write needs
+  `CIVITAI_DEPLOYMENT_ENVIRONMENT=production` (exact value) and no
+  non-production signal (`IS_PREVIEW`, a cache-key namespace). Every other
+  deployment, including one where the variable is unset, runs the same
+  validation and skips the insert.
+- **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
+  label; the per-app breakdown is the table).
+
+**The owner panel.** The app analytics panel (`AppAnalyticsPanel.tsx`) has a
+"Custom events" card, read by its own procedure, `blocks.getMyAppCustomEvents`, for
+one app (`src/server/services/blocks/app-custom-events.service.ts`). It has the same
+scope, flag gate, ownership check and date range as `getMyAppAnalytics`. The team
+(owner and accepted collaborators) sees aggregates only, never rows:
+
+- every event the app's manifest declares, including ones never sent, with its
+  event count, **signed-in viewers** (distinct signed-in viewers only; signed-out
+  activity appears as an event count) and signed-out events;
+- for a selected event, its series and a property breakdown: a count per declared
+  enum value, count / sum / average / median / p95 for a number, and a true /
+  false split for a boolean. Each covers only the events that carried the
+  property;
+- a banner when events arrived under names the approved manifest does not
+  declare (`__undeclared__` rows).
+
+The team's own activity (rows with `isOwner`: the owner or an accepted
+collaborator was signed in, including dev-tunnel testing) is excluded by
+default, from the drop count too; an "Include team activity" toggle adds it.
+Rows written before collaborators were counted are flagged for the owner only,
+so a collaborator's earlier activity still shows with the toggle off. Counts are
+exact (there is no small-count suppression) and are lower bounds, since
+client-side drops are never recorded. A ClickHouse failure shows "couldn't
+load", never a zero.
 
 ### Buzz and per-account spend
 
@@ -310,6 +607,11 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   `blocks.getMyBuzzBalance` mutation, which returns `{ blue, green, yellow }` for
   the token's subject (other account types — red / cash / creator-program — are
   omitted). This backs the SDK `useBuzzBalance()` hook + the account picker.
+  **Declare `buzz:read:self`** — this read requires it, like every other
+  host-mediated buzz read. It used to be scope-free (gated on an authoring
+  capability instead); that capability gate was removed from the runtime, and the
+  user's own scope grant is the authority now. A token without the scope gets
+  `block lacks buzz:read:self scope`.
 - **Choose the funding pool**: a workflow submit body may carry `accountType`
   (`blue | green | yellow`). It is honored **preferred-first** while the maturity
   policy clamp still applies (a SFW-domain block can't widen to a mature currency);
@@ -318,6 +620,209 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
+
+### The per-call budget
+
+Every token carrying `ai:write:budgeted` also carries `buzzBudget`, the most one
+single-step call may cost. A multi-step call (`kind: 'workflow'`, up to 8 steps) is bounded
+as a whole: its total price, author fee included, may not exceed the budget times its step
+count, nor `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` (8,000 Buzz) whatever the budget. That total
+is not divided per step, so one step may use more than the budget. The bound is on the
+quoted price: a chained workflow can bill above its quote, and the settle then corrects the
+cap counters up. A multi-step call the
+orchestrator cannot price is reserved at that ceiling, and each step's timeout is an equal
+share of it. The app declares it in its manifest (`page.buzzBudgetPerGen`); the mint clamps it to
+`BUZZ_BUDGET_CAP` (5,000 Buzz) and uses `BUZZ_BUDGET_DEFAULT` (1,000 Buzz) when the manifest
+declares none. Both live in `src/shared/constants/block-scope.constants.ts` and apply to
+install, hub, dev, review and private-run tokens alike. The viewer consents to the scope,
+not to this number, and is not asked again per call.
+
+The mint response reports the budget the token carries (`buzzBudget`, absent when the token
+carries no spend scope). The model-slot host forwards that value to the block as `token.buzzBudget`
+on `BLOCK_INIT`, `TOKEN_REFRESH` and the `REQUEST_TOKEN` reply; it does not work the number
+out from install settings, which are not all visible to the client. The page host does not
+send `token.buzzBudget`.
+
+It bounds one call only. The aggregate ceilings below and the review, private-run and
+dev-session caps are checked separately on every submit, and some are lower than the
+per-call cap: a call inside its budget is still refused when it would take the running
+total past the aggregate it reserves against.
+
+### The user's per-app spend limit (consent budget)
+
+A viewer who grants `ai:write:budgeted` may also set a **daily Buzz limit for that
+one app**, stored on their grant row (`app_user_scope_grants.buzz_budget_per_day`).
+It is the only one of the three spend ceilings the user chooses:
+
+| Ceiling                     | Scope of the key                  | Who set it   |
+| --------------------------- | --------------------------------- | ------------ |
+| Platform per-user daily cap | one user, ALL their apps          | the platform |
+| Per-app aggregate cap       | one app, ALL its users            | the platform |
+| **Consent budget**          | one (user, app) pair, per UTC day | **the user** |
+
+- **Both apply; the tighter one binds.** The consent budget is bounded above by the
+  platform per-user daily cap, so it can only ever narrow. `null` (the default, and
+  the state of every grant made before the field existed) means "no limit of my own"
+  and behaves exactly as it did before.
+- **Set at consent time** in the permission modal (shown only when the scope being
+  granted is `ai:write:budgeted` — a limit next to "read your username" bounds
+  nothing), and **changed, cleared or simply read afterwards** on
+  **Apps → Permissions** (`/apps/activity`). Both write through
+  `blocks.grantScopes`, whose `buzzBudgetPerDay` input has three distinct states: a
+  number sets/replaces, `null` clears, and an **omitted** key leaves the stored value
+  alone (so re-consenting to an unrelated scope can never wipe a limit).
+- **What an app sees when it binds.** The submit is refused before any spend with a
+  `failed` snapshot whose error names the user's own number — e.g. `app Buzz limit
+reached: 400 already spent today by this app on your behalf, this generation may
+cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
+  (a platform secret), this ceiling is the user's own setting, so telling the app is
+  what makes the rejection actionable: surface it and let the user raise the limit.
+- **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
+  as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
+  when it reaches a terminal state.
+
+### Training runs (`kind: 'training'`)
+
+A page app can train a LoRA (ai-toolkit engine) on images the viewer uploads, through
+the same upload path and dataset shape as the Training Studio. Behind its own fail-closed
+flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and review-sandbox
+tokens are refused, and so is an editor's read-only private run. The app owner's own
+private run is allowed, under the private-run Buzz cap.
+
+**Prerequisites.** The app is a page app (`/apps/run/<slug>`); the model slot has no
+training bridge and answers `RUN_TRAINING` with an error. The manifest declares
+`ai:write:budgeted`, and the viewer has granted it. `app-blocks-training-kind` is on for
+the viewer, and the viewer is signed in. Steps 2–3 check these server-side.
+
+1. **Upload** — `OPEN_IMAGE_UPLOAD { requestId, purpose: 'trainingData' }` opens a host
+   modal where the viewer picks up to `BLOCK_TRAINING_DATASET_MAX_ITEMS` (50) PNG, JPEG or
+   WebP images; each is uploaded as a consumer blob, as the Training Studio does. The
+   reply is `IMAGE_UPLOAD_RESULT { requestId, selected: { images: [{ url, air }] } }`, or a
+   bare `{ requestId }` when the viewer cancels. The host remembers every key it uploaded
+   for the block; step 3 refuses a run naming any other.
+2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`):
+   `{ kind, engine: 'ai-toolkit', model, params, triggerWord, samplePrompts, items }`,
+   where `items` is 1 to 50 `{ air, caption }` entries. `air` is the uploaded blob's key
+   or its `url` (the server keeps only the key); one blob may appear once, and a caption
+   holds up to `BLOCK_TRAINING_CAPTION_MAX_CHARS` (8,192) characters. The reply carries
+   `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The price is the
+   orchestrator's quote for that exact step; an unknown or variable price is refused.
+3. **Run** — `RUN_TRAINING { body: { …, quoteId } }`. The host reads the quote back from
+   the server and replies `error: 'training data not uploaded here'`, with no dialog, when
+   it names an image this host did not upload for the block. Otherwise it shows the
+   server's copy of the quote with its own uploads as thumbnails, and on the viewer's
+   confirm records it through `blocks.consentTrainingQuote` (signed-in session only) and
+   then submits. A submit
+   whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
+   directly cannot start a run. If the outcome of the submit is unknown — the connection
+   dropped, or the server attempted the run but could not confirm it — the host replies
+   `error: 'submission-unconfirmed'`: the run may be running and charged, so check the viewer's
+   trainings before offering a retry. When the server could not confirm the run, a retry of the
+   same body (new estimate, new confirmation) reuses that run's orchestrator id; but after a
+   dropped connection the server may already have started the run, and a retry of the same body
+   then starts a second, separately charged run. The block cannot tell these cases apart.
+4. **Follow the run** — `TRAINING_RESULT` carries the submit's `snapshot`; poll it with
+   `POLL_WORKFLOW`, or list the app's runs with `QUERY_APP_WORKFLOWS`. Both carry
+   `trainedEpochs: [{ $type, epochNumber }]` for the epochs whose checkpoint is ready,
+   and only once the run's moderation status is `approved`; the field is absent until then.
+5. **Publish** — the block sends the viewer to the training publish wizard,
+   `/models/train/from-orchestrator?workflowId=…&epoch=…`, with an `epochNumber` from
+   `trainedEpochs`. The checkpoint itself never reaches the block. Once the wizard has
+   created the model, `publishedModel: { modelId, modelVersionId, published }` appears on
+   the run (`published` is false while it is a draft).
+
+A confirmed run may cost more than the token's per-call budget, up to
+`BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
+A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
+re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
+reserved, when the balance can be read). Training charges no author fee.
+
+The trigger word of every training step an app runs gets the same trigger-word check the
+trainer and Training Studio use, at the estimate and again at the submit, before anything is
+reserved. The trigger word is the body's `triggerWord` on a `kind: 'training'` body; on a
+`kind: 'step'` step or a step of a `kind: 'workflow'` (inside a `repeat` too) it is
+`input.triggerWord` for `$type: 'training'` and `input.loraName` for
+`$type: 'imageResourceTraining'`. That field must be a literal string; a reference is refused.
+
+If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
+it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
+code a confirmed step uses). That holds for an ordinary viewer's page token. On an owner's
+private run the submit reserves against the private-run cap instead and makes no daily-limit
+check, and the training host does not check the limit before the confirm either — so a
+training private run is bounded by the private-run cap, not by the viewer's daily limit.
+Training and confirmed steps share one confirmation and submit path on the server; see
+"Confirmed steps" below.
+
+### Confirmed steps (one pass-through job above the per-call budget)
+
+A pass-through `kind: 'step'` job (`{ $type, input, maxBuzz }`) whose price exceeds the
+token's per-call budget is refused — unless the viewer confirms that exact price in host
+chrome. Behind its own fail-closed flag, `app-blocks-confirmed-step`. It is the training
+run's quote grant applied to any pass-through `$type` (the platform denylist still
+applies). Page tokens only, under the same rule as training: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap — it renders in the
+same page host, so the owner sees the same confirm.
+
+1. **Estimate** — `ESTIMATE_WORKFLOW` with the pass-through body. When the orchestrator
+   quotes a **fixed** price (positive, not variable/metered) that is above the per-call
+   budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000 Buzz), the reply
+   carries `snapshot.stepQuote: { quoteId, total, stepType, expiresAt }`. `total` is the
+   price the viewer will confirm and be charged. No quote, a zero price or a variable price
+   is never grantable: the viewer confirms what they are charged. Below the budget the
+   estimate is unchanged and the job runs as before. An app whose budget is the 5,000
+   cap is therefore never offered a confirm: no price is both above its budget and
+   within the per-job limit.
+
+   Three things to know as an author:
+   - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
+     quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
+     cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
+     you want to run.
+   - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
+     plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
+     `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
+     body.input.<path> is a Date`), at the estimate and at the submit.
+   - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
+     refused with `a training step type cannot run as a confirmed step — use
+     kind:'training'`. Training runs have their own kind, with its own checks.
+2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
+   reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
+   the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
+   only) and then submits. A submit naming a quote nobody confirmed is refused, so a block
+   cannot start the job by calling `SUBMIT_WORKFLOW` itself. The reply is
+   `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`; the host's
+   own codes are `review-mode`, `block is not ready`, `sign in to run`,
+   `invalid confirmed step request`, `no block token`, `declined`, `daily-limit-exceeded`
+   and `submission-unconfirmed` (same meaning as on training).
+3. **The viewer's daily limit binds.** If the viewer set a daily Buzz limit for the app
+   and the job would exceed what remains of it today, the host explains that instead of
+   offering a confirm, links to `/apps/activity` (where the limit is raised or removed), and
+   replies `daily-limit-exceeded`. The submit enforces the same limit and returns a failed
+   snapshot with `errorCode: 'daily-limit-exceeded'`. A viewer with no limit set (the
+   default) is unaffected. On an owner's private run the submit reserves against the
+   private-run cap instead of the daily counters, so there the host's check before the
+   confirm is the only daily-limit check.
+
+A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
+minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is
+refused. Every other ceiling above still applies, and the job charges no author fee.
+
+Each confirmation is its own run: the orchestrator id is derived from the confirmed quote,
+so confirming the same body twice starts two jobs. If a submit comes back
+`submission-unconfirmed`, the job may have started; a retry needs a new estimate and
+confirmation and would be a second job, so check the viewer's generations first.
+
+The confirm button of both spend confirms (training and confirmed step) stays disabled for
+about a second after the dialog appears, and again after the page regains focus or
+visibility, so the viewer has a moment to read it. If more than one such dialog is open,
+only the one in front counts down; the others start their wait when they come to the front.
+
+**3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
+`imageUrls`; `model3dOutputs: [{ url, format, variant }]` says which is which — `format`
+is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
+(`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
+`QUERY_APP_WORKFLOWS` items.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
@@ -362,100 +867,46 @@ manifest validation are all still enforced on the webhook.
 
 ### How wide your app renders (`/apps/run/<slug>`)
 
-The page host gives your app a **centred column with a maximum width**, not the
-whole monitor. The value is `--app-page-max-width` (currently `1600px`), declared
-on `:root` in `src/styles/globals.css` and read by `PageBlockHost` as
-`max-width: var(--app-page-max-width, …); margin-inline: auto`.
+**The page host imposes no width on your app.** It hands you the full viewport and
+your app decides what to do with it. The host's own column is `width: 100%` and
+declares no `max-width` of any kind, so your app is full width from a phone to an
+ultrawide and there is no platform setting, ledger or manifest field involved.
 
 Practically:
 
-- **Below 1600px of viewport the cap does nothing.** Your iframe is exactly as
-  wide as it has always been — laptops, tablets and phones are unaffected.
-- **Above it your app is centred**, with civitai's page background either side.
-  On a 2560px display your app gets 1600px and a ~480px gutter per side.
-- Your app is still handed a **normal viewport** inside the iframe: your own
-  media queries, `100dvh`, `position: fixed` and so on all resolve against the
-  iframe, so nothing about writing the app changes. The only thing that changed
-  is how wide that iframe gets on a large display.
+- **If you want a centred column, set one in your own CSS.** You are inside your own
+  iframe document and control it completely — a `max-width` plus `margin-inline: auto`
+  on your own root is all it takes, and you can pick the number that suits your
+  layout instead of inheriting one. Nothing on the civitai side is needed, and there
+  is no platform API to ask for.
+- **If you want the whole width, do nothing.** That is the default now.
+- Your app is handed a **normal viewport** inside the iframe: your own media queries,
+  `100dvh`, `position: fixed` and so on all resolve against the iframe.
 
-Why: an App Block is a cross-origin guest and cannot see the monitor it is on,
-and nothing in `@civitai/blocks-react` gives you a container to lay out in (its
-only max-widths are modal-scoped). Left uncapped, an app on a 2560px display
-renders as a single ~2500px column. Most shipped apps already impose a well of
-their own between 640px and 1100px, so for those this changes only which
-background paints the far gutter.
+⚠️ **This changed, and if you read an older copy of this page you were told
+otherwise.** The host used to cap a full-page app at `1600px` and centre it past
+that, with a per-app CSS opt-out on the civitai side. The owner dropped the default
+instead: the platform does not decide how wide a third-party app should be, because it
+cannot see the app's layout, and the app is the only party that can. Concretely, the
+old cap bound at any viewport wider than 1600 CSS px — ~10px of gutter a side at 1620,
+~150px at a maximised 1080p desktop (1905), ~480px at 2560. So a phone, a tablet and a
+1280/1366/1440/1536 laptop are completely unaffected and render exactly as before; a
+1680, 1728 (MacBook Pro 16" at default scaling) or 1792 display was capped by (w − 1600) / 2
+a side — 40px, 64px and 96px respectively — and now is not; and a wide desktop gets back the several hundred pixels it used to
+be denied.
 
-#### Asking for full bleed
+⚠️ **A follow-up change removed the per-app lever this page used to document.** An earlier
+revision had an _"If an app needs to be capped by the platform"_ section with a copyable CSS
+snippet, a warning about keying it on the wrong attribute, and a "Currently capped: nothing"
+line. **There is now no way for the platform to set your app's width at all** — not a CSS
+rule, not a ledger, not a manifest field, not an API. Nothing changes for you in practice:
+no app was capped when it was removed, and the advice is the same as above — set your own
+`max-width` if you want one, in your own document, on your own release schedule.
 
-Some apps genuinely want the whole width — an infinite grid, a canvas, a
-timeline, a map, a fullscreen player. There is **no manifest field** for this
-(the manifest schema is mirrored across three repos and has to move in lockstep,
-and the host runs an older `@civitai/app-sdk` than guests do, so a new field
-would be untyped where the host reads it). Instead it is one CSS rule on the
-civitai side, keyed on the `data-block-id` the host stamps:
-
-```css
-[data-app-page-frame][data-block-id='your-app-slug'] {
-  --app-page-max-width: none;
-}
-```
-
-🔴 **Never key this rule on `data-testid` — that attribute does not exist in
-production.** `next.config.mjs` sets `compiler.reactRemoveProperties` under
-`NODE_ENV === 'production'`, so every testid is compiled out of the live DOM. A
-rule keyed on one works in every preview and local build and matches **zero
-elements on civitai.com** — the app stays letterboxed and nothing looks broken.
-That is not hypothetical: this ledger shipped that spelling and
-`playable-collections` rendered capped in production while every test tier passed.
-`data-app-page-frame` is the presence marker the host stamps for exactly this
-purpose, on the same element as `data-block-id`; both halves of the selector must
-be on that one element.
-
-Those rules live in the **full-bleed opt-out ledger** in
-`src/styles/globals.css`, next to the `--app-page-max-width` declaration; the
-comment there carries the template and the review criteria. Open a PR adding
-your app's line with a one-line reason, or ask a maintainer to. A narrower value
-(`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
-frame than the default.
-
-**Currently opted out:** `playable-collections` — a collection player whose three
-open-collection view modes (slideshow, ticker, wall) are all uncapped by the app
-itself, so a centred column shrinks the player and truncates the grids. Its own
-960px well applies only to the browse list, which sits behind an early return and
-is unaffected either way. Every entry is expected to carry a reason like this
-one; the ledger's membership is asserted in a test, so a rule cannot be added or
-removed here without that being a deliberate, reviewed change.
-
-**What actually guards the snippet above.** The CSS block on this page is read by
-`src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
-which parses the strip list out of `next.config.mjs` and fails if the selector
-shown here depends on an attribute production removes — and parses
-`PageBlockHost.tsx` and fails if the attributes the selector chains are not
-stamped **together on one element**, the other way a compound selector silently
-matches nothing. Both are real checks and both catch the specific ways this
-recipe has gone wrong (the `data-testid` spelling; a half of the selector moved
-onto another box).
-
-🔴 **What that does NOT mean is that the mistake is impossible.** The guard runs
-in the node `unit` project, which on a pull request is **report-only** — the job
-carries `continue-on-error` there, so the check annotates and the run still
-concludes green — and renders a real verdict only on pushes to `main`, after the
-merge. And **no status check is required on `main` in this repo at all**: branch
-protection declares none, so nothing a test does stops a merge. A red guard here
-is a signal a reviewer has to read, not a gate that holds the door.
-
-Two things it does **not** promise. It compares the doc against the compiler
-config and against the host's JSX; it does not render anything, so it cannot tell
-you the rule still has the visual effect described. And the rule's measured
-behaviour — `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`
-injects a rule of this shape at a 2560px viewport and asserts the host goes back
-to full width — runs in the browser `component` project, which reports as the
-`preview / component-tests` status. Useful evidence, not a gate — and, as above,
-neither tier is one: both can go red without stopping a merge. What this tier
-alone can do is see a rendered width at all. And the guard covers the CSS
-**selector** on this page, nothing else: that test is the only thing in the repo
-that reads this file, so every other claim here is unverified prose and should be
-read as such.
+The snippet is deliberately not reproduced here, not even as an example of what was removed:
+a selector spelled out in a doc is a selector someone copies, and this page would then be
+the only place in the repo to copy one from. (The internal record of why the lever went
+lives in `src/components/AppBlocks/PageBlockHost.tsx`, next to the code.)
 
 ### Manifest re-publish behavior
 
@@ -526,13 +977,13 @@ that takedown tool is built, not a live bug today.
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
 
 `BlockRegistry.listForModel` caches its per-`(model, slot)` result for 60s
-(`CACHE_TTL_SECONDS`, `block-registry.service.ts:39`) and the SQL only filters
+(`CACHE_TTL_SECONDS` in `block-registry.service.ts`) and the SQL only filters
 on `ab.status = 'approved'` at query time, not at cache-read time.
-`invalidateModelCache(modelId)` (`block-registry.service.ts:461`) is called only
-from the four per-model mutation paths — install, uninstall, toggleEnabled,
-updateSettings (lines 1950 / 2019 / 2055 / 2108). It is NOT called on any
-`app_blocks.status` transition, because a status change on a block doesn't know
-which models the block is installed on.
+`invalidateModelCache(modelId)` (same file) is called only from the four
+per-model mutation paths — `BlockRegistry.installOnModel`,
+`uninstallFromModel`, `toggleEnabled` and `updateSettings`, which are its only
+callers. It is NOT called on any `app_blocks.status` transition, because a
+status change on a block doesn't know which models the block is installed on.
 
 Two facts bound the actual risk today:
 
@@ -546,9 +997,10 @@ Two facts bound the actual risk today:
   late; it never keeps rendering after it should have stopped.
 - **The emergency kill list is applied fresh on every cache hit**, so it is NOT
   subject to the 60s cache. `getKillList()` has its own 5s in-process TTL
-  (`KILL_LIST_CACHE_TTL_MS`, `block-registry.service.ts:480`) and `listForModel`
-  filters the cached rows against it on every read (lines 657–664). "Stop this
-  block right now" (`sysRedis SET system:blocks:emergency-kill-list`) therefore
+  (`KILL_LIST_CACHE_TTL_MS` in `block-registry.service.ts`) and `listForModel`
+  filters the cached rows against it on every read (the `kill.has(r.blockId)`
+  filter on `listForModel`'s cache-hit branch). "Stop this block right now"
+  (`sysRedis SET system:blocks:emergency-kill-list`) therefore
   takes effect within ~5s regardless of the registry cache.
 
 So the real work item is: before shipping a moderator `suspend`/`deprecate`
@@ -588,8 +1040,9 @@ documented above, so they're dropped from this list.
   (`Tracker.blockRender()` → the block-render insert, `sendBlockRender.ts`,
   `/api/track/block-render`) and workflow attribution flows through
   `/api/internal/blocks/workflow-completed`, but the analytics tables are still
-  being stood up (the hosts note "until the … ClickHouse table exists") and a
-  block-interactions stream is not yet emitted.
+  being stood up (the hosts note "until the … ClickHouse table exists"). Custom
+  events are forwarded by both hosts, recorded, and shown to owners (see "Custom
+  events").
 - **Health-check job + auto-suspend on consecutive failures.** The
   `health_status` column exists (default `'unknown'`) but nothing populates it
   and there's no auto-suspend job (and no suspend transition — see the
@@ -605,6 +1058,6 @@ documented above, so they're dropped from this list.
 - **DNS-rebinding gate at `assetBundleUrl` fetch time** (still lexical-only at
   submit — see the SSRF note in the threat model).
 - **Per-slot install-cap race hardening.** The cap is enforced at install time
-  (`MAX_BLOCKS_PER_SLOT`, `block-registry.service.ts:1849`) via a
+  (`MAX_BLOCKS_PER_SLOT`, checked in `BlockRegistry.installOnModel`) via a
   count-then-insert, not a row-locked transaction, so a rare concurrent double
   install can still exceed the cap; accepted for now.

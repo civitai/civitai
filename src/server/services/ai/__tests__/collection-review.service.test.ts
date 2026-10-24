@@ -3,6 +3,7 @@ import {
   decideFromObservations,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
+  needsMinorReview,
   resolveRejectionMessage,
 } from '~/server/services/ai/collection-review.service';
 import { NsfwLevel } from '~/server/common/enums';
@@ -251,5 +252,34 @@ describe('neverReject', () => {
     const result = decideFromObservations({ ...clean, suggestiveStyling: true });
     expect(result.decision).toBe('escalate');
     expect(result.neverReject).toBeFalsy();
+  });
+});
+
+describe('needsMinorReview', () => {
+  it.each([
+    ['a photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+    ['a minor depicted inappropriately', { depictsMinor: true, minorInappropriate: true }],
+    ['a possible minor', { minorUncertain: true, isPhotorealistic: true }],
+    [
+      'a minor listed before a real person',
+      { depictsRealPerson: true, depictsMinor: true, minorIsPhotorealistic: true },
+    ],
+    [
+      'a possible minor after another finding',
+      { depictsRealPerson: true, minorUncertain: true, isPhotorealistic: true },
+    ],
+  ])('sends %s to the minor queue', (_label, overrides) => {
+    expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(true);
+  });
+
+  it.each([
+    ['a clean submission', {}],
+    ['a real person likeness', { depictsRealPerson: true }],
+    ['suggestive styling', { suggestiveStyling: true }],
+    ['sexual content', { sexualContent: true }],
+    ['an age-ambiguous subject nothing else flags', { minorUncertain: true }],
+    ['an unreadable response', { hasBuzzReference: undefined }],
+  ])('leaves %s out of it', (_label, overrides) => {
+    expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(false);
   });
 });

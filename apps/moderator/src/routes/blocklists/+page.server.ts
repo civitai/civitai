@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
-import { parseRowId } from './form';
+import { inertEntries, parseRowId } from './form';
 import {
   BlocklistRowMismatchError,
   getBlocklistDTO,
@@ -41,6 +41,14 @@ export const actions: Actions = {
     if (id === null) return fail(400, { error: 'Invalid blocklist row.' });
     if (items.length === 0) return fail(400, { error: 'No items to add.' });
 
+    const inert = inertEntries(type, items);
+    if (inert.length > 0)
+      return fail(400, {
+        error: `Not a single word, so the filter can never match it: ${inert
+          .map((i) => `"${i}"`)
+          .join(', ')}. Enter one word per entry, without spaces or punctuation.`,
+      });
+
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.
     let result;
@@ -76,7 +84,7 @@ export const actions: Actions = {
 
     const result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
-    // served from a month-long Redis cache, so the likeliest cause is that this page is stale. An
+    // served from a short-lived Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.
     if (result.count === 0)
       return fail(409, {

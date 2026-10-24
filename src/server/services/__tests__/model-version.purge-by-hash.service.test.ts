@@ -35,7 +35,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
   modelVersionPublicDonationGoalsCache: {},
-  modelVersionResourceCache: {},
 }));
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({

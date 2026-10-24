@@ -89,7 +89,18 @@ export function StickerPicker({
   if (!features.stickers && !withEmoji) return null;
 
   return (
-    <Popover opened={opened} onChange={setOpened} position={position} withArrow shadow="md">
+    // Explicit because ThemeProvider turns portalling OFF for every Popover in
+    // the app, and every surface mounting this picker clips: the image page's
+    // comment column is a ScrollArea. Drop this and the dropdown is cut off
+    // again — a clip no z-index can reach.
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      position={position}
+      withArrow
+      shadow="md"
+      withinPortal
+    >
       <Popover.Target>
         {/* A supplied target is usually already a button (e.g. an RTE toolbar
             control), so clone the toggle onto it rather than wrapping — nesting

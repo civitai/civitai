@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -13,10 +13,18 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
-  import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
+  import {
+    BULK_SOURCE_LABELS,
+    BULK_SOURCES,
+    REMOVED_FILTER_LABELS,
+    REMOVED_FILTERS,
+    isRemovedFilter,
+    type RemovedFilter,
+  } from './sources';
   import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_SELECTION } from './limits';
   import { batchKey } from './selection';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
@@ -40,11 +48,13 @@
     });
   });
 
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
 
   const batchSubject = $derived(batchKey(page.url));
 
-  /** Entries outlive the page they were recorded on, because the actions act on the whole selection. */
+  /** Owners and states of every image seen in this batch, kept across pages. This host leaves
+   *  `keepOffScreen` off, so the bar drops ids that leave the page; the extra entries serve the Owners
+   *  row, not the action. */
   const seen = new SvelteMap<string | number, { userId: number; blocked: boolean }>();
   const seenOwners = new SvelteMap<number, { username: string | null; bannedAt: Date | null }>();
 
@@ -71,15 +81,14 @@
   });
 
   // Restore is only safe on already-blocked images; the bar warns when a selection includes others.
-  // Read when each page loaded, so for pages the moderator has left this is a snapshot — the server
-  // reports the count it actually found.
+  // Read when the page loaded — the server reports the count it actually found.
   const blockedIds = $derived(
     new Set<string | number>([...seen].filter(([, v]) => v.blocked).map(([id]) => id))
   );
 
-  // Retool filtered the fetched batch client-side, and so does this: the batch is one query the
-  // moderator already paid for, and re-running it per filter change would drop the selection they are
-  // assembling. `matched` is shown against the loaded count, never the source total.
+  // Rating and prompt filter the loaded page, unlike `removed`: re-querying changes `batchKey`, and a
+  // client-side filter drops what it hides from the selection (`ImageActionBar`). `matched` is against
+  // the loaded count, not the source total.
   let filters = $state<Record<string, string>>({});
   const filterFields: FilterField[] = [
     {
@@ -96,23 +105,12 @@
         ['0', 'Unrated'],
       ],
     },
-    {
-      kind: 'select',
-      key: 'status',
-      label: 'Removed',
-      options: [
-        ['removed', "Only ToS'd"],
-        ['live', 'Hide removed'],
-      ],
-    },
     { kind: 'search', key: 'q', label: 'Search prompt' },
   ];
 
   const filteredItems = $derived(
     (data.batch?.items ?? []).filter((i) => {
       if (filters.rating && i.nsfwLevel !== Number(filters.rating)) return false;
-      if (filters.status === 'removed' && i.ingestion !== 'Blocked') return false;
-      if (filters.status === 'live' && i.ingestion === 'Blocked') return false;
       // The negative prompt too: a blocked term sitting in the negative is the same finding, and
       // Retool's prompt search matched both.
       const q = filters.q?.trim().toLowerCase();
@@ -122,10 +120,9 @@
   );
 
   /**
-   * 🔴 Named, not counted. A selection can now span pages, so the Owners row below — which is the
-   * batch's current page — is no longer the list of accounts an action reaches. Striking is offered
-   * in the same gesture as removing, and a strike against an account the moderator never saw is one
-   * they could not check for a ban, a note, or whether it is the same person twice.
+   * 🔴 Named, not counted. Striking is offered in the same gesture as removing, and a strike against
+   * an account the moderator has not looked at is one they could not check for a ban, a note, or
+   * whether it is the same person twice.
    */
   const batchOwners = $derived(
     [...seenOwners].map(([id, o]) => ({ id, ...o }))
@@ -163,13 +160,15 @@
   // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
   // this account needs it, and every subsequent lookup on that account would otherwise snap back to 200.
   // Built from scratch rather than mutated: changing the source or the term makes `offset` — and any
-  // stale term — describe a batch that no longer exists.
-  const navigate = (value: string, limit: number) =>
+  // stale term — describe a batch that no longer exists. `removed` is NOT carried into a new search, so
+  // the next account never opens already narrowed.
+  const navigate = (value: string, limit: number, removed: RemovedFilter | null = null) =>
     goto(
       urlWith(new URL(page.url.pathname, page.url), {
         source,
         q: value || null,
         limit: limit === DEFAULT_LIMIT ? null : limit,
+        removed,
       }),
       { keepFocus: true }
     );
@@ -178,6 +177,15 @@
     e.preventDefault();
     navigate(term.trim(), data.limit);
   };
+
+  const setRemoved = (value: string) =>
+    goto(
+      urlWith(page.url, {
+        removed: isRemovedFilter(value) ? value : null,
+        offset: null,
+      }),
+      { keepFocus: true }
+    );
 
   // Paging keeps the batch and changes only the window, so it mutates the URL rather than rebuilding
   // it — the opposite of `navigate`, which is changing WHICH batch is on screen.
@@ -246,6 +254,15 @@
       {/if}
     </div>
   {/if}
+  {#if form && 'held' in form && form.held}
+    <div
+      class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
+      role="status"
+    >
+      {form.held}
+      <a href="/images/re-removals" class="link ml-1">Open Re-removals</a>
+    </div>
+  {/if}
   {#if form && 'warning' in form && form.warning}
     <div
       class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
@@ -278,8 +295,7 @@
     </h2>
     <p class="mb-3 text-xs text-dark-2">
       {#if batch.truncated || batch.offset > 0}
-        A selection survives Previous and Next, so you can gather images across pages and act on them
-        once — <span class="text-amber-300">up to {num(MAX_SELECTION)} per action</span>.
+        A selection holds only the images on this page; act on each page in turn.
       {:else}
         The whole set.
       {/if}
@@ -290,7 +306,7 @@
       <Select.Root
         type="single"
         value={String(data.limit)}
-        onValueChange={(v) => navigate(term.trim(), Number(v))}
+        onValueChange={(v) => navigate(term.trim(), Number(v), data.removed)}
       >
         <Select.Trigger class="w-32">{num(data.limit)} images</Select.Trigger>
         <Select.Content>
@@ -300,6 +316,18 @@
         </Select.Content>
       </Select.Root>
       <span class="text-xs text-dark-2">per page</span>
+
+      <Select.Root type="single" value={data.removed ?? 'all'} onValueChange={setRemoved}>
+        <Select.Trigger class="w-40" aria-label="Removed filter">
+          {data.removed ? REMOVED_FILTER_LABELS[data.removed] : 'Removed and live'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="all">Removed and live</Select.Item>
+          {#each REMOVED_FILTERS as f (f)}
+            <Select.Item value={f}>{REMOVED_FILTER_LABELS[f]}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
 
       {#if batch.total > data.limit}
         <div class="ml-auto flex items-center gap-2">
@@ -324,8 +352,8 @@
       {/if}
     </div>
 
-    <!-- Every owner seen in this batch, not just this page's: the selection spans pages, so a row
-         scoped to the current window understates who an action reaches. -->
+    <!-- Every owner seen in this batch, not just this page's. The selection is this page's only, so
+         this row is wider than what an action reaches. -->
     {#if batchOwners.length}
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
         <span class="text-xs tracking-wide text-dark-2 uppercase">Owners</span>
@@ -337,6 +365,9 @@
             {#if owner.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
           </span>
         {/each}
+        {#if data.canSeeUserCard}
+          <span class="text-xs text-dark-2">Hover a name for the account's card and alerts.</span>
+        {/if}
       </div>
     {/if}
   </section>
@@ -349,8 +380,7 @@
   />
 
   {#if data.canAct}
-    <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. That is the whole
-         point of filtering to ToS'd before acting. -->
+    <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. -->
     <ImageActionBar
       {selected}
       selectable={filteredItems.map((i) => i.id)}
@@ -359,6 +389,8 @@
       owners={selectedOwners}
       maxSelection={MAX_SELECTION}
       blockedIds={blockedIds}
+      notify={data.canStrike}
+      strike={data.canStrike}
     />
   {/if}
 
@@ -369,7 +401,9 @@
     civitaiUrl={data.civitaiUrl}
     selected={data.canAct ? selected : undefined}
     card={imageCard}
-    empty="No images in this batch."
+    empty={data.removed
+      ? `No images in this batch match "${REMOVED_FILTER_LABELS[data.removed]}".`
+      : 'No images in this batch.'}
     endLabel={batch.truncated ? null : 'End of batch.'}
   />
 
@@ -432,6 +466,7 @@
   negativePrompt?: string | null;
   isProfilePicture?: boolean;
   hasConnection?: boolean;
+  approvedAppeal?: { approvedAt: Date; approvedByUsername: string | null } | null;
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -442,6 +477,7 @@
         needsReview={img.needsReview}
         poi={img.poi}
         minor={img.minor}
+        approvedAppeal={img.approvedAppeal}
       />
       <span>{dateTime(img.createdAt ?? null)}</span>
       <!-- New tab: this page's whole job is assembling a selection, and navigating away loses it. -->

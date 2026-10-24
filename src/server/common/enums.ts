@@ -9,6 +9,7 @@ export enum UploadType {
 export type UploadTypeUnion = `${UploadType}`;
 
 export enum ModelSort {
+  Hot = 'Hot',
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
@@ -167,7 +168,7 @@ export enum SignalMessages {
   WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
-  ModelVersionPopularityUpdate = 'model-version:popularity:update',
+  ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',
@@ -189,6 +190,9 @@ export enum SignalMessages {
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
   ContestScoreRunUpdate = 'contest-score:run-update',
+  EventPointsHat = 'event-points:hat',
+  EventPointsTeams = 'event-points:teams',
+  EventPointsOwner = 'event-points:owner',
 }
 
 export enum BountySort {
@@ -205,6 +209,13 @@ export enum BountySort {
 export enum BountyBenefactorSort {
   HighestAmount = 'Highest Amount',
   Newest = 'Newest',
+}
+
+export enum CrucibleSort {
+  PrizePool = 'Prize Pool',
+  EndingSoon = 'Ending Soon',
+  Newest = 'Newest',
+  MostEntries = 'Most Entries',
 }
 
 export enum BountyStatus {
@@ -232,6 +243,7 @@ export enum ViolationType {
   RealisticMinorNsfw = 'realisticMinorNsfw',
   AnimatedMinorNsfw = 'animatedMinorNsfw',
   SchoolNsfw = 'schoolNsfw',
+  MinorViolence = 'minorViolence',
   Bestiality = 'bestiality',
   SexualViolence = 'sexualViolence',
   MindAlteredNsfw = 'mindAlteredNsfw',
@@ -355,6 +367,7 @@ export enum BanReasonCode {
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
+  Chargeback = 'Chargeback',
   Other = 'Other',
 }
 
@@ -402,6 +415,10 @@ export enum OrchEngineTypes {
 
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
+  // Opt-in per entry: an entry here blocks the domain AND every subdomain of it. Separate from
+  // `EmailDomain` so suffix matching is a decision a moderator makes about one domain, never a
+  // behaviour change applied to the ~8,800 entries the upstream sync maintains.
+  EmailDomainSuffix = 'EmailDomainSuffix',
   LinkDomain = 'LinkDomain',
   MessagePattern = 'MessagePattern',
   UsernameExact = 'UsernameExact',
@@ -439,6 +456,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, :event:owner:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 

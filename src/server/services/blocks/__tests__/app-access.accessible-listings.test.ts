@@ -17,6 +17,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDb, mockWriteDb } = vi.hoisted(() => {
   const make = () => ({
+    // 🔴 `getAppListingAuthoringContext` NOW READS THE VISIBILITY LEVEL THROUGH RAW SQL, so a
+    // file-local db mock has to carry `$queryRaw` or every case in this file dies with
+    // `db.$queryRaw is not a function` — a collection-shaped failure that says nothing about
+    // the behaviour under test. The column is `// @no-type` and absent from the generated
+    // client, so it CANNOT be a Prisma `select`; raw is the only read there is.
+    //
+    // An empty result is the "no level expressed" answer (`available: true, visibility: null`),
+    // which is the pre-feature behaviour and keeps each case below about what it was about.
+    // The canonical shared mock already provides this; these files predate it.
+    $queryRaw: vi.fn(async (): Promise<unknown[]> => []),
     appBlock: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -507,7 +517,7 @@ describe('getAppListingAuthoringContext', () => {
       it(`🔴 now ADMITS a \`${status}\` listing — the narrowing moved to the TAB SET`, async () => {
         // 🔴 THE REVERSAL, and the reason it is safe is NOT in this file. What this asserts
         // is only that the context resolves; that the resolved context yields at most
-        // Publishing + History — and NEVER Collaborators — is
+        // Publishing, History, Feedback — and NEVER Collaborators — is
         // `appListingEditorTabs.test.ts`, and that the seat-grant procs refuse independently
         // of any tab is `app-collaborator.seat-grant-status.test.ts`. Reading this case as
         // "removed listings are editable again" is exactly the misreading to avoid.
@@ -631,6 +641,120 @@ describe('getAppListingAuthoringContext', () => {
     expect(ctx.kind).toBe('onsite');
     expect(ctx.appBlockId).toBe('ab_1');
     expect(ctx.capabilities.submitVersion).toBe(true);
+  });
+
+  /**
+   * 🔴 THE VISIBILITY LEVEL the Publishing tab's control is driven by.
+   *
+   * Three fields, and each one is a decision the client must NOT re-make: the stored level,
+   * whether the manual-apply column is even there, and the review CEILING for this status.
+   * A client re-deriving the ceiling is how a `draft` + `public` selector would come to
+   * offer publishing content no moderator has reviewed (D6).
+   */
+  describe('the visibility level behind the Publishing tab', () => {
+    const rawRows = () =>
+      mockDb.$queryRaw as unknown as {
+        mockImplementation: (f: (...a: unknown[]) => unknown) => void;
+      };
+
+    /** The same approved-listing fixture the sibling cases install. */
+    function installListing() {
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
+          : listingFixture()
+      );
+    }
+
+    it('carries the stored level, availability, and the status ceiling', async () => {
+      installListing();
+      rawRows().mockImplementation(async () => [{ visibility: 'testers' }]);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibility).toBe('testers');
+      expect(ctx.visibilityAvailable).toBe(true);
+      // ⚠️ NO `maxVisibility` ASSERTION, AND ITS ABSENCE IS THE POINT. The field was shipped
+      // and removed: nothing but this line ever read it, while the client derived the
+      // ceiling from the shared `maxVisibilityForStatus`. The ceiling's own behaviour is
+      // pinned where it is implemented, in that function's invariant test.
+    });
+
+    it('🔴 reports an UNSET level as null, never as `private`', async () => {
+      // `null` resolves to the pre-feature rule for the status, which on an approved
+      // listing means visible to everyone — the OPPOSITE of `private`. Collapsing the two
+      // here would make one click of the owner's Save hide a live app.
+      installListing();
+      rawRows().mockImplementation(async () => []);
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibility).toBeNull();
+      expect(ctx.visibilityAvailable).toBe(true);
+    });
+
+    it('🔴 DEGRADES rather than throwing when the manual-apply column is absent', async () => {
+      // An unapplied migration must still render the whole authoring page; the control
+      // disables itself from this flag. A throw here would 500 the editor for every tab.
+      installListing();
+      rawRows().mockImplementation(async () => {
+        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
+      });
+      const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
+      expect(ctx.visibilityAvailable).toBe(false);
+      expect(ctx.visibility).toBeNull();
+      // The REST of the context still has to be intact — the degraded read must not take
+      // the page down with it.
+      expect(ctx.appListingId).toBe('apl_1');
+      expect(ctx.role).toBe('owner');
+    });
+
+    it('🔴 a connection failure still PROPAGATES — only a missing column degrades', async () => {
+      // The positive control on the degrade above. Degrading on a real outage would turn it
+      // into a silently wrong audience, which is worse than an error on a surface that
+      // licenses a write.
+      installListing();
+      rawRows().mockImplementation(async () => {
+        throw Object.assign(new Error('cannot reach database'), { code: 'P1001' });
+      });
+      await expect(
+        getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER })
+      ).rejects.toThrow('cannot reach database');
+    });
+
+    it('🔴 keys the level on the PARENT, not on the shadow the caller arrived with', async () => {
+      // 🔴 THE SUBTLEST THING ON THIS PATH. The level governs the LIVE listing's
+      // discoverability; a shadow is a draft copy nothing writes a level to. Keying it on
+      // the id the caller passed would read the shadow's (always unset), so an owner editing
+      // an approved app would see their deliberate `private` as "no choice expressed" — and
+      // the obvious next click re-publishes it.
+      mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
+          ? { id: 'apl_parent', slug: 'my-app', name: 'My App', status: 'approved' }
+          : listingFixture({
+              id: 'apl_shadow',
+              appBlockId: null,
+              revisionOfId: 'apl_parent',
+              appBlock: null,
+              revisionOf: {
+                id: 'apl_parent',
+                kind: 'onsite',
+                appBlockId: 'ab_1',
+                appBlock: { app: { userId: OWNER } },
+              },
+            })
+      );
+      const seen: unknown[] = [];
+      rawRows().mockImplementation(async (...a: unknown[]) => {
+        seen.push(a[0]);
+        return [{ visibility: 'private' }];
+      });
+      const ctx = await getAppListingAuthoringContext({
+        appListingId: 'apl_shadow',
+        userId: OWNER,
+      });
+      expect(ctx.visibility).toBe('private');
+      // The statement carries the PARENT id as a bound parameter, never the shadow's.
+      const sql = JSON.stringify(seen[0]);
+      expect(sql).toContain('apl_parent');
+      expect(sql).not.toContain('apl_shadow');
+    });
   });
 });
 

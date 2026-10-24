@@ -6,7 +6,11 @@
   // reports it unused — deleting it is a build error, not a cleanup.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   import type { MediaType } from '$lib/media/edge-url';
-  import type { SvelteSet } from 'svelte/reactivity';
+  import {
+    suppressShiftSelection,
+    type SelectionSet,
+  } from '@civitai/ui/hooks/selection-set.svelte.js';
+  import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
   import { IconExternalLink } from '@tabler/icons-svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -39,6 +43,7 @@
     empty = 'Nothing to review in this queue.',
     endLabel = 'End of queue.',
     minColumn = 300,
+    pagerTop = false,
   }: {
     items: T[];
     civitaiUrl: string;
@@ -53,23 +58,24 @@
     keyOf?: (item: T) => string | number;
     itemClass?: (item: T) => string;
     card: Snippet<[T]>;
-    /** Pass a set to enable multiselect: the image becomes the select target and the corner arrow
-     *  is the way out to the site. */
-    selected?: SvelteSet<string | number>;
+    /** Pass a selection to enable multiselect: the image becomes the select target and the corner
+     *  arrow is the way out to the site. */
+    selected?: SelectionSet<string | number>;
     empty?: string;
     /** `null` suppresses the terminator where a capped batch would contradict the truncation warning. */
     endLabel?: string | null;
     /** 300 unless the grid sits beside another column. */
     minColumn?: number;
+    /** The numbered pager above the grid as well as below it, for a page long enough that the bottom
+     *  one is a scroll away — the user report queue's 60-image account grid. */
+    pagerTop?: boolean;
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
+  const itemKeys = $derived(items.map(key));
 
-  function toggle(item: T) {
-    if (!selected) return;
-    const k = key(item);
-    if (selected.has(k)) selected.delete(k);
-    else selected.add(k);
+  function toggle(item: T, event: MouseEvent) {
+    selected?.toggle(key(item), itemKeys, event.shiftKey);
   }
 
   const numbered = $derived(total != null && perPage != null && pageProp != null);
@@ -101,6 +107,17 @@
   const goFirst = () => navigate(clearPaging);
 </script>
 
+{#snippet numberedPager(summary = true)}
+  <NumberedPager
+    {summary}
+    page={pageNumber}
+    total={total ?? 0}
+    perPage={perPage ?? 1}
+    label="images"
+    onPageChange={goPage}
+  />
+{/snippet}
+
 {#if items.length === 0}
   <div class="placeholder">{empty}</div>
   <!-- A narrowed filter or a deep link can land here with no other control on the page. -->
@@ -110,6 +127,9 @@
     </div>
   {/if}
 {:else}
+  {#if pagerTop && numbered && (total ?? 0) > (perPage ?? 1)}
+    <div class="-mt-6 mb-4">{@render numberedPager(false)}</div>
+  {/if}
   <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}
       {@const isSelected = selected?.has(key(item)) ?? false}
@@ -122,7 +142,8 @@
           {#if selected}
             <button
               type="button"
-              onclick={() => toggle(item)}
+              onclick={(e) => toggle(item, e)}
+              onmousedown={suppressShiftSelection}
               aria-pressed={isSelected}
               aria-label={isSelected ? 'Deselect image' : 'Select image'}
               class="flex h-full w-full cursor-pointer items-center justify-center"
@@ -168,12 +189,12 @@
             </Badge>
           {/if}
           {#if selected}
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onchange={() => toggle(item)}
+            <SelectionCheckbox
+              selection={selected}
+              key={key(item)}
+              order={itemKeys}
               aria-label="Select image"
-              class="absolute right-2 top-2 z-10 size-5 cursor-pointer accent-primary"
+              class="absolute right-2 top-2 z-10 size-6 rounded-md border-2 border-white bg-black/60 shadow-md shadow-black/60 dark:bg-black/60 [&_svg]:size-4"
             />
           {/if}
         </div>
@@ -185,13 +206,7 @@
   </div>
 
   {#if numbered}
-    <NumberedPager
-      page={pageNumber}
-      total={total ?? 0}
-      perPage={perPage ?? 1}
-      label="images"
-      onPageChange={goPage}
-    />
+    {@render numberedPager()}
   {:else if nextCursor || endLabel || paged}
     <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
       {#if paged}

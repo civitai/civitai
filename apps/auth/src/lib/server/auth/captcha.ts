@@ -68,14 +68,21 @@ export function captchaSiteKey(): string | undefined {
 
 /** Managed (interactive) widget sitekey — the fallback the client renders ONLY after the invisible widget
  *  fails. Undefined when unprovisioned, so the client never renders the fallback (behavior == pre-fallback).
- *  Uses the CF forced-challenge test key under CAPTCHA_DEV. */
+ *  Uses the CF forced-challenge test key under CAPTCHA_DEV.
+ *
+ *  Gated on the managed SECRET as well as its sitekey, for the same reason isCaptchaEnabled() is keyed
+ *  on the secret: never offer a check this module cannot honour. With the sitekey alone, a solved token
+ *  arrives here and is refused below on `no_secret`, and the two are separate env vars, so that state
+ *  is one missing value wide. The client-side consequence is pinned in the tests. */
 export function captchaManagedSiteKey(): string | undefined {
+  if (!secretFor('managed')) return undefined;
   return env.CF_MANAGED_TURNSTILE_SITEKEY || (devCaptcha() ? TEST_MANAGED_SITEKEY : undefined);
 }
 
 /** The verify secret for a given widget mode, with the CF dummy-pass secret as the dev default. */
 function secretFor(mode: CaptchaMode): string | undefined {
-  const real = mode === 'managed' ? env.CF_MANAGED_TURNSTILE_SECRET : env.CF_INVISIBLE_TURNSTILE_SECRET;
+  const real =
+    mode === 'managed' ? env.CF_MANAGED_TURNSTILE_SECRET : env.CF_INVISIBLE_TURNSTILE_SECRET;
   return real || (devCaptcha() ? TEST_SECRET_PASS : undefined);
 }
 
@@ -96,8 +103,18 @@ export async function verifyCaptchaToken(
   const mode = opts.mode ?? 'invisible';
   // Pass-through when captcha is disabled — NOT counted (no verification actually happened).
   if (!isCaptchaEnabled()) return true;
+  // Single assembly site for the label pair, so `mode` cannot be left off one branch (see the
+  // counter's declaration for why an omission is silent). One verification is one increment: the outer
+  // catch counts too, so anything throwing after a branch has already counted — an Axiom writer, a
+  // console hitting EPIPE — would otherwise record the same verification twice under two results.
+  let counted = false;
+  const count = (result: string) => {
+    if (counted) return;
+    counted = true;
+    captchaVerificationsTotal.inc({ result, mode });
+  };
   if (!token) {
-    captchaVerificationsTotal.inc({ result: 'no_token' });
+    count('no_token');
     // failReason (client-supplied) splits no_token into widget-error / timeout / fallback-error, so we can size
     // the RECOVERABLE (invisible-declined → the interactive fallback helps) vs UNRECOVERABLE (Turnstile fully
     // blocked) populations: `['civitai-prod'] | where name=='captcha-reject' | summarize count() by failReason`.
@@ -107,7 +124,7 @@ export async function verifyCaptchaToken(
   const secret = secretFor(mode);
   if (!secret) {
     // mode=managed but no managed secret configured — the client shouldn't have rendered the managed widget.
-    captchaVerificationsTotal.inc({ result: 'no_secret' });
+    count('no_secret');
     logRejectAxiom({ reason: 'no-secret', mode, ip });
     return false;
   }
@@ -119,8 +136,8 @@ export async function verifyCaptchaToken(
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
-      captchaVerificationsTotal.inc({ result: 'http_error' });
-      logRejectAxiom({ reason: 'http_error', status: res.status, ip });
+      count('http_error');
+      logRejectAxiom({ reason: 'http_error', mode, status: res.status, ip });
       return false;
     }
     const outcome = (await res.json()) as {
@@ -140,7 +157,7 @@ export async function verifyCaptchaToken(
       });
       // Mirror the reject reason to the counter (dash→underscore for a valid label value:
       // siteverify-failed→siteverify_failed, hostname-mismatch→hostname_mismatch, …).
-      captchaVerificationsTotal.inc({ result: reason.replace(/-/g, '_') });
+      count(reason.replace(/-/g, '_'));
       logRejectAxiom({
         reason,
         mode,
@@ -174,9 +191,18 @@ export async function verifyCaptchaToken(
       return false;
     }
 
-    captchaVerificationsTotal.inc({ result: 'success' });
+    count('success');
     return true;
-  } catch {
+  } catch (e) {
+    // Every siteverify network failure and every malformed-response parse failure lands here. Uncounted,
+    // an upstream verification outage is a volume drop with no reason beside it. Never logs the token or
+    // the secret.
+    console.error('captcha verify rejected', {
+      reason: 'verify_error',
+      error: e instanceof Error ? e.message : String(e),
+    });
+    count('verify_error');
+    logRejectAxiom({ reason: 'verify_error', mode, ip });
     return false;
   }
 }

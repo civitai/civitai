@@ -11,6 +11,7 @@ export function ImageContextMenu({
   context,
   additionalMenuItems,
   noDelete = false,
+  postImageCount,
   image,
   children,
   ...actionIconProps
@@ -20,6 +21,7 @@ export function ImageContextMenu({
     image,
     context,
     additionalMenuItems,
+    postImageCount,
   };
 
   return (

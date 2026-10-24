@@ -1,4 +1,4 @@
-import { Drawer, Modal } from '@mantine/core';
+import { Badge, Drawer, Modal } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { describe, expect, test } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -69,10 +69,12 @@ async function portalled(selector: string): Promise<Element> {
     if (el) return el;
     if (Date.now() > deadline)
       throw new Error(
-        `\`${selector}\` never appeared in <body> within 5s. Mantine mounts these through a ` +
-          'portal, so this is either a genuinely missing slot class — every rule in the ' +
-          '`@layer mantine` block of globals.css that uses it is now inert — or the component ' +
-          'failed to open at all.'
+        `\`${selector}\` never appeared in <body> within 5s. Either the slot class is genuinely ` +
+          'missing — read the call site for what that costs: a rule in globals.css, LAYERED or ' +
+          'not (the Badge root pays an unlayered `flex-shrink`), or the locator a geometry arm ' +
+          'resolves through — or the component failed to render at all. (Most of these mount ' +
+          'through a portal; a Badge does not, and is polled here only because a synchronous ' +
+          'read after `renderWithProviders` returns null.)'
       );
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -94,6 +96,30 @@ describe('the Mantine slot selectors globals.css pays on describe real elements'
     // 31 drawers. Chosen over `body` precisely because ~20 call sites set
     // `body` padding inline, which outranks a stylesheet.
     await portalled('.mantine-Drawer-content');
+    // `.mantine-Drawer-body` pays no globals.css rule — it is here because it is the CONTAINER the
+    // permissions-drawer arms of `AppsWideLayout.geometry.test.tsx` measure against, deliberately,
+    // so that those arms stay red-at-base on layout rather than on a test hook that change
+    // introduced. A Mantine rename would turn every arm that resolves it into `nothing rendered for
+    // .mantine-Drawer-body`, which reads as a broken harness. (No count here on purpose: an earlier
+    // revision said "four" and the number had already moved.)
+    await portalled('.mantine-Drawer-body');
+  });
+
+  test('a Badge emits the stable `root` slot class', async () => {
+    // 🔴 AND UNLIKE `.mantine-Drawer-body`, THIS ONE DOES PAY RULES — two of them, both
+    // UNLAYERED: `.mantine-Badge-root { flex-shrink: 0 }` and `.mantine-Badge-label *`'s font
+    // inheritance, in globals.css's "Mantine overrides" block outside every `@layer`. The
+    // `flex-shrink` is load-bearing for `BlockScopeList`'s nowrap scope row. On top of that, the
+    // same geometry block climbs from a Badge LABEL to its root with
+    // `closest('.mantine-Badge-root')`, so a Mantine rename of that part surfaces as
+    // "the leaf carrying … is not inside a Mantine Badge" — a component defect, read off a
+    // renamed class. ⚠️ `portalled()` DESPITE A BADGE NOT BEING PORTALLED: a synchronous
+    // `document.body.querySelector` straight after `renderWithProviders` returns null — measured
+    // — because React has not committed yet. The helper polls, which is the only thing this arm
+    // needs from it.
+    renderWithProviders(<Badge>probe</Badge>);
+    const badge = await portalled('.mantine-Badge-root');
+    expect(badge.textContent).toBe('probe');
   });
 
   test('a fullScreen Modal emits `content` carrying `data-full-screen`', async () => {

@@ -20,10 +20,14 @@ import {
   IconApps,
   IconChevronDown,
   IconChevronRight,
+  IconMessage2,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
+import type { NewFeedbackBadge } from '~/components/Apps/appFeedbackInbox';
+import { newFeedbackBadge } from '~/components/Apps/appFeedbackInbox';
+import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
 import { showModRemovedNotice } from '~/components/Apps/listingPublishingActions';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
@@ -92,59 +96,9 @@ export type OrphanedSubmissionRow = {
   canWithdraw?: boolean;
 };
 
-/** Fixed media boxes. Both dimensions are attributes on the `img`, so the row reserves its
- *  space before the bytes arrive — a table with two images per row is otherwise a CLS
- *  machine. The placeholder uses the SAME box, so present and absent media never reflow. */
-const ICON_BOX = 40;
-const COVER_W = 96;
-const COVER_H = 54; // 16:9
-
 function formatWhen(value: string | Date | null | undefined): string {
   if (!value) return '—';
   return formatDate(value, 'MMM D, YYYY');
-}
-
-/**
- * 🔴 THE CLICK TARGET IS A REAL `<button>`, AND THE PLACEHOLDER IS NOT ONE.
- *
- * Both media components below wrap their image in `UnstyledButton` — which renders a
- * real `<button type="button">`, so it is tab-reachable, Enter/Space-activatable and
- * carries a focus ring. An `<img onClick>` would be a mouse-only affordance that LOOKS
- * wired up; the screenshot gallery this viewer is shared with learned that already
- * (`appListingScreenshotViewerWiring.test.ts`'s "the tile is a real button").
- *
- * 🔴 NOT Mantine `Anchor`. Its root sets `color: var(--mantine-color-anchor)`, which
- * recolours every `currentColor` descendant — including the "No cover" glyph inside the
- * placeholder. That bug is INVISIBLE on the has-image path (an `<img>` ignores `color`)
- * and only appears on the no-image path, which is the path that must not be a link at
- * all. It is also not a navigation: nothing gets an href.
- *
- * 🔴 A PLACEHOLDER IS INERT — no button, no `tabIndex`, no pointer cursor. There is
- * nothing to view, and a focusable control that opens an empty modal is worse than no
- * control: it adds a tab stop to every row of a table whose rows are mostly incomplete
- * listings (measured: all 11 `removed` listings have a null cover).
- */
-function MediaButton({
-  label,
-  onOpen,
-  children,
-}: {
-  label: string;
-  onOpen: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <UnstyledButton
-      onClick={onOpen}
-      aria-label={label}
-      // `display: flex` so the button box is exactly the image box — a default
-      // `display: block` UnstyledButton would add descender space under the image and
-      // make the focus ring taller than the thing it is outlining.
-      style={{ display: 'flex', cursor: 'zoom-in', borderRadius: 8 }}
-    >
-      {children}
-    </UnstyledButton>
-  );
 }
 
 function ListingIcon({
@@ -154,45 +108,14 @@ function ListingIcon({
   row: MyAppRow;
   onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
 }) {
-  if (!row.iconUrl) {
-    return (
-      <div
-        data-testid={`apps-mine-icon-placeholder-${row.appListingId}`}
-        aria-hidden
-        style={{
-          width: ICON_BOX,
-          height: ICON_BOX,
-          borderRadius: 8,
-          flex: `0 0 ${ICON_BOX}px`,
-          background: 'var(--mantine-color-dark-4)',
-        }}
-      />
-    );
-  }
-  const img = (
-    // 🔴 A PLAIN `<img>`, NOT `next/image`. The server already hands us a CDN-transformed
-    // URL (`getEdgeUrl(..., { width })`), so `next/image` would put a SECOND optimizer in
-    // front of an already-optimized asset — extra cost, no smaller bytes. The two things
-    // `next/image` is usually reached for here are supplied directly: explicit
-    // `width`/`height` attributes reserve the box (no CLS on a table with two images per
-    // row) and `loading="lazy"` defers the off-screen ones.
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      data-testid={`apps-mine-icon-${row.appListingId}`}
-      src={row.iconUrl}
-      alt=""
-      width={ICON_BOX}
-      height={ICON_BOX}
-      loading="lazy"
-      decoding="async"
-      style={{ borderRadius: 8, objectFit: 'cover', flex: `0 0 ${ICON_BOX}px` }}
-    />
-  );
-  if (!onOpenMedia) return img;
   return (
-    <MediaButton label={`View icon image for ${row.name}`} onOpen={() => onOpenMedia(row, 'icon')}>
-      {img}
-    </MediaButton>
+    <ListingIconThumb
+      url={row.iconUrl}
+      name={row.name}
+      imgTestId={`apps-mine-icon-${row.appListingId}`}
+      placeholderTestId={`apps-mine-icon-placeholder-${row.appListingId}`}
+      onOpen={onOpenMedia ? () => onOpenMedia(row, 'icon') : undefined}
+    />
   );
 }
 
@@ -203,49 +126,14 @@ function ListingCover({
   row: MyAppRow;
   onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
 }) {
-  if (!row.coverUrl) {
-    return (
-      <div
-        data-testid={`apps-mine-cover-placeholder-${row.appListingId}`}
-        style={{
-          width: COVER_W,
-          height: COVER_H,
-          borderRadius: 6,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'var(--mantine-color-dark-5)',
-        }}
-      >
-        <Text size="9px" c="dimmed">
-          No cover
-        </Text>
-      </div>
-    );
-  }
-  const img = (
-    // Plain `<img>` for the same reason as the icon above — the URL is already a
-    // width-transformed CDN URL, and the CLS/lazy properties are set explicitly.
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      data-testid={`apps-mine-cover-${row.appListingId}`}
-      src={row.coverUrl}
-      alt=""
-      width={COVER_W}
-      height={COVER_H}
-      loading="lazy"
-      decoding="async"
-      style={{ borderRadius: 6, objectFit: 'cover' }}
-    />
-  );
-  if (!onOpenMedia) return img;
   return (
-    <MediaButton
-      label={`View cover image for ${row.name}`}
-      onOpen={() => onOpenMedia(row, 'cover')}
-    >
-      {img}
-    </MediaButton>
+    <ListingCoverThumb
+      url={row.coverUrl}
+      name={row.name}
+      imgTestId={`apps-mine-cover-${row.appListingId}`}
+      placeholderTestId={`apps-mine-cover-placeholder-${row.appListingId}`}
+      onOpen={onOpenMedia ? () => onOpenMedia(row, 'cover') : undefined}
+    />
   );
 }
 
@@ -256,7 +144,7 @@ function ListingCover({
  * REJECTED ONE, and that reversal is load-bearing rather than cosmetic. It used to be plain
  * text on any non-authorable status because `getAppListingAuthoringContext` refused those
  * with FORBIDDEN — linking there offered a guaranteed 403. That route now opens on them in
- * a NARROWED mode (at most Publishing + History; no Details, no Collaborators), and this PR
+ * a NARROWED mode (at most Publishing, History, Feedback; no Details, no Collaborators), and this PR
  * moved BOTH the History disclosure and the Unpublish/Republish pair off this row and into
  * that page. So the link is the only way the author reaches either one, and leaving a
  * REMOVED row unlinked would strand exactly the population that most needs its history.
@@ -315,7 +203,13 @@ function ListingName({ row }: { row: MyAppRow }) {
  * `MyAppsBody.browser.test.tsx`'s "no row shape renders a kind badge", so a future
  * "helpfully restore the badge" change is visible rather than silent.
  */
-function StatusBadges({ row }: { row: MyAppRow }) {
+function StatusBadges({
+  row,
+  newFeedback,
+}: {
+  row: MyAppRow;
+  newFeedback: NewFeedbackBadge | null;
+}) {
   return (
     /*
      * 🔴 THIS ROW MAY WRAP, AND THAT IS THE STRUCTURAL HALF OF A LAYOUT FIX — NOT A
@@ -388,6 +282,19 @@ function StatusBadges({ row }: { row: MyAppRow }) {
       <span data-testid={`apps-mine-problems-${row.appListingId}`}>
         <ListingProblemsIndicator problems={row.problems ?? []} />
       </span>
+      {newFeedback && (
+        <Badge
+          component={Link}
+          href={newFeedback.href}
+          variant="light"
+          color="blue"
+          leftSection={<IconMessage2 size={12} />}
+          style={{ cursor: 'pointer' }}
+          data-testid={`apps-mine-feedback-${row.appListingId}`}
+        >
+          {newFeedback.label}
+        </Badge>
+      )}
     </Group>
   );
 }
@@ -435,6 +342,7 @@ type RowRenderProps = {
   group: 'active' | 'inactive';
   /** Open the row's image viewer at the image that was clicked. */
   onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
+  newFeedback: NewFeedbackBadge | null;
 };
 
 function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
@@ -465,7 +373,7 @@ function AppTableRow(props: RowRenderProps) {
         </Table.Td>
         <Table.Td>
           <Stack gap={4} align="flex-start">
-            <StatusBadges row={row} />
+            <StatusBadges row={row} newFeedback={props.newFeedback} />
             <ModRemovedNotice row={row} />
           </Stack>
         </Table.Td>
@@ -503,7 +411,7 @@ function AppCardRow(props: RowRenderProps) {
           </Stack>
           <ListingCover row={row} onOpenMedia={props.onOpenMedia} />
         </Group>
-        <StatusBadges row={row} />
+        <StatusBadges row={row} newFeedback={props.newFeedback} />
         <ModRemovedNotice row={row} />
         <Text size="xs" c="dimmed">
           Updated {formatWhen(row.updatedAt)}
@@ -590,6 +498,8 @@ export type MyAppsBodyViewProps = {
   /** Is the orphan read still in flight? An empty result mid-stream is not an empty set. */
   orphanedLoading?: boolean;
   onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
+  /** `appFeedback.countNewForMyListings`: `{ [appListingId]: new-feedback count }`. */
+  newFeedbackCounts?: Readonly<Record<string, number>>;
 };
 
 export function MyAppsBodyView({
@@ -603,6 +513,7 @@ export function MyAppsBodyView({
   orphanedError = null,
   orphanedLoading = false,
   onWithdrawOrphan,
+  newFeedbackCounts,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
@@ -656,8 +567,9 @@ export function MyAppsBodyView({
       row,
       group,
       onOpenMedia: openMedia,
+      newFeedback: newFeedbackBadge(newFeedbackCounts, row),
     }),
-    [openMedia]
+    [openMedia, newFeedbackCounts]
   );
 
   /**
@@ -1036,6 +948,11 @@ export function MyAppsBody() {
     retry: false,
   });
 
+  // No error state on purpose: a failed count only hides the badges.
+  const feedbackCountsQuery = trpc.appFeedback.countNewForMyListings.useQuery(undefined, {
+    retry: false,
+  });
+
   const utils = trpc.useUtils();
   const withdrawVersion = trpc.blocks.withdrawPublishRequest.useMutation({
     onSuccess: () => {
@@ -1067,6 +984,7 @@ export function MyAppsBody() {
       onWithdrawOrphan={onWithdrawOrphan}
       withdrawing={withdrawVersion.isPending}
       withdrawEnabled={!!features?.appBlocks}
+      newFeedbackCounts={feedbackCountsQuery.data}
     />
   );
 }

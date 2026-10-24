@@ -24,6 +24,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 import { CosmeticShopSort } from '~/server/common/enums';
 import { getCommunityCosmetics } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -63,10 +64,34 @@ describe('getCommunityCosmetics', () => {
   it('strips payout/fee internals from item meta', async () => {
     mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
     mocks.shopItemCount.mockResolvedValue(2);
+    // Disagrees with the fixture's `meta.purchases` of 3: the rows are the sold
+    // count, and a fixture where the two agree passes under either derivation.
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 2: 7, 1: 4 }));
     const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
-    expect(items[0].meta).toEqual({ purchases: 3, acceptsBlueBuzz: false });
+    expect(items[0].meta).toEqual({ purchases: 7, acceptsBlueBuzz: false });
+    // `toEqual` skips undefined-valued keys; the key list does not.
+    expect(Object.keys(items[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
+    expect(items[1].meta.purchases).toBe(4);
     expect(totalPages).toBe(1);
+  });
+
+  /**
+   * TO WHOEVER IS ABOUT TO PUT `_count` BACK ON THE SELECT: Prisma resolves a
+   * relation `_count` by aggregating the WHOLE purchases table, once per query.
+   * Under MostPopular the `orderBy` already carries one of those, and Postgres
+   * does not dedupe a second. The value comes from `getSoldCounts`, restricted
+   * to this page's ids.
+   */
+  it('reads the sold count for the page only, never via a whole-table `_count`', async () => {
+    mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
+    await getCommunityCosmetics({ ...baseInput, sort: CosmeticShopSort.MostPopular });
+    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toBeUndefined();
+    const soldCall = dbMock.dbRead.$queryRaw.mock.calls.find((c) =>
+      (c[0] as string[]).join('').includes('"UserCosmeticShopPurchases"')
+    );
+    expect(soldCall).toBeDefined();
+    expect(soldCall?.slice(1)).toEqual([[2, 1]]);
   });
 
   it('pages by skip/take and reports the page count from the total', async () => {
@@ -115,8 +140,8 @@ describe('getCommunityCosmetics', () => {
     });
   });
 
-  it('searches title and cosmetic name without displacing the creator/pack branch', async () => {
-    await getCommunityCosmetics({ ...baseInput, query: 'sparkle', packsEnabled: true });
+  it('searches title, description, cosmetic name and sticker slug without displacing the creator/pack branch', async () => {
+    await getCommunityCosmetics({ ...baseInput, query: ':Sparkle:', packsEnabled: true });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     // The creator/pack gating lives in the top-level OR. A search written there
     // instead of into AND would replace it and leak official items into the feed.
@@ -124,8 +149,35 @@ describe('getCommunityCosmetics', () => {
     expect(packBranch(where)).toBeDefined();
     expect(andClauses(where)).toContainEqual({
       OR: [
-        { title: { contains: 'sparkle', mode: 'insensitive' } },
-        { cosmetic: { name: { contains: 'sparkle', mode: 'insensitive' } } },
+        { title: { contains: ':Sparkle:', mode: 'insensitive' } },
+        { description: { contains: ':Sparkle:', mode: 'insensitive' } },
+        { cosmetic: { name: { contains: ':Sparkle:', mode: 'insensitive' } } },
+        {
+          cosmetic: {
+            type: 'Sticker',
+            data: { path: ['slug'], string_contains: 'sparkle' },
+          },
+        },
+      ],
+    });
+  });
+
+  it('serves packs without mystery box listings, which have no cosmetic either', async () => {
+    await getCommunityCosmetics({ ...baseInput, packsEnabled: true });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    expect(packBranch(where)).toEqual({ cosmeticId: null, itemDefinitionId: null });
+  });
+
+  it('leaves the slug arm out for a search no slug could contain', async () => {
+    await getCommunityCosmetics({ ...baseInput, query: 'happy cat' });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    // Exact match, not a stringified search: JSON.stringify drops an undefined
+    // `string_contains`, which would hide an unguarded slug arm.
+    expect(andClauses(where)).toContainEqual({
+      OR: [
+        { title: { contains: 'happy cat', mode: 'insensitive' } },
+        { description: { contains: 'happy cat', mode: 'insensitive' } },
+        { cosmetic: { name: { contains: 'happy cat', mode: 'insensitive' } } },
       ],
     });
   });

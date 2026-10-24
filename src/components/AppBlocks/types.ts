@@ -281,7 +281,9 @@ export interface BlockInitPayload {
     raw: string;
     scopes: string[];
     expiresAt: string;
-    /** Present only when manifest declares ai:write:budgeted. */
+    /** Omitted by hosts that predate hub-minted OAuth tokens. */
+    kind?: 'block' | 'oauth';
+    /** Present only when the token carries ai:write:budgeted. */
     buzzBudget?: number;
   };
   context: SlotContext;
@@ -405,9 +407,27 @@ export interface BlockInitPayload {
    * - `maxBrowsingLevel`: the bitwise browsing-level ceiling for this domain
    *   (green/blue → SFW, red → all). Consumed by the SDK `useDomainMaturity()`
    *   hook (separate follow-up PR in the SDK repo).
+   * - `effectiveBrowsingLevel`: that domain ceiling intersected with the
+   *   VIEWER's own browsing level. `maxBrowsingLevel` is identical for every
+   *   viewer on a domain, so it cannot answer "may I show THIS person mature
+   *   content"; this field can. ALWAYS a subset of `maxBrowsingLevel` — a block
+   *   can never widen its own ceiling by reading it. Absent when the mint did
+   *   not supply one, in which case consumers fall back to `maxBrowsingLevel`
+   *   (the pre-field behaviour). The viewer's RAW level is deliberately never
+   *   sent: on `blue` it is WIDER than the domain permits, and it is the
+   *   high-resolution form of the `viewerNsfwEnabled` over-share that
+   *   `projectBlockInit.ts` exists to drop.
    */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  effectiveBrowsingLevel?: number;
+  /**
+   * Advisory local-storage hint for the SDK; see
+   * `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`. Optional and ADDED, like
+   * `viewer.signedIn`, so it cannot trip the deployed guard's missing-field /
+   * wrong-shape rejections documented above.
+   */
+  storageMode?: 'local-preview';
 }
 
 export interface BlockManifest {

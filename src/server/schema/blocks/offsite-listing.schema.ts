@@ -8,6 +8,8 @@ import {
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
   OFFSITE_MOD_REASON_MAX,
   OFFSITE_MOD_REASON_MIN,
@@ -126,7 +128,7 @@ export const submitExternalListingSchema = z
     // so bounding at Full could reject a valid subset. The per-client subset check still
     // lives in the service (it needs the client's `allowedScopes`).
     // OPTIONAL + IGNORED by the service. The listing's requested scopes are
-    // AUTO-DERIVED server-side from the client's CURRENT `allowedScopes` at submit
+    // AUTO-DERIVED server-side from the client's CURRENT consentable scopes at submit
     // time (server-authoritative snapshot — a form-supplied mask is never trusted).
     // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
     // overflow int4, but the stored value comes from the client, not this field.
@@ -241,6 +243,15 @@ export const updateListingPatchSchema = z
      */
     isBeta: z.boolean().optional(),
     betaMessage: z.string().max(BETA_MESSAGE_MAX).nullable().optional(),
+    /**
+     * AUTHOR OPT-IN: "Let others fork this app's source" (on-site listings only).
+     *
+     * 🔴 TRIVIAL, NOT MATERIAL — absent from `MATERIAL_LISTING_PATCH_FIELDS`, so it applies IN
+     * PLACE with no moderator review, like `isBeta`. It grants nothing a moderator approved: a
+     * fork is a separate app that passes its own publish review. Written to the LIVE listing
+     * only, never staged on a shadow revision (`updateRevisionDraft` refuses it).
+     */
+    forkable: z.boolean().optional(),
     // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications
@@ -262,6 +273,30 @@ export const updateListingSchema = z.object({
   patch: updateListingPatchSchema,
 });
 export type UpdateListingInput = z.infer<typeof updateListingSchema>;
+
+/**
+ * Set a listing's per-listing VISIBILITY LEVEL. ONE schema for BOTH the owner proc and the
+ * moderator proc, so the two cannot drift about what a level is.
+ *
+ * 🔴 `visibility` IS NOT A KEY OF `updateListingPatchSchema`, AND THAT IS THE DECISION, NOT
+ * AN OVERSIGHT. Routing it through the patch would force it into or out of
+ * `MATERIAL_LISTING_PATCH_FIELDS`, and BOTH answers are wrong. Material would stage a
+ * `public -> private` flip on a shadow revision and leave the listing publicly visible
+ * until a moderator approved the hiding — backwards — and would refuse the change outright
+ * on an owner-unpublished listing. Non-material would put an audience control in the same
+ * in-place bucket as `tagline`, with no moderator path and no audit row. Its own mutation
+ * gets both.
+ *
+ * 🔴 `z.enum` OVER THE RUNTIME TUPLE, never a hand-written list of the four strings. A
+ * second spelling of the value space is how a validator ends up accepting a level the
+ * resolver does not know, which `narrowListingVisibility` would then fail closed to
+ * `private` — i.e. the owner picks `testers`, the write succeeds, and their app goes dark.
+ */
+export const setListingVisibilitySchema = z.object({
+  listingId: z.string().min(1).max(64),
+  visibility: z.enum(APP_LISTING_VISIBILITIES),
+});
+export type SetListingVisibilityInput = z.infer<typeof setListingVisibilitySchema>;
 
 /**
  * AUTHOR: begin (or re-open) a shadow-draft revision of an APPROVED listing so
@@ -347,6 +382,7 @@ export const approveExternalRequestSchema = z.object({
   // nsfwLevel; when provided the service FLOORS it at the derived value (never
   // publishes mature assets under a too-low rating). See `approveExternalRequest`.
   contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 

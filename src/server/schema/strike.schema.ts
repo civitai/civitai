@@ -10,6 +10,21 @@ export const strikeStatusColorScheme: Record<string, MantineColor> = {
 };
 
 /**
+ * Derived from active strike POINTS, not the strike count — a single strike can carry several.
+ */
+export function accountStandingFromPoints(points: number): {
+  label: string;
+  /** No "standing" noun, for a caption that already carries it. */
+  short: string;
+  color: MantineColor;
+  good: boolean;
+} {
+  if (points === 0) return { label: 'Good standing', short: 'Good', color: 'green', good: true };
+  if (points === 1) return { label: 'Warning', short: 'Warning', color: 'yellow', good: false };
+  return { label: 'Restricted', short: 'Restricted', color: 'red', good: false };
+}
+
+/**
  * Sanitized, user-facing label per StrikeReason. Mirrors `publicBanReasonLabel`
  * in `banReasonDetails`: this is the only reason text emailed to the user (the
  * free-text `UserStrike.description` is kept for in-app/Retool but never sent in
@@ -23,6 +38,7 @@ export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
   [StrikeReason.HarassmentContent]: 'Community Abuse',
   [StrikeReason.ProhibitedContent]: 'Content violated our Terms of Service',
   [StrikeReason.ManualModAction]: 'Content violated our Terms of Service',
+  [StrikeReason.Scam]: 'Impersonating Civitai staff',
 };
 
 export const createStrikeSchema = z.object({

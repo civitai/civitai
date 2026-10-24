@@ -50,6 +50,7 @@ export function PackCoverTiles({
             width={single ? size : Math.floor(size / 2)}
             alt=""
             loading={lazy ? 'lazy' : undefined}
+            optimized
             className="max-h-full max-w-full object-contain"
           />
         </div>

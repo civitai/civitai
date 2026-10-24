@@ -1,5 +1,8 @@
+import { EXTERNAL_CLASSIFIER_REWRITES } from '@civitai/mod-utils/prompt-audit/lists';
 import { env } from '~/env/server';
 import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
+import { probeShadowModel } from '~/server/integrations/moderation-shadow-probe';
+import { deriveModerationVerdict } from '~/server/integrations/moderation-verdict-policy';
 import {
   type ModerationVerdict,
   policyDigest,
@@ -24,14 +27,10 @@ import { setActiveSpanAttributes, withSpan } from '~/server/utils/otel-helpers';
  */
 const MODERATION_MODEL = 'omni-moderation-latest';
 
-const falsePositiveTriggers = Object.entries({
-  '\\d*girl': 'woman',
-  '\\d*boy': 'man',
-  '\\d*girls': 'women',
-  '\\d*boys': 'men',
-  'school uniform': 'uniform',
-  'breasts?': 'chest',
-}).map(([k, v]) => ({ regex: new RegExp(`\\b${k}\\b`, 'gi'), replacement: v }));
+const falsePositiveTriggers = Object.entries(EXTERNAL_CLASSIFIER_REWRITES).map(([k, v]) => ({
+  regex: new RegExp(`\\b${k}\\b`, 'gi'),
+  replacement: v,
+}));
 function removeFalsePositiveTriggers(prompt: string) {
   for (const trigger of falsePositiveTriggers) {
     prompt = prompt.replace(trigger.regex, trigger.replacement);
@@ -173,26 +172,34 @@ async function moderatePrompt(
         }
 
         const { results } = await res.json();
-        let flagged = results[0].flagged;
-        let categories = Object.entries(results[0].category_scores)
-          .filter(([, v]) => (v as number) > env.EXTERNAL_MODERATION_THRESHOLD)
-          .map(([k]) => k);
-
-        // If we have categories
-        // Only flag if any of them are found in the results
-        if (env.EXTERNAL_MODERATION_CATEGORIES) {
-          categories = [];
-          for (const [k, v] of Object.entries(env.EXTERNAL_MODERATION_CATEGORIES)) {
-            if (results[0].categories[k]) categories.push(v ?? k);
-          }
-          flagged = categories.length > 0;
-        }
+        const { flagged, categories } = deriveModerationVerdict(
+          results[0],
+          env.EXTERNAL_MODERATION_THRESHOLD,
+          env.EXTERNAL_MODERATION_CATEGORIES
+        );
 
         recordOutcome(metricSource, 'ok', elapsedSeconds());
         // Store ONLY here, on the `ok` path. A failure must cost a retry every time — see the
         // module header on why caching one transient error would be TTL-long under-moderation.
         // Fire-and-forget: nothing waits on the write.
         writeCachedVerdict(preparedPrompt, policy, { flagged, categories });
+
+        // Dark shadow comparison: would a CHEAPER model have returned the same verdict? Off by
+        // default, fire-and-forget, and the verdict of record is never affected — this call reads
+        // nothing back.
+        //
+        // 🔴 PLACED HERE, ON THE `ok` PATH AND AFTER `recordOutcome`, FOR THREE REASONS. (1) It needs
+        // the incumbent's verdict to compare against, which does not exist earlier. (2) After the
+        // histogram observation, so a second in-flight request can never be attributed to the
+        // instrument that measures what ONE classifier call costs. (3) On `ok` only — a live call
+        // that failed has no verdict to compare, and shadowing it would spend a billable request to
+        // learn nothing.
+        //
+        // 🔴 It is NOT placed above the cache read. A cache hit returns before this point, so the
+        // shadow rate is measured over classifier calls that actually happened — which is the
+        // population the model decision is about. If the cache is ever armed alongside this, the
+        // denominator narrows but stays honest.
+        probeShadowModel(metricSource, preparedPrompt, { flagged });
         return { flagged, categories };
       } catch (e) {
         // Exactly one observation per call — here on the throw path, XOR on the resolve path above.

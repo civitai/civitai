@@ -1,33 +1,41 @@
 import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   getEdgeUrl,
+  getEdgeUrlSrcSet,
   getInferredMediaType,
-  shouldForceOptimized,
+  resolveOptimized,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import
 // graph). Re-exported here so every existing consumer of this module is unaffected.
 export {
   COMMON_IMAGE_WIDTHS,
-  OPTIMIZED_WIDTH_THRESHOLD,
+  MAX_EDGE_WIDTH,
+  SRCSET_DPR,
   getEdgeUrl,
+  getEdgeUrlSrcSet,
   getInferredMediaType,
-  shouldForceOptimized,
+  resolveOptimized,
+  resolvesToOriginal,
   snapWidthToCommonSize,
 } from '~/client-utils/edge-url';
 export type { EdgeUrlProps } from '~/client-utils/edge-url';
 
-export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
-  const currentUser = useCurrentUser();
+/** @param hiDpi also emit a variant sized for a 2x display. */
+export function useEdgeUrl(
+  src: string,
+  options: Omit<EdgeUrlProps, 'src'> | undefined,
+  hiDpi?: boolean
+) {
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
-  if (!src || src.startsWith('http') || src.startsWith('blob'))
-    return { url: src, type: inferredType };
+  // Same passthrough boundary as getEdgeUrl — one predicate, see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return { url: src, srcSet: undefined, type: inferredType };
 
   let { anim, transcode } = options ?? {};
 
@@ -40,22 +48,25 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
   }
 
   if (!anim) type = 'image';
-  // Threshold lives in `edge-url` so anything that has to reproduce this decision
-  // outside React (the announcement banner health monitor) cannot drift from it.
-  const shouldOptimize = shouldForceOptimized(options?.width);
-  const optimized =
-    options?.optimized ||
-    shouldOptimize ||
-    currentUser?.filePreferences?.imageFormat === 'optimized';
+  // Decided in `edge-url` so anything that has to reproduce this outside React (the
+  // announcement banner health monitor) cannot drift from it.
+  const optimized = resolveOptimized({
+    width: options?.width,
+    height: options?.height,
+    original: options?.original,
+  });
+
+  const resolved = {
+    ...options,
+    anim,
+    transcode,
+    type,
+    optimized: optimized ? true : undefined,
+  };
 
   return {
-    url: getEdgeUrl(src, {
-      ...options,
-      anim,
-      transcode,
-      type,
-      optimized: optimized ? true : undefined,
-    }),
+    url: getEdgeUrl(src, resolved),
+    srcSet: hiDpi ? getEdgeUrlSrcSet(src, resolved) : undefined,
     type,
   };
 }

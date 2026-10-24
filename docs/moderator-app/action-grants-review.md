@@ -70,10 +70,9 @@ Two shapes on the `/admin` page tree, and they behave differently:
 
 - [ ] `/retool/user-lookup` for the **staff** role. This is the whole of the open P1 "User Lookup
       unavailable for the staff role" — nothing to build.
-- [ ] **`/retool/post-reports`** — shipped 2026-08-21 and reachable by `moderator:admin` alone until
-      ticked. It is NOT covered by the `/reports` `sharedAccess` grant: that one covers the generic
-      `/reports/*` queues, and this is a separate page under the `Retool` group. Whoever holds
-      `/retool/user-reports` is the group to match.
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      `sharedAccess` grant like `/reports/user`, so there is nothing to tick. Ruling, removing images and
+      striking still need `/users`.
 - [ ] **`/users/newest`** — new 2026-08-24, admin-only until ticked. Grant it on its own merits: it
       reads emails and profile text. 🔴 Do **not** reach for `/users` instead — that grant is also what
       User Lookup's ban, purge and bulk-comment actions check, so granting it hands over enforcement.
@@ -89,9 +88,13 @@ checked. This step is what makes the pass real.
 - [ ] Log in as a moderator who is **not** `moderator:admin`.
 - [ ] User Lookup ▸ Chat (DMs) shows the header's chat links and the "every chat this account has
       posted in" link resolving for a non-admin. *(The P0 this was filed under is closed and was
-      scope, not permissions — the panel is deliberately moderator-contact only. What is unverified
-      is whether Chat Audit itself is granted: the links go to `/retool/chat-audit`, a separate page
-      grant.)*
+      scope, not permissions. The panel is no longer moderator-contact only: it also renders the
+      newest messages the account SENT. What is unverified is whether Chat Audit itself is granted:
+      the links go to `/retool/chat-audit`, a separate page grant.)*
+- [ ] **Cross-page gate:** a moderator holding `/retool/user-lookup` but NOT `/retool/chat-audit`
+      sees the Chat section WITHOUT the "What they said" panel, and `/api/user-chat-messages/<id>`
+      refuses them. This is the only place in the app where one page's grant gates a panel on
+      another page, so an admin-only check proves nothing.
 - [ ] `reportedUser` on the reports page no longer renders greyed out. *(Open P1, suspected downstream of
       User Lookup access. If it does not clear once granted, it is its own defect — say so, and it goes
       back on the list as one.)*

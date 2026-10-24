@@ -510,7 +510,7 @@ describe('moderator attribution', () => {
 describe('which row the system enforces', () => {
   // `readBlocklistRow` decides this for every reader in three apps, and after this change it is the
   // ONLY caller of the cache populate — so a write busts the key and the very next read through
-  // here pins a value for a month. Dropping its `orderBy` was invisible before this test.
+  // here pins a value for the cache TTL. Dropping its `orderBy` was invisible before this test.
   it('reads the LOWEST row of the type', async () => {
     addDuplicateEmailDomainRow();
 
@@ -526,7 +526,7 @@ describe('the shared cache key', () => {
   it('is DELETED, never rewritten with a snapshot', async () => {
     // A snapshot write is an unserialised read-modify-write over the artifact every reader
     // enforces from, so two edits the row lock correctly serialised can still land their cache
-    // writes in the other order and leave the loser's list under a month TTL. Deletes commute.
+    // writes in the other order and leave the loser's list under the cache TTL. Deletes commute.
     await removeBlocklistItems({
       userId: MOD_ID,
       id: 1,

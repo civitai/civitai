@@ -44,6 +44,8 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isHostForColor: mockIsHostForColor,
+  // The consolidated red-host test, driven by the same mock as `isHostForColor`.
+  isRedCapableHost: (host: string | null | undefined) => !!host && mockIsHostForColor(host, 'red'),
 }));
 // Spread the ORIGINAL: `~/server/logging/client` exports 7 symbols and this suite
 // only needs to intercept 3. Replacing it wholesale makes the mock silently stale

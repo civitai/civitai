@@ -1,11 +1,13 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
+import { showNotification } from '@mantine/notifications';
 import {
   IconApps,
   IconBuildingStore,
   IconChevronLeft,
+  IconCode,
   IconDots,
   IconEyeOff,
   IconGavel,
@@ -26,20 +28,37 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeForkMenuItem } from './ChromeForkEntry';
+import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
+import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
+import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
-import { failureSnapshot } from './failureSnapshot';
+import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
+import { handleEstimateBatch } from './estimateBatchGate';
+import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
-import { resolveRequestConsent } from './requestConsentGate';
+import {
+  resolveAdvertisedScopes,
+  resolveHostConsentNotice,
+  resolveRequestConsent,
+  resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
+  UNGRANTABLE_CONSENT_TOAST,
+} from './requestConsentGate';
+import { BlockConsentNotice } from './BlockConsentNotice';
+import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -50,6 +69,7 @@ import {
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -63,10 +83,20 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
+import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -78,9 +108,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-// Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
-// clicks an action whose consent-gated scope the token is missing.
-const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
+// The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
+// PageBlockHost, and this copy carried NO dedupe id. Both surfaces now go through
+// `openBlockConsentModal`, which owns the lazy component reference alongside the id
+// and the props shape.
 
 // Hard cap on the suggested top-up amount a block can pre-fill in the
 // BuyBuzzModal (security audit #10). Without this a malicious block could
@@ -93,16 +124,46 @@ interface IframeHostProps {
   token: string;
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
+  tokenKind?: 'block' | 'oauth';
+  /** The per-call Buzz budget `token` carries, as the mint reported it.
+   *  Forwarded to the block as-is; never derived here. */
+  buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
+  /**
+   * 🔴 THE MINT'S OWN VERDICT that the signed-in viewer's grant is short of the
+   * app's approved manifest — and the input the HOST-SIDE consent notice keys on,
+   * so the model slot can recover a missing grant WITHOUT the block asking.
+   *
+   * It exists because the block-driven route is not enough on its own. Every path
+   * back to consent on this surface used to start with the block sending
+   * REQUEST_CONSENT, so an app that never asked — an older SDK, a block that simply
+   * does not call `requestGrants`, a block whose own UI never reaches the call —
+   * left the viewer holding a control that could not succeed, with no host-side
+   * signal at all. `PageBlockHost` grew a backstop for exactly this; this surface
+   * did not, which is the gap this prop closes.
+   *
+   * Read as the server states it rather than re-derived from `missingScopes`: the
+   * mint sets `needsConsent = missing.length > 0`, so the two agree in production,
+   * but the host branches on the SERVER's answer and `undefined` (a legacy mint
+   * response with no such field) reads as "no notice".
+   */
+  needsConsent?: boolean;
   /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
    *  values mirrored from the token mint — the host forwards, never derives. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  /** The domain ceiling intersected with the VIEWER's own browsing level (see
+   *  `projectBlockInitMaturity`). Absent → the block falls back to
+   *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel?: number;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
@@ -127,9 +188,11 @@ const HARD_HEIGHT_CEILING = 8_000;
  * a 0px iframe because we could not read the viewport is a worse outcome than
  * the over-tall iframe the clamp exists to prevent.
  *
- * `window.innerHeight` deliberately, not `visualViewport.height` — nothing else
- * in `src/` reads `visualViewport`, and the pinch-zoom/keyboard-inset precision
- * it would add buys nothing for a bound whose whole job is "roughly one screen".
+ * `window.innerHeight` deliberately, not `visualViewport.height` — the
+ * pinch-zoom/keyboard-inset precision it would add buys nothing for a bound
+ * whose whole job is "roughly one screen". (A keyboard inset is a real concern
+ * for a fixed sheet holding a text field; that is
+ * `useVisualViewportBottomInset`'s job, not this clamp's.)
  */
 function viewportHeightPx(): number | null {
   if (typeof window === 'undefined') return null;
@@ -269,19 +332,6 @@ const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
-// Reduce a thrown tRPC error to a single short string the block can surface.
-// TRPCClientError exposes `.message` which is already the server message
-// (apps.storage.* throws with explicit code + message strings); everything
-// else gets a generic fallback. Keep this conservative — the iframe is
-// untrusted and we don't want to leak server stack traces.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
-
 /**
  * Renders a block inside a sandboxed iframe and drives the postMessage
  * lifecycle. Implements the @civitai/app-sdk/blocks v1 contract — see
@@ -320,7 +370,7 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed and a "Hide app" item
+ * "Manage apps" item routes to /apps/activity and a "Hide app" item
  * that locally hides this install for the viewer (a model owner's block shows
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
@@ -343,6 +393,7 @@ export function AppBlockChrome({
   modelId,
   modelName,
   slotId,
+  hostSurface,
   canOpenPage = false,
 }: {
   blockInstanceId: string;
@@ -382,13 +433,16 @@ export function AppBlockChrome({
    *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
    *  viewer regardless of where they came from. So every mounter passes
    *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
-   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  `AppListingDetailBody` and `MarketplaceBody` do.
    *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
    *
    *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
    *  prop hides the menu rather than offering guaranteed-404 links.
    */
   canOpenPage?: boolean;
+  /** The host that mounted this chrome. Decides whether it offers app feedback
+   *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
+  hostSurface?: BlockHostSurface;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -413,6 +467,11 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
+  // The feedback modal's target, `null` while closed. Owned here beside `reviewListingId` so the
+  // chrome's modals all mount in one place, outside the bar; the entry point (a bar button) hands
+  // up the snapshot it took at click time.
+  const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
+  const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -432,8 +491,8 @@ export function AppBlockChrome({
   // Which of those entries this menu may offer. The rules (off-site exclusion,
   // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
   // `/apps/run/` links, self-exclusion, the cap) live in the pure
-  // `selectChromeRecentApps` so the node `unit` project covers them — the
-  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // `selectChromeRecentApps` so the node `unit` project covers them. The
+  // store's PER-KIND cap is what stops
   // off-site entries from evicting the on-site ones this menu needs.
   const recentApps = selectChromeRecentApps(recents, {
     canOpenPage,
@@ -546,15 +605,15 @@ export function AppBlockChrome({
   //
   // 🔴 DEFINED BEFORE `appMenuItems` ON PURPOSE. `__tests__/chromeNavAlignsWithSubNav.ts`
   // slices this section out by anchoring on the `Civitai Apps` label and stopping at the
-  // NEXT `<ChromeSurfaceLabel>`, so that the ⋮ menu's own `/apps/installed` item is not
+  // NEXT `<ChromeSurfaceLabel>`, so that the ⋮ menu's own `/apps/activity` item is not
   // keyed onto the platform nav's. Reordering these two consts silently widens that
   // slice.
   const platformNavItems = (
     <>
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
       {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
-          SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
-          `~/components/Apps/AppsSubNav`. This section and that tab bar are two
+          STORE NAV, WHICH IS THE SOURCE OF TRUTH — `appsSections` in
+          `~/components/Apps/apps-sections`. This section and that nav are two
           renderings of ONE platform navigation: a user who opens an app from the
           store and then reaches for this menu is looking for the same four
           destinations they just left, and until now every shared concept was drawn
@@ -562,28 +621,57 @@ export function AppBlockChrome({
           apps, shield vs gavel) — four out of four, so the disagreement was the
           rule rather than an oversight.
 
-          When you add or re-icon an entry here, change `SUB_NAV_LINKS` first (or
+          When you add or re-icon an entry here, change `appsSections` first (or
           confirm it already says what you are about to write) and follow it. The
           alignment is pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`,
           which reads BOTH tables and fails when they drift — including when the
           subnav changes and this menu does not.
 
+          🔴 THIS SECTION IS A DELIBERATE SUBSET, NOT A MIRROR. The subnav also
+          carries `/apps/invites` and `/apps/revenue`, and neither belongs in a menu
+          that opens over a RUNNING app — this is navigation for someone CONSUMING
+          an app, not managing one. That excluded SET is itself asserted by the same
+          guard, so adding a subnav row fails there until someone decides which side
+          it lands on.
+
+          🔴 `/apps/mine` BECAME `/apps/build`, AND THE CHOICE WAS BETWEEN REPOINTING
+          AND DELETING. The store consolidated "Build apps" / "Create" / "My apps"
+          into ONE state-aware `/apps/build`; `/apps/mine` 301s there. Leaving the
+          old href would have made every press from this menu a redirect hop, and
+          removing the item outright would delete a door out of a running app for
+          the app's own owner — which the ledger guard's own message warns against.
+          So it is repointed, keeping the label ("My apps" still names what an owner
+          arrives at: state C is their app list) and taking the subnav's glyph for
+          the row it now shares, `IconCode`.
+
+          🔴 WHAT THAT DOES *NOT* DO IS DEFEAT A KILL SWITCH — and the previous
+          version of this note is why the question has to be asked. `/apps/build`
+          IS flag-gated (`canAccessAppsBuild`), and this section still reads no
+          flags. But `/apps/mine` was flag-gated too (`appBlocksAuthor` +
+          `isAppDeveloper`, a hard `notFound`), so an ungated link here to a gated
+          destination is the STATUS QUO, not something introduced by the repoint.
+          The behaviour change is strictly in the harmless direction: where a
+          non-author pressing this item used to get a 404, one holding
+          `appBlocksGetStarted` now gets the public pitch — a page with no private
+          data on it. Nobody reaches a surface they could not reach before, because
+          the PAGE, not this link, is what decides.
+
           The LABELS are deliberately NOT all identical: the subnav's tabs sit under
-          an "Apps" heading and can afford one-word labels ("Installed", "Review"),
+          an "Apps" heading and can afford one-word labels ("Activity", "Review"),
           whereas these items stand alone over a running app and need the noun
-          ("Installed apps"). "Marketplace" is the one label that is shared verbatim,
+          ("App activity"). "Marketplace" is the one label that is shared verbatim,
           because "Apps home" named a destination the store itself stopped calling
           that. */}
       <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
         Marketplace
       </ChromeSurfaceItem>
       <ChromeSurfaceItem
-        href="/apps/installed"
+        href="/apps/activity"
         leftSection={<IconPlugConnected size={14} stroke={1.5} />}
       >
-        Installed apps
+        App activity
       </ChromeSurfaceItem>
-      <ChromeSurfaceItem href="/apps/mine" leftSection={<IconApps size={14} stroke={1.5} />}>
+      <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
         My apps
       </ChromeSurfaceItem>
       {isModerator && (
@@ -596,8 +684,14 @@ export function AppBlockChrome({
           after mount so SSR + first client render match). Excludes the app
           currently being viewed and the whole label+section is omitted when
           there's nothing else to show (a first-time / single-app viewer).
-          Each item shows the app icon (persisted `iconUrl`, else a generic
-          app icon) + name, linking to the full-page run route. */}
+          Each item shows the app's icon + name, linking to the full-page run
+          route. 🔴 THE ICON IS READ LIVE, NEVER FROM THE STORE: the recents
+          store never persists an icon url (`recentlyOpenedAppsStore.ts`) and
+          `selectChromeRecentApps` strips one, so `ChromeRecentAppIcon` gets
+          only the slug and draws the `iconUrl` the server's listing-media gate
+          returned for THIS host and viewer (`appListings.getAppDetail`) — the
+          generic glyph while that loads, on any error, and whenever the gate
+          hides the icon. */}
       {recentApps.length > 0 && (
         <ChromeSurfaceGroup data-testid="app-recently-run">
           <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
@@ -613,13 +707,8 @@ export function AppBlockChrome({
               // note in `ChromeSurface.tsx` for why it is opt-in rather than
               // universal.
               clamp
-              leftSection={
-                r.iconUrl ? (
-                  <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
-                ) : (
-                  <IconApps size={14} stroke={1.5} />
-                )
-              }
+              // `blockId` is the listing slug for an on-site app (`app-listing-mapper.ts`).
+              leftSection={<ChromeRecentAppIcon slug={r.blockId} />}
             >
               {/* The persisted `name` is the SAME publisher-controlled string
                   the trust label above laundered through localStorage — so
@@ -642,15 +731,15 @@ export function AppBlockChrome({
     <>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
       {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH SURFACES. This item and the
-          platform nav's "Installed apps" are different WORDS for the same
-          destination (`/apps/installed`), so they must not be different
+          platform nav's "App activity" are different WORDS for the same
+          destination (`/apps/activity`), so they must not be different
           PICTURES: on a desktop bar the two dropdowns open a few pixels apart, and
           below `sm` they are literally rows of ONE sheet — a user who sees a plug in
           one and a grid in the other has to work out whether they lead to the same
           place. The glyph comes from the store subnav's row for this route
-          (`SUB_NAV_LINKS`), exactly as the platform nav's does — the labels stay
+          (`appsSections`), exactly as the platform nav's does — the labels stay
           different on purpose ("Manage apps" is the action from inside a running app;
-          "Installed apps" is the destination), because the rule is about the ROUTE,
+          "App activity" is the destination), because the rule is about the ROUTE,
           not the copy.
 
           Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
@@ -658,7 +747,7 @@ export function AppBlockChrome({
           section — this item is the reason that check is repo-wide rather than
           scoped, since scoping it to one dropdown is what let this site drift. */}
       <ChromeSurfaceItem
-        href="/apps/installed"
+        href="/apps/activity"
         leftSection={<IconPlugConnected size={14} stroke={1.5} />}
       >
         Manage apps
@@ -669,9 +758,10 @@ export function AppBlockChrome({
           literal-href items) correctly does not treat it as a destination the
           store subnav must also list.
 
-          Placed directly under "Manage apps" so the two whole-app actions that
-          are ALWAYS about the running app ("rate it", "see what it can do") sit
-          together above the dismissal, and "Hide app" stays last.
+          Placed directly under "Manage apps" so the whole-app actions about the
+          running app (rate it, see what it can do) sit together above the
+          dismissal, and "Hide app" stays last. Sending feedback is not here: it is its
+          own button in the bar, beside this menu's trigger.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -683,6 +773,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* FORKABLE APPS — "Fork": same lazy listing read and same render-its-own-gates shape as
+          the review item above; hidden on the dev tunnel and the review preview. */}
+      <ChromeForkMenuItem slug={slug} hostSurface={hostSurface} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -766,9 +859,10 @@ export function AppBlockChrome({
             >
               <IconChevronLeft size={16} stroke={1.5} />
             </ActionIcon>
-            {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
-              what centers it, and `minWidth: 0` is what lets the name truncate rather
-              than push a control off the row.
+            {/* The centered app name. `flex: 1 1 auto` between the back chevron and the
+              trailing cluster is what centers it — exactly when only ⋮ trails, slightly left
+              of true center when the feedback button renders too — and `minWidth: 0` is
+              what lets the name truncate rather than push a control off the row.
 
               The provenance icon rides along rather than being dropped with the
               platform-nav trigger it used to live in. That trigger is GONE on this
@@ -805,50 +899,66 @@ export function AppBlockChrome({
             onOpenReview={setReviewListingId}
           />
         )}
-        {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
-          was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
-          because the mobile bar has no second trigger to hang that behind — the
-          operator's call, and the reason `platformNavItems` is authored as a fragment
-          rather than inline in its own dropdown.
+        {/* The trailing cluster: the feedback button, then the ⋮ trigger, with a tighter gap
+          than the bar's own so the pair reads as one group of app actions. The button renders
+          its own gates and may be null. */}
+        <Group gap={4} wrap="nowrap">
+          {/* Labelled on a wide bar, icon-only below `sm`: the bar-width test the mobile shell
+            uses, but WITHOUT the `isPage` term of the local `compact` above. Two different
+            questions, so do not unify them: a narrow model sidebar has no shell but is just as
+            short of room. An unmeasured bar (SSR, first paint) is not compact, so it starts
+            labelled. */}
+          <ChromeFeedbackButton
+            request={feedbackRequest}
+            hostSurface={hostSurface}
+            labelled={!geometry.compact}
+            onOpenFeedback={setFeedbackTarget}
+          />
+          {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+            was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
+            because the mobile bar has no second trigger to hang that behind — the
+            operator's call, and the reason `platformNavItems` is authored as a fragment
+            rather than inline in its own dropdown.
 
-          Order: the running app's own actions first (that is what ⋮ has always
-          meant), then the platform destinations. The back chevron already covers the
-          most common of those, so the folded-in nav is the secondary half of the
-          sheet, not its headline. */}
-        <ChromeSurface
-          compact={compact}
-          kind="menu"
-          control={overflowMenu}
-          title="App menu"
-          width={180}
-          position="bottom-end"
-          dropdownTestId="app-block-menu-dropdown"
-          target={
-            /* `data-testid` alongside the accessible name: the sibling controls in
-             this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
-             are all addressable that way, and a test reaching this trigger by
-             accessible name alone breaks on a copy change that is not a behaviour
-             change. */
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="sm"
-              aria-label="App menu"
-              data-testid="app-block-menu-trigger"
-              // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-              // Without this the ⋯ trigger is a shrinkable flex item and a long name
-              // at a narrow width can squeeze it below its resting `ActionIcon
-              // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-              // has carried `flexShrink: 0` all along.
-              style={{ flexShrink: 0 }}
-            >
-              <IconDots size={16} stroke={1.5} />
-            </ActionIcon>
-          }
-        >
-          {appMenuItems}
-          {compact && platformNavItems}
-        </ChromeSurface>
+            Order: the running app's own actions first (that is what ⋮ has always
+            meant), then the platform destinations. The back chevron already covers the
+            most common of those, so the folded-in nav is the secondary half of the
+            sheet, not its headline. */}
+          <ChromeSurface
+            compact={compact}
+            kind="menu"
+            control={overflowMenu}
+            title="App menu"
+            width={180}
+            position="bottom-end"
+            dropdownTestId="app-block-menu-dropdown"
+            target={
+              /* `data-testid` alongside the accessible name: the sibling controls in
+               this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
+               are all addressable that way, and a test reaching this trigger by
+               accessible name alone breaks on a copy change that is not a behaviour
+               change. */
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="App menu"
+                data-testid="app-block-menu-trigger"
+                // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+                // Without this the ⋯ trigger is a shrinkable flex item and a long name
+                // at a narrow width can squeeze it below its resting `ActionIcon
+                // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+                // has carried `flexShrink: 0` all along.
+                style={{ flexShrink: 0 }}
+              >
+                <IconDots size={16} stroke={1.5} />
+              </ActionIcon>
+            }
+          >
+            {appMenuItems}
+            {compact && platformNavItems}
+          </ChromeSurface>
+        </Group>
       </Group>
       {/* Per-app transparency drawer (Part B). Rendered only when the caller
         threaded an appBlockId; the body's queries fire only once opened. */}
@@ -879,6 +989,9 @@ export function AppBlockChrome({
           opened
           onClose={() => setReviewListingId(null)}
         />
+      )}
+      {feedbackTarget && (
+        <AppFeedbackModal target={feedbackTarget} onClose={() => setFeedbackTarget(null)} />
       )}
     </>
   );
@@ -1050,7 +1163,7 @@ function ChromeDesktopLeadingGroup({
               data-clickable="true"
             >
               {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
-                  store's own subnav calls its first tab (`SUB_NAV_LINKS[0].label`), and a
+                  store's own nav calls its first entry (`appsSections[0].label`), and a
                   crumb that names the page differently from the page's own tab makes the
                   trail look like it leads somewhere else. The testid deliberately keeps
                   its `-apps` spelling: it addresses the crumb by its ROUTE, which has not
@@ -1088,9 +1201,14 @@ export function IframeHost({
   context,
   token,
   expiresAt,
+  tokenKind,
+  buzzBudget,
   missingScopes,
+  signedScopes,
+  needsConsent,
   domain,
   maxBrowsingLevel,
+  effectiveBrowsingLevel,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -1188,6 +1306,12 @@ export function IframeHost({
    * listener never needs replacing.
    */
   const readGateStatus = useCallback((): Status => statusRef.current, []);
+  // Which app the viewer dismissed the missing-permissions notice for. Keyed on the
+  // app rather than a bare boolean for the same reason PageBlockHost's is: the slot
+  // can swap installs without unmounting, and a dismissal must not carry over to a
+  // DIFFERENT app's permissions. Per-mount on purpose — nothing persists it, so a
+  // dismissal is "not now", not "never".
+  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -1289,7 +1413,13 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+  const { send, onMessage, reportNoToken } = usePostMessage({
+    iframeRef,
+    expectedOrigin,
+    opaqueOrigin,
+    host: 'IframeHost',
+    appBlockId: install.appBlockId,
+  });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
   // viewport change can re-run the clamp against the new bound. The block is
@@ -1366,40 +1496,14 @@ export function IframeHost({
     return () => window.removeEventListener('resize', onViewportChange);
   }, [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]);
 
-  // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
-  // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
-  // (`missingScopes`, reported by the mint). The server signs exactly this set
-  // into the JWT; sending the full manifest scopes in the wrapped token would
-  // lie to the block (it would think it has `ai:write:budgeted` when the JWT
-  // doesn't), defeating the block's Generate-time consent check. For anon and
-  // fully-granted viewers `missingScopes` is empty, so this equals the manifest
-  // scopes — no behavior change. (Anon is gated block-side by `viewer === null`,
-  // not by scopes.)
-  const grantedScopes = useMemo<string[]>(() => {
-    const declared = install.manifest.scopes ?? [];
-    if (!missingScopes || missingScopes.length === 0) return declared;
-    const withheld = new Set(missingScopes);
-    return declared.filter((s) => !withheld.has(s));
-  }, [install.manifest.scopes, missingScopes]);
-
-  // Mirror the server's buzzBudget resolution (publisher's
-  // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the token
-  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
-  // a budget cap is meaningless without the spend scope it bounds.
-  //
-  // Must stay in lockstep with the server's `resolveBuzzBudget`
-  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
-  // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
-  const buzzBudget = useMemo<number | undefined>(() => {
-    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
-    if (candidate <= 0) return undefined;
-    return Math.min(candidate, 1000);
-  }, [grantedScopes, install.publisherSettings]);
+  // A6 lazy consent: the scopes ACTUALLY carried by the minted token. Sending the
+  // full manifest scopes would lie to the block (it would think it has
+  // `ai:write:budgeted` when the JWT doesn't), defeating its Generate-time consent
+  // check. See `resolveAdvertisedScopes` for why the mint's signed set wins.
+  const grantedScopes = useMemo<string[]>(
+    () => resolveAdvertisedScopes(install.manifest.scopes ?? [], missingScopes, signedScopes),
+    [install.manifest.scopes, missingScopes, signedScopes]
+  );
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their
@@ -1451,6 +1555,7 @@ export function IframeHost({
       raw: token,
       scopes: grantedScopes,
       expiresAt,
+      ...(tokenKind ? { kind: tokenKind } : {}),
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     },
     // Data-minimization (security audit — MEDIUM): project the slot context
@@ -1484,7 +1589,7 @@ export function IframeHost({
     theme: activeTheme,
     renderMode: install.renderMode,
     // Advisory maturity signal — server-authoritative values from the mint.
-    ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
+    ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
   });
 
   // Keep the controller's interval posting the freshest payload. buildInitPayload
@@ -1520,10 +1625,11 @@ export function IframeHost({
         raw: token,
         scopes: grantedScopes,
         expiresAt,
+        ...(tokenKind ? { kind: tokenKind } : {}),
         ...(buzzBudget !== undefined ? { buzzBudget } : {}),
       },
     });
-  }, [token, expiresAt, buzzBudget, grantedScopes, send]);
+  }, [token, expiresAt, tokenKind, buzzBudget, grantedScopes, send]);
 
   // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and PageBlockHost
   // places it the same way. React runs effects in declaration order, so on the
@@ -1590,15 +1696,35 @@ export function IframeHost({
   // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
-      if (!token || !initSentRef.current) return;
       const requestId =
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
+      if (!token || !initSentRef.current) {
+        // 🔴 COUNTED, BUT DELIBERATELY NOT ANSWERED — and the asymmetry is the
+        // protocol's, not an oversight here. `REQUEST_TOKEN` is in
+        // `BRIDGE_NACK_EXEMPT` because `isValidTokenRefreshResponse` requires a
+        // valid `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is
+        // dropped at the block's own trust boundary and the block would hang
+        // exactly as before while we believed we had fixed it. Closing the
+        // block-facing half needs a failure variant in the SDK message union.
+        //
+        // 🔴 UNCONDITIONAL, AND NOT GATED ON `requestId`. A `REQUEST_TOKEN`
+        // carrying no `requestId` is an explicitly documented protocol shape (the
+        // success path below answers it with a `TOKEN_REFRESH` push), so gating
+        // the count on one would report NOTHING for it — and the count is this
+        // branch's only observable. `PageBlockHost` does the identical thing, and
+        // the two must stay in step by hand: there is no test asserting the
+        // relationship (see the PR description for why the structural guard that
+        // would have was removed rather than shipped).
+        reportNoToken('REQUEST_TOKEN');
+        return;
+      }
       const wrapped = {
         raw: token,
         scopes: grantedScopes,
         expiresAt,
+        ...(tokenKind ? { kind: tokenKind } : {}),
         ...(buzzBudget !== undefined ? { buzzBudget } : {}),
       };
       if (requestId === undefined) {
@@ -1608,7 +1734,7 @@ export function IframeHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
+  }, [token, expiresAt, tokenKind, buzzBudget, grantedScopes, send, onMessage, reportNoToken]);
 
   // Init handshake. Start the moment we're ALLOWED to init — token present and
   // the effective-checkpoint query resolved (`isLoading` false; the error path
@@ -1831,6 +1957,15 @@ export function IframeHost({
     return off;
   }, [onMessage]);
 
+  useEffect(() => {
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+    });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
+    return off;
+  }, [onMessage, install.appBlockId, install.blockInstanceId]);
+
   // Anonymous conversion: the block (rendered for a logged-out viewer from the
   // scope-free BLOCK_INIT context) asks the host to start the civitai login
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
@@ -1861,6 +1996,30 @@ export function IframeHost({
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [onMessage, readGateStatus]);
 
+  /**
+   * Open the host's consent UI for a set of withheld scopes.
+   *
+   * 🔴 ONE OPENER, TWO CALLERS ON THIS SURFACE (and two more on `PageBlockHost`),
+   * ON PURPOSE. The block-initiated REQUEST_CONSENT handler below and the host's own
+   * missing-permissions notice must build IDENTICAL props. This thunk binds only the
+   * per-surface values — the model host names the app from `install.manifest.name`,
+   * the page host from its `appName` prop; the dedupe id, the props shape and the
+   * lazy component reference all live in `openBlockConsentModal`.
+   */
+  const openConsentModal = useCallback(
+    (scopes: string[]) => {
+      openBlockConsentModal({
+        appBlockId: install.appBlockId,
+        blockName: install.manifest.name,
+        missingScopes: scopes,
+        onGranted: () => {
+          onConsentGranted?.();
+        },
+      });
+    },
+    [install.appBlockId, install.manifest.name, onConsentGranted]
+  );
+
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // token is missing a consent-gated scope) asks the host to open the consent UI
   // when the user clicks an action that needs that capability (e.g. Generate),
@@ -1872,7 +2031,7 @@ export function IframeHost({
   // useBlockToken.refresh); the new scopes flow to the iframe via TOKEN_REFRESH
   // and the block retries — there is no host→block reply (fire-and-forget).
   useEffect(() => {
-    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
       // `readGateStatus()` (not a closed-over `status`) — see its definition.
       //
       // NO NACK HERE, deliberately. REQUEST_CONSENT is fire-and-forget in both
@@ -1881,28 +2040,65 @@ export function IframeHost({
       // there is no host→block reply message for it — so there is nothing to
       // reply TO and no promise to fail fast. Dropping it cannot hang the block.
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
-      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
-      dialogStore.trigger({
-        component: BlockConsentModal,
-        props: {
-          appBlockId: install.appBlockId,
-          blockName: install.manifest.name,
-          missingScopes: scopesToGrant,
-          onGranted: () => {
-            onConsentGranted?.();
-          },
-        },
-      });
+      if (scopesToGrant != null) {
+        openConsentModal(scopesToGrant);
+        return;
+      }
+      // 🔴 THE REFUSAL, WHICH THIS SURFACE USED TO HAVE NO WAY TO SAY. Nothing is
+      // grantable-via-consent here. Distinguish the BENIGN case (the block
+      // re-requested a scope it ALREADY holds → keep the silent no-op) from the
+      // UN-GRANTABLE case (a requested scope was clamped/withheld at mint and can
+      // never be added via consent — e.g. a dev-tunnel preview token that doesn't
+      // carry it). Only the latter, proven from the block's advisory `scopes` hint,
+      // surfaces anything, so an app doesn't silently look dead.
+      //
+      // 🔴 WHY IT MATTERS THAT IT WAS MISSING *HERE*: `CONSENT_UNAVAILABLE` was
+      // emitted by `PageBlockHost` ONLY. On this surface a block that DID ask got
+      // nothing back over the bridge at all, so the SDK's `requestGrants` could
+      // resolve `true` or hang, but never `false` — its own UI went on telling the
+      // user to retry an action that can never succeed. The block-side promise
+      // having no route to a refusal is arguably a sharper defect than the absent
+      // notice above, and it is the same handler, so it is fixed in the same place.
+      // Both hosts now read the SAME predicate and send the SAME payload shape.
+      const ungrantable = resolveUngrantableConsentNotice(
+        payload?.scopes,
+        grantedScopes,
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview,
+        // so `promptViewer` always equals `notify` here and is not read.
+        'model-slot'
+      );
+      if (!ungrantable.notify) return; // already-granted or no hint — drop
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer — the ordering PageBlockHost pins, kept identical here.
+      //
+      // 🔴 WHAT `scopes` IS. NOT the block's raw hint. `notify` is decided on the
+      // full un-grantable set (requested − granted − missing), but `ungrantable.scopes`
+      // is that set filtered to the known block-scope vocabulary — the hint is
+      // untrusted block input and this payload is rendered by block UI, so nothing
+      // outside the fixed vocabulary is echoed back out of the host. The two are
+      // deliberately different sets: when every requested scope is unrecognised this
+      // still sends, with `scopes: []`. The refusal is the signal; the names are
+      // advisory. Delivered solely to the frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      // Signed out → offer sign-in, not "unavailable" — see the shared gate.
+      const prompt = resolveUngrantableConsentPrompt(readGateStatus(), currentUser?.id != null);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [
     onMessage,
+    send,
     readGateStatus,
     missingScopes,
-    install.appBlockId,
-    install.manifest.name,
-    onConsentGranted,
+    grantedScopes,
+    openConsentModal,
+    currentUser?.id,
   ]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
@@ -2016,8 +2212,9 @@ export function IframeHost({
           // The "30 seconds" above is the SDK-side request timeout carried over
           // from #3680's reasoning. It is NOT verifiable in this repo:
           // `@civitai/blocks-react` is not a dependency (0 hits in
-          // pnpm-lock.yaml; the installed SDK is `@civitai/app-sdk@0.14.0`,
-          // which implements neither OPEN_BUZZ_PURCHASE nor a request timeout).
+          // pnpm-lock.yaml; when this was written the installed SDK was
+          // `@civitai/app-sdk@0.14.0`, which implements neither
+          // OPEN_BUZZ_PURCHASE nor a request timeout — not re-checked at 0.65.1).
           // Treat it as the reasonable inference it is, not a measurement.
           //
           // `!raw` is implied by requestId != null; the compound condition also
@@ -2108,12 +2305,22 @@ export function IframeHost({
     modelCtx.slotId,
   ]);
 
-  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
-  // ecosystem group (e.g. 'Flux1') it wants restricted to. We open the
-  // platform's existing ResourceSelectModal filtered to Checkpoints in that
-  // family, then post the selection back via CHECKPOINT_PICKER_RESULT.
-  // Empty `selected` means the user closed without picking — the block's
-  // SDK promise resolves to `{ selected: undefined }`.
+  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER, OPTIONALLY with
+  // an ecosystem group (e.g. 'Flux1') to restrict the pick to. We open the
+  // platform's existing ResourceSelectModal on Checkpoints — narrowed to that
+  // family when a group was sent, and NOT narrowed at all when one was not (an
+  // absent group means "every checkpoint the viewer can generate with", see the
+  // detail on `groupKey` below) — then post the selection back via
+  // CHECKPOINT_PICKER_RESULT. Empty `selected` means the user closed without
+  // picking — the block's SDK promise resolves to `{ selected: undefined }`.
+  //
+  // The group is OPTIONAL, and that is the normal case rather than the
+  // exception: a block that passes the family it is already in pins its viewer
+  // to that ecosystem forever. This summary used to say the block sends "the
+  // ecosystem group it wants restricted to" and that we open the modal
+  // "filtered to Checkpoints in that family", full stop — which reads as though
+  // an unconstrained pick were unsupported, and is the exact misreading that
+  // made SDK callers over-constrain in the first place.
   useEffect(() => {
     const off = onMessage<
       { requestId?: unknown; baseModelGroup?: unknown; currentVersionId?: unknown } | undefined
@@ -2123,9 +2330,25 @@ export function IframeHost({
       // The block may send either an ecosystem key ('Flux1') or a baseModel
       // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
       // both forms and returns the ecosystem key, which is what
-      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
-      // rather than all checkpoints, since "all" includes incompatible
-      // families that would 400 at submit.
+      // getBaseModelsByGroup expects. An ABSENT baseModelGroup → groupKey null →
+      // baseModels:[] → NO baseModel narrowing: the modal emits the bare
+      // `type = Checkpoint` clause and returns ALL checkpoints (still gated by
+      // `canGenerate`). That is safe because the server is the authority on
+      // family compatibility at spend — an incompatible pick is rejected there,
+      // not silently filtered out of the picker here.
+      //
+      // This comment used to claim an empty filter yielded "no checkpoints at
+      // all rather than all checkpoints". It was wrong: the empty array is
+      // special-cased as "no narrowing" by ResourceSelectProvider, by
+      // `selectableVersions` in resource-select.types, and by the query builder
+      // in resource-select.service.
+      //
+      // 🔴 An EMPTY STRING is not the same as absent here. `getBaseModelGroup('')`
+      // returns the REAL ecosystem key 'Other', so `baseModelGroup: ''` narrows
+      // the picker to the Other family rather than widening it. Unlike the page
+      // host — whose resolveCheckpointPickerRequest strips '' to undefined —
+      // this handler passes any string straight through, so a block wanting an
+      // unconstrained pick must OMIT the key.
       const groupKey =
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
@@ -2230,16 +2453,21 @@ export function IframeHost({
           return;
         }
         const requestId = raw.requestId;
+        const workflowId = raw.workflowId;
+        const { waitSeconds } = raw as { waitSeconds?: unknown };
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(typeof waitSeconds === 'number' && Number.isFinite(waitSeconds)
+              ? { waitSeconds }
+              : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
           send('WORKFLOW_STATUS', {
             requestId,
-            snapshot: failureSnapshot(err),
+            snapshot: pollFailureSnapshot(err, workflowId),
           });
         }
       }
@@ -2316,6 +2544,29 @@ export function IframeHost({
   const trpcUtils = trpc.useUtils();
   const storageSetMutation = trpc.apps.storage.set.useMutation();
   const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  // ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT. The batch twin of
+  // ESTIMATE_WORKFLOW above: a list of bodies in, one snapshot per body plus a
+  // run total out. Estimate only — nothing is submitted. Decision + reply live in
+  // `estimateBatchGate.ts`, shared with the page host so the two cannot answer
+  // the same message differently. There is no review preview on a model slot, so
+  // `refusal` is always null here.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: null,
+        token,
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
+        send,
+        onNoToken: (requestId) => {
+          reportNoToken('ESTIMATE_WORKFLOW_BATCH');
+          send('ESTIMATE_BATCH_RESULT', { requestId, error: BRIDGE_NACK_NO_TOKEN });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils, reportNoToken]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
@@ -2524,6 +2775,7 @@ export function IframeHost({
           prefix?: unknown;
           limit?: unknown;
           cursor?: unknown;
+          mine?: unknown;
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
@@ -2536,12 +2788,27 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        // civitai/civitai#5354 Q3. 🔴 Forwarded ONLY when literally `true`, so a
+        // malformed payload cannot silently narrow someone's feed. The server
+        // decides WHOSE rows; this message carries no user id and cannot name an
+        // author.
+        //
+        // ⚠ The FORWARDING STATEMENT is identical to PageBlockHost's; the two
+        // SHARED_LIST arms are NOT. An earlier version of this comment claimed
+        // byte-identity, and a maintainer acting on that would "re-align" them
+        // and change behaviour: PageBlockHost nacks on a missing token before
+        // anything else and carries `nack` in its effect deps, and this one does
+        // neither. Key-set parity between the two call sites is asserted
+        // mechanically in `sharedListArgParity.test.ts` — rely on that, not on a
+        // sentence.
+        const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {
             blockToken: token,
             prefix,
             limit,
             cursor,
+            mine,
           },
           BLOCK_STORAGE_READ_OPTS
         );
@@ -2636,7 +2903,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2674,7 +2941,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2694,7 +2961,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2717,7 +2984,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2740,7 +3007,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2810,7 +3077,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2953,6 +3220,111 @@ export function IframeHost({
     unfollowCollectionMutation,
   ]);
 
+  // ── SET_ENTITY_REACTION / GET_ENTITY_REACTIONS ─────────────────────────────
+  // The model-slot twin of PageBlockHost's reaction handlers; the decision layer is shared
+  // (`reactionGate.ts`) and carries the rationale. This host contributes `currentUser` and the
+  // token's granted scopes. There is no mod-review sandbox on the model slot, so `reviewMode`
+  // is constant false here.
+  //
+  // No confirm dialog: the consent-gated `social:react:self` grant is the consent. Every path
+  // with a usable `requestId` replies exactly once; `trpcUtils.client` so no render-time hook
+  // is added.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
   useEffect(() => {
     if (status !== 'ready') return;
     const handler = () => {
@@ -2995,8 +3367,62 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
+      {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not
+          exist until now. Every term of the decision is in `resolveHostConsentNotice`
+          and the markup is in `BlockConsentNotice`, BOTH shared verbatim with
+          `PageBlockHost`: the two surfaces diverged on precisely this rule once
+          already (`needsConsent` appeared 7 times in that file and 0 times in this
+          one), so a second open-coded copy is the one outcome to avoid.
+
+          🔴 INSIDE `framed()`, ABOVE THE IFRAME — the same structural position the
+          page host uses (between the `AppBlockChrome` provenance bar and the app's own
+          box), not inside the iframe. That is what makes the host recoverable
+          regardless of what the block does or which SDK version it runs, and it is
+          host-owned chrome a block cannot restyle or hide.
+
+          ⚠️ IT ADDS FRAME OVERHEAD, AND THAT IS ALREADY HANDLED — do not re-derive
+          it. The viewport clamp budgets `viewport - frameOverheadPx(frame, iframe)`,
+          and that helper MEASURES `frame.offsetHeight - iframe.offsetHeight` live
+          rather than assuming a constant, precisely so the frame can gain another
+          sibling. The known limit it documents applies: a notice appearing with no
+          viewport change does not itself re-trigger the clamp, so the widget can be
+          taller than the budget by this bar's height until the next resize or
+          RESIZE_IFRAME. Stated rather than implied — it is a bounded one-bar
+          overshoot on a bound whose job is "roughly one screen".
+
+          NO `suppressed` TERM: this host has no review-sandbox mode. Review previews
+          mount `ReviewBlockPreviewHost`, which wraps `PageBlockHost` — so the
+          "never grant scopes from the sandbox" gate belongs there, and passing a
+          constant `false` here would only invite someone to wire it to the wrong
+          thing. */}
+      {resolveHostConsentNotice({
+        // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message
+        // HANDLER can see a status React has not yet flushed an effect for; a render
+        // has the state itself, and a ref read cannot schedule the re-render that
+        // makes this notice appear. Reading the ref here would happen to work today
+        // (the render body writes it before `framed()` runs) for a reason that has
+        // nothing to do with why it is correct.
+        status,
+        needsConsent,
+        missingScopes,
+        dismissedFor: consentNoticeDismissedFor,
+        appBlockId: install.appBlockId,
+      }) != null && (
+        <BlockConsentNotice
+          appName={install.manifest.name}
+          onReview={() => {
+            // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
+            // between the two can shrink the missing set, and granting a scope the
+            // viewer already has is a worse prompt than no prompt.
+            const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
+            if (scopes != null) openConsentModal(scopes);
+          }}
+          onDismiss={() => setConsentNoticeDismissedFor(install.appBlockId)}
+        />
+      )}
       {children}
     </Box>
   );

@@ -1,5 +1,12 @@
 // src/utils/trpc.ts
-import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
+import {
+  QueryClient,
+  type DefaultError,
+  type DefaultedQueryObserverOptions,
+  type QueryClientConfig,
+  type QueryKey,
+  type QueryObserverOptions,
+} from '@tanstack/react-query';
 import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
 import {
   createTRPCClient,
@@ -15,10 +22,12 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
+import { pageRouteHeaders } from '~/utils/page-route-header';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
+import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -117,9 +126,20 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
 }
 
 /**
- * Terminating link: large queries go out as POST (body-carried input, not
- * edge-cacheable), everything else stays a normal GET so the `responseMeta`
- * Cache-Control headers in `[trpc].ts` can still edge-cache them.
+ * Whether a query must leave the browser as POST: either its input is too large for a GET URL
+ * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
+ * block token, a bearer credential, and a GET would put it in the request URL. Those also never
+ * batch (see `shouldBatch`). Same set the server keys its `no-store` header on.
+ */
+export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
+  if (op.type !== 'query') return false;
+  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+}
+
+/**
+ * Terminating link: large queries and `BLOCK_TOKEN_QUERY_PROCEDURES` go out as POST
+ * (body-carried input, not edge-cacheable), everything else stays a normal GET so the
+ * `responseMeta` Cache-Control headers in `[trpc].ts` can still edge-cache them.
  */
 function httpLinkWithLargeQuerySupport({
   url,
@@ -129,7 +149,7 @@ function httpLinkWithLargeQuerySupport({
   headers: ReturnType<typeof getHeaders>;
 }): TRPCLink<AppRouter> {
   return splitLink({
-    condition: isLargeQuery,
+    condition: shouldSendQueryAsPost,
     true: httpLink({ transformer: clientTransformer, url, methodOverride: 'POST', headers }),
     false: httpLink({ transformer: clientTransformer, url, headers }),
   });
@@ -137,11 +157,12 @@ function httpLinkWithLargeQuerySupport({
 
 /**
  * Module-scoped, flag-driven batch toggle. Default OFF so batching is dark until the
- * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` once the per-user
- * flag overlay resolves in the browser. Kept as a mutable module flag (not React state)
- * because the tRPC terminating link is built once at module init and cannot read a hook;
- * the `splitLink` condition re-reads this per operation, so a later flip takes effect on
- * subsequent queries without rebuilding the client.
+ * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider`, never on the server:
+ * in its mount/update effect, and — when `trpcBatchingFirstCommit` is on — also while it
+ * renders in the browser, so before any query in that commit is sent. Kept as a
+ * mutable module flag (not React state) because the tRPC terminating link is built once at
+ * module init and cannot read a hook; the `splitLink` condition re-reads this per operation,
+ * so a later flip takes effect on subsequent queries without rebuilding the client.
  */
 let trpcBatchingEnabled = false;
 export function setTrpcBatchingEnabled(enabled: boolean) {
@@ -160,12 +181,12 @@ export const __getTrpcBatchingEnabled = getTrpcBatchingEnabled;
 
 /**
  * True ONLY when we are definitively in an authenticated browser session.
- * `window.isAuthed` is set by `CivitaiSessionProvider` AFTER hydration, so on the server
- * and during early hydration this is `false` — the SAFE direction: anonymous + unknown
- * ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
- * param) and remain CF-cacheable.
+ * `window.isAuthed` is set by `CivitaiSessionProvider` while it renders, so before any query
+ * in that commit is sent. On the server, and while the session is not yet known, this is
+ * `false` — the SAFE direction: anonymous + unknown ⇒ do NOT batch, so anonymous
+ * edge-cacheable tRPC GETs stay unbatched (no `?batch` param) and remain CF-cacheable.
  */
-function isAuthedBrowser() {
+export function isAuthedBrowser() {
   return typeof window !== 'undefined' && window.isAuthed === true;
 }
 
@@ -185,7 +206,8 @@ function isAuthedBrowser() {
  *
  * NB: `createContext` seeds `edgeTTL: 0` for logged-in users, but `edgeCacheIt` OVERWRITES
  * it with a positive TTL (it only honors the `?batch` bail, `ctx.cache.skip` and
- * `ctx.cache.canCache`), so these responses ARE cacheable for authed users today.
+ * `ctx.cache.canCache`), so the origin marks these responses cacheable for authed users too;
+ * whether the CDN stores them is its own configuration.
  *
  * 🔴 One exception to that last sentence, and it is subtle: `edgeCacheIt` MUTATES
  * `ctx.cache`, while `responseMeta` reads the ROOT context and tRPC's `next({ ctx })`
@@ -207,13 +229,20 @@ function isAuthedBrowser() {
  */
 export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
+  'article.getOfficialTag',
   'bug.getLatest',
   'changelog.getLatest',
+  'cosmetic.getEventDecorationsForSearch',
+  'event.getCosmeticScores',
   'event.getDonors',
+  'event.getHatCatalog',
   'event.getPartners',
   'event.getRewards',
+  'event.getStandings',
+  'event.getTeamRoster',
   'event.getTeamScoreHistory',
   'event.getTeamScores',
+  'event.getWornHat',
   'generation.checkResourcesCoverage',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -224,10 +253,12 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'nowPayments.getBuzzConversionRate',
   'nowPayments.getMinAmount',
   'nowPayments.getSupportedCurrencies',
+  'siteAlerts.getActive',
   'system.getBenignPhrases',
   'system.getCreationBlockedTags',
   'system.getDbKV',
   'system.getLiveNow',
+  'system.getUserMenuDefaultPins',
   'tag.getFeedTagBar',
   'tag.getHomeExcluded',
   'technique.getAll',
@@ -246,12 +277,17 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * and, worse, would sit there looking derived. Two sets, two mechanisms: neither can silently
  * disable the other.
  *
- * Both current members are PENDING-CACHEABLE: their `edgeCacheIt` is commented out in the
- * router with the intent of restoring it. They must stay unbatched anyway, because batching
- * appends `?batch=1` and `edgeCacheIt` refuses to cache a batched request. If they started
- * batching now, restoring the commented-out middleware would silently deliver zero edge-cache
- * benefit — a one-line uncomment whose effect is cancelled somewhere else entirely, with
- * nothing to point at.
+ * HEAVY FEED procedures — `image.getInfinite`, `image.getImagesAsPostsInfinite`,
+ * `model.getAll`, `user.getAll` — depend on being sent as their own request, under their own
+ * procedure path. A batched request names several procedures in one path, so they must not
+ * be batched.
+ *
+ * `event.getData` and `image.getGenerationData` are PENDING-CACHEABLE: their `edgeCacheIt` is
+ * commented out in the router with the intent of restoring it. They must stay unbatched
+ * anyway, because batching appends `?batch=1` and `edgeCacheIt` refuses to cache a batched
+ * request. If they started batching now, restoring the commented-out middleware would
+ * silently deliver zero edge-cache benefit — a one-line uncomment whose effect is cancelled
+ * somewhere else entirely, with nothing to point at.
  *
  * `image.getGenerationData` — `src/server/routers/image.router.ts` ("TODO: Add edgeCacheIt back
  * after fixing the cache invalidation"). Also fired at feed/lightbox width, one call per image,
@@ -260,15 +296,21 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * `event.getData` — `src/server/routers/event.router.ts`, `// .use(edgeCacheIt({ ttl:
  * CacheTTL.lg }))`.
  *
- * 🔴 Neither was ever DELIBERATELY excluded: both were on the never-batch list only because the
- * drift guard's substring test also matched their commented-out code. Making that guard
- * comment-aware is what surfaced them, and it would otherwise have silently started batching
- * both. Listing them here keeps today's behaviour unchanged and gives it an actual reason —
- * changing it is a separate decision, on evidence, not a side effect of a bug fix.
+ * 🔴 Neither of those two was ever DELIBERATELY excluded: both were on the never-batch list
+ * only because the drift guard's substring test also matched their commented-out code.
+ * Making that guard comment-aware is what surfaced them, and it would otherwise have silently
+ * started batching both. Listing them here keeps today's behaviour unchanged and gives it an
+ * actual reason — changing it is a separate decision, on evidence, not a side effect of a bug
+ * fix.
  */
 export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getData',
   'image.getGenerationData',
+  // Heavy feed procedures — see above.
+  'image.getImagesAsPostsInfinite',
+  'image.getInfinite',
+  'model.getAll',
+  'user.getAll',
 ]);
 
 /**
@@ -279,6 +321,8 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
+ *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
+ *    queries as GET, which would put a block token in the URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -296,6 +340,7 @@ export function shouldBatch(op: {
     isAuthedBrowser() &&
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
+    !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );
@@ -388,6 +433,43 @@ const queryClientConfig: QueryClientConfig = {
 };
 
 /**
+ * Per-request QueryClient for SSR: every query on it gets `gcTime: Infinity`, overriding any
+ * per-query value.
+ *
+ * Why: query-core skips the GC timer for a server query only when it falls back to its DEFAULT
+ * gcTime (Infinity on the server). An explicit per-query `gcTime` (e.g. `ModelTensorMetadata`'s
+ * 30 min) wins over that default, and the `Query` constructor calls `scheduleGc()` even for a
+ * disabled query. The timer's closure holds the Query, which holds this client and its whole
+ * cache — so one render of such a component pinned the render's entire QueryCache for the
+ * gcTime. A production SSR heap snapshot held ~700 such caches (~100 MB) on one pod.
+ *
+ * With `gcTime: Infinity` no timer is ever scheduled, so the client is collectable as soon as the
+ * render that created it is done. Nothing is lost: a server-side client lives for one render and
+ * is never reused. Server-only — the browser keeps plain `QueryClient`, where per-query gcTime is
+ * the real cache-eviction policy.
+ *
+ * All query building (`useQuery`, `fetchQuery`, `ensureQueryData`, `hydrate`) passes through
+ * `QueryCache.build` → `client.defaultQueryOptions`, so this one override covers every path.
+ */
+class ServerQueryClient extends QueryClient {
+  override defaultQueryOptions<
+    TQueryFnData = unknown,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+    TPageParam = never
+  >(
+    options:
+      | QueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey, TPageParam>
+      | DefaultedQueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey>
+  ): DefaultedQueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey> {
+    const defaulted = super.defaultQueryOptions(options);
+    return defaulted.gcTime === Infinity ? defaulted : { ...defaulted, gcTime: Infinity };
+  }
+}
+
+/**
  * Browser-only QueryClient singleton.
  *
  * IMPORTANT: never construct this at module scope. Doing so on the server
@@ -404,8 +486,8 @@ function getBrowserQueryClient(): QueryClient {
   if (typeof window === 'undefined') {
     throw new Error(
       '[trpc] queryClient was accessed on the server. Use `useQueryClient()` ' +
-        'inside a component, or pass `queryClientConfig` to tRPC so a fresh ' +
-        'QueryClient is created per request.'
+        'inside a component — on the server tRPC builds a fresh per-request ' +
+        'QueryClient (see `ServerQueryClient`).'
     );
   }
   if (!browserQueryClient) browserQueryClient = new QueryClient(queryClientConfig);
@@ -425,7 +507,7 @@ export const queryClient: QueryClient = new Proxy({} as QueryClient, {
   },
 });
 
-const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
+export const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
     const isAuthed = typeof window !== 'undefined' ? window.isAuthed : false;
     const authed = removeEmpty({ authed: isAuthed || undefined });
@@ -445,7 +527,7 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
  */
 function getHeaders(ctx?: NextPageContext) {
   return function () {
-    return { ...ctx?.req?.headers, ...headers };
+    return { ...ctx?.req?.headers, ...headers, ...pageRouteHeaders() };
   };
 }
 
@@ -472,11 +554,14 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
       // `setQueriesData`/`cancelQueries` would target a different cache than
       // the one `useQuery` hooks subscribe to.
       //
-      // On the server, omit `queryClient` so `@trpc/next` falls through to
-      // `new QueryClient(config.queryClientConfig)` per request — the prior
-      // module-scope singleton accumulated 11,962 `Query` objects per pod
-      // (heap snapshot, civitai-dp-prod, 2026-05-14).
-      ...(isClient ? { queryClient: getBrowserQueryClient() } : { queryClientConfig }),
+      // On the server, build a FRESH client per call: `withTRPC` calls `config()` once per
+      // render (in a `useState` initializer), so this is one client per request — the prior
+      // module-scope singleton accumulated 11,962 `Query` objects per pod (heap snapshot,
+      // civitai-dp-prod, 2026-05-14). It is a `ServerQueryClient` so no query on it can
+      // schedule a GC timer that keeps the request's cache alive after the render.
+      ...(isClient
+        ? { queryClient: getBrowserQueryClient() }
+        : { queryClient: new ServerQueryClient(queryClientConfig) }),
       links: [
         authedCacheBypassLink,
         loggerLink({

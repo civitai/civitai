@@ -82,13 +82,22 @@ describe('getTransactionsReport', () => {
 
     // The whole predicate, operator included: an assertion on the type names alone passes just as
     // well against `type IN (...)`, which would draw ONLY cash-outs.
-    expect(branches(sqlOf()).spent).toContain("AND type NOT IN ('bank','withdrawal','extract')");
+    //
+    // Each excluded type carries every spelling the column can hold, not just its name. All three
+    // here are stored by name, so the extra arms match nothing and the chart is unchanged. They are
+    // emitted unconditionally because the builder does not branch, which keeps one rule in one
+    // place; see `clickhouseTransactionTypeExclusionPredicate`.
+    expect(branches(sqlOf()).spent).toContain(
+      "AND type NOT IN ('bank','23','unknown_23','withdrawal','17','unknown_17','extract','24','unknown_24')"
+    );
   });
 
   it('excludes cash-out plumbing from the gained series too', async () => {
     await getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' });
 
-    expect(branches(sqlOf()).gained).toContain("AND type NOT IN ('bank','withdrawal','extract')");
+    expect(branches(sqlOf()).gained).toContain(
+      "AND type NOT IN ('bank','23','unknown_23','withdrawal','17','unknown_17','extract','24','unknown_24')"
+    );
   });
 
   it('scopes both branches to the requested account and account type', async () => {

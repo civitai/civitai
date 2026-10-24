@@ -16,6 +16,40 @@ export const toggleNotificationSettingInput = z.object({
 });
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
+export const upsertPushSubscriptionInput = z.object({
+  // Browser push endpoints are always https; anything else is a caller fabricating a row the
+  // dispatcher would then try to deliver to.
+  endpoint: z.url({ protocol: /^https$/ }),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
+});
+export type UpsertPushSubscriptionInput = z.infer<typeof upsertPushSubscriptionInput>;
+
+/**
+ * The service worker's `pushsubscriptionchange` payload. Same shape as a subscribe, plus the
+ * endpoint the push service rotated away from so the stale row can be reaped in the same request
+ * — left behind it survives until 10 consecutive delivery failures or the 180-day cleanup job.
+ * Not folded into `upsertPushSubscriptionInput`: tRPC's `subscribePush` has no old endpoint and
+ * must not grow a field it can never populate.
+ */
+export const resubscribePushInput = upsertPushSubscriptionInput.extend({
+  oldEndpoint: z.string().min(1).nullish(),
+});
+export type ResubscribePushInput = z.infer<typeof resubscribePushInput>;
+
+export const deletePushSubscriptionInput = z.object({
+  endpoint: z.string().min(1),
+});
+export type DeletePushSubscriptionInput = z.infer<typeof deletePushSubscriptionInput>;
+
+export const togglePushSettingInput = z.object({
+  type: z.string().array().min(1),
+  enabled: z.boolean(),
+});
+export type TogglePushSettingInput = z.infer<typeof togglePushSettingInput>;
+
 export const markReadNotificationInput = z.object({
   id: z.coerce.bigint().optional(),
   all: z.boolean().optional(),

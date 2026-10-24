@@ -1,7 +1,10 @@
+import { Prisma } from '@prisma/client';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
@@ -139,6 +142,32 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       -- Private models are a creator's own workspace rather than an abandoned
       -- publish attempt, and are never publicly discoverable, so the abandoned-
       -- draft rationale does not apply to them at all.
+      --
+      -- CONSEQUENCE, decided deliberately rather than overlooked: this job is the
+      -- ONLY reaper of Deleted models anywhere in src/server/jobs, so a model that
+      -- is BOTH Deleted AND Private is reapable by NOTHING. Those rows, their
+      -- ModelVersion/ModelFile children, their storage-resolver file_locations
+      -- entries, and the S3 objects those keep whitelisted against the
+      -- dereference-quarantine sweep all persist indefinitely. deleteModelById
+      -- sets status/deletedAt and never touches availability, while
+      -- privateModelFromTraining sets availability to Private permanently, so the
+      -- combination is reachable by ordinary use.
+      --
+      -- Measured 2026-09-06: 179 Private models across Draft and Deleted (117
+      -- Deleted+Private, 62 Draft+Private), of which 24 would become reapable if
+      -- this term were narrowed to exclude only Private Drafts.
+      --
+      -- That narrowing was proposed and REJECTED: this job's recent history is
+      -- about having destroyed too much (it reaped models whose weights and
+      -- training data were days old, because Model.updatedAt is the reap clock and
+      -- almost nothing bumps it), and re-enabling an irreversible cascade for 24
+      -- abandoned private models is not worth it. Treat Deleted+Private as an
+      -- accepted permanent retention class. If that ever changes, the population is
+      -- the query above, not a guess.
+      --
+      -- NOTE: this comment lives inside a tagged template, so it must never contain
+      -- a backtick. An earlier draft used markdown-style backticks and terminated
+      -- the template, which tsc reported as a cascade of unrelated syntax errors.
       AND m."availability" != 'Private'::"Availability"
       AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv
                        WHERE mv."modelId" = m.id
@@ -165,6 +194,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   let deletedCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
+  let heldCount = 0;
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
@@ -204,17 +234,54 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
       if (deletable.length === 0) continue;
 
-      const deletableSet = new Set(deletable);
-      // Only the versions of models we are actually about to delete. Deregistering
-      // a spared model's file_locations would drop its objects out of the
-      // dereference-quarantine allowlist — the same data loss by another route.
-      const versionIds = versionRows.filter((v) => deletableSet.has(v.modelId)).map((v) => v.id);
-
-      await dbWrite.$executeRaw`
-        DELETE FROM "Model"
-        WHERE id = ANY(${deletable})
+      // A held owner's model is kept, the account hold included: a held-for-image owner's model files
+      // can be evidence too. The hold is checked in the DELETE itself, so one placed after the replica
+      // SELECT still stops it.
+      const owner = Prisma.raw('m."userId"');
+      const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
+        DELETE FROM "Model" m
+        WHERE m.id = ANY(${deletable})
+          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+        RETURNING m.id
       `;
-      deletedCount += deletable.length;
+      const deletedSet = new Set(deletedRows.map((r) => r.id));
+      const deleted = deletable.filter((id) => deletedSet.has(id));
+      deletedCount += deleted.length;
+
+      // Not deleted and still there is held; gone already (another delete got there first) is not.
+      // Reporting only, so a failure here must not fail a batch whose deletes have committed.
+      const notDeleted = deletable.filter((id) => !deletedSet.has(id));
+      if (notDeleted.length > 0) {
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Model" WHERE id = ANY(${notDeleted}) ORDER BY id
+        `.then(
+          (rows) => {
+            heldCount += rows.length;
+            // Model ids only: the same held drafts come up every night.
+            if (rows.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models of owners under a legal hold',
+                modelIds: rows.map((r) => r.id),
+              });
+          },
+          (error: unknown) =>
+            logToAxiom({
+              type: 'error',
+              name: 'remove-old-drafts',
+              message: 'Failed to read which old draft models a legal hold kept',
+              error: (error as Error)?.message,
+              modelIds: notDeleted,
+            })
+        );
+      }
+      if (deleted.length === 0) continue;
+
+      // Only the versions of models actually deleted. Deregistering a spared model's file_locations
+      // would drop its objects out of the dereference-quarantine allowlist — the same data loss by
+      // another route.
+      const versionIds = versionRows.filter((v) => deletedSet.has(v.modelId)).map((v) => v.id);
 
       // Identify what was destroyed. The delete is irreversible and cascades, so
       // without the ids a later "my model vanished" report is unanswerable.
@@ -223,8 +290,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
         type: 'info',
         name: 'remove-old-drafts',
         message: 'Removed old draft models',
-        modelIds: deletable,
-        userIds: deletable.map((id) => userByModelId.get(id) ?? null),
+        modelIds: deleted,
+        userIds: deleted.map((id) => userByModelId.get(id) ?? null),
       });
 
       // Post-delete: deregister storage-resolver file_locations for the reaped
@@ -265,6 +332,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   log(
     `Removed ${deletedCount} old draft models` +
       `${skippedCount > 0 ? `, ${skippedCount} skipped for recent activity` : ''}` +
+      `${heldCount > 0 ? `, ${heldCount} kept for a legal hold` : ''}` +
       `${errorCount > 0 ? `, ${errorCount} failed` : ''}`
   );
 });

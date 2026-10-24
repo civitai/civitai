@@ -55,27 +55,43 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 
 import { deletePost } from '../post.service';
+import { userImageVideoCountCaches } from '~/server/redis/caches';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const POST_ID = 500;
-const OWNER_IMAGE = { id: 1, url: 'owner-url', deletable: true };
-const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', deletable: false };
+const POSTER_ID = 3307;
+const FOREIGN_USER_ID = 4419;
+const OWNER_IMAGE = { id: 1, url: 'owner-url', userId: POSTER_ID, deletable: true };
+const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, deletable: false };
 
-// $queryRaw runs select-images, then delete-images (only when something is deletable), then
-// delete-post. Branching on that is what lets the all-foreign case be tested at all.
-function primeQueries(images: { id: number; url: string; deletable: boolean }[]) {
-  const deletable = images.filter((i) => i.deletable);
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(images);
-  if (deletable.length)
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(deletable.map(({ id, url }) => ({ id, url })));
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: POST_ID, nsfwLevel: 1 }]);
+// Dispatched on SQL text, not call order: the number of $queryRaw calls ahead of the
+// delete is not stable.
+const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
+
+/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
+function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
+  const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
+  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = sqlTextOf(strings);
+    if (sql.includes('pg_class')) return [{ present: false }];
+    if (sql.includes('"collectionId"')) return [];
+    if (sql.includes('DELETE FROM "Image"')) return deletable.map(({ id, url }) => ({ id, url }));
+    if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
+    if (sql.includes('AS deletable')) return images;
+    return [];
+  });
 }
+
+const callContaining = (needle: string) =>
+  dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
+    sqlTextOf(strings).includes(needle)
+  ) as [string[], ...unknown[]];
 
 // The scoping predicate is a `Prisma.raw` VALUE in the template, so joining `strings` alone
 // renders it as `?` — the one token these assertions are about. Interleave to recover it.
 const selectImagesSql = () => {
-  const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+  const [strings, ...values] = callContaining('AS deletable');
   return strings
     .map((chunk, i) => {
       if (i === 0) return chunk;
@@ -89,6 +105,7 @@ describe('deletePost orphan de-indexing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
+    vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   });
 
   it('scopes the delete to poster-owned images in SQL', async () => {
@@ -130,13 +147,34 @@ describe('deletePost orphan de-indexing', () => {
     });
   });
 
+  it('drops a deletable image the delete kept from search, and never deletes its file', async () => {
+    primeQueries([OWNER_IMAGE, { ...FOREIGN_IMAGE, deletable: true }], [FOREIGN_IMAGE.id]);
+
+    await deletePost({ id: POST_ID, isModerator: true });
+
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateManyImageExistence).toHaveBeenCalledWith([OWNER_IMAGE.id]);
+  });
+
+  it('returns the ids of the images it deleted, and only those', async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    const result = await deletePost({ id: POST_ID });
+
+    expect(result?.deletedImageIds).toEqual([OWNER_IMAGE.id]);
+  });
+
   it('deletes only the poster-owned image, and never the foreign one', async () => {
     primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
 
     await deletePost({ id: POST_ID });
 
     // The ids arrive as a `Prisma.join` fragment, so they have to be read out of its own `values`.
-    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[1] as [string[], ...unknown[]];
+    const [strings, ...values] = callContaining('DELETE FROM "Image"');
     const bound = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? [v]);
     expect(strings.join('?')).toContain('DELETE FROM "Image"');
     expect(bound).toContain(OWNER_IMAGE.id);
@@ -161,5 +199,16 @@ describe('deletePost orphan de-indexing', () => {
     });
     expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
     expect(mockInvalidateManyImageExistence).not.toHaveBeenCalled();
+  });
+
+  // Orphaned images leave the count too: a NULL `postId` fails the count query's `NOT IN`.
+  it("busts the image count of every image's owner, including orphaned ones", async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    await deletePost({ id: POST_ID });
+
+    expect(selectImagesSql()).toContain('i."userId"');
+    expect(userImageVideoCountCaches.bust).toHaveBeenCalledTimes(1);
+    expect(userImageVideoCountCaches.bust).toHaveBeenCalledWith([POSTER_ID, FOREIGN_USER_ID]);
   });
 });

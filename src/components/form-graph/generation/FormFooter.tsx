@@ -3,8 +3,8 @@
  * `FormFooter` on the form-graph store: quantity input, submit button with
  * buzz-type selector, reset, priority alerts (missing fields, whatIf errors,
  * submit errors, insufficient buzz, BOGO), queue snackbar, prompt-block
- * handling, telemetry, and license attribution. The buzz selector and its
- * hooks are graph-free and imported from the v1 footer rather than copied.
+ * handling, telemetry, and license attribution. The buzz selector and its hooks are
+ * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
 import {
@@ -51,13 +51,23 @@ import {
   useGenerateFromGraph,
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
-import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/Generation/footer-parts';
+import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
+import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
+import { GeneratorMessageWarnings } from './GateRuleWarnings';
+import { StepWarningsNotification } from '~/components/Generation/footer-parts';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import {
+  TrialAccessWarning,
+  TrialBlockedAlert,
+} from '~/components/Generate/GenerationPaidAccessAlerts';
+import { parseTrialMessage, type SelectedResources } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
-import { useRemixOfId } from '~/components/generation_v2/hooks/useRemixOfId';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import {
   ecosystemByKey,
   getBaseModelLicense,
@@ -72,8 +82,17 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
+import {
+  FLUX3_MATURE_SOURCE_MESSAGE,
+  MATURE_SOURCE_ALTERNATIVE,
+} from '~/shared/constants/mature-source.constants';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
+import {
+  hasPendingPromptMint,
+  remixProvenanceStore,
+  waitForPromptMint,
+} from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useTipStore } from '~/store/tip.store';
@@ -81,32 +100,24 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
+import { hasTipEligibleSelection } from './creator-tip';
+import { FOOTER_RESET } from './footer-reset';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
-import type { GenerationStore } from './store';
+import { useSelectedResourceIds, type GenerationStore } from './store';
+import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
 
 // =============================================================================
 // Cost (including tips)
 // =============================================================================
 
-interface ResourceSnapshot {
-  model?: { id: number };
-  resources?: { id: number }[];
-  vae?: { id: number };
-}
-
-/** Creator tips apply when any user-created resource is selected. */
-function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
-  const { model, resources, vae } = snapshot;
-  return !!(model?.id || (resources && resources.length > 0) || vae?.id);
-}
-
 function useTotalGenerationCost(store: GenerationStore) {
   const features = useFeatureFlags();
   const { creatorTip, civitaiTip } = useTipStore();
   const { data } = useWhatIfContext();
+  const { resources: resourceData } = useResourceDataContext();
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
+  const snapshot = store.getSnapshot().state as SelectedResources;
+  const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
   const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -116,14 +127,18 @@ function useTotalGenerationCost(store: GenerationStore) {
   return (data?.cost?.total ?? 0) + totalTip;
 }
 
-function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
-  const { isLoading, isError, refetch } = useWhatIfContext();
+export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
+  const { isLoading, isError, refetch, canEstimateCost, gateBlocked } = useWhatIfContext();
   const cost = useTotalGenerationCost(store);
   return (
     <BuzzTypeSelector
       cost={cost}
       loading={isLoading}
       error={isError}
+      // The whatIf query is disabled in both cases, so no estimate is coming. Its other disable
+      // reasons are transient (resources/images loading), hide this box (no user), or render a
+      // different footer (noSubmit workflows).
+      unavailable={!canEstimateCost || gateBlocked}
       onRetry={() => refetch()}
       tourTarget={GEN_BUZZ_KEY}
     />
@@ -133,6 +148,38 @@ function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
 // =============================================================================
 // Priority alerts
 // =============================================================================
+
+export function MatureSourceNotice({
+  store,
+  canSwitch,
+}: {
+  store: GenerationStore;
+  canSwitch: boolean;
+}) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      <div className="flex w-full items-center justify-between gap-2">
+        <Text size="sm">{FLUX3_MATURE_SOURCE_MESSAGE}</Text>
+        {canSwitch && (
+          <Button
+            variant="light"
+            color="yellow"
+            radius="xl"
+            size="compact-sm"
+            onClick={() => switchToMatureSourceAlternative(store)}
+          >
+            Switch to {MATURE_SOURCE_ALTERNATIVE.label}
+          </Button>
+        )}
+      </div>
+    </Notification>
+  );
+}
 
 function PriorityAlertSpace({
   store,
@@ -151,14 +198,25 @@ function PriorityAlertSpace({
   forceInsufficientBuzz?: boolean;
   onClearInsufficientBuzz?: () => void;
 }) {
-  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const {
+    error: whatIfError,
+    isError: hasWhatIfError,
+    isSuccess: whatIfSucceeded,
+    data: whatIfData,
+  } = useWhatIfContext();
+  // The advisory alert is derived from entity access, which resolves well before the estimate. Drawing it
+  // then swapping in the blocking alert when the whatIf comes back reads as a yellow-to-red flash, so it
+  // waits for the estimate to settle — there is nothing to advise until we know whether it is blocked.
+  const whatIfSettled = whatIfSucceeded || hasWhatIfError;
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
     isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost(store);
+  const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
+  const matureSource = useFlux3MatureSource(store);
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
@@ -172,7 +230,27 @@ function PriorityAlertSpace({
       })
     : undefined;
 
+  // The orchestrator announces the remaining trial count as an ordinary step warning, so it arrives here
+  // rather than on submit. Split out so the generic warnings notification does not render it a second
+  // time beside the offer.
+  const trialWarning = whatIfData?.warnings?.find((w) => parseTrialMessage(w.message));
+  const otherWarnings = whatIfData?.warnings?.filter((w) => w !== trialWarning) ?? [];
+  // Only these two channels BLOCK: the whatIf rejects the estimate when the allowance is short of the
+  // requested quantity, and a submit is refused once it is spent. The step warning is advisory, so it
+  // informs the copy without claiming the user is stuck.
+  const blockingTrialMessage = [
+    submitError,
+    hasWhatIfError ? whatIfError?.message : undefined,
+  ].find((message) => parseTrialMessage(message));
+  const trialRemaining = parseTrialMessage(
+    blockingTrialMessage ?? trialWarning?.message
+  )?.remaining;
+
   let priorityAlert: ReactNode;
+  // Set by the branch that actually draws, not derived from the conditions again: a higher-priority
+  // alert can win while `submitError` is still set, and restating the precedence here is how the
+  // proactive warning would end up suppressed with nothing shown in its place.
+  let showingTrialAlert = false;
   if (missingFieldMessage) {
     priorityAlert = (
       <Notification
@@ -183,6 +261,18 @@ function PriorityAlertSpace({
       >
         {missingFieldMessage}
       </Notification>
+    );
+  } else if (matureSource.blocked) {
+    priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;
+  } else if (blockingTrialMessage) {
+    showingTrialAlert = true;
+    priorityAlert = (
+      <TrialBlockedAlert
+        selectedIds={selectedIds}
+        message={blockingTrialMessage}
+        remaining={trialRemaining}
+        onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
+      />
     );
   } else if (hasWhatIfError && whatIfError) {
     priorityAlert = (
@@ -248,6 +338,10 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+    // Above the sdcpp branch because that one always assigns (its MultiController decides
+    // internally whether to draw), so anything after it never renders.
+  } else if (otherWarnings.length) {
+    priorityAlert = <StepWarningsNotification warnings={otherWarnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     priorityAlert = (
       <MultiController
@@ -291,19 +385,27 @@ function PriorityAlertSpace({
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
-      <ExperimentalWarnings />
+      <GeneratorMessageWarnings />
+      <BaseModelWarnings />
+      <DownloadWarning />
+      {whatIfSettled && !showingTrialAlert && (
+        <TrialAccessWarning selectedIds={selectedIds} remaining={trialRemaining} />
+      )}
       {priorityAlert}
     </>
   );
 }
 
-/** Several can show at once, so these stay out of the exclusive chain above. */
-function ExperimentalWarnings() {
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
+}
+
+function BaseModelWarnings() {
   return (
-    <MultiController
+    <Controller
       graph={generationHub}
-      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-      render={({ values }) => <ExperimentalAlerts selection={values} />}
+      name="ecosystem"
+      render={({ value: ecosystem }) => <EcosystemBaseModelWarnings ecosystem={ecosystem} />}
     />
   );
 }
@@ -312,20 +414,27 @@ function ExperimentalWarnings() {
 // Submit button
 // =============================================================================
 
-function SubmitButton({
+const PREPARING_REMIX_LABEL = 'Preparing remix…';
+const REMIX_LINK_TIMEOUT_MESSAGE =
+  "Couldn't prepare the remix link in time; this generation won't count toward a free remix-gallery spot.";
+
+export function SubmitButton({
   store,
   isLoading: isSubmitting,
+  preparing,
   onSubmit,
 }: {
   store: GenerationStore;
   isLoading?: boolean;
+  /** Waiting on the reuse-prompt remix link before submitting. */
+  preparing?: boolean;
   onSubmit?: () => void;
 }) {
   const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -335,9 +444,12 @@ function SubmitButton({
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const matureSource = useFlux3MatureSource(store);
 
   const submitBlocked =
     !canGenerate ||
+    matureSource.blocked ||
+    gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
@@ -361,20 +473,23 @@ function SubmitButton({
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={submitBlocked}
+      disabled={submitBlocked || preparing}
       onClick={handleClick}
-    />
+    >
+      {preparing ? PREPARING_REMIX_LABEL : undefined}
+    </GenerateButton>
   );
 }
 
 function CostBreakdown({ store }: { store: GenerationStore }) {
   const features = useFeatureFlags();
   const { data } = useWhatIfContext();
+  const { resources: resourceData } = useResourceDataContext();
 
   if (!features.creatorComp) return null;
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
+  const snapshot = store.getSnapshot().state as SelectedResources;
+  const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   return (
     <GenerationCostPopover
@@ -680,14 +795,21 @@ export function FormFooter({
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
-  const { canEstimateCost, validationErrors, data: whatIfData } = useWhatIfContext();
+  const {
+    canEstimateCost,
+    validationErrors,
+    data: whatIfData,
+    preBoost,
+    setPreBoost,
+    download,
+  } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -728,16 +850,29 @@ export function FormFooter({
 
   const clearWarning = () => setPromptWarning(null);
 
+  const [preparingRemix, setPreparingRemix] = useState(false);
+  // A second click while the remix link is being prepared must not submit twice.
+  const preparingRemixRef = useRef(false);
+
+  // "Generate Anyway" on a flagged prompt submits without the Generate button.
+  const matureSource = useFlux3MatureSource(store);
+
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    if (preparingRemixRef.current || matureSource.blocked) return;
+    setSubmitError(undefined);
+
     // One Generator_Submit event per click; validate FIRST so the invalid +
-    // rate-limited overlap collapses to isValid:false, matching the v1 footer
-    // (see generation_v2/FormFooter.tsx for the full ordering rationale)
+    // rate-limited overlap collapses to isValid:false
     const result = store.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
 
+    // Resolved against the form, not the store: the claim dies when the form no longer
+    // holds what the remix put there.
+    const remixOfId = resolveRemixOfId(store.getSnapshot().state as RemixClaimFormState);
+
     if (!result.success) {
       try {
-        const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+        const submitSnapshot = store.getSnapshot().state as SelectedResources;
         trackAction({
           type: 'Generator_Submit',
           details: {
@@ -751,6 +886,16 @@ export function FormFooter({
       } catch {
         // telemetry must never block a submission
       }
+      // The only judgement wired to footer copy was the whatIf PARSE, which re-runs the
+      // lenient input schemas and so disagrees with this one; the branch itself returned
+      // silently, leaving a dead button. Both surfaces now carry the strict verdict.
+      const message =
+        getMissingFieldMessage(result.errors as Record<string, { message?: string }>) ??
+        'Something in the form is incomplete or invalid.';
+      // eslint-disable-next-line no-console -- the field names are the only diagnosis available
+      console.error('[generation] form-graph submit blocked by validation:', result.errors);
+      setSubmitError(message);
+      showWarningNotification({ title: 'Check your settings', message });
       return;
     }
 
@@ -773,10 +918,24 @@ export function FormFooter({
       return;
     }
 
+    // A reuse-prompt remix's token arrives when its mint answers, which can be well after the
+    // click; submitting before then would lose the free remix-gallery placement it is for.
+    if (hasPendingPromptMint(remixOfId)) {
+      preparingRemixRef.current = true;
+      setPreparingRemix(true);
+      try {
+        const { timedOut } = await waitForPromptMint(remixOfId);
+        if (timedOut) showWarningNotification({ message: REMIX_LINK_TIMEOUT_MESSAGE });
+      } finally {
+        preparingRemixRef.current = false;
+        setPreparingRemix(false);
+      }
+    }
+
     let externalId: string | undefined;
     try {
       externalId = crypto.randomUUID();
-      const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+      const submitSnapshot = store.getSnapshot().state as SelectedResources;
       trackAction({
         type: 'Generator_Submit',
         details: {
@@ -805,8 +964,7 @@ export function FormFooter({
     });
 
     // The wire schema strips `canGenerate`, so re-check against the resource
-    // data store: drop resources the user can't actually use (v1 filters
-    // these off the snapshot, where the flag is still present).
+    // data store: drop resources the user can't actually use.
     // The not-yet-hydrated fallback below lets an unchecked resource through —
     // safe ONLY because the server re-rejects !canGenerate resources
     // (orchestration-new.service validateAndEnrichResources); this filter is
@@ -818,13 +976,13 @@ export function FormFooter({
       );
     }
 
-    const snapshot = store.getSnapshot().state as ResourceSnapshot & {
+    const snapshot = store.getSnapshot().state as SelectedResources & {
       workflow?: string;
       images?: Array<{ url: string }>;
       video?: { url: string };
       snippets?: { seed?: number };
     };
-    const hasCreatorTip = getHasCreatorTip(snapshot);
+    const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
     const needsSourceMetadata = snapshot.workflow
       ? workflowConfigByKey.get(snapshot.workflow)?.enhancement === true
@@ -845,6 +1003,19 @@ export function FormFooter({
       }
     }
 
+    // Collected by CURRENT url, and outside the `needsSourceMetadata` gate: a token is
+    // keyed by the url the image has NOW, and a gated collection would skip the provenance
+    // on exactly the submissions that need it.
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
+    ].filter(isDefined);
+
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
     const base = whatIfData?.cost?.base ?? 0;
@@ -852,6 +1023,16 @@ export function FormFooter({
     const totalCost = (whatIfData?.cost?.total ?? 0) + totalTip;
 
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
+
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
 
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -866,10 +1047,13 @@ export function FormFooter({
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...boostFields,
       });
 
+      if (preBoost) setPreBoost(false);
       if (hasPaidAccess) invalidateWhatIf();
 
       // one-shot enhancement workflows clear their media after submit
@@ -893,21 +1077,11 @@ export function FormFooter({
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {
-    const snap = store.getSnapshot().state as { output?: string };
-    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
-
-    // clear only THIS output's buckets (v1's clearStorageForOutput semantics)
-    // while preserving output preferences; other outputs' settings survive
-    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
-
-    if (outputType === 'video') store.set({ workflow: 'txt2vid' });
-    if (outputType === 'audio') store.set({ workflow: 'txt2music' });
-    if (outputType === 'model3d') store.set({ workflow: 'txt2model3d' });
-
+    store.reset(FOOTER_RESET);
     remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);
@@ -980,6 +1154,7 @@ export function FormFooter({
             <SubmitButton
               store={store}
               isLoading={generateMutation.isPending || isMinLoading}
+              preparing={preparingRemix}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector store={store} />}

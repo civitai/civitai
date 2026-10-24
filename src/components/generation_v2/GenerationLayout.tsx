@@ -31,7 +31,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import createSlots from '~/libs/slots/create-slots';
 import { hashify } from '~/utils/string-helpers';
-import { useSelfHostedBlock, SelfHostedBlockedAlert } from './FormFooter';
+import { useSelfHostedBlock, SelfHostedBlockedAlert } from '~/components/Generation/footer-parts';
 
 // =============================================================================
 // Slots
@@ -87,8 +87,8 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     status.available && reviewed && !membershipUpsell.needsAcknowledgment && !selfHostedBlocked;
 
   return (
-    // Holds the primary Generate CTA, and on a phone `GenerationSidebar` renders
-    // `!w-screen`, so this bar IS the viewport bottom there.
+    // On a phone the generator fills the viewport, so this bar is the viewport bottom — hence
+    // the safe-area padding.
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 pb-[max(0.5rem,var(--safe-area-inset-bottom))] dark:bg-dark-7">
       {!status.available ? (
         <AlertWithIcon

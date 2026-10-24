@@ -54,6 +54,10 @@ import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
@@ -76,12 +80,21 @@ dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation((...args:
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
   (mocks.purchasesUpdate as (...a: unknown[]) => unknown)(...args)
 );
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-    userCosmetic: { create: mocks.userCosmeticCreate },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      // Not owned under the grant lock: the re-check passes and the grant proceeds.
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: vi.fn(async () => null) },
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: vi.fn(),
+    })
+  )
 );
+beforeEach(() => {
+  claims = installShopPurchaseClaimFake();
+});
 loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
   (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
 );
@@ -173,7 +186,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
       type: TransactionType.Purchase,
     });
     expect(charge.externalTransactionIdPrefix).toMatch(
-      new RegExp(`^cosmetic-purchase-${BUYER_ID}-${SHOP_ITEM_ID}-`)
+      new RegExp(`^cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-`)
     );
   });
 
@@ -663,7 +676,16 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
   it('refuses a replay of the same buying intent instead of charging twice', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
-    mocks.purchasesFindUnique.mockResolvedValue({ buzzTransactionId: 'seen-before' });
+    const key = '11111111-1111-4111-8111-111111111111';
+    const transactionId = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${key}`;
+    claims.rows.set(transactionId, {
+      transactionId,
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: 1,
+      attempts: 1,
+      status: 'paid',
+    });
 
     await expect(
       purchaseCosmeticShopItem({
@@ -746,6 +768,111 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
     await expect(
       purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
     ).rejects.toThrow('already own');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('purchaseCosmeticShopItem creator restocking their own sticker', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.resaleFindUnique.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+    // The creator holds their spent approval grant; only the unlimited lookup
+    // (which filters on `remaining`) comes back empty.
+    mocks.userCosmeticFindFirst.mockImplementation(({ where }: { where: { remaining?: null } }) =>
+      Promise.resolve('remaining' in where ? null : { claimKey: 'creator-shop' })
+    );
+  });
+
+  const ownSticker = () =>
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ type: 'Sticker', createdById: BUYER_ID })
+    );
+
+  it('sells the creator their own sticker at full price and grants the uses', async () => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx.mock.calls[0][0]).toMatchObject({
+      fromAccountId: BUYER_ID,
+      toAccountId: 0,
+      amount: PRICE,
+    });
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ userId: BUYER_ID }) })
+    );
+  });
+
+  it.each([
+    ['the official shop', undefined],
+    ['their own storefront', BUYER_ID],
+  ])('pays the creator none of their own money back, bought through %s', async (_, via) => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: via,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    expect(sellCalls()).toEqual([]);
+    expect(mocks.purchasesUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { meta: { payouts: [], platformCut: PRICE } } })
+    );
+  });
+
+  // No holding is found, so only the creator gate can refuse: the single-ownership
+  // check further down would otherwise throw the same message for a badge.
+  it.each(['Badge', 'ContentDecoration'])('still refuses a creator their own %s', async (type) => {
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type, createdById: BUYER_ID }));
+
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('You already own this cosmetic');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it("still pays another creator's storefront its share when the creator restocks there", async () => {
+    ownSticker();
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: RESELLER_ID,
+      stickersEnabled: true,
+    });
+
+    const { sellerAmount } = computeCreatorShopSplit(PRICE, 20);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: RESELLER_ID, amount: sellerAmount }),
+    ]);
+  });
+
+  it('refuses a creator whose own sticker grant is unlimited', async () => {
+    ownSticker();
+    mocks.userCosmeticFindFirst.mockResolvedValue({ claimKey: 'creator-shop' });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+      })
+    ).rejects.toThrow('unlimited uses');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 });

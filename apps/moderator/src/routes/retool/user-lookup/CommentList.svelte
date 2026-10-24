@@ -9,6 +9,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime, plainText } from '$lib/format';
+  import { postedIds } from './posted-ids';
   import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
@@ -54,8 +55,9 @@
       : live
   );
   // Only what is on screen posts. A selection made before a search was typed would otherwise still be
-  // in the form, and the moderator would confirm a count they cannot see.
-  const posting = $derived(selected.filter((id) => shown.some((r) => r.id === id)));
+  // in the form, and the moderator would confirm a count they cannot see. Shared with ReviewsPanel
+  // rather than open-coded per panel — the two had the same rule written two different ways.
+  const posting = $derived(postedIds(shown, new Set(selected)));
   const allSelected = $derived(shown.length > 0 && posting.length === shown.length);
 
   // What was posted, captured at SUBMIT. `posting` is derived from the filter, and the search box has
@@ -71,8 +73,11 @@
       // A short count means some ids did not take, and the endpoints report how many rather than which.
       // Marking all of them would fabricate the difference: on a delete, rows that still exist vanish;
       // on a ToS op, comments that were never flagged wear the badge. Mark nothing, say so, reload.
+      const kept = typeof data?.retainedHidden === 'number' ? data.retainedHidden : 0;
       if (affected < acted.length) {
-        partial = `${affected} of ${acted.length} went through — reload to see which.`;
+        partial = kept
+          ? `${affected} of ${acted.length} deleted, ${kept} kept hidden for review — reload to see which.`
+          : `${affected} of ${acted.length} went through — reload to see which.`;
         return;
       }
       partial = null;
@@ -109,7 +114,7 @@
       total={live.length}
     />
     {#if canBulkAct}
-      <div class="mb-3 flex items-center gap-2">
+      <div class="mb-3 flex items-center gap-2" data-touch-target>
         <!-- Function binding, not a one-way `checked`: the primitive writes to its own `$bindable`
              on click, and a plain prop leaves the box showing the opposite of the selection whenever
              the parent expression does not change. -->
@@ -143,7 +148,7 @@
       <ul class="space-y-2 text-sm">
         {#each shown.slice(0, limit) as c (c.id)}
           <li>
-            <div class="flex flex-wrap items-center gap-x-2">
+            <div class="flex flex-wrap items-center gap-x-2" data-touch-target>
               {#if canBulkAct}
                 <Checkbox
                   bind:checked={() => selected.includes(c.id), () => toggle(c.id)}

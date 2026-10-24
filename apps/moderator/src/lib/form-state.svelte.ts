@@ -11,6 +11,8 @@ import type { ActionResult, SubmitFunction } from '@sveltejs/kit';
 export class FormState {
   /** The refusal from the last submit, or null. */
   error = $state<string | null>(null);
+  /** A `warning` the last successful submit returned: it worked, with something to know. */
+  warning = $state<string | null>(null);
   /** True between submit and response — for disabling this form's own controls, not the page's. */
   submitting = $state(false);
 
@@ -31,6 +33,20 @@ export class FormState {
     private readonly opts: {
       onSuccess: ((data?: Record<string, unknown>) => void) | null;
       reload?: boolean;
+      /**
+       * Clear the form's fields on a successful write. Defaults TRUE — the shape for an entry form,
+       * where the operator types something, posts it, and wants a blank box back.
+       *
+       * 🔴 Set FALSE for a form whose inputs are pre-filled from SERVER state, or the field is
+       * silently emptied and the next submit posts the empty value back. `update()` calls
+       * `HTMLFormElement.prototype.reset()`, which restores the element's `defaultValue` — and
+       * Svelte writes `element.value`, never `defaultValue`, so the default is the empty string.
+       * Repopulation afterwards depends on the bound expression CHANGING: `set_value` returns early
+       * when the new value equals the cached one, so a save that leaves the stored value untouched
+       * leaves the box blank over a column that still holds text. The next submit then overwrites
+       * that column with `''`.
+       */
+      reset?: boolean;
       /**
        * Runs when the submit STARTS, before the server has answered.
        *
@@ -73,17 +89,20 @@ export class FormState {
     if (cancelled) return;
 
     this.submitting = true;
+    this.warning = null;
     return async ({ result, update }) => {
       // Reset on success ONLY. Clearing the fields after a refusal throws away what the operator
       // typed, on the one path where they need it back to fix and resubmit.
       await update({
-        reset: result.type === 'success',
+        reset: result.type === 'success' && (this.opts.reset ?? true),
         invalidateAll: this.opts.reload ?? false,
       });
       this.error =
         result.type === 'failure'
           ? (result.data?.error as string | undefined) ?? 'Something went wrong.'
           : null;
+      const warning = result.type === 'success' ? result.data?.warning : undefined;
+      this.warning = typeof warning === 'string' ? warning : null;
       if (result.type === 'success') this.opts.onSuccess?.(result.data);
       this.opts.onSettled?.(result);
       this.submitting = false;

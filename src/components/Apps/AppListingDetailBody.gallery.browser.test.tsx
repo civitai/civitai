@@ -10,9 +10,8 @@
  * it is the only place a real layout engine runs.
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: IT IS NOT ONE. This file is in the
- * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — report-only, non-blocking, and not
- * reported at all when the preview build fails. The enforceable half of the change is
+ * Vitest browser-mode `component` project, which CI runs as `Component tests`;
+ * no check in this repo blocks a merge. The node-tier half of the change is
  * the seam gate in the blocking node project (`__tests__/appListingGalleryFill.test.ts`),
  * which pins that the rule and the `className` both exist and agree. That gate cannot
  * see a single pixel; this file cannot block a merge. Both claims are needed and
@@ -169,8 +168,20 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
+    // No declared scopes: this file is not about the permission disclosure, and an
+    // empty array renders no section at all. `projectListingDetail` guarantees an
+    // array, so a fixture omitting it would not match any real payload.
+    scopes: [],
+    // Same contract as `scopes`: `projectListingDetail` guarantees an array, and
+    // the body reads `.length` — a fixture omitting it would not match any real
+    // payload. `[]` keeps these ON-SITE fixtures rendering no connect-permissions
+    // section, which is what an on-site listing produces.
+    connectScopes: [],
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',

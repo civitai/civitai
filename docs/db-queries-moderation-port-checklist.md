@@ -146,7 +146,7 @@ one) and **Net-new** (moderation the moderator app doesn't cover — new domains
 ### 5. entity / text moderation (XGuard / Clavata) (`services/entity-moderation.service.ts`, `jobs/entity-moderation.ts`)
 
 - [ ] `upsertEntityModerationPending`, `recordEntityModerationSuccess`, `recordEntityModerationFailure`, `getEntityModerationWithImageNsfwLevel`
-- [ ] job orchestration: `runModQueue`, `runModChat`, `clearAutomatedReports`, `autoMuteIfScamAccount` (+ `ReportAutomated`, JobQueue)
+- [ ] job orchestration: `runModQueue`, `runModChat`, `clearAutomatedReports`, `autoMuteIfScamAccount` — now a Clavata wrapper over `services/scam-auto-mute.service.ts` (+ `ReportAutomated`, JobQueue)
 - [ ] note: main app already has a `ModerationAdapter` registry (`moderation-adapters.ts`) — decide if the package standardizes on it
 
 ### 6. appeal lifecycle (beyond image status) (`services/report.service.ts`)
@@ -187,11 +187,11 @@ one) and **Net-new** (moderation the moderator app doesn't cover — new domains
 
 ### 13. knights "down-leveled" review (`services/image.service.ts`)
 
-- [ ] `getDownleveledImages` (ClickHouse `knights_new_order_downleveled` + PG join) + `addToNewOrderQueue`
+- [ ] `getDownleveledImages` (ClickHouse `knights_new_order_downleveled` + PG join) (`image.service.ts`) + `addToNewOrderQueue` (`image-scan-pipeline.ts`)
 
-### 14. scan-result ingestion pipeline internals (`services/image-scan-result.service.ts`)
+### 14. scan-result ingestion pipeline internals (`services/image-scan-pipeline.ts`, `services/image-scan-result.service.ts`)
 
-- [ ] `resolveScanOutcome`, `auditScanResults`, `markImageScanError`, `blockImageFromRating`, `getAssociatedEntities`, `evaluateImageModRules`, `isExemptFromAiVerification`, `processTags`
+- [ ] `resolveScanOutcome`, `auditScanResults`, `markImageScanError`, `getAssociatedEntities`, `evaluateImageModRules`, `processTags` (pipeline); `blockImageFromRating`, `isExemptFromAiVerification` (image-scan-result.service)
 
 ---
 

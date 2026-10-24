@@ -17,7 +17,9 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
@@ -25,7 +27,7 @@ import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { bulkWorkflowLimits } from '~/shared/data-graph/generation/config/workflows';
+import { bulkWorkflowLimits } from '~/shared/generation/config/workflows';
 import {
   useGeneratedItemWorkflows,
   applyBulkWorkflow,
@@ -39,6 +41,7 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
+  const showCreatePostError = useShowCreatePostError();
   const { data, markerTags } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(
@@ -50,6 +53,7 @@ export function GeneratedImageActions({
   const { setSelected } = useActions();
   const deselect = () => setSelected([]);
   const [zipping, setZipping] = useState(false);
+  const mobile = useIsMobile({ type: 'media' });
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata({
     onSuccess: () => deselect(),
@@ -87,14 +91,16 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    // Audio outputs aren't supported by the post system — filter them out.
-    const postable = selected.filter((image) => image.mediaType !== 'audio');
+    // Audio outputs aren't supported by the post system, and some workflows' outputs can't be posted.
+    const postable = selected.filter(
+      (image) => image.mediaType !== 'audio' && image.canUse('post')
+    );
     const skipped = selected.length - postable.length;
 
     if (postable.length === 0) {
       showErrorNotification({
         title: 'Cannot create post',
-        error: new Error('Audio outputs cannot be added to a post'),
+        error: new Error('None of the selected outputs can be added to a post'),
       });
       return;
     }
@@ -102,7 +108,7 @@ export function GeneratedImageActions({
     if (skipped > 0) {
       showWarningNotification({
         title: 'Some outputs were skipped',
-        message: `${skipped} audio output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
+        message: `${skipped} selected output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
       });
     }
 
@@ -126,11 +132,7 @@ export function GeneratedImageActions({
       });
       deselect();
     } catch (e) {
-      const error = e as Error;
-      showErrorNotification({
-        title: 'Failed to create post',
-        error: new Error(error.message),
-      });
+      showCreatePostError((e as Error).message);
     }
   };
 
@@ -205,7 +207,9 @@ export function GeneratedImageActions({
           </Tooltip>
         </div>
       )}
-      {selectableImages.length > 0 && (
+      {/* Touch keeps this row to sort + filters. Once a selection exists the control
+          comes back, because it is also the count and the only way to clear one. */}
+      {selectableImages.length > 0 && (!mobile || hasSelected) && (
         <Checkbox
           checked={allChecked}
           indeterminate={indeterminate}
@@ -236,8 +240,14 @@ function BulkWorkflowMenu({
   const { setSelected } = useActions();
 
   // Split selected by media type
-  const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
-  const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
+  const selectedImages = useMemo(
+    () => selected.filter((s) => s.type === 'image' && s.canUse('derive')),
+    [selected]
+  );
+  const selectedVideos = useMemo(
+    () => selected.filter((s) => s.type === 'video' && s.canUse('derive')),
+    [selected]
+  );
 
   // Get workflows for each type
   const imageWorkflows = useGeneratedItemWorkflows({ outputType: 'image', filterBy: 'input' });

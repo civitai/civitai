@@ -1,52 +1,55 @@
 import { describe, expect, it } from 'vitest';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 
-// Scope-A invariant: the PUBLIC "Build apps" → /apps/get-started nav entry is
-// visible whenever the public `appBlocksGetStarted` flag is on, INDEPENDENTLY of
-// the store flags.
+// #3907 invariant: `marketplace` is true exactly when the STORE is visible
+// (`hasAppsStoreAccess` = appListings || appBlocks || appListingsPublicExternal).
+// It used to read `appBlocks` alone, which hid the store from cohorts that could
+// load it.
 //
-// #3907 invariant: the "Apps" → /apps entry is visible exactly when the STORE is
-// visible (`hasAppsStoreAccess` = appListings || appBlocks ||
-// appListingsPublicExternal). It is the ONLY in-product route to `/apps`, so a
-// cohort that can load the store but not see this entry has a store it cannot
-// find. It used to read `appBlocks` alone.
-describe('appsNavVisibility — public get-started vs store-gated marketplace', () => {
-  it('shows the public get-started entry when appBlocksGetStarted is on', () => {
-    const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: false });
-    expect(nav.getStarted).toBe(true);
-  });
-
+// 🔴 THE SECOND BOOLEAN (`getStarted`) IS GONE, AND ITS CASES ARE NOT MERELY DELETED —
+// they are re-expressed below as the assertion that the get-started flag has NO effect
+// on this helper. The menu used to carry one row per boolean ("Build apps" →
+// /apps/get-started and "Apps" → /apps), then one row with a conditional href falling
+// back to /apps/get-started. That route was consolidated into /apps/build, whose gate
+// requires store access — so a get-started-only viewer has no /apps/* destination at all
+// and the fallback would have pointed at a second 404. Deleting the assertions outright
+// would leave "the flag is irrelevant here" as an unpinned claim; asserting irrelevance
+// keeps it a fact, and would fail if someone re-introduced a get-started term.
+//
+// The menu WIRING is pinned separately, against the real `hooks.tsx` source, in
+// `appsMenuEntry.test.ts`; this file remains the behavioural cover for the PREDICATE.
+describe('appsNavVisibility — the store-gated marketplace entry', () => {
   it('keeps the marketplace entry hidden for a viewer with NO store flag', () => {
-    // The public get-started flag alone grants no store access, so the entry that
-    // links to the store stays hidden.
-    const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: false });
-    expect(nav.getStarted).toBe(true);
-    expect(nav.marketplace).toBe(false);
+    expect(appsNavVisibility({ appBlocks: false }).marketplace).toBe(false);
   });
 
-  it('shows BOTH entries for a moderator (both flags on) — distinct labels, no collision', () => {
-    const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: true });
-    expect(nav.getStarted).toBe(true);
-    expect(nav.marketplace).toBe(true);
-  });
-
-  it('hides the get-started entry when the public flag is off (kill switch)', () => {
-    const nav = appsNavVisibility({ appBlocksGetStarted: false, appBlocks: true });
-    expect(nav.getStarted).toBe(false);
-    // The marketplace entry is unaffected by the get-started kill switch.
-    expect(nav.marketplace).toBe(true);
-  });
-
-  it('hides both entries when both flags are off', () => {
-    const nav = appsNavVisibility({ appBlocksGetStarted: false, appBlocks: false });
-    expect(nav.getStarted).toBe(false);
-    expect(nav.marketplace).toBe(false);
+  it('shows it for a moderator (store flag on)', () => {
+    expect(appsNavVisibility({ appBlocks: true }).marketplace).toBe(true);
   });
 
   it('treats undefined flags as off (default-deny on missing flags)', () => {
-    const nav = appsNavVisibility({});
-    expect(nav.getStarted).toBe(false);
-    expect(nav.marketplace).toBe(false);
+    expect(appsNavVisibility({}).marketplace).toBe(false);
+  });
+
+  /**
+   * 🔴 THE GET-STARTED FLAG IS IRRELEVANT TO THIS HELPER, ASSERTED RATHER THAN ASSUMED.
+   *
+   * It used to produce a second boolean that drove a second href. After the /apps/build
+   * consolidation it decides only WHAT a store-visible non-author is shown ON that page,
+   * never whether any route is reachable — so this helper must ignore it entirely. Held
+   * as an equality across the flag's two values so a re-introduced term fails here, in
+   * BOTH directions, rather than only when someone happens to test the right cohort.
+   */
+  it('🔴 appBlocksGetStarted changes NOTHING about this helper', () => {
+    for (const store of [false, true]) {
+      const off = appsNavVisibility({ appBlocks: store, appBlocksGetStarted: false } as never);
+      const on = appsNavVisibility({ appBlocks: store, appBlocksGetStarted: true } as never);
+      expect(on, `store=${store}`).toEqual(off);
+      // …and the value it agrees on is the STORE answer, not a constant. Without this the
+      // equality above would hold for a helper that returned `{ marketplace: false }`
+      // unconditionally.
+      expect(on.marketplace).toBe(store);
+    }
   });
 
   /**
@@ -62,7 +65,6 @@ describe('appsNavVisibility — public get-started vs store-gated marketplace', 
   describe('🔴 #3907 — the entry follows STORE visibility, not the block runtime', () => {
     it('EXTERNAL-ONLY cohort (appListingsPublicExternal alone) sees the entry', () => {
       const nav = appsNavVisibility({
-        appBlocksGetStarted: true,
         appBlocks: false,
         appListings: false,
         appListingsPublicExternal: true,
@@ -71,21 +73,14 @@ describe('appsNavVisibility — public get-started vs store-gated marketplace', 
     });
 
     it('CATALOG-ONLY cohort (appListings alone) sees the entry', () => {
-      const nav = appsNavVisibility({
-        appBlocksGetStarted: false,
-        appBlocks: false,
-        appListings: true,
-      });
+      const nav = appsNavVisibility({ appBlocks: false, appListings: true });
       expect(nav.marketplace).toBe(true);
-      // …and the get-started kill switch still governs its own entry.
-      expect(nav.getStarted).toBe(false);
     });
 
     it('a viewer with EVERY store flag off does not see it (the gate is not `true`)', () => {
       // The negative control for the two above: without it, a mutation that made
       // `marketplace` unconditionally true would pass both.
       const nav = appsNavVisibility({
-        appBlocksGetStarted: true,
         appBlocks: false,
         appListings: false,
         appListingsPublicExternal: false,

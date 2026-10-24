@@ -4,6 +4,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
@@ -23,7 +24,8 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import type { ListingSort, StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
+import { isSubListingCard, onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -172,7 +174,9 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
-    if (filters.query !== searchInput) setSearchInput(filters.query);
+    // Trimmed on both sides, like the echo above: a write skipped for whitespace alone leaves the
+    // URL one space off the box, and adopting that would eat or resurrect the space under the caret.
+    if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
   // "Recently opened" rail (client-only personalisation from localStorage).
@@ -239,14 +243,15 @@ export function AppListingsMarketplaceBody() {
       // the old four-column maximum; at the FIVE columns the grid now reaches on a
       // 2560 monitor it is under five, so a viewer on the widest screen the container
       // supports would meet the "Load more" button after the least content. 48 gives
-      // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
-      // future cap raise engages the declared-but-unreachable sixth column.
+      // twelve rows at four columns and sixteen at three — and stays ≥ 8 rows even if a
+      // future cap raise engages the declared-but-unreachable fifth column.
       // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
       // `listAppListingsSchema` in
       // `src/server/schema/blocks/app-listing-read.schema.ts` declares
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
+      includeSubListings: true,
     },
     {
       // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -256,6 +261,31 @@ export function AppListingsMarketplaceBody() {
       // `blocks.getNavSummary` — DOES widen with the store.
       enabled: hasAppsStoreAccess(features),
       getNextPageParam: (lastPage) => lastPage.nextCursor,
+      /**
+       * 🔴 60s. Without a `staleTime` react-query's default is ZERO, which means
+       * every remount and every window refocus refetches — and the `/apps` grid is
+       * a page viewers leave and come straight back to (open an app, hit back;
+       * tab away, tab back). Each of those was a fresh network round trip for a
+       * catalog that had not moved.
+       *
+       * WHY 60 AND NOT MORE: the PROPERTY is that the client window stays strictly
+       * shorter than the server-side TTL (`CacheTTL.sm`, 180s at the time of writing,
+       * on `listAvailableListings`'s keyset query), so the client is never the longer
+       * of the two staleness sources. That inequality — and only that — is what
+       * `AppListingsMarketplaceBody.keepPreviousData.browser.test.tsx` asserts, against
+       * the real constant. The specific 3× headroom is a judgement, not a pinned
+       * ratio: pick any value under `CacheTTL.sm`. The moderator-
+       * visible worst case for a listing entering or leaving the store is bounded
+       * by the server side, which every listing-state mutation busts explicitly
+       * (`bustAppListingCatalogCache`) — a client window that outlived the server
+       * TTL would have made those busts invisible for the difference.
+       *
+       * It does NOT interact with `placeholderData` below: `staleTime` governs
+       * whether a cached entry for THIS key is refetched; `keepPreviousData`
+       * governs what is rendered while a DIFFERENT key loads. A sort/filter change
+       * is a new key, so it still fetches immediately regardless of this value.
+       */
+      staleTime: 60 * 1000,
       /**
        * 🔴 KEEP THE PREVIOUS RESULT WHILE A NEW ONE LOADS. The query key is
        * `{kind, category, sort, limit}`, so every sort/filter change is a NEW
@@ -282,14 +312,20 @@ export function AppListingsMarketplaceBody() {
     }
   );
 
-  const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
+  const gridItems = useMemo(
+    () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
+    [data]
+  );
+  // The app cards alone. Sub-listing cards are grid-only: the "Recently opened" rail is about
+  // APPS, so it reconciles against these.
+  const items = useMemo(() => onlyListingCards(gridItems), [gridItems]);
 
   /**
    * RECONCILE the persisted recents against the listings already on this page.
    *
    * 🔴 WHY THE RAIL NEEDS THIS. A recents entry written by the legacy
-   * `MarketplaceBody.recordRecent` carries `{id, blockId, name, iconUrl}` — no
-   * `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
+   * `MarketplaceBody.recordRecent` carries `{id, blockId, name}` (the `iconUrl` it
+   * passes is dropped by the store, which never persists one) — no `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
    * viewer's most-run apps rendered an EYE pointing at the detail page instead of
    * a PLAY pointing at `/apps/run/…`, and no amount of clicking healed it:
    * `handleOpenRecent` re-persists the resolved `false`. `reconcileRecentApps`
@@ -319,7 +355,7 @@ export function AppListingsMarketplaceBody() {
    * 🔴 AND IT WOULD NOT BUY THE CHROME MENU ANYTHING EITHER. The store's other
    * consumer — the app-chrome "Recently run" menu — filters on `kind`/`blockId`,
    * and a legacy entry carries `blockId` but NOT `kind`: `MarketplaceBody`'s
-   * `recordRecent` writes only `{id, blockId, name, iconUrl}`. Such entries are
+   * `recordRecent` writes only `{id, blockId, name}`. Such entries are
    * admitted by ABSENCE (`undefined !== 'offsite'` is true), not by carrying the
    * field — see the 🔴 note on `selectChromeRecentApps`, which is the authority
    * on that gate. So persisting `kind` would not change what that menu shows;
@@ -373,13 +409,13 @@ export function AppListingsMarketplaceBody() {
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
+    if (!q) return gridItems;
+    return gridItems.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
     );
-  }, [items, debouncedSearch]);
+  }, [gridItems, debouncedSearch]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts
@@ -544,24 +580,36 @@ export function AppListingsMarketplaceBody() {
               Mantine `<Grid>`/`<Grid.Col span={…}>`.
 
               WHAT IT DOES: 1 / 2 / 3 / 4 columns exactly where the retired
-              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of
-              grid — those breakpoints minus the apps Container's 32px gutter), then
-              FIVE from 2364. The store container is `LISTING_STORE_CONTAINER_SIZE` =
-              `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid — or ~2518
-              from a 2560 VIEWPORT, since the page's `.scroll-area` reserves a thin
-              scrollbar on Windows/Linux Chrome/Firefox (macOS overlay scrollbars and
-              touch reserve none). Either way `/apps` renders FIVE columns, at 492.8px
-              or ~490.8px each — wider than the
-              460px four-up the 1920 container shipped, which is the point: the
-              `LISTING_CARD_MIN_WIDTH` floor is 460, so a column is only added where
-              every card ends up at least as big as it is today. A sixth column would
-              need 2840 of grid and is unreachable at this cap; the rung is declared
-              anyway so a future cap raise engages it.
+              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of grid —
+              those breakpoints minus the apps Container's 32px gutter), then FIVE from
+              2364 and SIX from 2840, both straight out of the 460px card-width floor
+              (`n × 460 + (n − 1) × 16`).
+
+              The store container is `LISTING_STORE_CONTAINER_SIZE` =
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560. At that container, net of a 10px
+              scrollbar and the 32px gutter, the three rail states land as:
+
+                rail OPEN       2242 of grid   FOUR columns at 548.5px
+                COLLAPSED       2446 of grid   FIVE columns at 476.4px
+                NO RAIL         2518 of grid   FIVE columns at 490.8px
+
+              All three clear the 460px floor, which is the point: a column is only ever
+              added where every card ends up at least as big as it is today.
+
+              ⚠️ A LEFT-RAIL RE-TUNE BRIEFLY MOVED THIS AND IS REVERTED. It replaced the
+              1168 and 2364 rungs with a chrome-derived pair (four from 2242, five from
+              2840) so an OPEN rail still reached four columns — but the ladder keys on
+              GRID WIDTH and cannot tell WHY the grid is narrow, so viewers with no rail,
+              with it hidden below 1300px, or with it collapsed paid a column they had the
+              width for. Under it, this paragraph read &quot;FOUR columns at 548.5px open,
+              599.5 collapsed, 617.5 no rail&quot;; collapsed and no-rail are FIVE columns
+              again. See `WIDE_COLUMN_COUNTS` in `appListingGrid.ts` for why a rail-aware
+              rung is not buildable at this layer.
 
               WHY IT MOVED OFF `<Grid>`: `Grid.Col span` can only read a theme
               BREAKPOINT, and `xl` (88em / 1408px) is the top of Mantine's default
               scale — `src/providers/ThemeProvider.tsx` declares no custom
-              breakpoints, so there was nowhere to hang a fifth column and adding a
+              breakpoints, so there was nowhere to hang a wide column and adding a
               breakpoint would be a site-wide theme change to fix one grid. A
               container query also reads the right quantity: card width is not
               monotonic in VIEWPORT width (a one-column 390px phone gets a ~356px
@@ -600,7 +648,11 @@ export function AppListingsMarketplaceBody() {
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
               {filteredItems.map((card) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">
-                  <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  {isSubListingCard(card) ? (
+                    <AppSubListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  ) : (
+                    <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  )}
                 </div>
               ))}
             </div>

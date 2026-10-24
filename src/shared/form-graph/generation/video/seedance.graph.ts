@@ -3,7 +3,7 @@ import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { checkpointDef } from '../checkpoint';
 import {
   SEED,
@@ -14,15 +14,13 @@ import {
   workflowScoped,
   sliderDef,
 } from '../defs';
-import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
+import { familyScope, makeTextBlock, perModelScope, type FamilyExt } from '../shared';
 
 /**
- * Seedance (ByteDance), ported from `seedance-graph.ts`. No resources, no
+ * Seedance (ByteDance). No resources, no
  * negative prompt; resolution and duration ceilings depend on the model
  * version. The selection IS the backend — no emit needed.
  */
-
-// ---- copied from seedance-graph.ts, which dies with the data-graph engine ---
 
 export const seedanceVersionIds = {
   v2: 2864671,
@@ -55,8 +53,6 @@ const seedanceResolutions = [
 // v2 is the only model that supports 1080p
 const seedanceResolutionsV2 = [...seedanceResolutions, { label: '1080p', value: '1080p' }];
 
-// ---- end of seedance-graph.ts copies ----------------------------------------
-
 export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
   .field(
     'images',
@@ -77,12 +73,15 @@ export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
       defaultModelId: seedanceVersionIds['v2-mini'],
     })
   )
-  .field('resolution', ({ model }) =>
-    enumDef({
+  // per-model memory: v2's 1080p pick must not ride onto versions whose
+  // option set lacks it (trusted values skip the input remap and fail validate)
+  .field('resolution', ({ model }) => ({
+    ...enumDef({
       options: model?.id === seedanceVersionIds.v2 ? seedanceResolutionsV2 : seedanceResolutions,
       default: '720p',
-    })
-  )
+    }),
+    scope: perModelScope({ model }),
+  }))
   // aspect-ratio dimensions scale with the selected resolution
   .field('aspectRatio', ({ resolution }) =>
     aspectRatioDef({
@@ -90,9 +89,10 @@ export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
       default: '16:9',
     })
   )
-  .field('duration', ({ model }) =>
-    sliderDef({ min: 4, max: model?.id === seedanceVersionIds['v2.5'] ? 30 : 15, default: 5 })
-  )
+  .field('duration', ({ model }) => ({
+    ...sliderDef({ min: 4, max: model?.id === seedanceVersionIds['v2.5'] ? 30 : 15, default: 5 }),
+    scope: perModelScope({ model }),
+  }))
   .field('generateAudio', boolDef(false))
   .field('seed', SEED)
   .use(makeTextBlock({ negativePrompt: false }));

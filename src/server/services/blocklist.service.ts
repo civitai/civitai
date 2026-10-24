@@ -134,8 +134,13 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // ⚠️ The create below is NOT serialised. `FOR UPDATE` locks nothing when it matches
         // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
         // type ends up with two. Unreachable from this app — the only caller always passes an id —
-        // but the spoke's twin is reachable, and the closes are a unique index on `Blocklist.type`
-        // or an advisory lock on the type, not this predicate.
+        // but the spoke's twin is reachable, and the close is a unique index on `Blocklist.type`,
+        // not this predicate. `Blocklist_type_key` (migration `20260819211000_blocklist_type_unique`)
+        // is what closes it, and production already has it — verified against `pg_index`,
+        // 2026-09-09 — so the duplicate is unrepresentable there. An environment where that
+        // migration has not been applied by hand can still produce one. Note the Prisma schema
+        // does NOT declare `@unique` on this column yet. The 2026-10-16 drift-gate catalog
+        // snapshot has a unique index on `Blocklist(type)`, so declaring it no longer blocks the gate.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
@@ -185,8 +190,9 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union
  * strips more, which is a moderation bypass — one helper cannot silently pick a safe
  * direction for both. Nor does it throw: this read gates account signup, so a duplicate
- * row would become an outage. Deterministic-and-loud is the compromise until the rows are
- * merged and a unique index on `type` makes it unrepresentable.
+ * row would become an outage. Deterministic-and-loud is the compromise for environments where
+ * `20260819211000_blocklist_type_unique` has not been applied; production has that index already,
+ * so this guard is inert there.
  */
 async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
   const rows = await dbWrite.blocklist.findMany({
@@ -470,13 +476,33 @@ export function scannableTextForms(content: string) {
   return [...new Set([...forms, ...forms.map(foldConfusables)])];
 }
 
+/** Which list rejected the text. Callers that classify a block read this rather than the message. */
+export type BlockedContentKind = 'link' | 'pattern';
+
 /**
- * Both blocklists over one or more pieces of user-authored text.
+ * One blocklist hit, attributed to the INPUT VALUE it came from. `index` is the position in the
+ * array the caller passed (absent/empty entries keep their slot), so a caller scanning
+ * `[title, body]` can tell which field tripped the list.
  *
- * The two exported wrappers below differ only in the message a pattern hit produces. Everything
- * that decides what is caught lives here, so a surface cannot end up with a weaker version of
- * the check by calling a different helper — which is the state this replaced, where comments got
- * both lists over every form and nine other surfaces got the link list over the raw string.
+ * At most one `link` and one `pattern` hit per value, each from the first scanned form that
+ * matched: the forms are spellings of the same text, so reporting each would count one write
+ * several times. A `link` hit carries every blocked URL that form contained.
+ */
+export type BlockedContentHit =
+  | { kind: 'link'; index: number; matched: string[] }
+  | { kind: 'pattern'; index: number; matched: string };
+
+type UserText = string | null | undefined;
+
+/**
+ * Both blocklists over one or more pieces of user-authored text — the DECISION only. It reads the
+ * lists and returns every hit; it does not throw, log, or read a flag. The enforcing wrappers
+ * below decide what a hit costs.
+ *
+ * Everything that decides what is caught lives here, so a surface cannot end up with a weaker
+ * version of the check by calling a different helper — which is the state this replaced, where
+ * comments got both lists over every form and nine other surfaces got the link list over the raw
+ * string.
  *
  * Each value is scanned SEPARATELY rather than joined. Joining is not merely untidy: a pattern
  * spanning the seam between two independent fields would match text no user ever wrote.
@@ -485,9 +511,84 @@ export function scannableTextForms(content: string) {
  * Empty and absent values are skipped, so a caller can hand over an optional field without
  * guarding the call. That removes the `if (x) await check(x)` shape, which is where a surface
  * loses its check by degrees — the guard follows the field rather than the call site.
+ *
+ * Hits are returned in value order, link before pattern within a value — the order the enforcing
+ * wrapper acts on them, which is what keeps its throw-vs-record sequence identical to the
+ * pre-split scan.
+ */
+async function findBlockedText(
+  values: UserText[],
+  { exemptFromLinks, exemptFromPatterns }: { exemptFromLinks: boolean; exemptFromPatterns: boolean }
+): Promise<BlockedContentHit[]> {
+  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
+  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
+  // existed, so exempting moderators from it would silently switch off a control that is live in
+  // production. Comments are the case that exempts both, and that asymmetry is why these are two
+  // flags rather than one.
+  if (exemptFromLinks && exemptFromPatterns) return [];
+
+  const present = values.flatMap((value, index) => (value ? [{ value, index }] : []));
+  if (!present.length) return [];
+
+  const [blockedDomains, blockedPatterns] = await Promise.all([
+    getBlocklistData(BlocklistType.LinkDomain),
+    getBlocklistData(BlocklistType.MessagePattern),
+  ]);
+  const matchable = substringEntries(blockedPatterns);
+  const matchableDomains = exactEntries(blockedDomains);
+
+  const hits: BlockedContentHit[] = [];
+  for (const { value, index } of present) {
+    const forms = scannableTextForms(value);
+
+    for (const form of exemptFromLinks ? [] : forms) {
+      const blockedFor = findBlockedLinkDomains(form, matchableDomains);
+      if (blockedFor.length) {
+        hits.push({ kind: 'link', index, matched: blockedFor });
+        break;
+      }
+    }
+
+    for (const form of exemptFromPatterns ? [] : forms) {
+      const matched = findBlockedPattern(form, matchable);
+      if (matched !== undefined) {
+        hits.push({ kind: 'pattern', index, matched });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * The pure classifier behind `throwOnBlockedUserContent`, for a caller that wants to know what the
+ * guard WOULD do without it doing it (shadow moderation). Same lists, same forms, same
+ * per-value scan; no Axiom event, no Flipt read, no throw.
+ *
+ * `exemptFromPatterns` is the moderator exemption `throwOnBlockedUserContent` applies via
+ * `isModerator`. There is deliberately no link exemption — see that function.
+ */
+export async function findBlockedUserContent(
+  values: UserText | UserText[],
+  { exemptFromPatterns = false }: { exemptFromPatterns?: boolean } = {}
+): Promise<BlockedContentHit[]> {
+  return findBlockedText(Array.isArray(values) ? values : [values], {
+    exemptFromLinks: false,
+    exemptFromPatterns,
+  });
+}
+
+/**
+ * Enforces `findBlockedText`'s hits, in order.
+ *
+ * A link hit calls `onLinkMatch` and STOPS: every caller's `onLinkMatch` throws, and returning
+ * rather than falling through means a future one that does not cannot silently turn the link half
+ * into a no-op that still reads as a scan. A pattern hit awaits `onPatternMatch`, which is allowed
+ * NOT to throw (record-only mode), and continues to the next value — so a recorded pattern hit on
+ * one value never shortens the link scan of a later one.
  */
 async function throwOnBlockedText(
-  values: Array<string | null | undefined>,
+  values: UserText[],
   {
     exemptFromLinks,
     exemptFromPatterns,
@@ -500,53 +601,18 @@ async function throwOnBlockedText(
     onPatternMatch: (matched: string) => Promise<void> | void;
   }
 ) {
-  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
-  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
-  // existed, so exempting moderators from it would silently switch off a control that is live in
-  // production. Comments are the case that exempts both, and that asymmetry is why these are two
-  // flags rather than one.
-  if (exemptFromLinks && exemptFromPatterns) return;
-
-  const present = values.filter((value): value is string => !!value);
-  if (!present.length) return;
-
-  const [blockedDomains, blockedPatterns] = await Promise.all([
-    getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
-  ]);
-  const matchable = substringEntries(blockedPatterns);
-  const matchableDomains = exactEntries(blockedDomains);
-
-  for (const value of present) {
-    const forms = scannableTextForms(value);
-
-    // The two lists are scanned in separate passes, not interleaved per form, because
-    // `onPatternMatch` is allowed NOT to throw. Interleaved, a caller in record-only mode would
-    // leave the remaining forms of this value unscanned for LINK hits, which do still throw —
-    // the weaker half would silently shorten the stronger one.
-    for (const form of exemptFromLinks ? [] : forms) {
-      const blockedFor = findBlockedLinkDomains(form, matchableDomains);
-      if (blockedFor.length) {
-        onLinkMatch(blockedFor);
-        // Every caller's `onLinkMatch` throws. Returning here rather than falling through means a
-        // future one that does not cannot silently turn the link half into a no-op that still
-        // reads as a scan.
-        return;
-      }
+  const hits = await findBlockedText(values, { exemptFromLinks, exemptFromPatterns });
+  for (const hit of hits) {
+    if (hit.kind === 'link') {
+      onLinkMatch(hit.matched);
+      return;
     }
-
-    for (const form of exemptFromPatterns ? [] : forms) {
-      const matched = findBlockedPattern(form, matchable);
-      if (matched !== undefined) {
-        await onPatternMatch(matched);
-        // One notification per value. The forms are spellings of the same text, so a caller that
-        // records rather than throws would otherwise count one write up to six times and read as
-        // a false-positive rate several times its real value.
-        break;
-      }
-    }
+    await onPatternMatch(hit.matched);
   }
 }
+
+/** What `throwOnBlockedCommentContent` hands its `onBlocked` hook. */
+export type CommentContentBlock = { kind: 'link'; urls: string[] } | { kind: 'pattern' };
 
 /**
  * Comments never called the pattern list at all until 2026-08-24, which is how 366 accounts
@@ -559,21 +625,34 @@ async function throwOnBlockedText(
  *
  * The DM precedent is not uniform and should not be cited as though it were: chat SEND exempts
  * moderators from both lists, chat EDIT exempts nobody.
+ *
+ * `onBlocked` replaces the thrown comment-worded `BAD_REQUEST` for a surface that reuses this
+ * check under its own wording (app feedback). It is handed the blocked URLs on a link hit, so the
+ * caller never parses them back out of the `invalid urls: …` prose; a pattern hit carries NO
+ * matched text on purpose — echoing a pattern to the writer teaches them what to misspell. The
+ * URLs are the matched link text as scanned, i.e. lowercased and possibly from a normalised form
+ * (an `href`, a confusable-folded spelling), not always byte-identical to what was typed.
  */
 export async function throwOnBlockedCommentContent(
   content: string,
-  { isModerator = false }: { isModerator?: boolean } = {}
+  {
+    isModerator = false,
+    onBlocked,
+  }: { isModerator?: boolean; onBlocked?: (block: CommentContentBlock) => never } = {}
 ) {
   await throwOnBlockedText([content], {
     exemptFromLinks: isModerator,
     exemptFromPatterns: isModerator,
-    onLinkMatch: (blockedFor) => throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`),
-    onPatternMatch: () => throwBadRequestError('Comment blocked by content filter'),
+    onLinkMatch: (blockedFor) => {
+      if (onBlocked) onBlocked({ kind: 'link', urls: blockedFor });
+      throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
+    },
+    onPatternMatch: () => {
+      if (onBlocked) onBlocked({ kind: 'pattern' });
+      throwBadRequestError('Comment blocked by content filter');
+    },
   });
 }
-
-/** Which list rejected the text. Callers that classify a block read this rather than the message. */
-export type BlockedContentKind = 'link' | 'pattern';
 
 /**
  * The same check for the OTHER surfaces that carry user-authored text — descriptions, titles,
@@ -670,16 +749,77 @@ export async function throwOnBlockedUserContent(
 // #region [blocked emails]
 
 const TRAILING_DOTS = /\.+$/;
+
+/**
+ * The one spelling of "this domain, comparable". Written FOUR times by hand before this, and the
+ * copies drifted: the suffix matcher stripped trailing dots after its final trim and the exact
+ * comparison did not, so an entry of `evil.example .` normalised to `evil.example ` here and to
+ * `evil.example` in the auth hub — 88 cells apart on a fuzz, every one of them this app admitting
+ * what the hub blocked. Twin of `normalizeDomain` in `apps/auth/src/lib/server/auth/blocklist.ts`;
+ * the next normalisation rule (an IDNA fold, a unicode-dot fold) must land here and there, not in
+ * whichever copies its author happened to be looking at.
+ */
+function normalizeDomain(domain: string) {
+  return domain.trim().toLowerCase().replace(TRAILING_DOTS, '');
+}
 export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);
 }
 
+export async function getBlockedEmailDomainSuffixes() {
+  return await getBlocklistData(BlocklistType.EmailDomainSuffix);
+}
+
 /**
- * Reject an email address whose domain is blocklisted or publishes no MX record.
+ * `*.evil.example` and `.evil.example` are how a moderator writes "and its subdomains" by hand, and
+ * both would otherwise be an entry that matches no address at all — silently, since a suffix entry
+ * has no other feedback than accounts continuing to arrive.
+ */
+const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
+
+/**
+ * The domain itself, or anything under it. `endsWith('.' + entry)` and not `endsWith(entry)`: the
+ * latter matches `notfhbsfg.buzz` against an entry of `fhbsfg.buzz`, which is a different
+ * registrable domain owned by someone else.
  *
- * The two halves catch different things and neither subsumes the other: the blocklist covers the
- * ~8,500 KNOWN disposable providers, which are real domains that accept mail; the MX check covers
- * INVENTED domains, which no list can ever enumerate. The auth hub's magic-link action has had the
+ * Exported for the guard tests — the branch that distinguishes those two is the whole rule.
+ *
+ * Twin of `isBlockedSuffix` in the auth hub's `apps/auth/src/lib/server/auth/blocklist.ts`. One rule
+ * in two separately-released apps: trim on both sides of the prefix strip, and keep the case table
+ * in `__tests__/email-domain-guard.test.ts` identical to the hub's. Both whitespace cells have
+ * already diverged once between the two copies.
+ */
+export function matchesBlockedSuffix(entries: string[], domain: string) {
+  if (!domain) return false;
+  return entries.some((raw) => {
+    // 🔴 NORMALIZE ON BOTH SIDES OF THE STRIP, and the second pass is not redundant.
+    // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so whitespace BEFORE the wildcard stops it matching at
+    // all (` *.evil.example` keeps its `*.` and then matches no address), and whitespace AFTER it
+    // survives into the entry (`*. evil.example` becomes ` evil.example`, which also matches
+    // nothing). Both are silent: a suffix entry's only feedback is accounts continuing to arrive.
+    // Character-for-character the hub's expression; the two have diverged three times on exactly
+    // this line, always on whitespace, and always found by review rather than by a test.
+    const entry = normalizeDomain(normalizeDomain(raw).replace(SUFFIX_ENTRY_PREFIX, ''));
+    // 🔴 A SINGLE LABEL IS REFUSED, and this is the only guard standing between a typo and an
+    // outage. Nothing validates what a moderator types: an entry of `com` is one keystroke from
+    // `com.example` and would refuse every email address under the whole TLD, on every signup and
+    // every email change, with a message that tells the user nothing. The exact list cannot do
+    // that — a bad entry there costs one domain — so the blast radius is new here and the refusal
+    // belongs at the enforcement point rather than only at one of the two write paths.
+    if (!entry.includes('.')) return false;
+    return domain === entry || domain.endsWith(`.${entry}`);
+  });
+}
+
+/**
+ * Reject an email address whose domain is blocklisted, is under a blocklisted suffix, or publishes
+ * no MX record.
+ *
+ * The halves catch different things and none subsumes the others: the exact list covers the ~8,800
+ * KNOWN disposable providers, which are real domains that accept mail; the MX check covers INVENTED
+ * domains, which no list can ever enumerate; the suffix list covers a domain whose owner mints fresh
+ * SUBDOMAINS, each real and each publishing MX, so neither of the other two ever sees it twice.
+ * The auth hub's magic-link action has had the
  * blocklist half since the login cutover and its email path is the one at zero — every remaining
  * writer of `User.email` (onboarding, profile update, email change) is free text that is never
  * verified, so those need both.
@@ -695,7 +835,7 @@ export async function assertEmailAllowed(email: string) {
   // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
   const at = email.lastIndexOf('@');
   const rawDomain = at === -1 ? '' : email.slice(at + 1);
-  const domain = rawDomain.trim().toLowerCase().replace(TRAILING_DOTS, '');
+  const domain = normalizeDomain(rawDomain);
   if (!domain) throw throwBadRequestError('Please provide a valid email address');
 
   // 🔴 DEGRADE OPEN. This lookup is a redis GET falling back to a `dbWrite` read, neither of which
@@ -703,22 +843,44 @@ export async function assertEmailAllowed(email: string) {
   // every profile-email set and every email change for its duration -- and Reddit accounts arrive
   // with no address at all, so that is the whole funnel for that provider. The auth hub's mirror of
   // this lookup already ends in `catch { return [] }` for the same reason; the two must agree.
-  let blocked: string[];
-  try {
-    blocked = await getBlockedEmailDomains();
-  } catch (error) {
+  // 🔴 The two reads degrade open INDEPENDENTLY, and that is the whole reason this is
+  // `allSettled` and not `Promise.all`. Failing them together means the suffix list — which starts
+  // EMPTY and may stay empty, since every entry is opted in by hand — can take the ~8,800-entry
+  // exact list down with it, so adding this feature would roughly double the rate at which the
+  // whole email check fails open while contributing no policy of its own. Whichever list loaded is
+  // still enforced. The auth hub degrades its two reads independently for the same reason; the two
+  // must agree.
+  const [exactResult, suffixResult] = await Promise.allSettled([
+    getBlockedEmailDomains(),
+    getBlockedEmailDomainSuffixes(),
+  ]);
+
+  const readOrDegradeOpen = (
+    result: PromiseSettledResult<string[]>,
+    blocklistType: BlocklistType
+  ) => {
+    if (result.status === 'fulfilled') return result.value;
     logToAxiom({
       name: 'email-blocklist-lookup-failed',
       type: 'error',
-      message: 'Email domain blocklist unreadable; signup allowed without the blocklist check',
-      details: { error: error instanceof Error ? error.message : String(error) },
+      message: 'Email domain blocklist unreadable; signup allowed without this list',
+      details: {
+        blocklistType,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      },
     }).catch(() => undefined);
-    blocked = [];
-  }
+    return [] as string[];
+  };
+
+  const blocked = readOrDegradeOpen(exactResult, BlocklistType.EmailDomain);
+  const blockedSuffixes = readOrDegradeOpen(suffixResult, BlocklistType.EmailDomainSuffix);
 
   // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
   // by moderators, and a single capital letter would silently make an entry match nothing.
-  if (blocked.some((entry) => entry.trim().toLowerCase().replace(TRAILING_DOTS, '') === domain))
+  if (blocked.some((entry) => normalizeDomain(entry) === domain))
+    throw throwBadRequestError('Please use a different email address');
+
+  if (matchesBlockedSuffix(blockedSuffixes, domain))
     throw throwBadRequestError('Please use a different email address');
 
   if (!(await domainAcceptsMail(domain)))

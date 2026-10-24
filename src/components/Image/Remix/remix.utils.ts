@@ -11,7 +11,7 @@ import {
   withExternalFetch,
 } from '~/store/generation-graph.store';
 import { getImageDimensions } from '~/utils/image-utils';
-import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { remixProvenanceStore, trackPromptMint } from '~/store/remix-provenance.store';
 import { trpcVanilla } from '~/utils/trpc';
 
 /**
@@ -213,7 +213,39 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   });
 }
 
-/** The original path: reuse the source's prompt and resources. */
+/**
+ * Counts reuse clicks so a slower mint cannot land after a newer one. There is
+ * one prompt token, and the mints resolve in whatever order the network gives
+ * them, so without this two quick clicks can leave the token naming the image
+ * the user clicked FIRST.
+ */
+let promptReuseSequence = 0;
+
+/**
+ * Open the generator seeded from this image's prompt and resources.
+ *
+ * The mint is what makes the link knowable at all: this path seeds no media, so
+ * by submit time nothing in the graph names the image the user started from.
+ * Swallowed and not awaited for the same reason as `startRemix`'s — provenance is
+ * an enrichment, and a reuse whose token fails to mint must still open the
+ * generator.
+ */
 export function startPromptReuse(image: RemixSourceImage) {
+  const sequence = ++promptReuseSequence;
+
+  const mint = trpcVanilla.orchestrator.mintPromptProvenance
+    .mutate({ imageId: image.id })
+    .then((r) => {
+      // A newer reuse click owns the form. Counted separately from the panel's
+      // own sequence, which every open bumps: a media-remix click supersedes the
+      // panel but leaves an in-flight prompt mint alone, and the id match is what
+      // refuses that token rather than this.
+      if (sequence !== promptReuseSequence) return;
+      if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance, image.id);
+    })
+    .catch(() => undefined);
+  // A Generate click can come before the mint answers; the submit waits on this.
+  trackPromptMint(image.id, mint);
+
   return generationGraphPanel.open({ type: image.type, id: image.id });
 }

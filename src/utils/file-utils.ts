@@ -1,14 +1,23 @@
 // Anti-hang ceiling only: a hung upstream would otherwise park the request for
 // undici's ~300s default. Generous by design — callers downloading large media
 // (video/zip) pass a bigger timeoutMs rather than risk cutting off a slow-but-legit transfer.
-export async function fetchBlob(src: string | Blob | File, timeoutMs = 120_000) {
+export async function fetchBlob(
+  src: string | Blob | File,
+  timeoutMs = 120_000,
+  { requireOk = false }: { requireOk?: boolean } = {}
+) {
   if (src instanceof Blob) return src;
   // Intentionally NOT behind the hot-path-fetch-timeouts Flipt kill-switch: this
   // is isomorphic (bundled client-side) so it can't import the server-only
   // isFliptSync, and its callers are background/media downloads where an abort is benign.
+  // credentials:'omit' — every caller fetches cross-origin presigned/orchestrator/CDN
+  // media (cookies were already not being sent under the same-origin default) or a
+  // user/attacker-supplied URL that must never ride the victim's session. There is no
+  // legit same-origin media fetch through this helper; if one ever appears it should be
+  // an explicit, credentialed call site — not this helper. (ClickUp 868maend5)
   else
-    return await fetch(src, { signal: AbortSignal.timeout(timeoutMs) }).then((response) =>
-      response.blob().catch(() => null)
+    return await fetch(src, { signal: AbortSignal.timeout(timeoutMs), credentials: 'omit' }).then(
+      (response) => (requireOk && !response.ok ? null : response.blob().catch(() => null))
     );
 }
 
@@ -32,9 +41,13 @@ export function blobToFile(
   return new File([blob], filename, { type });
 }
 
-export async function fetchBlobAsFile(src: string | Blob | File, filename?: string) {
+export async function fetchBlobAsFile(
+  src: string | Blob | File,
+  filename?: string,
+  options?: { requireOk?: boolean }
+) {
   if (src instanceof File) return src;
-  const blob = await fetchBlob(src);
+  const blob = await fetchBlob(src, undefined, options);
   if (!blob) return null;
   let type = blob.type;
 

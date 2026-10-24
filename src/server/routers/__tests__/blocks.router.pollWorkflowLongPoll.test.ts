@@ -35,6 +35,8 @@ const {
   mockIsAppBlocksAuthorEnabled,
   mockUpdateBlockWorkflowStatus,
   mockSettleCustomComfySpend,
+  mockAcquireHoldSlot,
+  mockReleaseHoldSlot,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -50,6 +52,12 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockUpdateBlockWorkflowStatus: vi.fn(async () => undefined),
   mockSettleCustomComfySpend: vi.fn(async () => undefined),
+  mockAcquireHoldSlot: vi.fn(),
+  mockReleaseHoldSlot: vi.fn(async () => undefined),
+}));
+
+vi.mock('~/server/utils/block-poll-hold-slots', () => ({
+  acquireBlockPollHoldSlot: (...args: unknown[]) => mockAcquireHoldSlot(...args),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -109,6 +117,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket, not the catalog one — so this file,
+  // which is entirely about poll, must declare it or every case throws on the missing export.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -116,9 +127,19 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
+import {
+  MAX_BLOCK_POLL_CONCURRENT_HOLDS,
+  MAX_BLOCK_POLL_WAIT_SECONDS,
+} from '~/server/services/blocks/workflow.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -138,10 +159,31 @@ const mockDbRead = dbMock.dbRead;
 // 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. Every workflow below differs in id,
 // status AND cost, so a wiring bug that returns the wrong workflow — or a stub
 // that returns a constant — cannot pass by coincidence.
-const RUNNING = { id: 'wf_running', status: 'processing', cost: { total: 11 }, steps: [] };
-const SUCCEEDED = { id: 'wf_succeeded', status: 'succeeded', cost: { total: 22 }, steps: [] };
-const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [] };
-const CANCELED = { id: 'wf_canceled', status: 'canceled', cost: { total: 44 }, steps: [] };
+// The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it, and these
+// fixtures are about the long poll rather than about scoping.
+const TAGS = ['app-block:oac_01JQ8XG7YV2K4M6P8R0T2W4Y6B'];
+const RUNNING = {
+  id: 'wf_running',
+  status: 'processing',
+  cost: { total: 11 },
+  steps: [],
+  tags: TAGS,
+};
+const SUCCEEDED = {
+  id: 'wf_succeeded',
+  status: 'succeeded',
+  cost: { total: 22 },
+  steps: [],
+  tags: TAGS,
+};
+const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [], tags: TAGS };
+const CANCELED = {
+  id: 'wf_canceled',
+  status: 'canceled',
+  cost: { total: 44 },
+  steps: [],
+  tags: TAGS,
+};
 
 /** The `query` argument of the Nth `getWorkflow` call (undefined if none). */
 function queryArg(n = 0): { wait?: number } | undefined {
@@ -205,12 +247,20 @@ beforeEach(() => {
   mockGetUserById.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
+  mockReleaseHoldSlot.mockReset().mockResolvedValue(undefined);
+  mockAcquireHoldSlot.mockReset().mockResolvedValue(mockReleaseHoldSlot);
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   mockVerifyBlockToken.mockResolvedValue(validClaims());
   mockUpdateBlockWorkflowStatus.mockResolvedValue(undefined);
   mockSettleCustomComfySpend.mockResolvedValue(undefined);
   mockCancelWorkflow.mockResolvedValue(undefined);
+});
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
 });
 
 describe('blocks.pollWorkflow — long poll wiring', () => {
@@ -262,17 +312,79 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(queryArg()).toBeUndefined();
   });
 
-  it('rejects a nonsensical waitSeconds at the wire schema without calling the orchestrator', async () => {
+  // The wire schema never refuses a waitSeconds: a refused poll reaches the block as a failed
+  // generation. Every number goes to the resolver; anything else is no hold.
+  it.each([
+    [2.5, { wait: 2 }],
+    [90, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
+    [99_999, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
+    [-3, undefined],
+    [null, undefined],
+    ['7', undefined],
+    [Number.NaN, undefined],
+    [Number.POSITIVE_INFINITY, undefined],
+  ])('accepts waitSeconds %s and asks the orchestrator for %o', async (waitSeconds, query) => {
     mockGetWorkflow.mockResolvedValue(RUNNING);
 
-    await expect(
-      caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running', waitSeconds: 99_999 })
-    ).rejects.toThrow();
-    await expect(
-      caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running', waitSeconds: -3 })
-    ).rejects.toThrow();
+    const result = await caller().pollWorkflow({
+      blockToken: 'tok',
+      workflowId: 'wf_running',
+      waitSeconds: waitSeconds as number,
+    });
 
-    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+    expect(queryArg()).toEqual(query);
+    expect(result.snapshot.status).toBe('processing');
+  });
+
+  describe('concurrent hold cap', () => {
+    const held = { blockToken: 'tok', workflowId: 'wf_running', waitSeconds: 9 };
+
+    it('takes a slot keyed on the install and the viewer, and holds', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      await caller().pollWorkflow(held);
+      expect(mockAcquireHoldSlot.mock.calls).toEqual([
+        ['bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C', 42, MAX_BLOCK_POLL_CONCURRENT_HOLDS],
+      ]);
+      expect(queryArg()).toEqual({ wait: 9 });
+    });
+
+    it('OVER THE CAP: answers the poll without a hold instead of refusing it', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      mockAcquireHoldSlot.mockResolvedValue(null);
+
+      const result = await caller().pollWorkflow(held);
+
+      expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+      expect(queryArg()).toBeUndefined();
+      expect(result.snapshot.status).toBe('processing');
+    });
+
+    it('releases the slot once, after the read, when the read succeeds', async () => {
+      const order: string[] = [];
+      mockGetWorkflow.mockImplementation(async () => {
+        order.push('read');
+        return RUNNING;
+      });
+      mockReleaseHoldSlot.mockImplementation(async () => {
+        order.push('release');
+      });
+      await caller().pollWorkflow(held);
+      expect(order).toEqual(['read', 'release']);
+    });
+
+    it('releases the slot when the read throws', async () => {
+      mockGetWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await expect(caller().pollWorkflow(held)).rejects.toThrow();
+      expect(mockReleaseHoldSlot).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes no slot for a poll without a hold', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      await caller().pollWorkflow({ ...held, waitSeconds: 0 });
+      await caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running' });
+      expect(mockAcquireHoldSlot).not.toHaveBeenCalled();
+    });
   });
 
   it('COMPLETES INSIDE THE HOLD: terminal snapshot + terminal side effects fire', async () => {

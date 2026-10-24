@@ -117,7 +117,10 @@ Miss the second and it fails at runtime, not at typecheck.
 **A pure moderation constant or util that now exists in both apps belongs in `@civitai/mod-utils`** —
 add a row to [`mod-utils-candidates.md`](../../../docs/moderator-app/mod-utils-candidates.md) and move
 it in its own scoped change, never folded into the page port. Utils only: no DB, no `process.env`, no
-framework imports.
+framework imports. **If the main app consumes it too, it needs its own wiring** — `workspace:*` in the
+root `package.json` plus the name in `transpilePackages` in `next.config.mjs`, because a workspace
+package ships raw TS/JSON and Next will not build it otherwise. That doc's Process §3 is the
+maintained copy of both halves; don't restate it here.
 
 ### Prisma → Kysely: match the predicate, not the intent
 

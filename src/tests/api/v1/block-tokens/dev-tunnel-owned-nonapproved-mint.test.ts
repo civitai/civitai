@@ -77,6 +77,12 @@ const {
     isAppBlocksAuthorEnabled: vi.fn(async () => true),
     isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
     isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => true),
+    // PHASE 3 (private run) is reached on this path, BEFORE the bare 404, so the
+    // mint imports this accessor. `false` is both the correct default for these
+    // suites (none of them exercises the private-run branch) and the flag's real
+    // ship state: it is base-off in Flipt until PR 3 creates the row. A missing key
+    // here does not fail open — it throws, which is how this was found.
+    isAppBlocksPrivateRunEnabled: vi.fn(async () => false),
   };
   const devTunnelService = {
     getActiveDevTunnel: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
@@ -96,14 +102,24 @@ const {
   };
 });
 
-vi.mock('~/env/server', () => ({
-  env: {
+const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
+  mockEnv: {
     NEXTAUTH_URL: 'https://civitai.com',
-    TRPC_ORIGINS: [],
+    TRPC_ORIGINS: [] as string[],
     BLOCK_TOKEN_PRIVATE_KEY: 'fake-private',
     BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: false,
+  },
+  mockDevOauth: {
+    mintDevTunnelOauthToken: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      token: 'civ_dev_oauth',
+      expiresAt: '2099-01-01T00:15:00Z',
+    })),
+    devTunnelClientId: (userId: number, slug: string) => `appdev-${userId}-${slug}`,
   },
 }));
+vi.mock('~/env/server', () => ({ env: mockEnv }));
+vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -202,6 +218,7 @@ async function invoke(body: unknown) {
 describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
     mockSession.value = MOD;
     mockRedis.incrBy.mockResolvedValue(1);
     mockRedis.ttl.mockResolvedValue(60);
@@ -216,6 +233,25 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
       sessionId: 'bki_testsession',
       grantedScopes: [],
     });
+  });
+
+  it.each([
+    ['at the cap', { path: '/', buzzBudgetPerGen: 5000 }, 5000],
+    ['one over the cap', { path: '/', buzzBudgetPerGen: 5001 }, 5000],
+    ['far over the cap', { path: '/', buzzBudgetPerGen: 6301 }, 5000],
+    ['undeclared', { path: '/' }, 1000],
+    ['a non-integer', { path: '/', buzzBudgetPerGen: 12.5 }, 1000],
+    ['negative', { path: '/', buzzBudgetPerGen: -5 }, 1000],
+  ])('a manifest budget, %s, mints the owner’s dev-tunnel buzzBudget', async (_l, page, minted) => {
+    mockBlockRegistry.resolveOwnedNonApprovedPageBlock.mockResolvedValue(
+      OWNED_RESOLUTION({
+        manifest: { name: 'My App', page, scopes: ['ai:write:budgeted', 'user:read:self'] },
+      })
+    );
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect((mockTokenService.sign.mock.calls[0][0] as any).buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
   });
 
   it('owner + SUSPENDED app + active tunnel + flags → mints a self-bound token (real ids, dev:true, forced-SFW)', async () => {
@@ -235,7 +271,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(arg.blockInstanceId).toBe('page_apb_real');
     expect(arg.dev).toBe(true);
     expect(arg.domain).toBeNull();
-    // Budget from the manifest page.buzzBudgetPerGen (75), clamped to the dev cap (250).
+    // Budget from the manifest page.buzzBudgetPerGen (75), under the dev cap.
     expect(arg.buzzBudget).toBe(75);
     // Ownership resolve was called with the real id + caller + write db.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).toHaveBeenCalledWith(
@@ -424,6 +460,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
         sessionId: 'bki_testsession',
         scopes: ['ai:write:budgeted', 'user:read:self'],
         spendGranted: true,
+        kind: 'block',
       });
       // DUAL-SINK RELATIONSHIP: the mirror is exactly the Axiom payload plus `event`.
       const axiom = log.info.mock.calls.find(
@@ -485,6 +522,37 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(res._status).toBe(200);
     // The non-approved branch never ran for an approved app.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).not.toHaveBeenCalled();
+  });
+
+  it('mints a hub token on the app’s REAL client when the tunnel declares auth: "oauth", consenting the owner directly', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'oauth',
+    });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ token: 'civ_dev_oauth', kind: 'oauth', needsConsent: false });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(mockDevOauth.mintDevTunnelOauthToken).toHaveBeenCalledWith({
+      userId: MOD.user.id,
+      clientId: 'appblk-my-app',
+      scopes: ['ai:write:budgeted', 'user:read:self'],
+    });
+  });
+
+  it('the stored manifest’s auth decides when the CLI declared nothing', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockBlockRegistry.resolveOwnedNonApprovedPageBlock.mockResolvedValue(
+      OWNED_RESOLUTION({ manifest: { ...OWNED_RESOLUTION().manifest, auth: 'oauth' } })
+    );
+    expect((await invoke(DEV_BODY()))._body.kind).toBe('oauth');
+
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'block-token',
+    });
+    expect((await invoke(DEV_BODY()))._body.kind).toBe('block');
   });
 
   it('an ephemeral-<slug> id is NOT handled by this branch (belongs to tryDevTunnelScopedMint)', async () => {

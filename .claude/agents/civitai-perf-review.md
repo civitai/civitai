@@ -1,6 +1,7 @@
 ---
 name: civitai-perf-review
 description: Reviews a feature segment in the main Civitai Next.js app (src/) for production performance — N+1 queries, unindexed scans, hot feed path regressions, cache stampedes, event-loop blocking, and client bundle weight. Cleared for read-only prod EXPLAIN via the postgres-query and clickhouse-query skills. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-test-review and civitai-intent-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is `src/` and the packages it imports.** The SvelteKit apps under `apps/` belong to the
 `svelte-*-review` trio.
 
-Read the root `CLAUDE.md` "Server-Side Architecture Map" first. Useful prior art in `docs/`:
+Read the architecture map in `.claude/rules/server.md` first. Useful prior art in `docs/`:
 `feed-layer-perf-checklist.md`, `frontend-perf-audit-2026-04.md`, `middleware-performance-improvements.md`,
 `basemodel-metrics-performance.md`.
 

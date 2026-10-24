@@ -11,6 +11,7 @@ import {
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
+import { ImageSearchMaintenanceNotice } from '~/components/Search/ImageSearchMaintenance';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -19,23 +20,27 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 export default function ImageSearch() {
+  const features = useFeatureFlags();
   return (
     <SearchLayout.Root>
       <SearchLayout.Content>
         <SearchHeader />
-        <ImagesHitList />
+        {features.imageSearch ? <ImagesHitList /> : <ImageSearchMaintenanceNotice />}
       </SearchLayout.Content>
     </SearchLayout.Root>
   );
@@ -67,7 +72,11 @@ function RenderFilters() {
             : ''
         }`
       : null,
-    browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    buildMinorExclusionFilter({
+      targetIndex: 'images',
+      addons: browsingSettingsAddons.settings,
+      currentUser,
+    }),
     // Filter out images from NSFW models with restricted base models
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '
@@ -76,11 +85,7 @@ function RenderFilters() {
 
   return (
     <>
-      <BrowsingLevelFilter
-        indexKey="images"
-        filters={filters}
-        attributeOverride={features.canViewNsfw ? undefined : 'combinedNsfwLevel'}
-      />
+      <BrowsingLevelFilter indexKey="images" filters={filters} />
       <SortBy
         title="Sort images by"
         items={!features.canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
@@ -123,6 +128,7 @@ function RenderFilters() {
         attribute="baseModel"
         limit={100}
         searchable
+        renderOption={renderBaseModelOption}
       />
     </>
   );
@@ -137,6 +143,7 @@ function ImagesHitList() {
     type: 'images',
     data: hits,
   });
+  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -212,9 +219,9 @@ function ImagesHitList() {
         </ImagesProvider>
       </div> */}
       <div>
-        <ImagesProvider images={items as any} hideReactions>
+        <ImagesProvider images={decorated as any} hideReactions>
           <MasonryColumnsVirtual
-            data={items as any}
+            data={decorated as any}
             imageDimensions={(data) => {
               const width = data?.width ?? 450;
               const height = data?.height ?? 450;
@@ -246,24 +253,36 @@ function ImagesHitList() {
   );
 }
 
-ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
+function ImageSearchLayout({ children }: { children: React.ReactNode }) {
+  const features = useFeatureFlags();
   return (
     <SearchLayout
       indexName={IMAGES_SEARCH_INDEX}
+      maintenance={!features.imageSearch}
       leftSidebar={
-        <SearchLayout.Filters>
-          <RenderFilters />
-        </SearchLayout.Filters>
+        features.imageSearch ? (
+          <SearchLayout.Filters>
+            <RenderFilters />
+          </SearchLayout.Filters>
+        ) : undefined
       }
     >
-      {page}
+      {children}
     </SearchLayout>
   );
+}
+
+ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
+  return <ImageSearchLayout>{page}</ImageSearchLayout>;
 };
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.imageSearch) return { notFound: true };
+    // Only redirect when the Images entry is hidden entirely. When it stays visible
+    // (`imageSearchEntry`) but search is off (`imageSearch`), the page renders a maintenance
+    // notice in place — old bookmarks land on the notice instead of a redirect.
+    if (!features?.imageSearch && !features?.imageSearchEntry)
+      return { redirect: { destination: '/search/models', permanent: false } };
   },
 });

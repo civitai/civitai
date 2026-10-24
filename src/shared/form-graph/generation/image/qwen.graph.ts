@@ -1,18 +1,25 @@
 import { z } from 'zod';
+import { qwen21AspectRatios, qwen21ResolutionOptions } from '~/shared/constants/qwen21.constants';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SEED, aspectRatioDef, resourcesDef, sliderDef } from '../defs';
-import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
+import {
+  optionFallback,
+  img2imgImages,
+  SEED,
+  aspectRatioDef,
+  resourcesDef,
+  sliderDef,
+} from '../defs';
+import { familyScope, familyResources, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Qwen family (Qwen / Qwen2 / Qwen3), ported from `qwen-graph.ts`. Three
+ * Qwen family (Qwen / Qwen2 / Qwen21 / Qwen3). Four
  * ecosystems, one graph: Qwen is the comfy build (LoRAs, cfg/steps,
  * workflow-scoped version lists — a cross-workflow version hits the LOCK and
  * substitutes to the current workflow's default, probed); Qwen2 is the fal
- * build (negative prompt only); Qwen3 is DashScope (prompt expansion toggle).
+ * build (negative prompt only); Qwen21 is the unified 7B Comfy build;
+ * Qwen3 is DashScope (prompt expansion toggle).
  */
-
-// ---- copied from qwen-graph.ts, which dies with the data-graph engine -------
 
 export const qwenVersionIds = {
   txt2img_v2509: 2110043,
@@ -31,6 +38,7 @@ const qwenImg2ImgVersionOptions = [
   { label: 'v2511', value: qwenVersionIds.img2img_v2511 },
 ];
 
+/** The `Qwen` ecosystem only; `Qwen2` and `Qwen3` have their own lists. */
 const qwenAspectRatios = [
   { label: '2:3', value: '2:3', width: 832, height: 1216 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
@@ -55,8 +63,6 @@ const qwen3AspectRatios = [
   { label: '9:16', value: '9:16', width: 928, height: 1664 },
 ];
 
-// ---- end of qwen-graph.ts copies --------------------------------------------
-
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');
 
 const qwen1 = defineGraph<FamilyExt>()
@@ -70,7 +76,7 @@ const qwen1 = defineGraph<FamilyExt>()
       defaultModelId: isEdit ? qwenVersionIds.img2img_v2511 : qwenVersionIds.txt2img_v2512,
     });
   })
-  // v1 uses raw resourcesNode with a hardcoded 'Qwen' ecosystem: no filter
+  // Hardcoded 'Qwen' ecosystem, and no cross-ecosystem filter.
   .field('resources', ({ _ext }) =>
     resourcesDef({ ecosystem: 'Qwen', limit: _ext.limits.maxResources, filterIncompatible: false })
   )
@@ -83,6 +89,29 @@ const qwen2 = defineGraph<FamilyExt>()
     checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
   )
   .field('aspectRatio', aspectRatioDef({ options: qwen2AspectRatios, default: '1:1' }));
+
+const qwen21 = defineGraph<FamilyExt>()
+  .field('model', ({ _ext }) =>
+    checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
+  )
+  .field('resources', familyResources)
+  .field('resolution', {
+    input: z.enum(qwen21ResolutionOptions).optional(),
+    output: z.enum(qwen21ResolutionOptions),
+    default: '1K' as (typeof qwen21ResolutionOptions)[number],
+    correct: optionFallback(
+      qwen21ResolutionOptions,
+      '1K' as (typeof qwen21ResolutionOptions)[number]
+    ),
+    meta: { options: qwen21ResolutionOptions.map((value) => ({ label: value, value })) },
+  })
+  .field('aspectRatio', ({ resolution, _ext }) =>
+    _ext.workflow.startsWith('txt')
+      ? aspectRatioDef({ options: qwen21AspectRatios[resolution], default: '1:1' })
+      : null
+  )
+  .field('cfgScale', sliderDef({ min: 0, max: 30, default: 1, step: 0.5 }))
+  .field('steps', sliderDef({ min: 1, max: 150, default: 25 }));
 
 const qwen3 = defineGraph<FamilyExt>()
   .field('model', ({ _ext }) =>
@@ -106,18 +135,20 @@ const qwen3 = defineGraph<FamilyExt>()
 const subFamilies = branch('ecosystem', [
   [['Qwen'], qwen1],
   [['Qwen2'], qwen2],
+  [['Qwen21'], qwen21],
   [['Qwen3'], qwen3],
 ] as const);
 
 export const qwen = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('images', img2imgImages({ max: 3 }))
+  .field('images', (bag) => img2imgImages({ max: bag._ext.ecosystem === 'Qwen21' ? 10 : 3 })(bag))
   .field('seed', SEED)
   .use(subFamilies)
-  // negativePrompt exists only in the Qwen2/Qwen3 subgraphs; its in-branch
+  // negativePrompt exists in the Qwen2/Qwen21/Qwen3 subgraphs; its in-branch
   // snippet registration never fires
   .use(
     makeTextBlock({
-      negativePrompt: (ext) => ext.ecosystem === 'Qwen2' || ext.ecosystem === 'Qwen3',
+      negativePrompt: (ext) =>
+        ext.ecosystem === 'Qwen2' || ext.ecosystem === 'Qwen21' || ext.ecosystem === 'Qwen3',
       negativePromptRegistersTarget: false,
     })
   );

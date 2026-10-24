@@ -19,7 +19,7 @@ import {
  * 🔴 THE DEFECT IS A GAP, NOT A CLIP. Nothing was cut off — a table's columns simply
  * stayed at their content width and the table distributed the extra 640px as PADDING,
  * which on a `space-between` row lands entirely between a row's content and the control
- * that acts on it. Measured on `/apps/installed`, where THREE
+ * that acts on it. Measured on `/apps/activity`, where THREE
  * `Group justify="space-between" wrap="nowrap"` rows (in `PinnedInstallRow`,
  * `InstalledAppCard` and `HiddenBlocksPanel`) each moved their button 640px further from
  * the name it belongs to. `/apps/review` had the same shape and had been "fixed" by
@@ -143,23 +143,43 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
 }
 
 /**
- * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Submitter ·
- * date · [Deploy] · action.
+ * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Version ·
+ * Submitter · Plays · date · [Deploy] · action.
  *
  * The App column is primary: it is the only cell carrying a variable-length identity
- * (a slug plus an optional title), and it is what a moderator scans down. Everything
- * else is a badge, a username, a formatted date or a button — all of which have a
- * natural width that more space does not improve.
+ * (an icon, a slug and an optional title), and it is what a moderator scans down.
+ * Everything else is a badge, a semver, a user chip, an abbreviated count, a relative
+ * age or a button — all of which have a natural width that more space does not improve.
  *
  * The Deploy column exists on the Approved tab only, so BOTH shapes are enumerated
  * rather than one being patched at the call site. Its presence is decided by whether a
  * retrigger handler was supplied — i.e. by data, never by width.
+ *
+ * 🔴 THE DATE SHARE WENT DOWN WHEN THE COLUMN WENT RELATIVE, AND THAT IS THE DIRECTION
+ * THIS MODULE'S OWN RULE REQUIRES. It was 9 against a `toLocaleString()` stamp; the cell
+ * now renders `5h` / `2mo`, whose max-content is a fraction of that, so 9 would have been
+ * ~130px of padding per row at the wide width — "a share larger than its cell needs is
+ * padding relabelled", which is the defect, not the fix.
+ *
+ * 🔴 VERSION AND SUBMITTER ARE THE TWO BIG FIXED SHARES, which is not where intuition puts
+ * them. Version is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap
+ * row. Submitter is an avatar plus a username, sized to the longest the schema allows
+ * (`usernameInputSchema.max(25)`): `UserAvatar`'s own row is `wrap="nowrap"`, so a long
+ * name moves the cell's MIN-CONTENT rather than the row height, and a share under that
+ * simply stops binding — automatic table layout hands the column its min-content anyway and
+ * the primary absorbs less.
+ *
+ * 🔴 NEITHER IS SIZED BY EYE, AND NEITHER MAY BE JUSTIFIED BY A FIGURE WRITTEN HERE. The
+ * declared-share and Version-containment arms in `AppsWideLayout.geometry.test.tsx` render
+ * the real components at the real bound and red on a share below its cell; that is the
+ * record. A pixel value in this comment is not — it moves with any font, padding or `size`
+ * change, with nothing asserting it.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
-  /** Pending / Rejected: Kind · App · Submitter · date · action. */
-  withoutDeploy: [6, null, 6, 9, 6] as AppsTableColumns,
-  /** Approved: Kind · App · Submitter · date · Deploy · action. */
-  withDeploy: [5, null, 5, 8, 8, 5] as AppsTableColumns,
+  /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */
+  withoutDeploy: [6, null, 14, 13, 5, 5, 6] as AppsTableColumns,
+  /** Approved: Kind · App · Version · Submitter · Plays · date · Deploy · action. */
+  withDeploy: [6, null, 14, 13, 5, 5, 8, 6] as AppsTableColumns,
 } as const;
 
 /**
@@ -217,6 +237,13 @@ export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 18, 9];
  * and handing it the slack would push the buttons away from the row again.
  */
 export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 5, 5, 4, 13];
+
+/**
+ * The `/apps/review` SUB-LISTINGS table (`SubListingReviewQueue`). The item cell carries the
+ * before/after diff of a staged edit, so it takes the slack; the action cell holds up to three
+ * buttons.
+ */
+export const APPS_SUB_LISTING_QUEUE_COLUMNS: AppsTableColumns = [null, 12, 10, 22];
 
 /**
  * The revenue attributions table (`RevenuePanel`) — Date · [App] · **Scope** · Buzz ·
@@ -305,7 +332,7 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
 /**
  * 🔴 THERE IS NO `APPS_ACTIVITY_COLUMNS`, AND THAT IS A MEASURED DECISION.
  *
- * `/apps/installed`'s activity tab (`AppActivityPanel`) carried one for two rounds and it
+ * `/apps/activity`'s activity tab (`AppActivityPanel`) carried one for two rounds and it
  * was wrong both times — first with `Detail` primary (a fixed monospace ref), then with
  * shares set from a 1408 measurement, which squeezed three columns below their content at
  * every width a real desktop uses. Measured on a rich `tip` row, ROW HEIGHT:
@@ -317,7 +344,9 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  *
  * Round 3 was 79% taller than natural at 1440 — `When` broke a `YYYY-MM-DD HH:mm` stamp
  * across THREE lines, and `App` sat pinned at its 108.52 min-content from 768 through 2560
- * so a long name was ellipsised identically on both.
+ * so a long name was ellipsised identically on both. (`When` no longer renders that stamp
+ * — see the re-measurement at the foot of this comment. The natural row height is still
+ * 36.19 at all four widths, so this table's rows are unchanged.)
  *
  * 🔴 AND NO LEDGER FIXES IT, WHICH IS THE POINT. This table's max-content sum (~735px) is
  * the container's content width AT 768, so there is no surplus to place at the narrow end.
@@ -333,6 +362,55 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  * a share larger than its cell needs is padding relabelled — rules out the second. The
  * table is EXEMPT; the guard in `__tests__/appsWideLayout.test.ts` records that as a
  * `no-surplus` exemption and requires a geometry arm to keep proving it.
+ *
+ * ── 🔴 RE-MEASURED AFTER `When` WENT RELATIVE (`DaysFromNow`) ─────────────────
+ *
+ * The numbers above were taken with `When` rendering a fixed-width `YYYY-MM-DD HH:mm`
+ * stamp. It now renders `20 minutes ago`, so the measurement no longer described the
+ * table and was redone rather than inherited. Same fixture (one rich `tip` row), same
+ * four viewports, `AppsWideLayout.geometry.test.tsx`:
+ *
+ *   WHEN | APP | ACTION | DETAIL | STATUS, natural layout, cell widths in px
+ *
+ *   before   @768    119.67 | 177.34 | 194.36 | 179.09 |  65.53
+ *            @1200   189.94 | 281.44 | 308.44 | 284.23 | 103.95
+ *            @1440   228.95 | 339.27 | 371.81 | 342.63 | 125.34
+ *            @2560   411.09 | 609.14 | 667.58 | 615.19 | 225.00   ← the row above
+ *
+ *   after    @768    108.39 | 180.58 | 197.91 | 182.38 |  66.75
+ *            @1200   172.02 | 286.59 | 314.08 | 289.44 | 105.88
+ *            @1440   207.38 | 345.47 | 378.63 | 348.91 | 127.63
+ *            @2560   372.33 | 620.30 | 679.80 | 626.45 | 229.13
+ *
+ *   ROW HEIGHT        36.19 at 768 / 1200 / 1440 / 2560 — UNCHANGED, both before and
+ *                     after. That is the value the exemption rests on.
+ *
+ * 🔴 THE CONCLUSION SURVIVES, AND SO DOES THE REASON FOR IT. `When` gave up ~10% of its
+ * width at every viewport (38.76px at 2560) and the other four columns absorbed it
+ * proportionally — the table stayed at its natural distribution, it did not develop a
+ * surplus. The `no-surplus` argument is a claim about max-content sum vs container width
+ * at 768, and a narrower `When` makes that sum SMALLER, i.e. it moves further away from
+ * the case a ledger could help. Nothing here re-opens the decision.
+ *
+ * (The `before` @2560 row reproduces the recorded `natural @2560` figures exactly, which
+ * is the control on the re-measurement: the instrument agrees with the number that was
+ * already in this comment before it was pointed at anything new.)
+ *
+ * ── ⚠️ THE SCOPE OF ALL OF THE ABOVE: CONTAINERS ≥768 ─────────────────────────
+ *
+ * Every number in this note comes from the 768 / 1200 / 1440 / 2560 ladder, and the
+ * `no-surplus` argument is "max-content sum ≈ container content width AT 768". Nothing in
+ * it is wrong; it simply never described the panel's OTHER mount.
+ * `AppPermissionsActivityDrawer` renders it in a Mantine `size="md"` drawer — 27.5rem,
+ * ~408px of content — where ~735px of max-content is ~80% over and overflow is certain.
+ *
+ * So the exemption now states its own bound: NO-SURPLUS AT ≥768, and below ~560px the panel
+ * renders the STACKED variant (`AppActivityPanel.module.scss`, a `container-type: inline-size`
+ * query) where each row is a card and there are no columns to ledger. A `<colgroup>` is inert
+ * against `display: block` cells, so the two decisions do not interact. Both halves are
+ * measured: `the activity table renders ONE LINE per cell at every width` holds the ≥768
+ * claim, and `the drawer's activity feed renders the STACKED variant, and the wide page does
+ * not` holds the narrow one — `__tests__/appsWideLayout.test.ts` requires both arms by name.
  */
 
 /**
@@ -353,6 +431,15 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  */
 export const APPS_AGENT_REPORT_SCOPE_COLUMNS: AppsTableColumns = [7, 5, 6, 6, 22, null];
 
+/**
+ * The analytics panel's Custom events table (`AppAnalyticsPanel`) — **Event** · Events ·
+ * Signed-in viewers · Signed-out events. Event is primary: the three counts are numbers whose
+ * natural width more space does not improve, so their shares use the shrink-to-content idiom
+ * (too small to bind) and the surplus goes to the event name beside its counts. No geometry arm
+ * measures this table.
+ */
+export const APPS_CUSTOM_EVENTS_COLUMNS: AppsTableColumns = [null, 2, 2, 2];
+
 /** Every ledger in this module, so a guard can sweep them all rather than a sample. */
 export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns>> = {
   'review queue (pending/rejected)': APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy,
@@ -363,6 +450,7 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
   'revenue (scoped)': APPS_REVENUE_COLUMNS.scoped,
   'active previews': APPS_ACTIVE_PREVIEWS_COLUMNS,
   'agent report scopes': APPS_AGENT_REPORT_SCOPE_COLUMNS,
+  'custom events': APPS_CUSTOM_EVENTS_COLUMNS,
 };
 
 /**
@@ -438,7 +526,7 @@ export const APPS_LEGACY_CONTENT_WIDTH = APPS_LEGACY_CONTAINER_WIDTH - APPS_CONT
  * `child=1200`, and `document.scrollWidth` **unchanged** — so the card is 1200px wide
  * inside a 358px grid, CLIPPED, with no scrollbar and no page-level overflow to notice
  * it by. Nothing on screen says the content is cut off. That matters because this
- * component converted three phone-reachable `Stack`s on `/apps/installed` into grids, so
+ * component converted three phone-reachable `Stack`s on `/apps/activity` into grids, so
  * the narrow case is a real users' case rather than a theoretical one, and it is pinned
  * at a phone viewport in `AppsWideLayout.geometry.test.tsx`.
  *
@@ -460,7 +548,7 @@ export function AppsCardGrid({
    * Track gap in px. Defaults to {@link APPS_CARD_LIST_GAP} (Mantine `md`).
    *
    * 🔴 IT IS A PROP BECAUSE THE PROVENANCE RULE APPLIES TO SPACING TOO. The lists this
-   * replaced did not all use the same gap — `/apps/installed`'s Hidden tab was
+   * replaced did not all use the same gap — `/apps/activity`'s Hidden tab was
    * `<Stack gap="sm">` (12px) — and defaulting every one of them to 16 would have moved
    * something a 1440 monitor shows, which is precisely what
    * `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes" claim

@@ -13,7 +13,7 @@
  *       "ref": "design",            // local ref for dependencies (optional)
  *       "name": "Design system architecture",
  *       "description": "Create the architecture doc",
- *       "assignee": "justin",       // name, email, or ID
+ *       "assignee": "jane",         // name, email, or ID
  *       "priority": "high",         // urgent/high/normal/low/none
  *       "status": "to do",          // status name
  *       "dueDate": "+7d",           // relative or absolute date

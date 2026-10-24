@@ -14,7 +14,7 @@ import {
   unfollowUserHub,
 } from '~/server/services/user-hub.service';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { encodeHubId } from '~/server/utils/hub-id';
 
@@ -43,7 +43,6 @@ const hubRow = (over: Partial<{ id: number; userId: number; name: string }> = {}
   availability: Availability.Public,
   forcedBrowsingLevel: 0,
   metadata: {},
-  sources: [],
   ...over,
 });
 
@@ -197,26 +196,46 @@ describe('getFollowedHubs', () => {
     expect(followFindMany.mock.calls[0][0].orderBy).toStrictEqual({ hub: { name: 'asc' } });
   });
 
-  it('does not join the owner — the rail renders a name and a source count', async () => {
+  it('fetches neither the owner nor the sources — the rail renders a name and counts', async () => {
+    // The sources are the payload: every hub in the rail carrying its whole list is
+    // what this list shape exists to avoid, and a `select` that quietly grows them
+    // back reads as a working list everywhere else.
     await getFollowedHubs({ userId: VIEWER });
 
     const select = followFindMany.mock.calls[0][0].select.hub.select;
     expect(select.user).toBeUndefined();
+    expect(select.sources).toBeUndefined();
     expect(select.name).toBe(true);
-    expect(select.sources).toBeTruthy();
   });
 
-  it('returns the same detail shape the owned list does', async () => {
-    stubFollowedHubs([
-      { ...hubRow({ id: 5 }), metadata: { description: 'hi' }, sources: [{ enabled: false }] },
+  it('returns the same summary shape the owned list does', async () => {
+    stubFollowedHubs([{ ...hubRow({ id: 5 }), metadata: { description: 'hi' } }]);
+    dbMock.dbRead.userHubSource.groupBy.mockResolvedValue([
+      {
+        hubId: 5,
+        type: UserHubSourceType.User,
+        enabled: true,
+        exclude: false,
+        _count: { _all: 2 },
+      },
+      // Switched off by the owner, so it fills nothing and is not counted for anyone.
+      {
+        hubId: 5,
+        type: UserHubSourceType.Tag,
+        enabled: false,
+        exclude: false,
+        _count: { _all: 1 },
+      },
     ]);
 
     const [hub] = await getFollowedHubs({ userId: VIEWER });
 
     expect(hub.description).toBe('hi');
-    // Not the owner, so a source the owner switched off is not published to them.
     expect(hub.isOwner).toBe(false);
-    expect(hub.sources).toStrictEqual([]);
+    expect(hub.sourceCounts).toStrictEqual({ User: 2 });
+    // A non-owner is told what fills the feed and nothing else: counting the owner's
+    // switched-off source here would publish part of their curation by arithmetic.
+    expect(hub.sourceCount).toBe(2);
     expect(hub).not.toHaveProperty('metadata');
   });
 });

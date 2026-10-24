@@ -3,8 +3,13 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { LINK_CLASS, dateTime, plainText } from '$lib/format';
-  import type { Account } from './user-account';
+  import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { postedIds } from './posted-ids';
+  import { fetchReviewImageCounts, type Account } from './user-account';
       import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
@@ -29,8 +34,16 @@
     { kind: 'search', key: 'q', label: 'Search content' },
   ];
 
-  // Bound so the confirmation can name a count. The inputs stay in the form, so they still post.
-  let selectedReviews = $state<number[]>([]);
+  // A `SelectionSet`, not an array behind `bind:group` — `bind:group` only works on a native
+  // `<input>`. What it fixes: under `bind:group` the COUNT and the PAYLOAD were different quantities.
+  // A row ticked and then filtered off screen stayed in `selectedReviews.length`, which is what
+  // Delete's confirmation read, while its input had unmounted and stopped posting. Both now come from
+  // one derivation over the rendered rows, so they cannot disagree.
+  //
+  // Only that derivation (`postedIds`) is shared with `CommentList.svelte` beside this file — it keeps
+  // its own array-based selection, so comments get no shift-range select. Unifying the two selection
+  // models is a follow-up, not this change.
+  const selectedReviews = new SelectionSet<number>();
   let writtenFilters = $state<Record<string, string>>({});
   let receivedFilters = $state<Record<string, string>>({});
 
@@ -69,9 +82,19 @@
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
-  const form = new FormState({ onSuccess: () => onSuccess() });
+  //
+  // The selection is cleared here, as `CommentList` does. Exclude/Include leave their rows in the
+  // list (`filterWritten` only drops excluded rows when the Excluded filter is set), so ticks left
+  // behind would silently join the NEXT action's payload.
+  const form = new FormState({
+    onSuccess: () => {
+      selectedReviews.clear();
+      onSuccess();
+    },
+  });
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
-  const CHECKBOX = 'accent-blue-500 mr-1';
+
+  const imageCounts = $derived(browser ? fetchReviewImageCounts(userId) : SSR_PENDING);
 </script>
 
 {#if form.error}
@@ -98,19 +121,38 @@
           />
         {/snippet}
         {#snippet children(limit)}
+          {@const visible = written.slice(0, limit)}
+          {@const visibleIds = visible.map((r) => r.id)}
+          <!-- 🔴 Narrowed to what is RENDERED, not to `written`. `ListCard`'s limit shrinks as well as
+               grows — its toggle reads "Show less" — and it is component-local `$state`, so the
+               `{#await}` re-entering its pending branch on a reload collapses the card back to 5 rows.
+               Narrowing by `written` therefore kept posting a row ticked at position 30 and then
+               scrolled away, and Exclude/Include carry no confirmation to catch it. Nothing is lost by
+               this: unlike `CommentList` there is no select-all here, so a row can only enter the
+               selection by being rendered. -->
+          {@const posting = postedIds(visible, selectedReviews)}
           <form method="POST" action="?/contentAction" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="reviews" />
+            <!-- One entry per id: `contentAction` reads them with `form.getAll('reviewIds')`, and a
+                 joined string would act on a single row. Posted from the selection rather than from
+                 the controls themselves so the payload and the confirmed count are one derivation. -->
+            {#each posting as id (id)}
+              <input type="hidden" name="reviewIds" value={id} />
+            {/each}
             <ul class="space-y-1 text-sm">
-              {#each written.slice(0, limit) as r (r.id)}
-                <li class="flex flex-wrap items-baseline gap-x-2">
+              {#each visible as r (r.id)}
+                <li
+                  class="flex flex-wrap items-baseline gap-x-2"
+                  data-touch-target={canAct ? '' : undefined}
+                >
                   {#if canAct}
-                    <input
-                      type="checkbox"
-                      name="reviewIds"
-                      value={r.id}
-                      bind:group={selectedReviews}
-                      class={CHECKBOX}
+                    <SelectionCheckbox
+                      selection={selectedReviews}
+                      key={r.id}
+                      order={visibleIds}
+                      aria-label="Select review {r.id}"
+                      class="mr-1"
                     />
                   {/if}
                   {#if modelUrl(r.modelId)}
@@ -119,9 +161,13 @@
                     </a>
                   {/if}
                   {#if r.rating !== null}<span class="text-dark-0">{r.rating}★</span>{/if}
-                  {#if r.imageCount}
-                    <span class="text-xs text-dark-2">{r.imageCount} img</span>
-                  {/if}
+                  {#await imageCounts then counts}
+                    {#if counts[r.id]}
+                      <span class="text-xs text-dark-2">{counts[r.id]} img</span>
+                    {/if}
+                  {:catch}
+                    <!-- An image count is a detail: a failed lookup leaves it off rather than the row. -->
+                  {/await}
                   {#if r.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                   {#if r.nsfw}<Badge variant="secondary">NSFW</Badge>{/if}
                   {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
@@ -133,19 +179,37 @@
               {/each}
             </ul>
             {#if canAct}
+              <!-- Exclude/Include have no confirmation step, so zero-selection is disabled rather
+                   than posting an empty `reviewIds` the action would report success over. -->
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
                 <ConfirmSubmit
                   label="Delete"
                   name="op"
                   value="delete"
-                  count={selectedReviews.length}
+                  count={posting.length}
                   noun="review"
                   submitting={form.submitting}
                 />
-                <Button type="submit" name="op" value="exclude" size="sm" variant="outline" disabled={form.submitting}>
+                <Button
+                  type="submit"
+                  name="op"
+                  value="exclude"
+                  size="sm"
+                  variant="outline"
+                  disabled={form.submitting || posting.length === 0}
+                  data-touch-target
+                >
                   Exclude
                 </Button>
-                <Button type="submit" name="op" value="include" size="sm" variant="outline" disabled={form.submitting}>
+                <Button
+                  type="submit"
+                  name="op"
+                  value="include"
+                  size="sm"
+                  variant="outline"
+                  disabled={form.submitting || posting.length === 0}
+                  data-touch-target
+                >
                   Include
                 </Button>
               </div>

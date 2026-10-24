@@ -10,6 +10,8 @@ type Props = Omit<NumberInputProps, 'onChange'> & {
   onClear?: () => void;
   currency?: string;
   onChange?: (value: number | undefined) => void;
+  /** A value typed past `max` becomes `max` right away, instead of staying until blur. */
+  clampToMax?: boolean;
 };
 
 export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
@@ -21,6 +23,8 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       onChange,
       value,
       currency = constants.defaultCurrency,
+      clampToMax,
+      isAllowed,
       min,
       max,
       step,
@@ -54,6 +58,18 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       onChange?.(
         typeof value === 'number' ? (isCurrency ? Math.ceil(value * 100) : value) : undefined
       );
+    };
+
+    // Rejecting the keystroke while reporting `max` keeps the text in step with the value: once the
+    // value is already `max`, a second clamp to `max` wouldn't re-render the input.
+    const handleIsAllowed: NumberInputProps['isAllowed'] = (values) => {
+      if (isAllowed && !isAllowed(values)) return false;
+      const displayMax = typeof max === 'number' ? (isCurrency ? max / 100 : max) : undefined;
+      if (clampToMax && displayMax !== undefined && (values.floatValue ?? 0) > displayMax) {
+        handleChange(displayMax);
+        return false;
+      }
+      return true;
     };
 
     const showCloseButton = clearable && (typeof value === 'number' || !!value);
@@ -92,6 +108,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         decimalScale={isCurrency ? 2 : undefined}
         fixedDecimalScale={isCurrency}
         onChange={handleChange}
+        isAllowed={handleIsAllowed}
         value={parsedValue}
         min={min != null ? (isCurrency ? min / 100 : min) : undefined}
         max={max != null ? (isCurrency ? max / 100 : max) : undefined}

@@ -8,6 +8,10 @@ interface UseBlockTokenResult {
   /** ISO-8601 expiry of the current token. Surfaces to the iframe in
    *  BLOCK_INIT.token.expiresAt so blocks don't have to JWT-decode. */
   expiresAt: string | null;
+  kind: 'block' | 'oauth' | undefined;
+  /** The per-call Buzz budget the current token carries, as the mint reported it.
+   *  `undefined` when the token carries no spend scope. */
+  buzzBudget: number | undefined;
   error: Error | null;
   pending: boolean;
   /** A6: true when the app's approved manifest declares scopes the viewer has
@@ -16,12 +20,21 @@ interface UseBlockTokenResult {
   needsConsent: boolean;
   /** A6: the consent-gated scopes withheld from the current token. */
   missingScopes: string[];
+  /** The scopes the mint signed into the current token. `undefined` when the
+   *  response omits them (the dev-tunnel mint) — see `resolveAdvertisedScopes`. */
+  signedScopes: string[] | undefined;
   /** Advisory maturity signal mirrored from the mint (BLOCK_INIT). The color
    *  domain the token was minted on, or null when unresolved. */
   domain: 'green' | 'blue' | 'red' | null;
   /** Advisory: the bitwise browsing-level ceiling for the domain (SFW on
    *  green/blue, all on red). undefined on legacy responses → fail closed. */
   maxBrowsingLevel: number | undefined;
+  /** Advisory: {@link maxBrowsingLevel} intersected with the VIEWER's own
+   *  browsing level — what THIS person may be shown here, as opposed to what
+   *  the domain permits anyone. Always a subset of `maxBrowsingLevel`.
+   *  undefined on legacy responses → consumers fall back to the domain
+   *  ceiling, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel: number | undefined;
   /**
    * A bounded automatic re-mint is scheduled after a refresh failure — i.e. the
    * hook has NOT settled. Consumers must not take a destructive action (collapse
@@ -43,13 +56,22 @@ interface UseBlockTokenResult {
 interface TokenResponse {
   token: string;
   expiresAt: string;
+  kind?: 'block' | 'oauth';
+  buzzBudget?: number;
   /** A6: present from the server when the viewer's grant is short of the
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
   missingScopes?: string[];
+  scopes?: string[];
   /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  effectiveBrowsingLevel?: number;
+}
+
+export interface UseBlockTokenOptions {
+  /** A dev-tunnel preview: the mint then signs no document-store scopes. */
+  devTunnel?: boolean;
 }
 
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
@@ -75,15 +97,25 @@ const MIN_REFRESH_MS = 30 * 1000;
  * `blockInstanceId`. If a caller needs to force a refresh on context change,
  * use the returned `refresh()`.
  */
-export function useBlockToken(install: BlockInstall, context: SlotContext): UseBlockTokenResult {
+export function useBlockToken(
+  install: BlockInstall,
+  context: SlotContext,
+  options: UseBlockTokenOptions = {}
+): UseBlockTokenResult {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [kind, setKind] = useState<'block' | 'oauth' | undefined>(undefined);
+  const [buzzBudget, setBuzzBudget] = useState<number | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
+  const [signedScopes, setSignedScopes] = useState<string[] | undefined>(undefined);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
+  const [effectiveBrowsingLevel, setEffectiveBrowsingLevel] = useState<number | undefined>(
+    undefined
+  );
   // A bounded automatic re-mint is scheduled. State (not a ref) because it is
   // part of the returned contract — it drives whether a consumer may take a
   // destructive action — so it has to re-render.
@@ -143,6 +175,10 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const abortRef = useRef<AbortController | null>(null);
   const contextRef = useRef<SlotContext>(context);
   contextRef.current = context;
+  // Read through a ref like `contextRef`, so an inline options literal does not
+  // re-key `requestToken` (and so re-mint) on every render.
+  const devTunnelRef = useRef<boolean>(options.devTunnel === true);
+  devTunnelRef.current = options.devTunnel === true;
 
   const requestToken = useCallback(async (): Promise<void> => {
     // 🔴 BAIL BEFORE CLAIMING `abortRef`. This check used to sit just below the
@@ -186,6 +222,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
           body: JSON.stringify({
             blockInstanceId: instanceId,
             slotContext: contextRef.current,
+            ...(devTunnelRef.current ? { devTunnel: true } : {}),
           }),
         });
         if (res.status === 429 && attempt === 0) {
@@ -220,8 +257,17 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       expiresAtRef.current = data.expiresAt;
       setToken(data.token);
       setExpiresAt(data.expiresAt);
+      setKind(data.kind === 'block' || data.kind === 'oauth' ? data.kind : undefined);
+      setBuzzBudget(
+        typeof data.buzzBudget === 'number' && Number.isFinite(data.buzzBudget)
+          ? data.buzzBudget
+          : undefined
+      );
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
+      setSignedScopes(
+        Array.isArray(data.scopes) ? data.scopes.filter((s) => typeof s === 'string') : undefined
+      );
       setDomain(
         data.domain === 'green' || data.domain === 'blue' || data.domain === 'red'
           ? data.domain
@@ -230,6 +276,16 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       setMaxBrowsingLevel(
         typeof data.maxBrowsingLevel === 'number' && Number.isFinite(data.maxBrowsingLevel)
           ? data.maxBrowsingLevel
+          : undefined
+      );
+      // Carried RAW here (shape-check only, no clamp): the intersection against
+      // the projected ceiling is `projectBlockInitMaturity`'s job, and doing it
+      // in exactly one place is what lets that function's tests be the whole
+      // statement of the never-widen rule.
+      setEffectiveBrowsingLevel(
+        typeof data.effectiveBrowsingLevel === 'number' &&
+          Number.isFinite(data.effectiveBrowsingLevel)
+          ? data.effectiveBrowsingLevel
           : undefined
       );
       setPending(false);
@@ -424,12 +480,16 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   return {
     token: scopedToken,
     expiresAt: scopedExpiresAt,
+    kind: tokenMatchesInstance ? kind : undefined,
+    buzzBudget: tokenMatchesInstance ? buzzBudget : undefined,
     error,
     pending,
     needsConsent,
     missingScopes,
+    signedScopes: tokenMatchesInstance ? signedScopes : undefined,
     domain,
     maxBrowsingLevel,
+    effectiveBrowsingLevel,
     retrying,
     // The mint failed, nothing usable is left, and no automatic attempt is
     // coming. This — NOT a bare `error` — is what a consumer may act

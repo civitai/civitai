@@ -1,20 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { getStepParams, getStepResources, WorkflowData, StepData } from '../index';
+import { WorkflowData, StepData } from '../index';
 import type { WorkflowDataOptions } from '../index';
-import type {
-  NormalizedStep,
-  NormalizedWorkflow,
-  NormalizedWorkflowMetadata,
-} from '../orchestration-new.service';
+import type { NormalizedStep, NormalizedWorkflowMetadata } from '../orchestration-new.service';
 
 const defaultOptions: WorkflowDataOptions = {
   domain: { green: false, blue: false, red: false } as any,
   nsfwEnabled: false,
 };
-
-// =============================================================================
-// Client helpers: getStepParams / getStepResources
-// =============================================================================
 
 function makeStep(metadata: Partial<NormalizedStep['metadata']>): NormalizedStep {
   return {
@@ -25,89 +17,10 @@ function makeStep(metadata: Partial<NormalizedStep['metadata']>): NormalizedStep
   } as NormalizedStep;
 }
 
-function makeWorkflow(metadata?: NormalizedWorkflow['metadata']): NormalizedWorkflow {
-  return {
-    id: 'wf-1',
-    status: 'succeeded',
-    createdAt: new Date(),
-    transactions: [],
-    tags: [],
-    steps: [],
-    metadata,
-  } as NormalizedWorkflow;
-}
-
 /** Build a bare WorkflowData for tests that only need metadata fallback behavior. */
 function makeWorkflowData(metadata?: NormalizedWorkflowMetadata): WorkflowData {
   return new WorkflowData({ steps: [], metadata } as any, defaultOptions);
 }
-
-describe('getStepParams', () => {
-  it('returns step params when present', () => {
-    const step = makeStep({ params: { prompt: 'step prompt', steps: 30 } });
-    const workflow = makeWorkflow({ params: { prompt: 'wf prompt' }, resources: [] });
-
-    expect(getStepParams(step, workflow)).toEqual({ prompt: 'step prompt', steps: 30 });
-  });
-
-  it('falls back to workflow params when step has none', () => {
-    const step = makeStep({});
-    const workflow = makeWorkflow({ params: { prompt: 'wf prompt', steps: 20 }, resources: [] });
-
-    expect(getStepParams(step, workflow)).toEqual({ prompt: 'wf prompt', steps: 20 });
-  });
-
-  it('returns empty object when neither has params', () => {
-    const step = makeStep({});
-    expect(getStepParams(step)).toEqual({});
-  });
-
-  it('returns empty object when workflow is undefined', () => {
-    const step = makeStep({});
-    expect(getStepParams(step, undefined)).toEqual({});
-  });
-
-  it('returns empty object when workflow metadata is undefined', () => {
-    const step = makeStep({});
-    const workflow = makeWorkflow(undefined);
-    expect(getStepParams(step, workflow)).toEqual({});
-  });
-});
-
-describe('getStepResources', () => {
-  it('returns step resources when present', () => {
-    const step = makeStep({
-      resources: [{ id: 1, modelName: 'SD 1.5' }] as any,
-    });
-    const workflow = makeWorkflow({
-      params: {},
-      resources: [{ id: 2, modelName: 'SDXL' }] as any,
-    });
-
-    expect(getStepResources(step, workflow)).toEqual([{ id: 1, modelName: 'SD 1.5' }]);
-  });
-
-  it('falls back to workflow resources when step has none', () => {
-    const step = makeStep({});
-    const workflow = makeWorkflow({
-      params: {},
-      resources: [{ id: 2, modelName: 'SDXL' }] as any,
-    });
-
-    expect(getStepResources(step, workflow)).toEqual([{ id: 2, modelName: 'SDXL' }]);
-  });
-
-  it('returns empty array when neither has resources', () => {
-    const step = makeStep({});
-    expect(getStepResources(step)).toEqual([]);
-  });
-
-  it('returns empty array when workflow metadata is undefined', () => {
-    const step = makeStep({});
-    const workflow = makeWorkflow(undefined);
-    expect(getStepResources(step, workflow)).toEqual([]);
-  });
-});
 
 // =============================================================================
 // Two-layer metadata model
@@ -118,19 +31,15 @@ describe('two-layer metadata model', () => {
     // New writes: step.metadata is empty (or has images feedback only)
     // workflow.metadata has the form input snapshot
     const step = makeStep({ images: { 'img-1': { feedback: 'liked' } } });
-    const workflow = makeWorkflow({
+    const wf = makeWorkflowData({
       params: { prompt: 'a cat', steps: 30, workflow: 'image:create' },
       resources: [{ id: 123, modelName: 'SD 1.5' }] as any,
       remixOfId: 42,
     });
+    const sd = new StepData(step, wf);
 
-    // Client resolves via helpers
-    expect(getStepParams(step, workflow)).toEqual({
-      prompt: 'a cat',
-      steps: 30,
-      workflow: 'image:create',
-    });
-    expect(getStepResources(step, workflow)).toEqual([{ id: 123, modelName: 'SD 1.5' }]);
+    expect(sd.params).toEqual({ prompt: 'a cat', steps: 30, workflow: 'image:create' });
+    expect(sd.resources).toEqual([{ id: 123, modelName: 'SD 1.5' }]);
   });
 
   it('legacy standard gen: step has params, no workflow metadata', () => {
@@ -139,10 +48,10 @@ describe('two-layer metadata model', () => {
       params: { prompt: 'a cat', steps: 30 },
       resources: [{ id: 123 }] as any,
     });
-    const workflow = makeWorkflow(undefined);
+    const sd = new StepData(step, makeWorkflowData());
 
-    expect(getStepParams(step, workflow)).toEqual({ prompt: 'a cat', steps: 30 });
-    expect(getStepResources(step, workflow)).toEqual([{ id: 123 }]);
+    expect(sd.params).toEqual({ prompt: 'a cat', steps: 30 });
+    expect(sd.resources).toEqual([{ id: 123 }]);
   });
 
   it('enhancement step: complete step params are used verbatim, no workflow leak', () => {
@@ -268,16 +177,5 @@ describe('two-layer metadata model', () => {
     expect(sd.params).toEqual({});
     expect(sd.resources).toEqual([]);
     expect(sd.remixOfId).toBeUndefined();
-  });
-
-  it('works with Omit<NormalizedStep, "output"> (no generic needed)', () => {
-    const step: Omit<NormalizedStep, 'output'> = {
-      $type: 'textToImage',
-      name: '$0',
-      metadata: { params: { prompt: 'test' } },
-    } as any;
-    const sd = new StepData(step, makeWorkflowData());
-
-    expect(sd.params).toEqual({ prompt: 'test' });
   });
 });

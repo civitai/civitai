@@ -1,9 +1,11 @@
 // Prompt inappropriate-content detection + highlighting, ported from the main app's
 // src/utils/metadata/audit.ts (the `includesInappropriate` / `highlightInappropriate` path only —
-// no profanity/enriched/debug branches). The detection REGEXES are copied verbatim, including the
-// zero-width word-boundary ReDoS fixes (#2722/#2725/#2727) — do not "simplify" them back to consuming
-// `[^a-zA-Z0-9]+` groups or a long CJK prompt re-pins the event loop. The main app keeps its own copy
-// for now; this is the canonical home once that's re-pointed.
+// no profanity/enriched/debug branches).
+//
+// The vocabulary (`./lists`) and the term->regex builder (`./word-regex`) are now shared: the main
+// app imports both from here, so there is one copy of each. What is still duplicated is the
+// DETECTION LOGIC below — the checkable/gate machinery and the age engine — which the main app
+// still has its own copy of. Keeping those in step is manual.
 //
 // Highlighting differs from the legacy HTML approach: instead of sequential string-replace into
 // `<span>` (which injects unescaped user text — unsafe in Svelte — and mangles punctuation on the poi
@@ -16,7 +18,10 @@ import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
 import poiWords from './lists/words-poi.json';
 import youngWords from './lists/words-young.json';
 import blockedNSFW from './lists/blocklist-nsfw.json';
+import { prepareWordRegex, prepareWordRegexBody } from './word-regex';
+import { ages, canonicalNumberWords, templateParts, templates } from './lists/ages';
 import { harmfulCombinations } from './lists/harmful-combinations';
+import { youngComposedNouns } from './lists/composed-nouns';
 
 // Defense-in-depth length cap (main app's MAX_AUDIT_PROMPT_LENGTH). Realistic prompts are <1500 chars;
 // anything past this is anomalous, so we bound the work rather than scan an adversarial input.
@@ -70,27 +75,7 @@ function trimNonAlphanumeric(str: string | null | undefined) {
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
-// #region [word-regex machinery — verbatim, zero-width boundaries]
-function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
-  let regexStr = word;
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]+`);
-  if (leet && !word.includes('[')) {
-    regexStr = regexStr
-      .replace(/i/g, '[i|l|1]')
-      .replace(/o/g, '[o|0]')
-      .replace(/s/g, '[s|z]')
-      .replace(/e/g, '[e|3]');
-  }
-  if (pluralize) regexStr += '[s|z]*';
-  return regexStr;
-}
-
-function prepareWordRegex(word: string, pluralize = false, leet = true) {
-  const body = prepareWordRegexBody(word, pluralize, leet);
-  const regexStr = `(?<![a-zA-Z0-9])` + body + `(?![a-zA-Z0-9])`;
-  return new RegExp(regexStr, 'i');
-}
-
+// #region [token-regex machinery]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const blockedBoth = '\\%|\\~|\\\\$|\\.|-|\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
 function tokenRegex(word: string) {
@@ -177,95 +162,10 @@ function checkable(
 // #endregion
 
 // #region [minor-age engine — verbatim]
-const ages = [
-  { age: 17, matches: ['seven{teen}', 'sevn{teen}', 'sevem{teen}', 'seve{teen}', '7{teen}', '17'] },
-  { age: 16, matches: ['six{teen}', 'sicks{teen}', 'sixe{teen}', '6{teen}', '16'] },
-  {
-    age: 15,
-    matches: ['fif{teen}', 'fiv{teen}', 'five{teen}', 'fife{teen}', 'fivve{teen}', '5{teen}', '15'],
-  },
-  { age: 14, matches: ['four{teen}', 'for{teen}', 'fore{teen}', 'foure{teen}', '4{teen}', '14'] },
-  {
-    age: 13,
-    matches: [
-      'thir{teen}',
-      '3{teen}',
-      'ther{teen}',
-      'three{teen}',
-      'tree{teen}',
-      'thee{teen}',
-      'thre{teen}',
-      'thri{teen}',
-      '3{teen}',
-      '13',
-    ],
-  },
-  { age: 12, matches: ['twelve', 'twelv', 'twelf', '2{teen}', 'twel', '12'] },
-  { age: 11, matches: ['eleven', 'eleve', 'elevn', '1{teen}', 'elvn', '11'] },
-  { age: 10, matches: ['ten', 'tenn', 'tene', '10'] },
-  { age: 9, matches: ['nine', 'nien', 'nein', 'niene', '9'] },
-  { age: 8, matches: ['eight', 'eigt', 'eigh', '8'] },
-  { age: 7, matches: ['seven', 'sevn', 'sevem', 'seve', '7'] },
-  { age: 6, matches: ['six', 'sicks', 'sixe', '6'] },
-  { age: 5, matches: ['five', 'fiv', 'fife', 'fivve', '5'] },
-  { age: 4, matches: ['four', 'fore', 'foure', '4'] },
-  { age: 3, matches: ['three', 'thee', 'thre', 'thri', '3'] },
-  { age: 2, matches: ['two', '2'] },
-  { age: 1, matches: ['one', 'uno', '1'] },
-];
-
-const templateParts = {
-  teen: ['teen', 'ten', 'tein', 'tien', 'tn'],
-  years: ['y', 'yr', 'yrs', 'years', 'year', 'anos'],
-  old: ['o', 'old'],
-};
-const templates = [
-  'aged {age}',
-  'age {age}',
-  'age of {age}',
-  '{age} age',
-  '{age} {years} {old}',
-  '{age} {years}',
-  '{age}th birthday',
-];
-
-for (const age of ages) {
-  const newMatches = new Set<string>();
-  for (const match of age.matches) {
-    if (!match.includes('{teen}')) newMatches.add(match);
-    else {
-      const base = match.replace('{teen}', '').trim();
-      for (const teen of templateParts.teen) {
-        newMatches.add(base + teen);
-        newMatches.add(base + ' ' + teen);
-      }
-    }
-  }
-  age.matches = Array.from(newMatches);
-}
 
 const yearsPattern = templateParts.years.join('|');
 const oldPattern = templateParts.old.join('|');
 
-const canonicalNumberWords = new Set([
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-  'ten',
-  'eleven',
-  'twelve',
-  'thirteen',
-  'fourteen',
-  'fifteen',
-  'sixteen',
-  'seventeen',
-]);
 const buildAgePattern = (matches: string[]) =>
   matches.map((m) => (canonicalNumberWords.has(m) ? `${m}\\b` : m)).join('|');
 
@@ -329,13 +229,10 @@ function minorAgeTerms(prompt: string): string[] {
 // #endregion
 
 // #region [detectors — verbatim]
-const composedNouns = youngWords.partialNouns.flatMap((word) =>
-  youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,200}|[^\\w]{1,200})' + word)
-);
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
-    nouns: checkable(youngWords.nouns.concat(composedNouns), { pluralize: true }),
+    nouns: checkable(youngWords.nouns.concat(youngComposedNouns), { pluralize: true }),
     negativeNouns: checkable(youngWords.negativeNouns, { pluralize: true }),
   },
   poi: checkable(poiWords, {

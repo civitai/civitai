@@ -21,7 +21,10 @@
     "consumer:test": "tsx -r tsconfig-paths/register src/index.ts",
     "port-forward": "tsx scripts/port-forward-k8s.ts",
     "generate-types": "tsx -r tsconfig-paths/register scripts/generate-types.ts",
-    "test:spine": "tsx -r tsconfig-paths/register scripts/test-spine-transformation.ts"
+    "test:spine": "tsx -r tsconfig-paths/register scripts/test-spine-transformation.ts",
+    "vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/consumer.ts",
+    "vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/backfill.ts",
+    "vector-reconcile": "tsx -r tsconfig-paths/register src/vector-sync/reconcile.ts"
   },
   "keywords": [
     "kafka",
@@ -34,6 +37,7 @@
   "dependencies": {
     "@axiomhq/pino": "^1.3.1",
     "@clickhouse/client": "^1.12.1",
+    "@qdrant/js-client-rest": "1.19.0",
     "@types/lru-cache": "^7.10.9",
     "axios": "^1.6.5",
     "dotenv": "^16.3.1",
@@ -46,7 +50,7 @@
     "pino": "^8.17.2",
     "pino-pretty": "^10.3.1",
     "prom-client": "^15.1.3",
-    "redis": "^5.8.3",
+    "redis": "6.3.0",
     "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {

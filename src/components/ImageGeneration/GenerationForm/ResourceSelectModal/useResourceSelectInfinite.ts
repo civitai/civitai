@@ -4,8 +4,9 @@ import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { toResourceSelectFilterInput } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { trpc } from '~/utils/trpc';
+import { queryRetry, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const limit = 50;
@@ -45,8 +46,7 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       sort,
       limit,
       resources: resources.map((r) => ({ type: r.type as ModelType, baseModels: r.baseModels })),
-      filterTypes: filters.types,
-      filterBaseModels: filters.baseModels,
+      ...toResourceSelectFilterInput(filters),
       tagName: categoryTag,
       canGenerate,
       excludedVersionIds: excludedIds,
@@ -56,13 +56,22 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       enabled,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       placeholderData: keepPreviousData,
+      // A batched request can't abort one operation, so the abort needs skipBatch.
+      trpc: { abortOnUnmount: true, context: { skipBatch: true } },
+      // A 503 here is the server's Meili timeout; a retry queues a second search behind the first.
+      retry: (failureCount, error) =>
+        error.data?.code !== 'SERVICE_UNAVAILABLE' && queryRetry(failureCount, error),
     }
   );
+
+  const coverageNext = queryResult.data?.pages[0]?.coverageNext ?? false;
+  // Absent page = no data yet; member:false is the narrower view, so a hit cannot flash selectable.
+  const member = queryResult.data?.pages[0]?.member ?? false;
 
   const items = useMemo(
     () => queryResult.data?.pages.flatMap((p) => p.items) ?? [],
     [queryResult.data]
   );
 
-  return { ...queryResult, items };
+  return { ...queryResult, items, coverageNext, member };
 }

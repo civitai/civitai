@@ -4,8 +4,14 @@
  */
 
 import type { ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { getFileExtension } from '~/utils/string-helpers';
+import {
+  filenamize,
+  getDisplayName,
+  getFileExtension,
+  replaceInsensitive,
+} from '~/utils/string-helpers';
 
 /**
  * Metadata shape expected for file display functions
@@ -78,6 +84,31 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
     default:
       return true;
   }
+}
+
+/**
+ * File-type options for a filename, with display labels. `currentType` stays selectable even
+ * when not otherwise offered, so an existing file never renders as a blank Select.
+ */
+export function getModelFileTypeOptions(
+  fileName: string,
+  {
+    types = constants.modelFileTypes,
+    currentType,
+    modelType,
+  }: {
+    types?: readonly ModelFileType[];
+    currentType?: ModelFileType | null;
+    modelType?: ModelType | null;
+  } = {}
+) {
+  return types
+    .filter((type) => type === currentType || filterFileTypeByExtension(type, fileName))
+    .map((type) => ({
+      value: type,
+      label:
+        comfyFileTypeLabels[type] ?? getDisplayName(type === 'Model' ? modelType ?? type : type),
+    }));
 }
 
 /**
@@ -268,4 +299,48 @@ export const primaryModelFileTypes: readonly ModelFileType[] = [
 export function getPrimaryFileTypes(modelType?: ModelType | null): readonly ModelFileType[] {
   if (!modelType) return primaryModelFileTypes;
   return primaryFileTypesByModelType[modelType] ?? primaryModelFileTypes;
+}
+
+/**
+ * Default download name for a trainer import, whose stored name is the opaque training
+ * job id. Falls back to that stored name when `filenamize` leaves nothing of the model
+ * name — opaque-but-unique beats a version name that collides across a whole catalogue.
+ */
+export function getTrainedFileDefaultName({
+  modelName,
+  versionName,
+  fileName,
+}: {
+  modelName: string;
+  versionName: string;
+  fileName: string;
+}) {
+  const model = filenamize(modelName);
+  if (!model) return fileName;
+
+  const version = filenamize(replaceInsensitive(versionName, model, ''));
+  const base = version && version !== model ? `${model}_${version}` : model;
+  return `${base}.${getFileExtension(fileName) || 'safetensors'}`;
+}
+
+/**
+ * A name the creator typed wins, then one they saved on an earlier pass, then the
+ * computed default. Writing that default over a saved name is what this ordering stops.
+ */
+export function resolveTrainedFileName({
+  editedName,
+  overrideName,
+  modelName,
+  versionName,
+  fileName,
+}: {
+  editedName: string | null;
+  overrideName: string | null | undefined;
+  modelName: string;
+  versionName: string;
+  fileName: string;
+}) {
+  return (
+    editedName ?? overrideName ?? getTrainedFileDefaultName({ modelName, versionName, fileName })
+  );
 }

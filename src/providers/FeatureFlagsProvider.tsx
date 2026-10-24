@@ -34,19 +34,27 @@ export const useOptionalFeatureFlags = () => useContext(FeatureFlagsCtx);
  * doesn't flash against the anonymous SSR snapshot.
  */
 export const useFeatureFlagsReady = () => useContext(FeatureFlagsReadyCtx);
+
+/** The viewer's flags when they arrive after mount (a shell page's page data). */
+export type FeatureFlagsSeed = { flags: FeatureAccess };
+
 export const FeatureFlagsProvider = ({
   children,
   flags: initialFlags,
   userFlags,
+  seed,
 }: {
   children: React.ReactNode;
   flags: FeatureAccess;
   // SSR-computed per-user toggleable overlay. When present, seeds the
   // `user.getFeatureFlags` query so the client never fetches it on bootstrap.
   userFlags?: FeatureAccess;
+  /** `null` while the viewer's flags are on their way (not ready), then they replace `flags` once. */
+  seed?: FeatureFlagsSeed | null;
 }) => {
   const session = useSession();
-  const [flags] = useState(initialFlags);
+  const [frozenFlags] = useState(initialFlags);
+  const flags = seed ? seed.flags : frozenFlags;
 
   const {
     data: userFeatures = {} as FeatureAccess,
@@ -55,7 +63,14 @@ export const FeatureFlagsProvider = ({
   } = trpc.user.getFeatureFlags.useQuery(undefined, {
     gcTime: Infinity,
     staleTime: Infinity,
-    retry: 0,
+    // A failed fetch here reads as an EMPTY overlay ({} merges over host flags),
+    // and with staleTime: Infinity and this provider never remounting, nothing
+    // ever refetches it — every toggleable-gated page 404s for the whole SPA
+    // session on one transient failure. Retry a couple of times, and while the
+    // query is errored re-enable the (globally disabled) focus refetch so a
+    // later tab-in self-heals instead of staying wedged.
+    retry: 2,
+    refetchOnWindowFocus: (query) => query.state.status === 'error',
     enabled: !!session.data,
     initialData: userFlags,
   });
@@ -71,9 +86,9 @@ export const FeatureFlagsProvider = ({
   // logged-in user and permanently hide the chat icon + 3 migration alerts.
   // `isSuccess` flips true immediately on the seed (no flash: user flags are
   // present from frame 0). The `|| isError` arm preserves the no-seed error
-  // path (retry: 0): a failed client fetch still settles to ready, exactly as
-  // `isFetched` did, so consumers don't hang forever on a transient failure.
-  const ready = !session.data || isSuccess || isError;
+  // path: a client fetch that fails through its retries still settles to ready,
+  // exactly as `isFetched` did, so consumers don't hang forever on an outage.
+  const ready = seed !== null && (!session.data || isSuccess || isError);
 
   const featureFlags = useMemo(
     () => ({
@@ -83,10 +98,20 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
-  // Bridge the resolved `trpcBatching` flag to the module-scope tRPC terminating
-  // link (which can't read a hook). Runs client-side only; until this fires the
-  // link stays unbatched (dark default), so anon + early-hydration queries never
-  // batch. See `shouldBatch` in `~/utils/trpc`.
+  // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
+  // `~/utils/trpc`).
+  //
+  // With `trpcBatchingFirstCommit` on, it is written while rendering: child
+  // effects run before parent effects and React Query starts a query's fetch
+  // from an effect, so the effect below alone would miss the first commit's
+  // queries. Browser only — on the server this module flag would be shared
+  // across concurrent requests.
+  if (typeof window !== 'undefined' && featureFlags.trpcBatchingFirstCommit) {
+    setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
+  }
+  // With `trpcBatchingFirstCommit` off, this effect is the only writer, so
+  // batching applies only to queries sent after the provider has mounted. With
+  // it on, this writes the value the render already wrote.
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }, [featureFlags.trpcBatching]);

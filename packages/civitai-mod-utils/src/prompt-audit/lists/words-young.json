@@ -35,12 +35,12 @@
   "partialNouns": [
     "\\w*girl+\\w*",
     "\\w*female\\w*",
-    "\\w*bo+y+\\w*",
+    "(?!cowbo)\\w*bo+y+(?![-_]?shorts)\\w*",
     "\\w*male\\w*",
-    "sister",
-    "daughter",
-    "brother",
-    "son"
+    "(?:step|grand|god|half)?sister",
+    "(?:step|grand|god|half)?daughter",
+    "(?:step|grand|god|half)?brother",
+    "(?:step|grand|god|half)?son"
   ],
   "nouns": [
     "young looking",
@@ -81,9 +81,9 @@
     "\\w*tike\\w*",
     "\\w*tyke\\w*",
     "\\w*sprog\\w*",
-    "\\w*minor\\w*",
+    "minor",
     "\\w*toddle\\w*",
-    "\\w*tee+n\\w*",
+    "(?!(?:eigh|nine|four|fif|six|seven|thir|can|velve|sa|ump)teen)\\w*tee+n\\w*",
     "tean\\w*",
     "twe[e|a]n\\w*",
     "\\w*pre te[e|a]+n\\w*",
@@ -95,7 +95,7 @@
     "\\w*kid",
     "kid",
     "\\w*kiddo\\w*",
-    "\\w*ba+b+ y(?!d[o0]ll)\\w*",
+    "\\w*ba+b+y(?![^a-zA-Z0-9]{0,3}(?:d[o0]ll|blue|sitt|face|hair)|lon)\\w*",
     "\\w*ba+bies\\w*",
     "\\w*t[i|o]d+le*r\\w*",
     "\\w*chi*ld\\w*",

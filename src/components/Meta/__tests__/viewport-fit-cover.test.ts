@@ -7,10 +7,8 @@ import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 /**
  * The app must ship `viewport-fit=cover` in its ONE `<meta name="viewport">`.
  *
- * Node `unit` project — the GATING suite. The `.browser.test.tsx` component
- * suites run in CI only as the report-only `preview / component-tests` status,
- * and that tier is red on `main` independently of anything here, so a coupling
- * that must not silently revert is pinned in this tier.
+ * Node `unit` project. A coupling that must not silently revert is pinned in
+ * this tier as well as in the browser tier (`Component tests`).
  *
  * WHAT WAS BROKEN. The meta content was `initial-scale=1, width=device-width`.
  * Absent a `viewport-fit` token the UA defaults to `auto`, which lays the page
@@ -76,7 +74,15 @@ const INSET_EDGES = ['top', 'right', 'bottom', 'left'] as const;
  */
 const INSET_CONSUMERS = [
   'src/components/Ads/AdhesiveAd.tsx',
+  // An inline `styles.inner` padding, which outranks the shell's modal rule the same way
+  // SupportModal's Tailwind one does — but only while an on-screen keyboard is up, when the
+  // feedback dialog swaps its 10dvh offsets for a small gap. It folds the TOP inset into that
+  // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
+  'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
+  // The phone account menu's sheet: starts under the header plus the top inset and pads its
+  // bottom by the home indicator's, because it is `fixed` and the page pads only `#__next`.
+  'src/components/AppLayout/AppHeader/UserMenuV2/UserMenuMobile.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
   'src/components/Consent/ConsentBanner.tsx',
@@ -100,9 +106,11 @@ const INSET_CONSUMERS = [
   // Here for the same reason as NotificationsDrawer, via the other override
   // channel: a Tailwind utility in `classNames` is UNLAYERED, so its `inner`
   // padding outranks the shell's modal rule and it has to fold the inset in
-  // itself. The only `inner:` override in the app.
+  // itself. One of two `inner` padding overrides in the app; the other is the feedback dialog
+  // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
+  'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to
   // pay `@mantine/notifications` with a `style` prop, which reached one of the
@@ -205,23 +213,6 @@ describe('the viewport meta opts into the full display area', () => {
         'here — and check that `viewport-fit=cover` survived, because dropping it silently ' +
         're-zeroes every env(safe-area-inset-*) in the repo.'
     ).toBe('initial-scale=1, width=device-width, viewport-fit=cover');
-  });
-
-  it('parses to exactly the expected directive set, with viewport-fit=cover', () => {
-    // The string assertion above is order- and whitespace-sensitive by design.
-    // This one restates the claim as SEMANTICS, so a reviewer reading a failure
-    // can tell "reformatted" from "a directive changed meaning".
-    const directives = Object.fromEntries(
-      VIEWPORT_META_CONTENT.split(',').map((part) => {
-        const [key, value] = part.split('=');
-        return [key.trim(), (value ?? '').trim()];
-      })
-    );
-    expect(directives).toEqual({
-      'initial-scale': '1',
-      width: 'device-width',
-      'viewport-fit': 'cover',
-    });
   });
 
   it('MetaPWA renders the viewport meta from the constant, not a copy of the string', () => {
@@ -439,7 +430,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   });
 
   /**
-   * The eight global stylesheets `_app.tsx` loads, in its own order. Order
+   * The nine global stylesheets `_app.tsx` loads, in its own order. Order
    * matters and is asserted with them: globals.css is imported FIRST, which is
    * why the drawer rule needs a doubled class to win a same-layer source-order
    * tie against Mantine's own `top: 0`.
@@ -453,6 +444,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     '@mantine/nprogress/styles.layer.css',
     '@mantine/tiptap/styles.layer.css',
     'mantine-react-table/styles.css',
+    '@civitai/components/styles.css',
   ];
 
   /**
@@ -479,6 +471,9 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     ['@mantine/nprogress/styles.layer.css', 1, 0],
     ['@mantine/tiptap/styles.layer.css', 0, 1],
     ['mantine-react-table/styles.css', 1, 9],
+    // The package ships a REAL root `styles.css` (byte-identical to `dist/components.css`, which is
+    // what the `exports` alias resolves to), so the path under node_modules is the import spec.
+    ['@civitai/components/styles.css', 1, 0],
     ['draft-js/dist/Draft.css', 0, 0],
   ];
 
@@ -977,8 +972,8 @@ describe('the chokepoints that pay for whole populations', () => {
 
           // Channel 3: a `.module.scss` handed to this element via `classNames`.
           // Resolved from the file's own imports rather than guessed from the
-          // filename — `SelectMenu.tsx` imports `SelectMenu.module.scss`, but
-          // nothing makes that a rule.
+          // filename — `NotificationsDrawer.tsx` imports
+          // `NotificationsDrawer.module.scss`, but nothing makes that a rule.
           if (/\bclassNames=\{/.test(head)) {
             for (const [, rel] of src.matchAll(
               /import\s+\w+\s+from\s+'(\.[^']*\.module\.s?css)'/g

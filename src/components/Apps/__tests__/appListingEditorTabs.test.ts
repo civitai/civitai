@@ -9,6 +9,11 @@ import {
   listingEditHref,
   resolveEditorTab,
 } from '~/components/Apps/appListingEditorTabs';
+import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
+import {
+  listingPublishingActions,
+  showVisibility,
+} from '~/components/Apps/listingPublishingActions';
 import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
 import {
   AUTHORABLE_LISTING_STATUSES,
@@ -68,14 +73,43 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     // What differs for an editor on the content surfaces is the CONTROLS inside the
     // collaborators panel (invite/remove are owner-only), not which tabs exist:
     // `getMyListingForEdit`, `getMyListingForApp`, `getMyAppManifest` and `list` all admit
-    // an ACCEPTED seat. `draft` is used here precisely because it is a status on which NO
-    // publishing control exists for either role, so this case isolates the content half.
+    // an ACCEPTED seat.
+    //
+    // ⚠️ THIS CASE USED TO COMPARE THE SETS WHOLE, on the premise that `draft` is "a status
+    // on which NO publishing control exists for either role". That premise died when the
+    // Publishing tab was widened to the level-eligible statuses so the visibility control
+    // could be reached on a draft — the OWNER now gets `publishing` there and the editor
+    // still does not. The claim this case exists for is unchanged and is now stated
+    // DIRECTLY: role narrows exactly one tab, `publishing`, and nothing else. Subtracting it
+    // is what keeps the content half isolated; comparing the raw sets would now be asserting
+    // the role clause does not exist.
+    const withoutPublishing = (tabs: EditorTab[]) => tabs.filter((t) => t !== 'publishing');
     for (const kind of ['onsite', 'offsite'] as const) {
       const capabilities = capabilitiesForKind(kind);
       const appBlockId = kind === 'onsite' ? 'ab_1' : null;
-      expect(
-        editorTabsFor({ kind, appBlockId, role: 'editor', status: 'draft', capabilities })
-      ).toEqual(editorTabsFor({ kind, appBlockId, role: 'owner', status: 'draft', capabilities }));
+      const asEditor = editorTabsFor({
+        kind,
+        appBlockId,
+        role: 'editor',
+        status: 'draft',
+        capabilities,
+        lastModerationAction: null,
+      });
+      const asOwner = editorTabsFor({
+        kind,
+        appBlockId,
+        role: 'owner',
+        status: 'draft',
+        capabilities,
+        lastModerationAction: null,
+      });
+      expect(withoutPublishing(asEditor)).toEqual(withoutPublishing(asOwner));
+      // 🔴 AND THE DIFFERENCE IS EXACTLY `publishing`, asserted rather than left implicit —
+      // otherwise a future widening that handed the editor a content tab the owner lacks
+      // (or vice versa) would pass the subtraction above.
+      expect(asEditor).not.toContain('publishing');
+      expect(asOwner).toContain('publishing');
+      expect(asOwner.filter((t) => !asEditor.includes(t))).toEqual(['publishing']);
     }
   });
 
@@ -301,16 +335,37 @@ describe('🔴 Publishing is offered only where a control exists, and only to th
     expect(editorTabsFor({ ...base, status: 'removed' })).toContain('publishing');
   });
 
-  it('🔴 is ABSENT on draft and pending — an app that was never live has nothing to take down', () => {
-    // These two are AUTHORABLE, so they keep the full content set; the absence here is the
-    // publishing clause alone, isolated from the status branch above.
+  it('🔴 is PRESENT on draft and pending — for the LEVEL control, not a takedown', () => {
+    // ⚠️ THIS CASE ASSERTED THE OPPOSITE, AND IT WAS RIGHT WHEN IT WAS WRITTEN. Its old
+    // reasoning — "an app that was never live has nothing to take down" — is still true of
+    // the takedown PAIR, and that is now pinned directly below rather than inferred from the
+    // tab's absence. What changed is that the tab also hosts the per-listing VISIBILITY LEVEL
+    // control, which IS settable on `draft`/`pending`; with the publish predicate as the only
+    // term the tab never opened there and the level control was dead on the very case it
+    // exists for (an owner setting `moderators` so a moderator can see their draft).
     for (const status of ['draft', 'pending'] as const) {
       const tabs = editorTabsFor({ ...base, status });
-      expect(tabs).not.toContain('publishing');
-      // The control arm: the content tabs ARE there, so this is not an empty render.
+      expect(tabs).toContain('publishing');
+      // 🔴 THE NARROWER CLAIM THE OLD ASSERTION WAS STANDING IN FOR: no takedown control is
+      // offered on these statuses. The tab opening does not mean Unpublish appears — that is
+      // `showUnpublish`/`showRepublish`'s job, and `listingPublishingActions.test.ts` pins
+      // the empty takedown cell for `inactive`. Asserted here so the widening above cannot
+      // be read as having loosened the takedown rule too.
+      expect(
+        listingPublishingActions({ status, lastModerationAction: null, role: 'owner' })
+      ).not.toContain('unpublish');
+      // The content tabs ARE there, so this is not an empty render.
       expect(tabs).toContain('details');
       expect(tabs).toContain('collaborators');
     }
+  });
+
+  it('🔴 is ABSENT on rejected — level-ineligible AND not publishable', () => {
+    // The discriminating status for the widened gate: `rejected` is authorable-adjacent but
+    // satisfies NEITHER term, so it is the case that proves the widening did not become
+    // "every status". Without it, replacing the condition with `true` passes this describe.
+    const tabs = editorTabsFor({ ...base, status: 'rejected' });
+    expect(tabs).not.toContain('publishing');
   });
 
   it('🔴 is ABSENT for a seated EDITOR on a LIVE listing — a seat is not ownership', () => {
@@ -319,6 +374,56 @@ describe('🔴 Publishing is offered only where a control exists, and only to th
     // Control arm: the editor keeps every content tab on this status, so the absence is the
     // role clause and not a collapsed set.
     expect(tabs).toEqual(['details', 'collaborators', 'history']);
+  });
+});
+
+/**
+ * 🔴 THE SEAM GUARD — the instrument whose ABSENCE let four green test files agree on a
+ * configuration the product could not reach.
+ *
+ * `showVisibility` decides whether the level control RENDERS; `editorTabsFor` decides
+ * whether the panel that hosts it is MOUNTED. Nothing related the two, so when the level
+ * control was first shipped it was offered on `draft`/`pending` by one function and
+ * withheld on `draft`/`pending` by the other — and every suite was scoped to ONE of them.
+ * `ListingPublishingPanel.browser.test.tsx` asserted a draft renders `['visibility']`,
+ * `listingPublishingActions.test.ts` asserted the same, and both were green against a tab
+ * set that never opens there. It took a reachability pass over the whole surface to see it.
+ *
+ * This pins the RELATIONSHIP rather than either side, so a narrowing on EITHER function is
+ * red here: tighten the tab gate and the first case fails; widen `showVisibility` past the
+ * tab's statuses and it fails too.
+ */
+describe('🔴 the seam: every status that offers the level control also opens its tab', () => {
+  const owner = {
+    kind: 'offsite',
+    appBlockId: null,
+    role: 'owner',
+    capabilities: offsite,
+    lastModerationAction: null,
+  } as const;
+
+  it('every status `showVisibility` offers the level on also opens the Publishing tab', () => {
+    // Driven over EVERY status the lifecycle has, not a hand-picked list — a hand-picked one
+    // would have omitted exactly the statuses that were broken.
+    const statuses = ['draft', 'pending', 'approved', 'rejected', 'removed'];
+    const offered = statuses.filter((status) =>
+      showVisibility({ status, lastModerationAction: null, role: 'owner' })
+    );
+    // Positive control: the filter is not vacuous.
+    expect(offered).toEqual(['draft', 'pending', 'approved']);
+    for (const status of offered) {
+      expect(editorTabsFor({ ...owner, status })).toContain('publishing');
+    }
+  });
+
+  it('the converse is NOT asserted, and that asymmetry is deliberate', () => {
+    // `removed` opens the tab (for Republish) and offers no level — the tab is a superset,
+    // by design. Pinned so a future reader does not "fix" the seam into an equality and
+    // delete the Republish route.
+    expect(editorTabsFor({ ...owner, status: 'removed' })).toContain('publishing');
+    expect(showVisibility({ status: 'removed', lastModerationAction: null, role: 'owner' })).toBe(
+      false
+    );
   });
 });
 
@@ -342,6 +447,103 @@ describe('🔴 History is on EVERY shape the route opens — the set is never em
         }
       }
     }
+  });
+});
+
+/**
+ * 🔴 THE FEEDBACK TAB EXISTS ONLY ONCE THE LISTING HAS FEEDBACK (operator decision, 2026-10-09).
+ *
+ * `hasFeedback` is `appFeedback.hasAnyForListing`, which applies the inbox list's own visibility
+ * predicate — so "hidden from owner" and "banned reporter" rows are already excluded before the
+ * value gets here (that half is pinned against real rows in `app-feedback.service.test.ts`).
+ */
+describe('🔴 Feedback appears only when the listing has feedback — then on every shape, LAST', () => {
+  const shapes = () =>
+    (['draft', 'pending', 'approved', 'removed', 'rejected'] as const).flatMap((status) =>
+      (['owner', 'editor'] as const).flatMap((role) =>
+        (['onsite', 'offsite'] as const).flatMap((kind) =>
+          [null, OWNER_UNPUBLISH_ACTION, 'other'].map((lastModerationAction) => ({
+            kind,
+            appBlockId: kind === 'onsite' ? 'ab_x' : null,
+            role,
+            status,
+            capabilities: capabilitiesForKind(kind),
+            lastModerationAction,
+          }))
+        )
+      )
+    );
+
+  it('positive control: the sweep covers every status x role x kind x last-action', () => {
+    expect(shapes()).toHaveLength(5 * 2 * 2 * 3);
+  });
+
+  it('🔴 NO feedback: no tab, on any shape', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      expect(editorTabsFor({ ...ctx, hasFeedback: false }), where).not.toContain('feedback');
+    }
+  });
+
+  it('🔴 WITH feedback: the tab, once, LAST, on every shape — reports on a delisted app stay readable', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const tabs = editorTabsFor({ ...ctx, hasFeedback: true });
+      expect(tabs.at(-1), where).toBe('feedback');
+      expect(
+        tabs.filter((t) => t === 'feedback'),
+        where
+      ).toHaveLength(1);
+      // Adding it changes nothing else in the set.
+      expect(tabs.slice(0, -1), where).toEqual(editorTabsFor({ ...ctx, hasFeedback: false }));
+    }
+  });
+
+  it('🔴 an OMITTED field fails closed (a JS caller, or an `as` cast past the type)', () => {
+    const [ctx] = shapes();
+    expect(editorTabsFor(ctx as Parameters<typeof editorTabsFor>[0])).not.toContain('feedback');
+  });
+
+  it('🔴 INVARIANT: feedback never moves the landing tab — what lets `myAppListingHref` pass `false`', () => {
+    // INVARIANT GUARD, not regression coverage: it pins why the `/apps/build` row href may ignore
+    // feedback existence. That href reads only `tabs[0]`.
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const withIt = editorTabsFor({ ...ctx, hasFeedback: true });
+      const without = editorTabsFor({ ...ctx, hasFeedback: false });
+      expect(withIt[0], where).toBe(without[0]);
+      expect(resolveEditorTab(undefined, withIt), where).toBe(resolveEditorTab(undefined, without));
+    }
+  });
+
+  it('🔴 `?tab=feedback` with no feedback falls back like any unavailable tab', () => {
+    const live = {
+      kind: 'onsite',
+      appBlockId: 'ab_x',
+      role: 'owner',
+      status: 'approved',
+      capabilities: onsite,
+      lastModerationAction: null,
+    } as const;
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: false }))).toBe(
+      'details'
+    );
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: true }))).toBe(
+      'feedback'
+    );
+    // A narrowed set has no `details`, so the fallback is its FIRST tab — a different answer.
+    const removedEditor = { ...live, role: 'editor', status: 'removed' } as const;
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: false }))
+    ).toBe('history');
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: true }))
+    ).toBe('feedback');
+  });
+
+  it('has a label and a canonical deep link', () => {
+    expect(EDITOR_TAB_LABELS.feedback).toBe('Feedback');
+    expect(listingEditHref('apl_1', 'feedback')).toBe('/apps/listing/apl_1/edit?tab=feedback');
   });
 });
 

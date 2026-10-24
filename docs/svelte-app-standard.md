@@ -32,7 +32,7 @@ const signals = $derived(
   browser ? fetch(`/api/user-signals/${userId}`).then((r): Promise<Signals> => {
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
-  }) : null
+  }) : SSR_PENDING // never `: null` — see below
 );
 
 {#await signals}
@@ -48,12 +48,39 @@ A new `userId` produces a new promise and the template re-awaits it, so there is
 `browser` keeps SSR from issuing the request. **Every `{#await}` needs a `{:catch}`** — without one a
 rejection is silent and the panel just never fills in.
 
+**The server half must be a promise that never settles, not `null`.** The moderator app exports one as
+`SSR_PENDING` from `$lib/ssr-pending`; elsewhere `new Promise(() => {})` is the whole of it. With `null`
+the server renders `{:then}` — null is not a promise — while the browser hydrates `pending`, and Svelte
+does not reconcile the two: what the browser renders lands outside the block, so when a parent `{#key}` or
+`{#if}` later swaps the panel out, its content stays on the page and the replacement renders beneath it.
+That was the model reports "stuck preview" (2026-10-14), pinned in
+`apps/moderator/src/lib/__tests__/ssr-pending.test.ts`. Wrapping the await in `{#if x}` with `: null` is
+also correct — Svelte does repair a mismatched `{#if}` — and is the form for a panel that should render
+nothing at all without JS. Neither holds once `experimental.async` is on: async SSR awaits the promise,
+and a never-settling one hangs the request.
+
 To refetch after a write, bump a counter (`?v=${version}`) — it is part of the derived expression, so
 the promise rebuilds. Don't reach for `invalidateAll()` when the data didn't come from `load`.
 
 `$effect` is for **synchronising with something outside Svelte** (a subscription, an imperative API,
 resetting a local mirror when a prop changes). It is not a data-fetching hook and it is not a computed
 value. Use `untrack()` for a `$state` initialiser seeded from a prop.
+
+#### The one exception: keeping the previous answer visible
+
+`{#await}` has no concept of a previous answer — **any** refetch re-enters the pending branch. That is
+right for a panel with nothing to show yet, and wrong for one the operator is already reading: paging a
+list replaces the rows with a spinner, and re-filtering takes the control they were using with it. On a
+query against a 1.5B-row table that is seconds of empty screen traded for data already on screen.
+
+`apps/moderator`'s `$lib/keep-last.svelte.ts` is the sanctioned shape for that, and the only one. Reach
+for it when a refetch is a REFINEMENT of something visible — another page, a narrower filter — never as
+a general replacement for the pattern above. Its decisions live in the plain-TypeScript
+`$lib/keep-last.ts` so the guards are tested rather than asserted in a comment, and each closes one of
+the three failure modes named above: `loading` clears on both settle paths, the effect reads none of the
+state it writes, and a response whose ticket is no longer current is discarded rather than allowed to
+overwrite a newer one. A failure keeps the last good answer and says so — blanking it turns a transient
+error into apparent absence, and absence is a finding on a moderation screen.
 
 ### Keys are correctness, not a lint rule
 
@@ -126,9 +153,11 @@ did is wrong, and the item they skip is the one that failed.
 
 ## UI components
 
-**Use [`@civitai/ui`](../packages/civitai-ui/README.md) (shadcn-svelte) primitives.** ~45 are available —
-check `packages/civitai-ui/src/lib/components/ui/` before hand-rolling anything, and add missing ones to
-that package (`npx shadcn-svelte@latest add <name>`), never to an app.
+**Use [`@civitai/ui`](../packages/civitai-ui/README.md) (shadcn-svelte) primitives.** Check
+`packages/civitai-ui/src/lib/components/` before hand-rolling anything — shadcn primitives in `ui/`,
+hand-written shared components beside it (`selection/`) — and add missing ones to that package, never to
+an app: `npx shadcn-svelte@latest add <name>` for a primitive, a sibling of `ui/` for anything
+hand-written, since `--overwrite` regenerates `ui/`.
 
 ```svelte
 import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -184,7 +213,7 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 
 ## Comments
 
-Per the [root guide](../CLAUDE.md#comments), and more strictly here: a comment in these apps earns its
+Per the [root comment guideline](../.claude/rules/comments.md), and more strictly here: a comment in these apps earns its
 place only as a **breakage guard** — an invariant, a cast, an ordering requirement, a hazard a future
 edit would otherwise walk into. No narration, no provenance, no "ported from X", no explaining your work
 to a reviewer. Say that in the PR.
@@ -192,7 +221,7 @@ to a reviewer. Say that in the PR.
 ## Verifying
 
 `typecheck`, never `check` — and `build` is not a check. Both run `svelte-kit sync`, which fights the
-dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full rule and why. Read
+dev server's file watcher; see [`.claude/rules/sveltekit.md`](../.claude/rules/sveltekit.md) for the full rule and why. Read
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 
@@ -220,6 +249,12 @@ imported at all. Route logic is reachable: import `load`/`actions` from a `+page
 them with the slice of the event they read. Component behaviour is **not** — no SvelteKit app has a
 browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
 review and by opening the page, not by a test.
+
+The one exception is static markup branches. `apps/creator-studio` compiles `.svelte` in its vitest
+config, so a test may server-render a page with `svelte/server` (mocking `$app/*`) to pin which branch
+renders, such as a link that must be present or absent. SSR output never runs `use:enhance`, `$state`
+changes or anything after hydration, so do not use it for those. The app's `src/test/setup.ts` stubs
+`@tabler/icons-svelte` for every suite, because compiling the real barrel adds about a minute.
 
 🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
 module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile

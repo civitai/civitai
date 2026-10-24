@@ -106,6 +106,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -238,8 +244,9 @@ async function advance(ms: number) {
  *
  * Two budgets, deliberately decoupled: at most 500ms of VIRTUAL time (well inside
  * the shortest recovery window, 2s, so a poll can never silently trip the very
- * behaviour the test is about to assert) and up to 5s of REAL time for the
- * browser to actually do the work. Advancing virtual time alone would give the
+ * behaviour the test is about to assert) and at least 5s of REAL time (500 x
+ * 10ms of sleep, plus the advance overhead — ~14.5s was observed on a loaded CI
+ * runner) for the browser to actually do the work. Advancing virtual time alone would give the
  * page only microtasks — the failure mode that makes a fake-timer poll report
  * "iframe never mounted" on a saturated runner.
  */
@@ -865,4 +872,218 @@ describe('PageBlockHost auto-retry — manual Retry interaction + teardown', () 
     await advance(10 * LAST_BACKOFF_MS);
     expect(onRemint).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * DEV-TUNNEL READY WINDOW — `surface === 'dev-tunnel'` only.
+ *
+ * The author's dev tunnel serves an unbundled dev server (one request per module)
+ * through a tunnel, so a healthy app can take several seconds to ack BLOCK_READY.
+ * Measured 2026-10-23 on a good network: 2.5–7.0 s against the 10 s limit every
+ * other surface uses. A slow link pushed it past 10 s, and each automatic attempt
+ * then RELOADED the frame, restarting every module download — making it worse.
+ *
+ * So dev-tunnel (and ONLY dev-tunnel) gets:
+ *   - a 30 s ready window, during which the host keeps the SAME frame and keeps
+ *     re-sending BLOCK_INIT (the "wait" — no reload while the app may still be
+ *     downloading);
+ *   - no automatic reload after a `timeout` — the 30 s window IS the wait; it then
+ *     settles on the fallback with the prominent manual Retry;
+ *   - copy that says the dev server is slow to reach rather than that the app broke.
+ *
+ * 🔴 Literal 30_000 / 10_000 and whole-string copy on purpose: these are the
+ * contract, so they are pinned rather than imported from the implementation.
+ */
+const DEV_TUNNEL_WINDOW_MS = 30_000;
+const DEFAULT_WINDOW_MS = 10_000;
+const DEFAULT_TIMEOUT_TITLE = "This app didn't load in time";
+const DEFAULT_TIMEOUT_HINT = 'It may be a temporary network or server hiccup. Try again.';
+const DEV_TUNNEL_TIMEOUT_TITLE = "Your app's dev server didn't respond in time";
+const DEV_TUNNEL_TIMEOUT_HINT =
+  "Your app's dev server is taking a while to respond. It may be a slow connection to the preview — try again.";
+
+/** Title + hint actually rendered by the timeout fallback (Mantine Alert). */
+function timeoutCopy() {
+  const alert = document.querySelector('[data-block-fallback="timeout"]');
+  return {
+    title: alert?.querySelector('.mantine-Alert-title')?.textContent ?? null,
+    hint: alert?.querySelector('.mantine-Alert-message .mantine-Text-root')?.textContent ?? null,
+  };
+}
+
+/**
+ * Capture host→block posts on ONE frame's contentWindow. If the host reloads the
+ * frame, this listener stays on the old window and stops counting — which is part
+ * of what the no-reload test relies on (alongside element identity).
+ */
+function listenForHostPosts(frame: HTMLIFrameElement) {
+  const received: Array<{ type: string }> = [];
+  const cw = frame.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const handler = (e: MessageEvent) => {
+    const d = e.data as { type?: string } | null;
+    if (d && typeof d.type === 'string') received.push({ type: d.type });
+  };
+  cw.addEventListener('message', handler);
+  return {
+    count: (type: string) => received.filter((m) => m.type === type).length,
+    stop: () => cw.removeEventListener('message', handler),
+  };
+}
+
+/**
+ * Like `pollFor`, but REPORTS instead of throwing, so the caller's own `expect` is
+ * the failure — and on a much smaller budget (100 iterations: ≤100 ms virtual,
+ * ≥1 s real; ~4 s measured per exhausted poll in CI run 40004842650). `pollFor`'s 500-iteration budget can outlast the 15 s test
+ * timeout on a loaded runner, and then a "the limit moved" regression surfaces as
+ * a generic "Test timed out" instead of this test's assertion (seen in CI under a
+ * 30-s-for-every-surface mutant). Used only where the awaited thing is a React
+ * commit already triggered by an explicit `advance()`.
+ */
+async function reaches(ready: () => boolean): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    if (ready()) return true;
+    await advance(1);
+    await realSleep(10);
+  }
+  return ready();
+}
+
+describe('PageBlockHost dev-tunnel ready window — 30 s, wait in place, dev-server copy', () => {
+  test('dev-tunnel: an app that acks BLOCK_READY at 12 s loads — no fallback, same frame', async () => {
+    useVirtualClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await awaitIframeMount();
+    const frame = iframeEl();
+
+    // Past the 10 s every other surface uses: still loading, no fallback.
+    await advance(DEFAULT_WINDOW_MS + 500);
+    expect(fallbackEl()).toBeNull();
+    expect(loadingEl()).not.toBeNull();
+
+    await advance(1_500); // t ≈ 12 s
+    expect(fallbackEl()).toBeNull();
+    expect(iframeEl()).toBe(frame);
+
+    await pollFor('BLOCK_READY ack', () => {
+      postFromBlock('BLOCK_READY', {});
+      return iframeEl()?.getAttribute('data-block-ready') === 'true';
+    });
+    expect(fallbackEl()).toBeNull();
+    expect(iframeEl()).toBe(frame);
+  });
+
+  test('dev-tunnel: waiting does NOT reload the frame, and BLOCK_INIT keeps being re-sent', async () => {
+    useVirtualClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await awaitIframeMount();
+    const frame = iframeEl() as HTMLIFrameElement;
+    const src = frame.getAttribute('src');
+    const posts = listenForHostPosts(frame);
+
+    // Positive control: the listener sees the handshake at all.
+    await advance(1_000);
+    expect(posts.count('BLOCK_INIT')).toBeGreaterThan(0);
+
+    // Past where any other surface would have timed out (10 s) AND auto-retried
+    // (10 s + the 2 s backoff) — and well into a second 10 s window.
+    await advance(DEFAULT_WINDOW_MS);
+    const atEleven = posts.count('BLOCK_INIT');
+    await advance(DEV_TUNNEL_WINDOW_MS - DEFAULT_WINDOW_MS - 2_000); // t ≈ 29 s
+
+    // The SAME <iframe> element, same src — nothing re-keyed or re-navigated it.
+    expect(iframeEl()).toBe(frame);
+    expect(iframeEl()?.getAttribute('src')).toBe(src);
+    expect(fallbackEl()).toBeNull();
+    expect(loadingEl()).not.toBeNull();
+    // …and the host is still knocking on that same frame (steady 400 ms cadence:
+    // ~45 posts in 18 s; 20 leaves room for timer granularity).
+    expect(posts.count('BLOCK_INIT') - atEleven).toBeGreaterThan(20);
+    posts.stop();
+  });
+
+  test('dev-tunnel: no ready by 30 s → the dev-server fallback, settled, prominent Retry, no reload', async () => {
+    useVirtualClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await awaitIframeMount();
+    const frame = iframeEl();
+
+    await advance(DEV_TUNNEL_WINDOW_MS - 200);
+    expect(fallbackEl()).toBeNull();
+    expect(iframeEl()).toBe(frame);
+
+    await advance(400);
+    expect(
+      await reaches(() => fallbackEl() !== null),
+      'dev-tunnel must time out at the 30 s limit'
+    ).toBe(true);
+    expect(timeoutCopy()).toEqual({
+      title: DEV_TUNNEL_TIMEOUT_TITLE,
+      hint: DEV_TUNNEL_TIMEOUT_HINT,
+    });
+
+    // The 30 s window WAS the wait: no automatic reload is scheduled, the host has
+    // settled, and Retry is the (prominent) way forward.
+    expect(autoRetryLine()).toBeNull();
+    expect(retryButton()?.getAttribute('data-block-fallback-retry-prominent')).toBe('true');
+    await advance(10 * LAST_BACKOFF_MS);
+    expect(loadingEl()).toBeNull();
+    expect(fallbackEl()).not.toBeNull();
+    expect(document.querySelector('[data-block-fallback-autoretry-spent]')).toBeNull();
+  });
+
+  /**
+   * 🔴 THE SURFACE CONDITION. Every non-dev surface keeps the 10 s limit, the
+   * automatic retry, and today's copy, byte-for-byte. `model-slot` here exercises
+   * the surface → policy mapping through PageBlockHost; the real model-slot host
+   * (`IframeHost`) has its own 10 s constant this change does not touch.
+   */
+  test.each(['page-run', 'model-slot', 'review-preview', 'private-run'] as const)(
+    '%s: still a 10 s limit, still auto-retries, still the original copy',
+    async (surface) => {
+      useVirtualClock();
+      renderWithProviders(
+        <PageBlockHost
+          {...baseProps}
+          surface={surface}
+          onConsentGranted={vi.fn()}
+          onRetryToken={vi.fn()}
+        />
+      );
+      await awaitIframeMount();
+      await advance(DEFAULT_WINDOW_MS - 200);
+      expect(fallbackEl()).toBeNull();
+
+      await advance(400);
+      expect(
+        await reaches(() => fallbackEl() !== null),
+        `${surface} must time out at the 10 s limit`
+      ).toBe(true);
+      expect(timeoutCopy()).toEqual({ title: DEFAULT_TIMEOUT_TITLE, hint: DEFAULT_TIMEOUT_HINT });
+      expect(autoRetryLine()?.textContent).toBe(
+        `Retrying automatically… (attempt 1 of ${MAX_AUTO_RETRIES})`
+      );
+    }
+  );
 });

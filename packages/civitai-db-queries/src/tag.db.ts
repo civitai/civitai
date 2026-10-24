@@ -1,28 +1,23 @@
 import { type Kysely, type Selectable, type Updateable } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-// `target` is a Postgres enum ARRAY (TagTarget[]); `nsfw` is a scalar enum (NsfwLevel).
+// `target` is a Postgres enum ARRAY (TagTarget[]).
 type TagTargetValue = Selectable<DB['Tag']>['target'][number];
-type NsfwLevelValue = Selectable<DB['Tag']>['nsfw'];
 
 export function getTagById(db: Kysely<DB>, id: number) {
   return db
     .selectFrom('Tag')
-    .select(['id', 'name', 'target', 'nsfw', 'nsfwLevel', 'createdAt', 'updatedAt'])
+    .select(['id', 'name', 'target', 'nsfwLevel', 'createdAt', 'updatedAt'])
     .where('id', '=', id)
     .executeTakeFirst();
 }
 
-export function createTag(
-  db: Kysely<DB>,
-  input: { name: string; target: TagTargetValue[]; nsfw?: NsfwLevelValue }
-) {
+export function createTag(db: Kysely<DB>, input: { name: string; target: TagTargetValue[] }) {
   return db
     .insertInto('Tag')
     .values({
       name: input.name,
       target: input.target,
-      ...(input.nsfw !== undefined ? { nsfw: input.nsfw } : {}),
       updatedAt: new Date(),
     })
     .returningAll()

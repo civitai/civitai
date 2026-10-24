@@ -1,8 +1,10 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Marketplace / Installed apps / My apps / Review). "Review" is gated on
+// (Marketplace / App activity / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -18,35 +20,22 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => holder.user,
 }));
 
-vi.mock('~/utils/trpc', () => ({
+/**
+ * 🔴 A PROXY, NOT A LITERAL — the whole `blocks` namespace here was inert fixture anyway.
+ *
+ * Phase 3 first patched this by hand (`useUtils` + `revokeScopes`) after `ScopeConsentList`'s
+ * `useScopeRevoke` made the drawer body throw `TypeError: trpc.useUtils is not a function`, which
+ * failed the one arm below on `Cannot find element with locator:
+ * getByTestId('app-permissions-activity-drawer')` — a message that reads as "the menu item is
+ * broken" and names nothing. Converted because this file asserts on NO tRPC spy at all: every
+ * procedure it named existed solely to stop the drawer's subtree crashing, which is exactly what
+ * the shared proxy does for every procedure, including the ones the next change adds. See
+ * `test/trpcProxyStub.ts` for the four-time history behind it.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
-  trpc: {
-    blocks: {
-      listMyScopeGrants: { useQuery: () => ({ data: [], isLoading: false }) },
-      listMyAppActivity: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-      listMyScopeInvocations: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-    },
-    // W13 — AppActivityPanel (mounted by the drawer) resolves rich-detail ids via
-    // these batch lookups. Stub them (empty fixtures → inert).
-    modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
-    useQueries: () => [],
-  },
+  trpc: makeTrpcProxy(),
 }));
 
 // eslint-disable-next-line import/first
@@ -88,13 +77,17 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
     expect(home.getAttribute('href')).toBe('/apps');
 
-    const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();
-    expect(installed.getAttribute('href')).toBe('/apps/installed');
+    const installed = page.getByRole('menuitem', { name: 'App activity' }).element();
+    expect(installed.getAttribute('href')).toBe('/apps/activity');
 
-    // Was "My submissions" → `/apps/my-submissions`; that page merged into `/apps/mine`
+    // Was "My submissions" → `/apps/my-submissions`, then `/apps/mine`; that table is now
+    // state C of the consolidated `/apps/build`, and this item was REPOINTED rather than
+    // removed (removing it would delete a door out of a running app for the app's own
+    // owner; leaving the old href would make every press a 301 hop). The LABEL is
+    // deliberately still "My apps" — it names what an owner arrives at.
     // and 301s there, so the in-app link points at the surviving route directly.
     const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
-    expect(mine.getAttribute('href')).toBe('/apps/mine');
+    expect(mine.getAttribute('href')).toBe('/apps/build');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

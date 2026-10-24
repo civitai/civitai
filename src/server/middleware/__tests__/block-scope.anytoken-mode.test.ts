@@ -43,6 +43,18 @@ vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
 }));
 
+// These suites isolate ONE property of `withBlockScope` each (scope gating, CORS,
+// Cache-Control, the RED labels, the runtime flag). The approved-status gate added
+// alongside the revocation check is a REAL dependency of every one of those paths — an
+// approved app is the precondition each of them was already implicitly assuming — so it
+// is stubbed to 'ok' here for the same reason `isRevoked` is stubbed to false: to keep
+// the suite about its own subject. The gate's OWN behaviour (suspended/missing/dev/
+// lookup-failure, and its order relative to revocation) is covered in
+// `block-scope.approved-gate.test.ts`.
+vi.mock('~/server/services/blocks/block-approval.service', () => ({
+  resolveRestApprovalVerdict: vi.fn(async () => 'ok' as const),
+}));
+
 import { withBlockScope } from '../block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 

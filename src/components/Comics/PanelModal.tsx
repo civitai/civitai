@@ -103,7 +103,7 @@ function ReferencePanelPicker({
             }}
           >
             <img
-              src={getEdgeUrl(p.imageUrl, { width: 120 })}
+              src={getEdgeUrl(p.imageUrl, { width: 120, optimized: true })}
               alt={`Panel #${p.position + 1}`}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
@@ -373,7 +373,7 @@ export function PanelModal({
       const result = await uploadEnhanceToCF(file);
       setEnhanceSourceImage({
         url: result.id,
-        previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+        previewUrl: getEdgeUrl(result.id, { width: 400, optimized: true }) ?? result.id,
         width: dims.width,
         height: dims.height,
       });
@@ -401,7 +401,7 @@ export function PanelModal({
             const cfId = await fetchAndUploadGeneratorImage(img.url, 'enhance', uploadEnhanceToCF);
             setEnhanceSourceImage({
               url: cfId,
-              previewUrl: getEdgeUrl(cfId, { width: 400 }) ?? cfId,
+              previewUrl: getEdgeUrl(cfId, { width: 400, optimized: true }) ?? cfId,
               width,
               height,
             });
@@ -452,7 +452,7 @@ export function PanelModal({
             const result = await uploadEnhanceToCF(file);
             setEnhanceSourceImage({
               url: result.id,
-              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              previewUrl: getEdgeUrl(result.id, { width: 400, optimized: true }) ?? result.id,
               width: enhanceSourceImage.width,
               height: enhanceSourceImage.height,
             });
@@ -510,7 +510,7 @@ export function PanelModal({
             cfId: result.id,
             width: dims.width,
             height: dims.height,
-            preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
+            preview: getEdgeUrl(result.id, { width: 120, optimized: true }) ?? result.id,
           },
           prompt: '',
           aspectRatio: '3:4',
@@ -566,7 +566,7 @@ export function PanelModal({
                   cfId,
                   width,
                   height,
-                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
+                  preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
                 },
                 prompt: '',
                 aspectRatio: '3:4',
@@ -634,7 +634,7 @@ export function PanelModal({
                   cfId,
                   width,
                   height,
-                  preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
+                  preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
                   // Preserve the full workflow step meta (civitaiResources,
                   // prompt, sampler, …) so the server can attribute the new
                   // Image record to the model that produced it.
@@ -930,8 +930,10 @@ export function PanelModal({
                   src={
                     enhanceSourceImage.previewUrl.startsWith('http')
                       ? enhanceSourceImage.previewUrl
-                      : getEdgeUrl(enhanceSourceImage.previewUrl, { width: 400 }) ??
-                        enhanceSourceImage.previewUrl
+                      : getEdgeUrl(enhanceSourceImage.previewUrl, {
+                          width: 400,
+                          optimized: true,
+                        }) ?? enhanceSourceImage.previewUrl
                   }
                   alt="Source"
                 />

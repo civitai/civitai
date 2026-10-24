@@ -24,6 +24,8 @@ export const threadEntitySelect = {
   comicChapter: { select: { projectId: true } },
   model3d: { select: { id: true } },
   appListing: { select: { slug: true } },
+  crucible: { select: { id: true } },
+  storyline: { select: { id: true } },
 } satisfies Prisma.ThreadSelect;
 
 /**
@@ -84,6 +86,8 @@ export type ThreadEntitySource = Pick<
   | 'comicChapter'
   | 'model3d'
   | 'appListing'
+  | 'crucible'
+  | 'storyline'
 >;
 
 /**
@@ -139,6 +143,8 @@ const getThreadEntity = (thread: ThreadEntitySource): CommentThreadTarget | null
   // the TS chain had `comicChapter` but not `model3d`, the SQL CASE had `model3d` but not
   // `comicChapter` — two copies of one rule, and the bug lived in the disagreement.
   if (thread.model3d) return { threadType: 'model3d', threadParentId: thread.model3d.id };
+  if (thread.crucible) return { threadType: 'crucible', threadParentId: thread.crucible.id };
+  if (thread.storyline) return { threadType: 'storyline', threadParentId: thread.storyline.id };
   if (thread.appListing)
     return {
       threadType: 'appListing',

@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
  * one allowlists rot without, and it is what keeps this list draining rather than growing.
  *
  * SCOPE. Only calls through the `~/server/services/orchestrator/workflows` wrapper that pass
- * `token`. A call passing `client:` is the generated `@civitai/client` used with
+ * `token`. A call passing `client:` is the generated `@civitai/orchestration-client` used with
  * `internalOrchestratorClient` — the system account, which legitimately owns what it submits.
  */
 
@@ -37,9 +37,15 @@ const SRC = path.join(REPO_ROOT, 'src');
  */
 const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
   'src/server/routers/blocks.router.ts': {
-    unguarded: 7,
+    unguarded: 11,
     reason:
-      'App Blocks: 4 paid submits + 3 whatIf/quote estimates. The paid ones SHOULD be guarded, ' +
+      "App Blocks: 6 paid submits + 5 whatIf/quote estimates (the pass-through `kind:'step'` " +
+      'arm added one of each — it is the same block spend path, so it inherits this exemption ' +
+      "rather than getting a different answer to the same question; the `kind:'workflow'` arm " +
+      "added a paid submit and prices through the pass-through arm's quote; the `kind:'training'` arm " +
+      'added a whatIf quote here, while its PAID submit is guarded, because a training workflow ' +
+      'is the same shape the training form already checks; the confirmed pass-through step ' +
+      'shares that one guarded submit, so it adds no site here). The paid ones SHOULD be guarded, ' +
       'but blocks record spend through reserveBlockBuzzSpend rather than a generation/training ' +
       'buzzTransaction, so their workflow-id shape is not confirmed against the ledger the way ' +
       'the other paths are (1.16M rows, prefix == payer). Guarding on an unconfirmed id shape ' +
@@ -53,10 +59,19 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       'blocker as blocks: a chatCompletion workflow id has not been checked against the ledger.',
   },
   'src/server/services/orchestrator/orchestration-new.service.ts': {
+    unguarded: 2,
+    reason:
+      'Two cost estimates, both at `query: { whatif: true }`, which produces no persisted workflow ' +
+      'and no debit — so there is no attribution to check. (1) whatIfFromGraph. (2) the pre-boost ' +
+      'check in generateFromGraph, which asks whether anything is waiting to download before it ' +
+      'sends a paid `downloadPriority`. The real submit beside it IS guarded.',
+  },
+  'src/server/services/resource-load.service.ts': {
     unguarded: 1,
     reason:
-      'whatIfFromGraph — a cost estimate. `query: { whatif: true }` produces no persisted ' +
-      'workflow and no debit, so there is no attribution to check.',
+      'estimateResourceLoad — the paid-model-loading price quote at `query: { whatif: true }`. ' +
+      'No persisted workflow and no debit, so there is no attribution to check. The real load ' +
+      'submit beside it IS guarded.',
   },
   'src/server/services/orchestrator/promptEnhancement.ts': {
     unguarded: 1,

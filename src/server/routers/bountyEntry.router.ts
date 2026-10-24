@@ -60,11 +60,13 @@ export const bountyEntryRouter = router({
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(upsertBountyEntryInputSchema)
+    .use(isOwnerOrModerator)
     .use(isFlagProtected('bounties'))
     .mutation(upsertBountyEntryHandler),
   submit: guardedProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(submitBountyEntryInputSchema)
+    .use(isOwnerOrModerator)
     .use(isFlagProtected('bounties'))
     .mutation(submitBountyEntryHandler),
   award: protectedProcedure

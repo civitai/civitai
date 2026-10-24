@@ -9,10 +9,10 @@ import type {
   ComfyBooguEditImageInput,
   ComfyBooguEditTurboImageInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { booguModeOf, type BooguMode } from '~/shared/form-graph/generation/image/boogu.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

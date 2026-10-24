@@ -2,6 +2,7 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import { updatedAtPlugin } from '@civitai/db-queries';
 import type { DB } from '@civitai/db-schema/kysely';
 import { UPDATED_AT_TABLES } from '@civitai/db-schema/kysely/updated-at-tables';
+import type { ColumnType } from 'kysely';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 
@@ -25,6 +26,19 @@ const { dbRead, dbWrite } = createKyselyClients<DB>({
 
 export const kyselyRead = dbRead;
 export const kyselyWrite = dbWrite;
+
+// prisma-kysely drops Unsupported columns and types dbgenerated ones as writable. CommentV3's
+// path (ltree, trigger-set) and rootId/depth (GENERATED) reject any write, so these handles narrow
+// them to select-only. The shared clients keep the generated `DB` that @civitai/db-queries is typed against.
+type CommentV3TreeColumns = {
+  CommentV3: {
+    path: ColumnType<string, never, never>;
+    rootId: ColumnType<number, never, never>;
+    depth: ColumnType<number, never, never>;
+  };
+};
+export const kyselyV3Read = dbRead.withTables<CommentV3TreeColumns>();
+export const kyselyV3Write = dbWrite.withTables<CommentV3TreeColumns>();
 // Main-app-only tiers. Available for dynamic per-call routing (long-running reads, the datapacket replica).
 // Read-only replicas — no UPDATEs run here, so they don't need the plugin.
 export const kyselyReadLong = createKyselyClients<DB>({

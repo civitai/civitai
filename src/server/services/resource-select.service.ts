@@ -6,9 +6,13 @@ import { dbRead } from '~/server/db/client';
 import {
   isTransientMeiliError,
   searchClient,
+  searchWithSignal,
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+
+import { coverageFilter } from '~/shared/generation/coverage-fields';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GetResourceSelectInput } from '~/server/schema/model.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -24,13 +28,18 @@ import {
   getModelSearchIndexRecords,
   type ModelSearchIndexRecord,
 } from '~/server/search-index/models.search-index';
+import {
+  modelPricingFilterClause,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { transformModelHits } from '~/shared/search/models-transform';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type ServiceUser = { id: number } | undefined;
+/** Dropping `tier`/`isModerator` here silently makes `coverageAudience` read every user as free. */
+type ServiceUser = { id: number; tier?: string; isModerator?: boolean } | undefined;
 
 const FEATURED_LIMIT = 1000;
 
@@ -106,23 +115,39 @@ async function resolveTabIds(
   }
 }
 
-function buildFilter({
+export function buildFilter({
   input,
   user,
   featuredModels,
   tabIds,
   excludeIds,
+  coverageNext,
+  member,
 }: {
   input: GetResourceSelectInput;
   user: ServiceUser;
   featuredModels?: GetFeaturedModels;
   tabIds: number[] | null;
+  /** Which indexed coverage field is live — the index carries both. */
+  coverageNext?: boolean;
+  /** Whether this user gets the expansion; a non-member also keeps what is already resident. */
+  member: boolean;
   // Ids pinned to the front from Postgres — excluded from the Meili stream so a
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
 }): string | null {
-  const { tab, selectSource, canGenerate, resources, filterTypes, filterBaseModels, tagName } =
-    input;
+  const {
+    tab,
+    selectSource,
+    canGenerate,
+    resources,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    filterTurbo,
+    tagName,
+    hidePaid,
+  } = input;
 
   // On the featured tab, determine which types have featured models so we can
   // skip the baseModel filter for those types and instead AND an explicit id set.
@@ -168,13 +193,17 @@ function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    canGenerate !== undefined && eq('canGenerate', canGenerate),
+    coverageFilter({ canGenerate, coverageNext: !!coverageNext, member }),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),
     featuredIds.length > 0 && inArray('id', featuredIds),
     filterTypes.length > 0 && inArray('type', filterTypes),
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
+    // Any version resident, not the one the card happens to show — Meili matches a nested array.
+    filterLoaded && eq('versions.generatorLoaded', true),
+    filterTurbo && eq('versions.turbo', true),
     tagName ? eq('tags.name', tagName) : null,
+    modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
     tab === 'official' ? eq('user.id', constants.system.officialUserId) : null,
@@ -186,14 +215,22 @@ function buildFilter({
 
 async function searchModels(
   query: string,
-  request: SearchParams
+  request: SearchParams,
+  signal?: AbortSignal
 ): Promise<SearchResponse<ModelSearchIndexRecord>> {
   if (!searchClient)
     return { hits: [], estimatedTotalHits: 0 } as unknown as SearchResponse<ModelSearchIndexRecord>;
   const client = searchClient;
   try {
-    return await withMeiliResourceSelect(() =>
-      client.index(MODELS_SEARCH_INDEX).search<ModelSearchIndexRecord>(query, request)
+    return await withMeiliResourceSelect(
+      (searchSignal) =>
+        searchWithSignal<ModelSearchIndexRecord>(
+          client.index(MODELS_SEARCH_INDEX),
+          query,
+          request,
+          searchSignal
+        ),
+      { signal }
     );
   } catch (err) {
     if (isTransientMeiliError(err)) {
@@ -214,11 +251,11 @@ async function searchModels(
 // `retryCount: 0` and the catch keep the pin off the critical path. On a cold key
 // with the refresh lock already held, fetchThroughCache's default retry sleeps
 // lockTTL/2 (5s) up to three times before giving up — inside the request. This runs
-// only while officialPinActive, i.e. the picker's initial state, so that stall lands
+// on the picker's initial state and the browse feed's Hot + base-model view, so that stall lands
 // on every concurrent modal open after a deploy or a Redis eviction even though the
 // lock winner populates the key in ~300ms. Failing to [] instead costs the pin for
 // one request and nothing else.
-async function getOfficialModelIds() {
+export async function getOfficialModelIds() {
   try {
     return await fetchThroughCache(
       REDIS_KEYS.CACHES.OFFICIAL_MODELS,
@@ -237,11 +274,64 @@ async function getOfficialModelIds() {
   }
 }
 
+// Meilisearch only, never `getModelSearchIndexRecords`: the index holds published, searchable models
+// and `buildFilter` adds the rest of the visibility rules, so a pasted id finds nothing a search
+// could not.
+async function lookupResourceSelectModel(
+  input: GetResourceSelectInput,
+  { modelId, modelVersionId }: NonNullable<GetResourceSelectInput['lookup']>,
+  {
+    user,
+    signal,
+    coverageNext,
+    member,
+  }: { user: ServiceUser; signal?: AbortSignal; coverageNext: boolean; member: boolean }
+) {
+  const filter = and(
+    buildFilter({
+      input: {
+        ...input,
+        tab: 'all',
+        tagName: undefined,
+        resources: [],
+        filterTypes: [],
+        filterBaseModels: [],
+        filterLoaded: false,
+        filterTurbo: false,
+        hidePaid: false,
+      },
+      user,
+      tabIds: null,
+      coverageNext,
+      member,
+    }),
+    !!modelId && eq('id', modelId),
+    !!modelVersionId && eq('versions.id', modelVersionId)
+  );
+
+  const results = await searchModels('', { filter: filter ?? undefined, limit: 1 }, signal);
+  return { items: transformModelHits(results.hits), nextCursor: undefined, coverageNext, member };
+}
+
 export async function getResourceSelectModels(
   input: GetResourceSelectInput,
-  { user }: { user: ServiceUser }
+  { user, signal }: { user: ServiceUser; signal?: AbortSignal }
 ) {
-  const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
+  const {
+    tab,
+    query = '',
+    sort,
+    cursor,
+    limit,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    tagName,
+  } = input;
+
+  const { next: coverageNext, member } = await coverageAudience(user);
+  if (input.lookup)
+    return lookupResourceSelectModel(input, input.lookup, { user, signal, coverageNext, member });
 
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
@@ -256,6 +346,8 @@ export async function getResourceSelectModels(
     !query &&
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
+    !filterLoaded &&
+    !input.filterTurbo &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the
@@ -281,15 +373,24 @@ export async function getResourceSelectModels(
     featuredModels,
     tabIds,
     excludeIds: officialIdsForType,
+    coverageNext,
+    member,
   });
 
-  const results = await searchModels(query, {
-    filter: filter ?? undefined,
-    sort: meiliSortFor(sort),
-    offset,
-    limit: take,
-  });
+  const results = await searchModels(
+    query,
+    {
+      filter: filter ?? undefined,
+      sort: meiliSortFor(sort),
+      offset,
+      limit: take,
+    },
+    signal
+  );
 
+  // Images are returned at every browsing level on purpose: the picker filters them by the
+  // viewer's level before rendering (ResourceHitList). Product decision, 2026-09-22: do not
+  // add server-side level filtering here without revisiting it.
   let items = transformModelHits(results.hits);
 
   // Prepend the official models on the first page only. Sourced straight from
@@ -300,6 +401,15 @@ export async function getResourceSelectModels(
     const officialItems = transformModelHits(
       await getModelSearchIndexRecords(officialIdsForType)
     ).filter((m) => {
+      // buildFilter never sees the pin, so anything it would have excluded is re-applied here —
+      // pricing and base model only. `canGenerate`, the private-availability split and the celebrity
+      // exclusion are NOT re-applied; `getOfficialModelIds` scopes on isOfficial + Published alone,
+      // so a mod flagging a private or non-generatable model official would pin it past all three.
+      if (
+        input.hidePaid &&
+        !m.versions.some((v) => versionSatisfiesPricingFilter(v.pricing, input))
+      )
+        return false;
       const baseModels = input.resources
         .filter((r) => r.type === m.type)
         .flatMap((r) => r.baseModels);
@@ -311,5 +421,5 @@ export async function getResourceSelectModels(
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
 
-  return { items, nextCursor };
+  return { items, nextCursor, coverageNext, member };
 }

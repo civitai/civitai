@@ -18,6 +18,8 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
     select: {
       ...simpleCosmeticSelect,
       videoUrl: true,
+      // So the tray's shop can hide a sticker kept off the image being decorated.
+      flags: true,
       creator: { select: userWithCosmeticsSelect },
     },
   },

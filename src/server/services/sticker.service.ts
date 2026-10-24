@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
 import { isProd } from '~/env/other';
+import { isEventShopItemData } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
@@ -252,8 +253,8 @@ export type StickerOffer = {
  *
  * ⚠️ Every refusal `purchaseCosmeticShopItem` makes has to be made here too, or
  * the tray offers a price the press then rejects. That is why it takes the
- * viewer: self-created, blocked and sold-out are answers about a person and a
- * moment, not about a listing.
+ * viewer: blocked and sold-out are answers about a person and a moment, not
+ * about a listing.
  */
 export async function getStickerOffers({
   ids,
@@ -294,9 +295,9 @@ export async function getStickerOffers({
       meta: true,
       availableQuantity: true,
       addedById: true,
-      // The purchase counts rows, not `meta.purchases` — that counter is written
-      // from a snapshot read and loses increments under concurrency, so a
-      // listing genuinely out of stock still reads as available through it.
+      // The purchase counts rows, not `meta.purchases` — that counter is bumped
+      // after the grant commits and a failed bump is only logged, so a listing
+      // genuinely out of stock can still read as available through it.
       _count: { select: { purchases: true } },
     },
   });
@@ -313,11 +314,9 @@ export async function getStickerOffers({
     const soldOut =
       listing?.availableQuantity != null &&
       listing.availableQuantity - (listing._count?.purchases ?? 0) <= 0;
-    // The creator is granted their own sticker on approval, so the shop refuses
-    // to sell it to them; the block is refused in either direction, against both
-    // the maker and whoever listed it.
+    // A block is refused in either direction, against both the maker and whoever
+    // listed it.
     const refusedForViewer =
-      cosmetic.createdById === viewerId ||
       (cosmetic.createdById != null && blockedPairIds.includes(cosmetic.createdById)) ||
       (listing?.addedById != null && blockedPairIds.includes(listing.addedById));
 
@@ -384,6 +383,10 @@ export async function purchaseStickerUses({
   if (!cosmetic) throw throwNotFoundError('Sticker not found');
   if (cosmetic.type !== CosmeticType.Sticker)
     throw throwBadRequestError('Only stickers are sold by the use');
+  // Event items are gated per buyer (event window, team, paid Buzz only) at the
+  // shop purchase; a top-up would sell more of one past all three.
+  if (isEventShopItemData(cosmetic.data))
+    throw throwBadRequestError("Event stickers can't be topped up");
 
   // Never derived from the list price: a sticker priced before per-use pricing
   // existed has no top-up price, and inventing one would charge a number its

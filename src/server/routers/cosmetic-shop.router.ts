@@ -1,11 +1,15 @@
+import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { getRegion } from '~/server/utils/region-blocking';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  setShopItemEventTagsInput,
+  shopItemSectionInput,
   toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticInput,
@@ -13,17 +17,22 @@ import {
   upsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
+  addShopItemToSection,
   deleteCosmeticShopItem,
   deleteCosmeticShopSection,
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getShopItemEventTags,
+  getShopItemSections,
   getShopSections,
   getShopSectionsWithItems,
   getUserPreviewImagesForCosmetics,
   getWishlistedShopItemIds,
   purchaseCosmeticShopItem,
+  removeShopItemFromSection,
   reorderCosmeticShopSections,
+  setShopItemEventTags,
   toggleWishlistShopItem,
   upsertCosmetic,
   upsertCosmeticShopItem,
@@ -47,12 +56,10 @@ export const cosmeticShopRouter = router({
     .query(({ input }) => {
       return getPaginatedCosmeticShopItems(input);
     }),
-  getShopItemById: protectedProcedure
-    .meta({ requiredScope: TokenScope.CollectionsRead })
-    .input(getByIdSchema)
-    .query(({ input }) => {
-      return getShopItemById(input);
-    }),
+  // Editor reads: the whole item, the way the upsert form round-trips it.
+  getShopItemById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
+    return getShopItemById(input);
+  }),
   upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input, ctx }) => {
     // Same gate as the creator path: creating stickers is flag-controlled, even
     // for mods. Rendering and owning them are not.
@@ -77,12 +84,9 @@ export const cosmeticShopRouter = router({
   getAllSections: moderatorProcedure.input(getAllCosmeticShopSections).query(({ input }) => {
     return getShopSections(input);
   }),
-  getSectionById: protectedProcedure
-    .meta({ requiredScope: TokenScope.CollectionsRead })
-    .input(getByIdSchema)
-    .query(({ input }) => {
-      return getSectionById(input);
-    }),
+  getSectionById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
+    return getSectionById(input);
+  }),
   upsertShopSection: moderatorProcedure
     .input(upsertCosmeticShopSectionInput)
     .mutation(({ input, ctx }) => {
@@ -99,6 +103,22 @@ export const cosmeticShopRouter = router({
     .mutation(({ input }) => {
       return reorderCosmeticShopSections(input);
     }),
+  getShopItemSections: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemSections(input)),
+  addShopItemToSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input }) => addShopItemToSection(input)),
+  removeShopItemFromSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input }) => removeShopItemFromSection(input)),
+  // Event tags are moderator data: they decide what an official section sells.
+  getShopItemEventTags: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemEventTags(input)),
+  setShopItemEventTags: moderatorProcedure
+    .input(setShopItemEventTagsInput)
+    .mutation(({ input }) => setShopItemEventTags(input)),
   // #endregion
   // #region [Public facing routes]
   getShop: publicProcedure
@@ -116,6 +136,7 @@ export const cosmeticShopRouter = router({
   purchaseShopItem: verifiedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })
     .input(purchaseCosmeticShopItemInput)
+    .use(itemHolderInFlightLimit)
     .mutation(({ input, ctx }) => {
       // Calculate domain-allowed account types at router level
       const [buzzType] = getAllowedAccountTypes(ctx.features);
@@ -124,7 +145,10 @@ export const cosmeticShopRouter = router({
         ...input,
         stickersEnabled: ctx.features.stickers,
         packsEnabled: ctx.features.cosmeticPacks,
+        mysteryBoxEnabled: ctx.features.mysteryBox,
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
         buzzType,
       });
     }),

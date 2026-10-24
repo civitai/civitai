@@ -1,3 +1,4 @@
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { NavKey } from '~/shared/constants/nav.constants';
 
@@ -42,6 +43,11 @@ export type NavRegistryEntry = {
   classes?: string[];
 };
 
+/** `FeatureAccess` carries only the flags that are ON, so a gate reading an off flag returns
+ *  `undefined` — which `?? true` would treat as "ungated" and show to everyone. */
+export const isNavEntryVisible = (entry: NavRegistryEntry, ctx: NavGateContext) =>
+  entry.visible ? !!entry.visible(ctx) : true;
+
 const authed = (ctx: NavGateContext) => ctx.isAuthed;
 
 /**
@@ -49,8 +55,8 @@ const authed = (ctx: NavGateContext) => ctx.isAuthed;
  * queries that used to decide placement by viewport width; `defaultHidden` replaces the two
  * account-settings switches.
  *
- * `posts` and `events` are `hidden` because that is what every user sees today: their flags are
- * `default: false`, so a user who never opened account settings has never seen those tabs.
+ * `posts` is `hidden` because that is what every user sees today: its flag was `default: false`, so
+ * a user who never opened account settings has never seen that tab.
  */
 export const navRegistry: NavRegistryEntry[] = [
   { key: 'home', url: '/', defaultGroup: 'bar', locked: true },
@@ -66,10 +72,8 @@ export const navRegistry: NavRegistryEntry[] = [
   },
   { key: 'hubs', url: '/hubs', defaultGroup: 'bar', visible: (ctx) => ctx.features.userHubs },
   /**
-   * `posts` and `events` carry NO gate. Their flags still exist and still seed a placement for
-   * users who had them on, but placement is the config's job now — gating the rows would filter
-   * them out of the customization modal for the default-off majority, leaving no way to turn them
-   * on at all once the account switches retire.
+   * `posts` carries NO gate: gating it would filter it out of the customization modal for the
+   * default-off majority, leaving no way to turn it on.
    */
   { key: 'posts', url: '/posts', defaultGroup: 'bar', defaultHidden: true },
   {
@@ -86,6 +90,12 @@ export const navRegistry: NavRegistryEntry[] = [
     new: new Date('2026-03-01'),
   },
   {
+    key: 'storylines',
+    url: '/storylines',
+    defaultGroup: 'more',
+    visible: (ctx) => ctx.features.storylines,
+  },
+  {
     key: 'bounties',
     url: '/bounties',
     defaultGroup: 'more',
@@ -94,10 +104,26 @@ export const navRegistry: NavRegistryEntry[] = [
   {
     key: 'challenges',
     url: '/challenges',
-    defaultGroup: 'bar',
+    defaultGroup: 'more',
     visible: (ctx) => ctx.features.challengePlatform,
   },
-  { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
+  {
+    key: 'crucibles',
+    url: '/crucibles',
+    defaultGroup: 'bar',
+    visible: (ctx) => ctx.features.crucible,
+  },
+  {
+    key: 'apps',
+    url: '/apps',
+    defaultGroup: 'bar',
+    // The `/apps` page's own SSR gate restated as a viewer fact — a pill visible under
+    // different flags is a menu entry into the `notFound` `resolveAppsPageAccess` answers
+    // for an ineligible viewer (the #3907/#4668 defect class). Registered in the
+    // store-gate call-site ledger (`appsStoreAccessCallSites.test.ts`).
+    visible: (ctx) => hasAppsStoreAccess(ctx.features),
+    new: new Date('2026-10-01'),
+  },
   { key: 'updates', url: '/changelog', defaultGroup: 'bar' },
   {
     key: 'shop',

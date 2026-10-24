@@ -157,6 +157,67 @@ describe('actions.type enum drift', () => {
     }
   });
 
+  /**
+   * 🔴 THE DDL IS ONLY HALF THE OPERATION, AND THE OTHER HALF HAS SHIPPED BROKEN TWICE.
+   *
+   * `civitai-clickhouse-tracker` builds its column serializers from the schema its pods read
+   * AT CONNECT TIME and never re-reads them. A value added to the enum after those pods booted
+   * is rejected CLIENT-SIDE, inside the tracker, before ClickHouse is asked — so the ALTER
+   * verifies perfectly against `system.columns` and the type still collects ZERO rows.
+   *
+   * Measured: `Announcement_Click` (2026-09-04) collected NOTHING for ~2.5 days; its first row
+   * ever landed ten minutes after an unrelated tracker restart on 2026-09-07, then 253 rows
+   * across 170 real users within the day. `App_Open` (2026-09-05) went the same way until it
+   * was caught by hand. Both migrations were CORRECT. Both headers already carried the
+   * "apply the DDL before the emitting code" rule and obeyed it — that rule addresses deploy
+   * ordering and cannot fix a cache predating both the DDL and the deploy.
+   *
+   * 🔴 WHY AN EXACT STRING RATHER THAN A LOOSE MATCH: the artifact under test is PROSE, and a
+   * guard on words is walkable by rewording — /restart/i would pass on any sentence containing
+   * the word. Pinning the whole normalised line makes it a machine-checkable claim. A cosmetic
+   * reword fails this test on purpose; change the constant and the README together.
+   */
+  const POST_APPLY_MARKER =
+    '-- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.';
+
+  /** Every migration file that widens `default.actions.type`, by name, with its raw text. */
+  const actionsMigrations = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .map((f) => ({ name: f, raw: fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf-8') }))
+    .filter(({ raw }) =>
+      /ALTER\s+TABLE\s+default\.actions\s+MODIFY\s+COLUMN\s+`?type`?\s+Enum16/i.test(
+        raw
+          .split('\n')
+          .filter((line) => !line.trim().startsWith('--'))
+          .join('\n')
+      )
+    );
+
+  it('found actions migrations to check for the post-apply marker', () => {
+    // The positive control for the case below. Without it, a regex that matches nothing
+    // makes every `every()` assertion vacuously true — a green that means "scanned zero
+    // files", which is exactly the reassuring-zero this whole file exists to prevent.
+    expect(
+      actionsMigrations.length,
+      'no migration widening default.actions.type was found — the marker check below would be vacuous'
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(actionsMigrations.map((m) => m.name))(
+    '%s carries the POST-APPLY tracker-restart marker verbatim',
+    (name) => {
+      const raw = actionsMigrations.find((m) => m.name === name)!.raw;
+      expect(
+        raw.includes(POST_APPLY_MARKER),
+        `${name} widens actions.type but does not carry the post-apply marker.\n` +
+          `Add this line verbatim to its header:\n  ${POST_APPLY_MARKER}\n` +
+          `Applying the DDL without restarting the tracker ships a type that collects ZERO ` +
+          `rows while every signal says it worked — see migrations/README.md.`
+      ).toBe(true);
+    }
+  );
+
   it('assigns every value a distinct index', () => {
     const indices = [...actionsBlock.arms.values()];
     expect(new Set(indices).size).toBe(indices.length);

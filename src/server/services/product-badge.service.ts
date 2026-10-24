@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { submitWorkflow } from '@civitai/client';
-import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
+import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import type {
@@ -13,8 +13,13 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+  normalizeImageScanUrl,
+} from '~/server/utils/image-scan-url';
 import { getImageUploadBackend } from '~/utils/s3-utils';
-import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticSource, CosmeticType, PaymentProvider } from '~/shared/utils/prisma/enums';
 
 const BADGE_TARGET_SIZE = 200;
 
@@ -124,6 +129,12 @@ export const getBadgeHistory = async ({ productId }: GetBadgeHistoryInput) => {
  * resize transform preserves aspect ratio. Returns the new Cloudflare image id.
  * If width/height are already 200x200 (or unknown and equal to the target),
  * the original id is returned unchanged.
+ *
+ * 🔴 THROWS `ImageIngestionUrlBlockedError` for a `url` off the image-scan allowlist — on
+ * EVERY path, including the already-target-size one that returns the id unchanged. Callers
+ * relying on "returned unchanged" must handle a rejection: the allowlist check deliberately
+ * precedes that short-circuit, because `width`/`height` are caller input and a guard a
+ * request field can step around is not a guard (see the note on the check itself).
  */
 export const resizeBadgeImage = async ({
   url,
@@ -134,9 +145,34 @@ export const resizeBadgeImage = async ({
   width?: number;
   height?: number;
 }): Promise<string> => {
+  // 🔴 Same SSRF boundary as `createImageIngestionRequest`: this hands the orchestrator a
+  // caller-supplied URL it fetches from inside our network. The rung here is
+  // `moderatorProcedure` (product-badge.router), so this is the narrowest of the funnels —
+  // it is gated anyway, because "only moderators can reach it" is an argument about the
+  // CURRENT router and not a property of this function.
+  //
+  // This THROWS rather than returning the url unchanged: returning it would hand an
+  // un-resized, un-validated url straight into `upsertProductBadge`'s cosmetic `data.url`,
+  // where the phash sweep would then replay it on a schedule.
+  //
+  // 🔴 IT MUST PRECEDE THE TARGET-SIZE SHORT-CIRCUIT BELOW, and for a while it did not.
+  // `width`/`height` are CALLER INPUT (`product-badge.schema.ts` — both plain optional
+  // positive ints), so `{ badgeUrl: 'https://evil.example/x.png', sourceWidth: 200,
+  // sourceHeight: 200 }` took the early return and handed the url straight back — landing it
+  // in `upsertProductBadge`'s cosmetic `data.url` and the phash sweep, i.e. EXACTLY the
+  // outcome the paragraph above says this throw exists to prevent. A guard a request field
+  // can step around is not a guard.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
+  // Already the target size ⇒ nothing to re-encode, so skip the orchestrator round-trip and
+  // return the (now validated) url. This is a COST short-circuit, never a security one.
   if (width === BADGE_TARGET_SIZE && height === BADGE_TARGET_SIZE) return url;
 
-  const sourceUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+  // The `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary this replaces was a
+  // no-op (getEdgeUrl forwards a passthrough src on exactly that predicate) and a fourth
+  // open-coded spelling of it. Submit the NORMALIZED form so the host validated above is
+  // the host a downstream RFC-3986 client resolves.
+  const sourceUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: 'image' });
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
@@ -275,7 +311,7 @@ export const upsertProductBadge = async (input: UpsertProductBadgeInput) => {
           name,
           type: CosmeticType.Badge,
           source: CosmeticSource.Membership,
-          permanentUnlock: false,
+          permanentUnlock: true,
           data: { url: resolvedBadgeUrl, animated },
           productId,
           availableStart,
@@ -340,16 +376,43 @@ export const syncActiveBadgeMetadata = async ({
         select: { id: true, metadata: true },
       })
     : [];
-  const metadataByProductId = new Map(products.map((p) => [p.id, p.metadata]));
+
+  // The Buzz catalog owns no badge cosmetics: its plan card shows the badge of the cash
+  // product it was seeded from (civitai-<tier>, see seed-buzz-membership-products.sql), so
+  // it follows that product's sync.
+  const tierOf = (metadata: unknown) => (metadata as { tier?: string } | null)?.tier;
+  const sourceTierOf = (p: (typeof products)[number]) => {
+    const tier = tierOf(p.metadata);
+    return p.id === `civitai-${tier}` ? tier : undefined;
+  };
+  const buzzVariants = products.some(sourceTierOf)
+    ? (
+        await dbRead.product.findMany({
+          where: { provider: PaymentProvider.Civitai },
+          select: { id: true, metadata: true },
+        })
+      ).filter((p) => {
+        // Read inline: ~/shared/utils/buzz-membership pulls Buzz constants into this graph.
+        const buzzPurchase = (p.metadata as { buzzPurchase?: unknown } | null)?.buzzPurchase;
+        return buzzPurchase === true || buzzPurchase === 'true';
+      })
+    : [];
+
+  const targets = products.flatMap((product) => {
+    const badge = byProduct.get(product.id);
+    if (!badge) return [];
+    const tier = sourceTierOf(product);
+    const variants = tier ? buzzVariants.filter((v) => tierOf(v.metadata) === tier) : [];
+    return [product, ...variants].map((target) => ({ target, badge }));
+  });
 
   let synced = 0;
-  for (const [productId, badge] of byProduct.entries()) {
+  for (const { target, badge } of targets) {
+    const productId = target.id;
     const badgeData = badge.data as { url?: string; animated?: boolean } | null;
     if (!badgeData?.url) continue;
 
-    if (!metadataByProductId.has(productId)) continue;
-
-    const existingMeta = (metadataByProductId.get(productId) as Record<string, unknown>) ?? {};
+    const existingMeta = (target.metadata as Record<string, unknown>) ?? {};
     const nextBadgeType = badgeData.animated ? 'animated' : 'static';
 
     if (existingMeta.badge === badgeData.url && existingMeta.badgeType === nextBadgeType) {

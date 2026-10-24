@@ -31,6 +31,7 @@ export const toggleHiddenSchema = z.discriminatedUnion('kind', [
     kind: z.literal('blockedUser'),
     data: z.object({ id: z.number(), username: z.string().nullish() }).array().min(1).max(1), // max 1 until we add support for more
     hidden: z.boolean().optional(),
+    hideComments: z.boolean().optional(),
   }),
 ]);
 
@@ -38,3 +39,6 @@ export const toggleHiddenTagsSchema = z.object({
   addedIds: z.number().array().optional(),
   removedIds: z.number().array().optional(),
 });
+
+export type GetHiddenImagesForUserInput = z.infer<typeof getHiddenImagesForUserSchema>;
+export const getHiddenImagesForUserSchema = z.object({ userId: z.number() });

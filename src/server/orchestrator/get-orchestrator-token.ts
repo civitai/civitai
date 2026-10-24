@@ -14,7 +14,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-/** Unused since the cookie store was retired. Kept so the 39 call sites don't churn. */
+/** Unused since the cookie store was retired. Kept (optional) so existing call sites don't churn;
+ *  server-side callers with no request in hand (e.g. the publish → workflow stamp) omit it. */
 type Context = {
   req: NextApiRequest;
   res: NextApiResponse;
@@ -42,7 +43,7 @@ type GetOrchestratorTokenOptions = {
 
 export async function getOrchestratorToken(
   userId: number,
-  ctx: Context,
+  ctx?: Context,
   options: GetOrchestratorTokenOptions = {}
 ) {
   const redisKey = userId.toString();

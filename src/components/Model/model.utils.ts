@@ -2,14 +2,15 @@ import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import type { ModelFilterSchema } from '~/providers/FiltersProvider';
+import { modelSortPeriodDefaults, useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
@@ -24,8 +25,11 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
+import { getQueryErrorMessage } from '~/utils/errorHandling';
+import { isViewerUsername } from '~/utils/is-viewer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { publishedDateParam, publishedRangeError } from '~/shared/utils/published-range';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
@@ -36,6 +40,8 @@ const modelQueryParamSchema = z
   .object({
     period: z.enum(MetricTimeframe),
     periodMode: periodModeSchema,
+    publishedFrom: publishedDateParam,
+    publishedTo: publishedDateParam,
     sort: z.enum(ModelSort),
     query: z.string(),
     user: z.string(),
@@ -59,6 +65,7 @@ const modelQueryParamSchema = z
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     paidAccess: booleanString().optional(),
+    hidePaid: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),
@@ -108,6 +115,130 @@ export const useModelQueryParams = () => {
 
 export const useModelQueryParams2 = () => useZodRouteParams(modelQueryParamSchema);
 
+// The /models toolbar filters that live in the URL, so a filtered browse can be bookmarked or
+// shared. `hidden`, `followed` and the moderator flags stay in the store only.
+const MODEL_BROWSE_FILTER_KEYS = [
+  'sort',
+  'period',
+  'publishedFrom',
+  'publishedTo',
+  'types',
+  'checkpointType',
+  'baseModels',
+  'status',
+  'fileFormats',
+  'availability',
+  'supportsGeneration',
+  'earlyAccess',
+  'paidAccess',
+  'hidePaid',
+  'fromPlatform',
+  'isFeatured',
+] as const satisfies readonly (keyof ModelFilterSchema & keyof ModelQueryParams)[];
+type ModelBrowseFilters = Pick<ModelFilterSchema, (typeof MODEL_BROWSE_FILTER_KEYS)[number]>;
+const isBrowseKey = (key: string) => (MODEL_BROWSE_FILTER_KEYS as readonly string[]).includes(key);
+const unsetBrowseFilters = Object.fromEntries(
+  MODEL_BROWSE_FILTER_KEYS.map((key) => [key, undefined])
+) as Record<keyof ModelBrowseFilters, undefined>;
+
+// Only what departs from the default, so the URL carries what the visitor chose and nothing else.
+function compactBrowseFilters(filters: Partial<ModelBrowseFilters>) {
+  const compact: Partial<ModelBrowseFilters> = {};
+  for (const key of MODEL_BROWSE_FILTER_KEYS) {
+    const value = filters[key];
+    if (value === undefined || value === false || (Array.isArray(value) && !value.length)) continue;
+    if (key === 'sort' || key === 'period') {
+      if (value === modelSortPeriodDefaults[key]) continue;
+    }
+    (compact as Record<string, unknown>)[key] = value;
+  }
+  // The server refuses a half or over-wide range, so a bookmark carrying one drops it.
+  if (publishedRangeError({ from: compact.publishedFrom, to: compact.publishedTo })) {
+    delete compact.publishedFrom;
+    delete compact.publishedTo;
+  }
+  return compact;
+}
+
+/**
+ * The /models filters. A URL that carries filters is the whole truth, so a bookmark never picks up
+ * the visitor's own stored filters; with none in the URL the stored filters apply, as they always
+ * have. Writes go to both, so the next bare visit and the address bar agree.
+ */
+export const useModelBrowseFilters = () => {
+  const params = useModelQueryParams();
+  const stored = useFiltersContext((state) => state.models);
+  const setStored = useFiltersContext((state) => state.setModelFilters);
+
+  const urlFilters = useMemo(() => compactBrowseFilters(params), [params]);
+  const hasUrlFilters = Object.keys(urlFilters).length > 0;
+  const droppedPublishedRange =
+    !!(params.publishedFrom || params.publishedTo) && !urlFilters.publishedFrom;
+
+  const filters = useMemo<ModelFilterSchema>(
+    () =>
+      hasUrlFilters
+        ? { ...stored, ...unsetBrowseFilters, ...modelSortPeriodDefaults, ...urlFilters }
+        : stored,
+    [hasUrlFilters, stored, urlFilters]
+  );
+
+  const setFilters = (next: Partial<ModelFilterSchema>) => {
+    // A key absent from `next` keeps its value: the dropdown's Clear leaves the sort alone.
+    const browse: Partial<ModelBrowseFilters> = { ...filters };
+    const storeOnly: Partial<ModelFilterSchema> = {};
+    for (const [key, value] of Object.entries(next)) {
+      if (isBrowseKey(key)) (browse as Record<string, unknown>)[key] = value;
+      else (storeOnly as Record<string, unknown>)[key] = value;
+    }
+    const compact = compactBrowseFilters(browse);
+    setStored({ ...storeOnly, ...unsetBrowseFilters, ...modelSortPeriodDefaults, ...compact });
+    params.set({ ...unsetBrowseFilters, ...compact });
+  };
+
+  return {
+    filters,
+    setFilters,
+    hasUrlFilters,
+    /** Spread over the URL params: the URL's own filters, cleaned, and not the stored ones. */
+    feedOverrides: hasUrlFilters
+      ? { ...unsetBrowseFilters, ...modelSortPeriodDefaults, ...urlFilters }
+      : droppedPublishedRange
+      ? { publishedFrom: undefined, publishedTo: undefined }
+      : {},
+  };
+};
+
+/** Run once, by the /models page. Keeps the store and the address bar in step. */
+export const useModelBrowseUrlSync = () => {
+  const { isReady } = useRouter();
+  const params = useModelQueryParams();
+  const stored = useFiltersContext((state) => state.models);
+  const setStored = useFiltersContext((state) => state.setModelFilters);
+
+  const urlFilters = useMemo(() => compactBrowseFilters(params), [params]);
+  const hasUrlFilters = Object.keys(urlFilters).length > 0;
+
+  // Read through a ref: a store write lands before the router's, and re-running this on that
+  // write would put the old URL back into the store.
+  const storedRef = useRef(stored);
+  storedRef.current = stored;
+
+  // Without this, Clear on a bookmark would bring the filters back on the next bare visit.
+  useEffect(() => {
+    if (!isReady || !hasUrlFilters) return;
+    if (isEqual(compactBrowseFilters(storedRef.current), urlFilters)) return;
+    setStored({ ...unsetBrowseFilters, ...modelSortPeriodDefaults, ...urlFilters });
+  }, [isReady, hasUrlFilters, urlFilters, setStored]);
+
+  // So the address bar can be bookmarked as it stands.
+  useEffect(() => {
+    if (!isReady || hasUrlFilters) return;
+    const compact = compactBrowseFilters(stored);
+    if (Object.keys(compact).length) params.set(compact);
+  }, [isReady, hasUrlFilters, stored, params]);
+};
+
 export const useModelFilters = () => {
   const storeFilters = useFiltersContext((state) => state.models);
   return removeEmpty(storeFilters);
@@ -136,8 +267,7 @@ export const useQueryModels = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(_filters.username &&
-    _filters.username?.toLowerCase() === currentUser?.username?.toLowerCase()
+    ...(isViewerUsername(currentUser, _filters.username)
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
@@ -175,7 +305,7 @@ export const useQueryModels = (
     );
     showErrorNotification({
       title: 'Failed to fetch data',
-      error: new Error(`Something went wrong: ${error.message}`),
+      error: new Error(getQueryErrorMessage(error)),
     });
   }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -226,6 +356,13 @@ export const useToggleCheckpointCoverageMutation = () => {
   return { ...toggleMutation, toggle: handleToggle };
 };
 
+/**
+ * The showcase fetches this once and then links out to the collection, so it is the whole
+ * list rather than a page of one — `model.getAll` is rate limited at the edge, and the
+ * widget walking a collection a page at a time is what tripped that limit.
+ */
+const SHOWCASE_PAGE_SIZE = 50;
+
 export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
   const queryUtils = trpc.useUtils();
 
@@ -243,7 +380,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
-      limit: 10,
+      limit: SHOWCASE_PAGE_SIZE,
     },
     { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );

@@ -25,7 +25,7 @@ What gets authored in phase 1:
 
 The orchestrator stamps each evaluation with a `policyHash` derived from the exact policy text. That hash becomes the `version` column on `scanner_label_results`, which is what makes A/B comparison in phase 3 work without civitai-side bookkeeping.
 
-For image scanners, "defining a label" means adding a new `include*` flag to the `mediaRating` step input and a corresponding output field (see [image-scan-result.service.ts](src/server/services/image-scan-result.service.ts) and the `TagSource` enum). Versioning is currently a `'1'` placeholder until the orchestrator surfaces per-result version info.
+For image scanners, "defining a label" means adding a new `include*` flag to the `mediaRating` step input and a corresponding output field (see [image-scan-result.service.ts](src/server/services/image-scan-result.service.ts) and the `TagSource` enum). Versioning is a fixed stamp until the orchestrator surfaces per-result version info: `'1'` for the `mediaRating` lane, `'2'` for the `imageScanning` lane (different models, so the two must not aggregate).
 
 ### Phase 2 — Provide a dataset
 
@@ -217,12 +217,12 @@ The `topK` distributions, bounding boxes, face geometry, and confidences for non
 
 `wdTagging` and `mediaHash` are unchanged.
 
-**Code changes required in [image-scan-result.service.ts](src/server/services/image-scan-result.service.ts):**
+**Code changes required in [image-scan-result.service.ts](src/server/services/image-scan-result.service.ts) (step types) and [image-scan-pipeline.ts](src/server/services/image-scan-pipeline.ts) (tags + audit):**
 
-1. Extend the `MediaRatingStep` TypeScript type (line 74) — add the four new optional output fields.
-2. Extend `tagsWithSource` (line 251) to emit `minor`/`ai`/`anime` tags from the new fields when present.
+1. Extend the `MediaRatingStep` TypeScript type in `image-scan-result.service.ts` — add the four new optional output fields.
+2. Extend `tagsWithSource` (`buildAndInsertScanTags` in `image-scan-pipeline.ts`) to emit `minor`/`ai`/`anime` tags from the new fields when present.
 3. Add `AiRecognition` + `AnimeRecognition` to the `TagSource` Prisma enum (or accept lossy provenance and reuse `Computed`).
-4. Decide whether `auditScanResults` branches on the new `MinorDetection`-sourced `minor` tag (stronger signal than the hand-curated `tagsNeedingReview` list) or just appends `minor` to that list.
+4. Decide whether `auditScanResults` (`image-scan-pipeline.ts`) branches on the new `MinorDetection`-sourced `minor` tag (stronger signal than the hand-curated `tagsNeedingReview` list) or just appends `minor` to that list.
 5. Forward the full untruncated `mediaRating.output` to the audit log so the per-detection / topK / non-triggered confidences are preserved for tuning.
 
 ---
@@ -254,13 +254,13 @@ The `topK` distributions, bounding boxes, face geometry, and confidences for non
 
 ### Image ingestion
 
-- **Webhook**: [src/pages/api/webhooks/image-scan-result.ts](src/pages/api/webhooks/image-scan-result.ts) — handles legacy POST + new orchestrator workflow format
+- **Webhook**: [src/pages/api/webhooks/image-scan-result.ts](src/pages/api/webhooks/image-scan-result.ts) — orchestrator workflow/job events only; routes `imageScanning` workflows to [image-scanning-result.service.ts](src/server/services/image-scanning-result.service.ts) and `wdTagging` + `mediaRating` workflows to `processImageScanWorkflow`. Which step is submitted is chosen in `createImageIngestionRequest` by the Flipt flag `image-ingestion-image-scanning`.
 - **Processor**: [image-scan-result.service.ts](src/server/services/image-scan-result.service.ts) → `processImageScanWorkflow` — parses `wdTagging`/`mediaRating`/`mediaHash` steps. The `mediaRating` type definition is what needs to be extended for the new fields.
 - **Storage**:
   - `Image` table: `nsfwLevel: Int`, `minor: Boolean`, `poi: Boolean`, `needsReview: String?`, `blockedFor: String?`, `ingestion: ImageIngestionStatus`, `scanJobs: Json?`
   - `TagsOnImageDetails`: `automated`, `disabled`, `needsReview`, `confidence`, `source: TagSource`
   - `ImageTagForReview`: review queue (per-image, per-tag)
-- **Review trigger conditions** (current logic in [image-scan-result.ts](src/pages/api/webhooks/image-scan-result.ts:697-733)): `child-10/13/15` + realistic, POI word-list match, `nsfwLevel === Blocked`, moderator-specific tags.
+- **Review trigger conditions** (current logic in `auditScanResults`, [image-scan-pipeline.ts](src/server/services/image-scan-pipeline.ts)): `child-10/13/15` + realistic, POI word-list match, `nsfwLevel === Blocked`, moderator-specific tags.
 - **Tag rules**: [src/server/utils/tag-rules.ts](src/server/utils/tag-rules.ts) — replacements, appends, computed combos.
 
 ### Cross-cutting

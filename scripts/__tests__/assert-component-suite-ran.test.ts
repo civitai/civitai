@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { DIRECT_COMMANDS } from '../queued-check-rules.mjs';
 
 import {
   canonicalFlag,
@@ -14,7 +16,7 @@ import {
 } from '../test-component-run.mjs';
 
 /**
- * Tests for the `preview / component-tests` positive control
+ * Tests for the browser `component` suite's positive control
  * (scripts/ci/assert-component-suite-ran.mjs) and the one branch of its caller that can be
  * wrong invisibly (`isNarrowed`).
  *
@@ -488,20 +490,19 @@ describe('the WIRING — package.json must actually invoke the wrapper', () => {
    * reverts one of the two, and the "take theirs" resolution is the one that looks safest and
    * kills this feature. A textual conflict made it loud that time; the next overlap may not.
    */
-  it('`pnpm test:component` runs scripts/test-component-run.mjs, not vitest directly', () => {
+  it('`pnpm test:component` reaches scripts/test-component-run.mjs, not vitest directly', () => {
     const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'));
-    const script = pkg.scripts['test:component'];
-    // Asserted as the WHOLE normalised string, not a substring: a partial match is satisfied by
+    // TWO HOPS since the component suite got a queue lane: the package script names the queue
+    // wrapper, and the wrapper's direct command names this runner. Both are asserted as WHOLE
+    // normalised values, not substrings, for the reason above - a partial match is satisfied by
     // `vitest run --project component && node scripts/test-component-run.mjs` and by anything
-    // else that merely mentions the file.
-    expect(script.trim()).toBe('node scripts/test-component-run.mjs');
-  });
-
-  it('the script it names EXISTS and exports the entry point', async () => {
-    // A wiring assertion that only reads package.json can pass over a deleted file.
-    const target = resolve(__dirname, '../test-component-run.mjs');
-    expect(existsSync(target)).toBe(true);
-    expect(typeof main).toBe('function');
+    // else that merely mentions the file. Checking only the first hop would let the second be
+    // repointed at a bare vitest and leave this green, which is the same inert-guard state.
+    expect(pkg.scripts['test:component'].trim()).toBe('node scripts/queued-check.mjs component');
+    expect(DIRECT_COMMANDS.component).toEqual({
+      cmd: 'node',
+      args: ['scripts/test-component-run.mjs'],
+    });
   });
 });
 

@@ -61,6 +61,15 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('db');
   });
 
+  it('serves the viewer\'s hidden images from the database', async () => {
+    const input = { limit: 10, browsingLevel: 1, include: [], hidden: true } as never;
+    const result = await getInfiniteImagesHandler({ input, ctx });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('db');
+  });
+
   // 🔴 The ONLY test that varies `features.imageIndexFeed`. Every other test in this
   // file shares one ctx with it hardcoded true, so without this the flag conjunct in
   // `useIndex` can be deleted outright and nothing in the suite goes red. It replaces

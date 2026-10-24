@@ -21,6 +21,9 @@ We also have a unique-to-this-codebase wrinkle: `getFeatureFlagsLazy` in [featur
 
 There are **203 `useFeatureFlags()` callsites across 179 files**, plus **server-side `ctx.features` reads**.
 
+Audit snapshot, 2026-05-12. Paths and counts below are not maintained — re-run the grep before
+relying on a row.
+
 ### Destructure sites (36 total) — most vulnerable to type changes
 
 These are the ones that aren't caught by `grep "features\.X"` — when removing a flag, you must also grep the destructure variable name in scope.
@@ -30,7 +33,7 @@ These are the ones that aren't caught by `grep "features\.X"` — when removing 
 | File                                                                                                                                                       | Destructured flags                         |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | [hooks/useDomainColor.tsx:5](../src/hooks/useDomainColor.tsx#L5)                                                                                           | `isGreen, isBlue, isRed`                   |
-| [pages/user/account.tsx:30](../src/pages/user/account.tsx#L30)                                                                                             | `apiKeys, oauthApps, canViewNsfw, strikes` |
+| ~~pages/user/account.tsx:30~~ → [LegacyAccountPage.tsx:34](../src/components/Account/LegacyAccountPage.tsx#L34) + [AccountPanes.tsx:41](../src/components/Account/AccountPanes.tsx#L41)                                                                                             | `apiKeys, oauthApps, canViewNsfw, strikes` |
 | [pages/user/[username]/comics.tsx:192](../src/pages/user/[username]/comics.tsx#L192)                                                                       | `isGreen`                                  |
 | [pages/comics/[id]/[[...slug]].tsx:101](../src/pages/comics/[id]/[[...slug]].tsx#L101)                                                                     | `isGreen`                                  |
 | [pages/comics/project/[id]/iterate.tsx:316](../src/pages/comics/project/[id]/iterate.tsx#L316)                                                             | `isGreen`                                  |
@@ -111,7 +114,7 @@ The `=== true` matches in [generation.service.ts:591,779](../src/server/services
 - [user.controller.ts:1297](../src/server/controllers/user.controller.ts#L1297) — `!ctx.features[key]` already truthy-style
 - [trpc.ts:217](../src/server/trpc.ts#L217) `isFlagProtected` uses `!features[flag]` — already truthy-style
 - [constants.ts:1708,1718](../src/server/common/constants.ts#L1708) already uses `features?.X ?? false` — partial-aware (good pattern; recommend for new code)
-- [data-graph context.ts:21](../src/shared/data-graph/generation/context.ts#L21) already typed as `Partial<FeatureAccess>` — data-graph nodes already partial-aware
+- [context.ts:21](../src/shared/generation/context.ts#L21) already typed as `Partial<FeatureAccess>` — generation graph fields already partial-aware
 
 **Step 1.5 — Convert destructure sites to alias pattern.** ✅ All 36 destructure sites converted:
 
@@ -177,7 +180,7 @@ The type "lies" — it claims every flag is present and boolean, when at runtime
 - The wire payload is still sparse (Phase 2 stays — half the win was the bytes)
 - **The flag-removal safety net still works**: `FeatureFlagKey` is the keyspace, so removing a flag from the registry shrinks the union and produces a type error at every consumer (including destructure sites)
 
-**What we lose:** the type doesn't enforce write safety (`features.X = false` compiles even though wire payload never produces `false`). Acceptable — no consumer writes to the cache except [SettingsCard.tsx:242](../src/components/Account/SettingsCard.tsx#L242), and that one assignment is internal optimistic-cache state, not the wire payload.
+**What we lose:** the type doesn't enforce write safety (`features.X = false` compiles even though wire payload never produces `false`). Acceptable — no consumer writes to the cache except [SettingsCard.tsx:335](../src/components/Account/SettingsCard.tsx#L335), and that one assignment is internal optimistic-cache state, not the wire payload.
 
 ### Phase 4 — Benefits realized
 

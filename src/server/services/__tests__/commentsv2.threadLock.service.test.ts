@@ -56,6 +56,8 @@ beforeEach(() => {
 
   db.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
+    // The block check's owner walk, which shares this client. Rooted, so it never refuses first.
+    if (sql.includes('muteable_threads')) return [{ id: 0, rooted: true }];
     if (!sql.includes('RECURSIVE chain')) return [];
     queriedSql.push(sql);
     const seed = values.find((v) => typeof v === 'number') as number;

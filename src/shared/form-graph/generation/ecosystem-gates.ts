@@ -10,45 +10,25 @@ import {
   getEcosystemsForWorkflow,
   isWorkflowAvailable,
   workflowGroups,
-} from '~/shared/data-graph/generation/config';
+} from '~/shared/generation/config';
 import {
   pickStrongerGate,
   rulesToStates,
   type GateItemState,
   type GateResolution,
   type GateState,
-} from '~/shared/data-graph/generation/gates';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
-
-/**
- * Copied from `ecosystem-graph.ts` (which dies with the data-graph engine at
- * the end of the migration — the port must not import from it). The
- * differential suite pins the copy against the original while both live.
- */
+} from '~/shared/generation/gates';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
-  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules' | 'flags'
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
 >;
 
 /**
- * Ecosystems hidden unless their feature flag is explicitly enabled — the
- * deploy gate for newer generators. Fail-closed: an absent/false flag hides
- * the ecosystem from the picker (client) and rejects it on submit (server).
- */
-const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAccess }> = [
-  { key: 'Tripo', flag: 'tripoGenerator' },
-  { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
-  { key: 'Pixal3D', flag: 'pixal3dGenerator' },
-  { key: 'Trellis2', flag: 'trellis2Generator' },
-];
-
-/**
  * Resolve the unified gate state for the workflow's ecosystems — the
- * self-hosted toggle, the rules model, and the feature-flag deploy gate folded
- * into one per-ecosystem state via `pickStrongerGate`, split by what the
- * picker needs.
+ * self-hosted toggle and the rules model folded into one per-ecosystem state
+ * via `pickStrongerGate`, split by what the picker needs.
  */
 export function getEcosystemStates(
   workflow: string,
@@ -66,11 +46,6 @@ export function getEcosystemStates(
   for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
     states.set(key, pickStrongerGate(states.get(key), res));
 
-  for (const { key, flag } of FEATURE_FLAG_GATED_ECOSYSTEMS) {
-    if (ext.flags?.[flag] !== true)
-      states.set(key, pickStrongerGate(states.get(key), { state: 'hidden' }));
-  }
-
   const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
   const hiddenSet = new Set(hiddenEcosystems);
   const compatibleEcosystems = getEcosystemsForWorkflow(workflow)
@@ -85,14 +60,18 @@ export function getEcosystemStates(
 }
 
 /**
- * v1's workflow→ecosystem sync effect as a pure function: an ecosystem that
- * doesn't support the workflow REDIRECTS to the workflow's configured default
- * (txt2img + WanVideo30 parses as SD1 in the oracle — probed 2026-09-01).
- * Returns the value unchanged when it's fine, when it's unknown (v1's effect
+ * The workflow→ecosystem sync, as a pure function: an ecosystem that doesn't
+ * support the workflow REDIRECTS to the workflow's configured default (txt2img +
+ * WanVideo30 resolves to SD1).
+ * Returns the value unchanged when it's fine, when it's unknown (the sync
  * bails on unknown keys), or when a workflow-group override lets the family
  * handle the switch internally (wan's T2V↔I2V variants).
  */
-export function resolveCompatibleEcosystem(workflow: string, value: string): string {
+export function resolveCompatibleEcosystem(
+  workflow: string,
+  value: string,
+  usable?: readonly string[]
+): string {
   const ecosystem = ecosystemByKey.get(value);
   if (!ecosystem) return value;
   if (isWorkflowAvailable(workflow, ecosystem.id)) return value;
@@ -103,12 +82,16 @@ export function resolveCompatibleEcosystem(workflow: string, value: string): str
     if (override?.workflows.includes(workflow)) return value;
   }
 
+  // `usable` is compatible-minus-gated. Without it the fallback can land on a
+  // disabled ecosystem, which the output schema then refuses — turning a
+  // correctable value into an error naming one the user never picked.
   const defaultEcoId = getDefaultEcosystemForWorkflow(workflow);
   if (defaultEcoId) {
     const eco = ecosystemById.get(defaultEcoId);
-    if (eco) return eco.key;
+    if (eco && (!usable || usable.includes(eco.key))) return eco.key;
   }
-  return 'SDXL'; // v1's ultimate fallback
+  if (usable?.length) return usable[0];
+  return 'SDXL'; // the ultimate fallback
 }
 
 /** Whether the ecosystem/model pair surfaces the `enhancedCompatibility` toggle. */
@@ -117,8 +100,8 @@ export function supportsEnhancedCompatibility(ecosystem: string, modelId?: numbe
 }
 
 /**
- * Whether the ecosystem/model pair runs through sdcpp and qualifies for the
- * 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility`.
+ * Whether the given ecosystem/model pair qualifies for the 2-for-1 quantity bonus. Not an engine
+ * test — see SDCPP_SUPPORTED_ECOSYSTEMS.
  */
 export function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
   if (!SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return false;

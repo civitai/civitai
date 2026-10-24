@@ -1,4 +1,5 @@
-import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { type ModelVersionTerms, acceptsBlueBuzz, generationPrice } from '@civitai/buzz';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
@@ -27,6 +28,7 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
+  IconCalendarPlus,
   IconClock,
   IconCloudCheck,
   IconCloudLock,
@@ -37,7 +39,6 @@ import {
   IconGavel,
   IconHeart,
   IconInfoSquareRounded,
-  IconLicense,
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
@@ -79,6 +80,7 @@ import { CollectionShowcase } from '~/components/Model/CollectionShowcase/Collec
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -88,15 +90,19 @@ import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
 import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
+import { LoadedCornerBadge } from '~/components/ResourceLoad/ResourceResidency';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import {
+  toModelVersionPermissionData,
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
+import {
+  getModelVersionActionLayout,
+  showRequestReviewFor,
+} from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
 import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
@@ -119,22 +125,26 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
+import { BaseModelLicense } from '~/components/Model/ModelVersions/BaseModelLicense';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
 import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import useIsClient from '~/hooks/useIsClient';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  baseModelLicenses,
   CAROUSEL_LIMIT,
   constants,
   getEffectiveCommercialUse,
+  getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
+  hasAdditionalLicensePermissions,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -144,18 +154,19 @@ import {
   resolveActiveFile,
 } from '~/server/utils/model-helpers';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
   ModelEngagementType,
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -190,6 +201,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
+  // `modelPageDeferBelowFold` trial: below-the-fold, non-SEO sections render only once the client
+  // has mounted, behind fixed-height placeholders. The flag is serialised with the page, so the
+  // server render and the hydrating render both see `true && !isClient` and emit the same
+  // placeholders; the real sections replace them on the next client render. With the flag off this
+  // is always false and the page renders exactly as before.
+  const isClient = useIsClient();
+  const deferBelowFold = !!features.modelPageDeferBelowFold && !isClient;
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [detailAccordions, setDetailAccordions] = useLocalStorage({
@@ -198,6 +216,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
   const adContainerRef = useRef<HTMLDivElement | null>(null);
   const [feeInfoOpened, feeInfoHandlers] = useDisclosure(false);
+
+  // The version is already on hand from model.getById: the permission hook and the children that call
+  // it read this instead of refetching modelVersion.getById.
+  const permissionData = toModelVersionPermissionData(model, version);
 
   const {
     isLoadingAccess,
@@ -208,6 +230,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     generationRequiresPurchase,
   } = useModelVersionPermission({
     modelVersionId: version.id,
+    modelVersion: permissionData,
   });
   const mobile = useIsMobile();
 
@@ -310,13 +333,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
   // owner reading their own model page should see the price a buyer is quoted, like everyone else.
   const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
+  // Which Buzz the price chips advertise — a sale that takes Blue must not read as Yellow-only.
+  const paidAccessAcceptsBlue = acceptsBlueBuzz(paidAccessTerms);
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
-  // Drafts hide the action, except for owners/mods on ExternalGeneration versions: those carry no
-  // weights, so generating is the only way to check the wiring before publishing.
+  // Owners/mods can test covered drafts before publishing, including hosted weights.
+  // version.canGenerate below still enforces coverage, ecosystem support, and generation gates.
   const couldGenerate =
-    (!isDraft || (isExternalGeneration && isOwnerOrMod)) &&
+    (!isDraft || isOwnerOrMod) &&
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&
@@ -346,13 +371,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           versionIds,
         });
+        notifyIfPublishHeld(result);
       } else {
         // Just republish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id });
+        const result = await publishVersionMutation.mutateAsync({ id: version.id });
+        notifyIfPublishHeld(result);
       }
       await queryUtils.model.getById.invalidate({ id: model.id });
     } catch (e) {
@@ -374,7 +401,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
     dialogStore.trigger({
       component: ModelVersionEarlyAccessPurchase,
-      props: { modelVersionId: version.id, reason },
+      props: { modelVersionId: version.id, reason, modelVersion: permissionData },
     });
   };
   const { currentUserReview } = useQueryUserResourceReview({
@@ -418,14 +445,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           model.status === ModelStatus.UnpublishedViolation && user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           publishedAt: publishDate,
           versionIds,
         });
+        notifyIfPublishHeld(result);
       } else {
         // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
+        const result = await publishVersionMutation.mutateAsync({
+          id: version.id,
+          publishedAt: publishDate,
+        });
+        notifyIfPublishHeld(result);
       }
 
       await queryUtils.model.getById.invalidate({ id: model.id });
@@ -505,14 +537,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? user?.isModerator
       : isOwnerOrMod);
   // Show request review for owners (non-mods) when model/version is unpublished due to violation
-  const showRequestReview =
-    isOwner &&
-    !user?.isModerator &&
-    (model.status === ModelStatus.UnpublishedViolation ||
-      version.status === ModelStatus.UnpublishedViolation);
+  const violation =
+    model.status === ModelStatus.UnpublishedViolation ||
+    version.status === ModelStatus.UnpublishedViolation;
+  const underReview = !!(model.meta?.needsReview || version.meta?.needsReview);
+  const showRequestReview = showRequestReviewFor({
+    isOwner: !!isOwner,
+    isModerator: !!user?.isModerator,
+    violation,
+    underReview,
+  });
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
-  const license = baseModelLicenses[version.baseModel];
+  const license = getDisplayedBaseModelLicense(version.baseModel);
   // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
@@ -522,13 +559,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
-    (!model.allowCommercialUse.length ||
-      model.allowCommercialUse.some((permission) =>
-        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
-      ) ||
-      !model.allowNoCredit ||
-      !model.allowDerivatives ||
-      model.allowDifferentLicense);
+    hasAdditionalLicensePermissions(model);
 
   const { branch, showDownloadSection } = getModelVersionActionLayout({
     showRequestReview,
@@ -579,6 +610,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? displayTerms.download.price
               : undefined
           }
+          acceptsBlueBuzz={paidAccessAcceptsBlue}
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -590,7 +622,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 5, md: 4 }}
+        order={{ sm: 2 }}
+        className={classes.sidebarSection}
+        ref={adContainerRef}
+      >
         <Stack>
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any
@@ -635,7 +672,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               color="yellow"
               onClick={handleRequestReviewClick}
               loading={requestReviewMutation.isPending || requestVersionReviewMutation.isPending}
-              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
               Request a Review
@@ -731,30 +767,59 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   Republish (keep private)
                 </Button>
               )}
+              {features.batchPostScheduling &&
+                isOwner &&
+                !deleted &&
+                !model.mode &&
+                model.status === ModelStatus.Published &&
+                version.status === ModelStatus.Published && (
+                  <Tooltip
+                    label="Upload a set of images once and schedule them as posts over days or weeks, each attributed to this version."
+                    multiline
+                    w={280}
+                    withArrow
+                  >
+                    <Button
+                      component={Link}
+                      href={`/posts/batch?modelId=${model.id}&modelVersionId=${version.id}`}
+                      variant="light"
+                      fullWidth
+                      leftSection={<IconCalendarPlus size={16} />}
+                    >
+                      Promote this model
+                    </Button>
+                  </Tooltip>
+                )}
               {/* Primary Actions Card */}
               <Card withBorder p="md">
                 <Stack gap="xs">
                   {canGenerate ? (
-                    <GenerateButton
-                      versionId={version.id}
-                      modelId={model.id}
-                      wildcardSetId={version.wildcardSetId}
-                      data-tour="model:create"
-                      data-activity="create:model"
-                      disabled={isLoadingAccess || !!model.mode}
-                      generationPrice={
-                        generationRequiresPurchase && !isLoadingAccess && displayTerms
-                          ? generationPrice(displayTerms)
-                          : undefined
-                      }
-                      listedPrice={
-                        !generationRequiresPurchase && isOwnerOrMod && displayTerms
-                          ? generationPrice(displayTerms) || undefined
-                          : undefined
-                      }
-                      onPurchase={() => onPurchase('generation')}
-                      fullWidth
-                    />
+                    <div className="relative flex w-full">
+                      <GenerateButton
+                        versionId={version.id}
+                        modelId={model.id}
+                        wildcardSetId={version.wildcardSetId}
+                        data-tour="model:create"
+                        data-activity="create:model"
+                        disabled={isLoadingAccess || !!model.mode}
+                        generationPrice={
+                          generationRequiresPurchase && !isLoadingAccess && displayTerms
+                            ? generationPrice(displayTerms)
+                            : undefined
+                        }
+                        listedPrice={
+                          !generationRequiresPurchase && isOwnerOrMod && displayTerms
+                            ? generationPrice(displayTerms) || undefined
+                            : undefined
+                        }
+                        acceptsBlueBuzz={paidAccessAcceptsBlue}
+                        onPurchase={() => onPurchase('generation')}
+                        fullWidth
+                      />
+                      {features.imageGeneration && (
+                        <LoadedCornerBadge readiness={generatorReadiness(version)} />
+                      )}
+                    </div>
                   ) : null}
                   {/* Action icon buttons row */}
                   <div className="flex gap-2">
@@ -1026,11 +1091,22 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </AlertWithIcon>
           )}
 
-          {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && !underReview && (
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
-              showAppeal
+              // Moderators see this alert too, and only the owner can appeal. The form's Model appeal
+              // is for a removed model; a version removed on its own is Other.
+              appealHref={
+                isOwner
+                  ? siteAppealHref(
+                      features.siteAppealForm,
+                      model.status === ModelStatus.UnpublishedViolation
+                        ? { category: AppealCategory.Model, id: model.id }
+                        : { category: AppealCategory.Other }
+                    )
+                  : undefined
+              }
             />
           )}
           {isPrivateModel && isOwnerOrMod && (
@@ -1040,18 +1116,21 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               icon={<IconLock />}
               title="Private Model"
             >
-              {model.status !== ModelStatus.UnpublishedViolation &&
-              version.status !== ModelStatus.UnpublishedViolation ? (
+              {!violation ? (
                 <Text>
                   Want to start earning Buzz?{' '}
                   <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+                </Text>
+              ) : underReview ? (
+                <Text>
+                  This model is private and is currently being reviewed by our moderators.
                 </Text>
               ) : (
                 <Text>This model is private and has been unpublished due to a violation.</Text>
               )}
             </AlertWithIcon>
           )}
-          {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && underReview && (
             <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
               This version is currently being reviewed by our moderators. It will be visible to the
               community once it has been approved.
@@ -1092,12 +1171,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             })}
           >
             {model.meta?.showcaseCollectionId && collection && (
-              <Accordion.Item value="collection-showcase">
-                <Accordion.Control
-                  disabled={settingShowcase}
-                  className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4"
-                >
-                  <div className="flex items-center justify-between">
+              <Accordion.Item value="collection-showcase" className="group">
+                {/* The follow/edit action sits BESIDE the control, not inside it: the control is a
+                    <button>, so nesting one there is invalid DOM and React drops the inner button's
+                    events on some paths. The expanded underline moves with it, keyed off the item's
+                    own data-active so it still spans the full row. */}
+                <div className="flex items-center group-data-[active]:border-b group-data-[active]:border-solid group-data-[active]:border-gray-2 dark:group-data-[active]:border-dark-4">
+                  <Accordion.Control disabled={settingShowcase} className="flex-1">
                     <div>
                       <Link
                         href={`/collections/${model.meta?.showcaseCollectionId}`}
@@ -1119,15 +1199,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           : ''}
                       </Text>
                     </div>
+                  </Accordion.Control>
+                  <div className="pr-3">
                     {isOwnerOrMod ? (
                       <Anchor
                         size="sm"
                         className={clsx(
                           settingShowcase && 'pointer-events-none cursor-not-allowed text-dark-2'
                         )}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          e.preventDefault();
+                        onClick={() => {
                           if (model.user.username)
                             openCollectionSelectModal({
                               username: model.user.username,
@@ -1144,9 +1224,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <CollectionFollowAction collectionId={collection.id} />
                     )}
                   </div>
-                </Accordion.Control>
+                </div>
                 <Accordion.Panel>
-                  <CollectionShowcase modelId={model.id} loading={settingShowcase} />
+                  {/* Collapsed by default, so deferring the body moves nothing on first paint. */}
+                  {!deferBelowFold && (
+                    <CollectionShowcase modelId={model.id} loading={settingShowcase} />
+                  )}
                 </Accordion.Panel>
               </Accordion.Item>
             )}
@@ -1164,6 +1247,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       ? paidAccessTerms.download.price
                       : undefined
                   }
+                  acceptsBlueBuzz={paidAccessAcceptsBlue}
                   isLoadingAccess={isLoadingAccess}
                   archived={archived}
                   onPurchase={() => onPurchase('download')}
@@ -1448,19 +1532,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                     </Group>
                   </div>
-                  {/* Generation Popularity */}
-                  {canGenerate &&
-                    features.modelVersionPopularity &&
-                    model.type === ModelType.Checkpoint && (
-                      <div className={classes.detailRow}>
-                        <span className={classes.detailLabel}>Generation</span>
-                        <ModelVersionPopularity
-                          versionId={version.id}
-                          isCheckpoint={model.type === ModelType.Checkpoint}
-                          listenForUpdates
-                        />
-                      </div>
-                    )}
                   {/* Generation License Fee */}
                   {Number(version.licensingFee ?? 0) > 0 && (
                     <div className={classes.detailRow}>
@@ -1528,22 +1599,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   {/* Base Model */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Base Model</span>
-                    <Text size="sm">
-                      {ecosystemSeoPage ? (
-                        <Anchor
-                          component={Link}
-                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
-                          inherit
-                        >
-                          {version.baseModel}
-                        </Anchor>
-                      ) : (
-                        version.baseModel
-                      )}{' '}
-                      {version.baseModelType && version.baseModelType !== 'Standard'
-                        ? version.baseModelType
-                        : ''}
-                    </Text>
+                    <Group gap={6} wrap="nowrap">
+                      <Text size="sm">
+                        {ecosystemSeoPage ? (
+                          <Anchor
+                            component={Link}
+                            href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                            inherit
+                          >
+                            {version.baseModel}
+                          </Anchor>
+                        ) : (
+                          version.baseModel
+                        )}{' '}
+                        {version.baseModelType && version.baseModelType !== 'Standard'
+                          ? version.baseModelType
+                          : ''}
+                      </Text>
+                      <SfwOnlyBadge baseModel={version.baseModel} />
+                    </Group>
                   </div>
                   {/* Training */}
                   {(!!version.steps || !!version.epochs) && (
@@ -1781,14 +1855,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </UserResourceReviewComposite>
           )}
 
-          <ModelVersionDonationGoal modelVersionId={version.id} />
+          <ModelVersionDonationGoal modelVersionId={version.id} modelVersion={permissionData} />
 
-          <SmartCreatorCard
-            user={model.user}
-            tipBuzzEntityType="Model"
-            tipBuzzEntityId={model.id}
-            tipsEnabled={!model.poi}
-          />
+          {deferBelowFold ? (
+            <div data-deferred-section="creator-card" className={classes.deferredCreatorCard} />
+          ) : (
+            <SmartCreatorCard
+              user={model.user}
+              tipBuzzEntityType="Model"
+              tipBuzzEntityId={model.id}
+              tipsEnabled={!model.poi}
+            />
+          )}
           {onSite && (
             <Group
               align="flex-start"
@@ -1805,79 +1883,65 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </Group>
           )}
 
-          <Group justify="space-between" align="flex-start" wrap="nowrap">
-            {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
-              <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
-                <Group gap={4} wrap="wrap" align="center">
-                  <IconLicense size={16} />
-                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
-                    License{model.licenses.length > 0 ? 's' : ''}:
-                  </Text>
-                  {license && (
+          {deferBelowFold ? (
+            <div data-deferred-section="license" className={classes.deferredLicense} />
+          ) : (
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
+                <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                  <BaseModelLicense license={license} plural={model.licenses.length > 0}>
+                    {showAddendumLicense && (
+                      <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
+                        <Anchor
+                          variant="text"
+                          td="underline"
+                          size="xs"
+                          c="dimmed"
+                          style={{ lineHeight: 1.1 }}
+                        >
+                          Addendum
+                        </Anchor>
+                      </Link>
+                    )}
+                  </BaseModelLicense>
+                  {model.licenses.map(({ url, name }) => (
                     <Text
+                      key={name}
                       component="a"
-                      href={license.url}
-                      rel="nofollow noreferrer"
+                      rel="nofollow"
+                      href={url}
                       td="underline"
-                      target="_blank"
                       size="xs"
                       c="dimmed"
+                      target="_blank"
                       style={{ lineHeight: 1.1 }}
                     >
-                      {license.name}
+                      {name}
                     </Text>
-                  )}
-                  {showAddendumLicense && (
-                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
-                      <Anchor
-                        variant="text"
-                        td="underline"
-                        size="xs"
-                        c="dimmed"
-                        style={{ lineHeight: 1.1 }}
-                      >
-                        Addendum
-                      </Anchor>
-                    </Link>
-                  )}
-                </Group>
-                {model.licenses.map(({ url, name }) => (
-                  <Text
-                    key={name}
-                    component="a"
-                    rel="nofollow"
-                    href={url}
-                    td="underline"
-                    size="xs"
-                    c="dimmed"
-                    target="_blank"
-                    style={{ lineHeight: 1.1 }}
-                  >
-                    {name}
-                  </Text>
-                ))}
-              </Stack>
-            )}
-            <PermissionIndicator
-              permissions={{
-                ...model,
-                // Permissions are derived per displayed version from its base model:
-                // non-commercial base models (e.g. Ideogram) force commercial use off,
-                // mature-restricted base models force SFW-only generation, and
-                // same-license base models (e.g. LTXV 2.5) force merges to match.
-                allowCommercialUse: getEffectiveCommercialUse(
-                  model.allowCommercialUse,
-                  version.baseModel
-                ),
-                sfwOnly: model.sfwOnly || baseModelRestrictsMature,
-                allowDifferentLicense: getEffectiveDifferentLicense(
-                  model.allowDifferentLicense,
-                  version.baseModel
-                ),
-              }}
-              ml="auto"
-            />
-          </Group>
+                  ))}
+                </Stack>
+              )}
+              <PermissionIndicator
+                permissions={{
+                  ...model,
+                  // Permissions are derived per displayed version from its base model:
+                  // non-commercial base models (e.g. Ideogram) force commercial use off,
+                  // mature-restricted base models force SFW-only generation, and
+                  // same-license base models (e.g. LTXV 2.5) force merges to match.
+                  allowCommercialUse: getEffectiveCommercialUse(
+                    model.allowCommercialUse,
+                    version.baseModel
+                  ),
+                  sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+                  allowDifferentLicense: getEffectiveDifferentLicense(
+                    model.allowDifferentLicense,
+                    version.baseModel
+                  ),
+                }}
+                ml="auto"
+              />
+            </Group>
+          )}
           {license?.notice && (
             <Text size="xs" c="dimmed">
               {license.notice}

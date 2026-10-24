@@ -1,11 +1,22 @@
-import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import type { MinorFlagAppealRow } from '~/server/services/minor-hash.service';
+import { appealRowState } from '~/components/Moderation/appeal-row-state';
+import type { AppealLabelDecision, MinorFlagAppealRow } from '~/server/services/minor-hash.service';
 
 export type MinorFlagAppealActionRow = Pick<
   MinorFlagAppealRow,
-  'modelId' | 'modelName' | 'minor' | 'prevNsfw' | 'prevGalleryLevel'
+  | 'modelId'
+  | 'modelName'
+  | 'minor'
+  | 'poi'
+  | 'prevNsfw'
+  | 'prevGalleryLevel'
+  | 'flagSource'
+  | 'flagConfirmedFrom'
+  | 'textScanFlags'
 >;
+
+type SplitLabels = { minor: AppealLabelDecision; poi: AppealLabelDecision };
 
 export function MinorFlagAppealActions({
   row,
@@ -13,9 +24,26 @@ export function MinorFlagAppealActions({
   onResolve,
 }: {
   row: MinorFlagAppealActionRow;
-  pending?: 'uphold' | 'overturn';
-  onResolve: (uphold: boolean) => void;
+  pending?: 'uphold' | 'overturn' | 'split';
+  onResolve: (uphold: boolean, labels?: SplitLabels) => void;
 }) {
+  const { anyFlagged, bothFlagged } = appealRowState(row);
+
+  const confirmSplit = (labels: SplitLabels) =>
+    openConfirmModal({
+      title: 'Rule on each flag',
+      centered: true,
+      labels: { confirm: 'Apply', cancel: 'Cancel' },
+      children: (
+        <Text size="sm">
+          {labels.minor === 'uphold' ? 'Keep' : 'Lift'} the minor flag and{' '}
+          {labels.poi === 'uphold' ? 'keep' : 'lift'} the real-person flag on{' '}
+          <strong>{row.modelName}</strong>. The uploader is told their request was granted.
+        </Text>
+      ),
+      onConfirm: () => onResolve(false, labels),
+    });
+
   return (
     <Group gap="xs" justify="flex-end" wrap="nowrap">
       {/* Upholding a flag that is no longer in force writes nothing but still
@@ -23,8 +51,8 @@ export function MinorFlagAppealActions({
           about a child-safety restriction. Wrapped in a span because a disabled
           button emits no pointer events for the tooltip to hang off. */}
       <Tooltip
-        label="This model is no longer flagged as minor, so there is nothing to uphold. Unflag closes the request."
-        disabled={row.minor}
+        label="This model is no longer flagged, so there is nothing to uphold. Unflag closes the request."
+        disabled={anyFlagged}
         multiline
         w={260}
         withArrow
@@ -32,7 +60,7 @@ export function MinorFlagAppealActions({
         <span>
           <Button
             size="compact-sm"
-            disabled={!row.minor}
+            disabled={!anyFlagged}
             loading={pending === 'uphold'}
             onClick={() =>
               openConfirmModal({
@@ -41,9 +69,9 @@ export function MinorFlagAppealActions({
                 labels: { confirm: 'Keep flagged', cancel: 'Cancel' },
                 children: (
                   <Text size="sm">
-                    Keep <strong>{row.modelName}</strong> flagged as minor and tell the uploader
-                    their request was denied. This also records your sign-off, so a bulk rollback
-                    can no longer undo the flag.
+                    Keep <strong>{row.modelName}</strong> flagged and tell the uploader their
+                    request was denied. This also records your sign-off, so a bulk rollback can no
+                    longer undo the flag.
                   </Text>
                 ),
                 onConfirm: () => onResolve(true),
@@ -54,6 +82,23 @@ export function MinorFlagAppealActions({
           </Button>
         </span>
       </Tooltip>
+      {bothFlagged && (
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <Button size="compact-sm" variant="default" loading={pending === 'split'}>
+              Split
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item onClick={() => confirmSplit({ minor: 'uphold', poi: 'overturn' })}>
+              Keep minor, lift real person
+            </Menu.Item>
+            <Menu.Item onClick={() => confirmSplit({ minor: 'overturn', poi: 'uphold' })}>
+              Lift minor, keep real person
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      )}
       <Button
         size="compact-sm"
         variant="light"

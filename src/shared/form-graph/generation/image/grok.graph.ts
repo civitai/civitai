@@ -4,12 +4,10 @@ import { grokHead, grokTextBlock, isGrokV2 } from '../grok-shared';
 import { familyScope, modelIdOf, type FamilyExt } from '../shared';
 
 /**
- * Grok's IMAGE arm, ported from `grok-graph.ts`. The video arm is
+ * Grok's IMAGE arm. The video arm is
  * `../video/grok.graph.ts`; the version-locked head and the text block they
  * share live in `../grok-shared.ts`.
  */
-
-// ---- copied from grok-graph.ts, which dies with the data-graph engine -------
 
 const grokImageAspectRatios = [
   { label: '16:9', value: '16:9', width: 1824, height: 1024 },
@@ -31,17 +29,22 @@ const grokV2Qualities = [
   { label: 'Medium', value: 'medium' },
 ] as const;
 
-// ---- end of grok-graph.ts copies --------------------------------------------
-
 export const grokImage = defineGraph<FamilyExt>({ scope: familyScope })
   .use(grokHead)
   .field(
     'images',
-    workflowScoped(({ model, _ext }) =>
-      _ext.workflow === 'img2img:edit'
-        ? imagesDef({ max: isGrokV2(modelIdOf(model)) ? 3 : 7 })
-        : null
-    )
+    workflowScoped(({ model, _ext }) => {
+      if (_ext.workflow !== 'img2img:edit') return null;
+      const max = isGrokV2(modelIdOf(model)) ? 3 : 7;
+      return {
+        ...imagesDef({ max }),
+        // v1.x allows 7; a v2 switch truncates instead of failing max(3)
+        correct: (value: unknown) =>
+          Array.isArray(value) && value.length > max
+            ? { value: value.slice(0, max), reason: 'image_limit' }
+            : undefined,
+      };
+    })
   )
   .field('aspectRatio', ({ _ext }) =>
     _ext.workflow !== 'img2img:edit'

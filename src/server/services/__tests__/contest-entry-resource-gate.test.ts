@@ -26,7 +26,7 @@ const { mockChargeEntryFees, mockAmIBlockedByUser } = vi.hoisted(() => ({
 }));
 
 const mockDbRead = dbMock.dbRead;
-const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 const mockImageResourceNewFindMany = mockDbRead.imageResourceNew.findMany;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
@@ -73,7 +73,7 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
 
 const { validateContestCollectionEntry } = await import('~/server/services/collection.service');
 
-// Dispatch dbRead.challenge.findFirst by the distinguishing field in its `where` clause —
+// Dispatch dbWrite.challenge.findFirst by the distinguishing field in its `where` clause —
 // the function makes several distinct challenge lookups in sequence.
 function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeChallenge: boolean }) {
   mockChallengeFindFirst.mockImplementation(
@@ -263,6 +263,8 @@ describe('validateContestCollectionEntry — creator block gate', () => {
     expect(mockAmIBlockedByUser).toHaveBeenCalledWith({
       userId: USER_ID,
       targetUserId: CREATOR_ID,
+      // An entry is a write: the gate confirms a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });

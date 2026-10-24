@@ -45,7 +45,7 @@ off. Moderator-database slices *can* be ticked once they work: the app reads and
 
 ## The moderator database (`retool_db` in the exports)
 
-User notes and image help requests live in a database of their own, never in Civitai's. (Legacy
+User notes, model notes and image help requests live in a database of their own, never in Civitai's. (Legacy
 `UserStrikes` and `TimedMutes` are there too but are **not** the live implementations — strikes go
 through `strike/create` and timed mutes are `User.muteExpiresAt`. `TimedMutes` is not even typed.)
 
@@ -63,14 +63,16 @@ const notes = await getModeratorDb()
   .execute();
 ```
 
-It points at Retool's Postgres today, so **Retool and the moderator app are writing to the same tables
-during the transition** — which is what makes an incremental cutover possible. Keep writes compatible
-with what Retool expects to read back.
+Since 2026-08-21 it points at the **moderator** database (`MODERATOR_DATABASE_URL`), not Retool's — the
+two were consolidated. Retool may still be live for tables it owns, so keep writes compatible with what
+it expects to read back until it is switched off; see
+[`retool-db-cutover.md`](../../../docs/moderator-app/retool-db-cutover.md).
 
 ### Attribution: write the name, ids come later
 
-`createdBy` / `lastUpdateBy` / `handledBy` are free text holding Retool *display names*, and only 5 of
-37 map to a Civitai account. A name → userId table is being assembled separately.
+`createdBy` / `lastUpdateBy` / `handledBy` are free text holding Retool *display names*, and the
+name → id map is being assembled separately — 53 distinct names across nine columns; see
+[`moderator-db-backfill-tasks.md`](../../../docs/moderator-app/moderator-db-backfill-tasks.md).
 
 Until it lands, **write `locals.user.username` into those columns** and do not invent an id column. New
 rows are then at least resolvable (a Civitai username maps to an account trivially), while historical
@@ -257,7 +259,9 @@ Two blind spots in the export itself, both of which need a screenshot to close:
 **Read [`apps/moderator/CLAUDE.md`](../../../apps/moderator/CLAUDE.md) first** — Svelte 5 idiom, shadcn
 usage, styling tokens and component placement are defined there and apply to every page in the app,
 whether it came from Retool or the main app. What follows is only the Retool-specific part. A
-neighbouring route (`routes/reports`, `routes/blocklists`) is a good model.
+neighbouring route (`routes/reports`, `routes/blocklists`) is a good model. A **report queue** is not
+modelled on a neighbour but built to [`docs/moderator-app/report-queue-pattern.md`](../../../docs/moderator-app/report-queue-pattern.md),
+under `routes/reports/<type>` rather than `routes/retool/`.
 
 - **Route**: `apps/moderator/src/routes/retool/<slug>/+page.server.ts` + `+page.svelte`
 - **Data**: `load` calls a service in `$lib/server/<domain>.service.ts`; queries go through
@@ -403,13 +407,8 @@ the repo precisely so the next session doesn't need the previous one's context.
 ## 7. Feedback loop
 
 Moderators report bugs and request features in the **Mod Studio Feedback** Discord group chat —
-channel `1534637921829912777`.
-
-```bash
-QB=~/.claude/skills/discord-bridge/query.mjs
-node $QB messages 1534637921829912777          # recent feedback
-node $QB search "retool" --guild <guildId>     # older context
-```
+channel `1534637921829912777`. The repo's `discord` skill goes through a bot,
+which may not see a group chat; read it with your own Discord access.
 
 Check it **before** starting a page (someone may have already described what they need) and
 **after** shipping one. It carries screenshots, real SQL moderators want surfaced, and bug

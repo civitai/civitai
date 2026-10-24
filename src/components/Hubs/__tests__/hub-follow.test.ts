@@ -10,7 +10,7 @@ const { followMutate, unfollowMutate, currentUser, followedHubs } = vi.hoisted((
   unfollowMutate: vi.fn(),
   currentUser: { value: { id: 3 } as { id: number } | null },
   followedHubs: {
-    value: [] as { id: number; key: string; name: string; sources: unknown[] }[],
+    value: [] as { id: number; key: string; name: string; sourceCounts: Record<string, number> }[],
   },
 }));
 
@@ -75,8 +75,8 @@ describe('FollowedHubsSection', () => {
 
   it('lists each followed hub, linked by its encoded key and slug', () => {
     followedHubs.value = [
-      { id: 5, key: 'Xk3p9aBc', name: 'Cute Models', sources: [{}] },
-      { id: 6, key: 'Qm7r2dEf', name: 'Other', sources: [] },
+      { id: 5, key: 'Xk3p9aBc', name: 'Cute Models', sourceCounts: { User: 1 } },
+      { id: 6, key: 'Qm7r2dEf', name: 'Other', sourceCounts: {} },
     ];
 
     const container = render(createElement(FollowedHubsSection, {}));
@@ -90,16 +90,16 @@ describe('FollowedHubsSection', () => {
     // `/hubs/5/...` and pass nothing here — which is the point of asserting the
     // whole href rather than that it contains the slug.
     for (const link of links) expect(link.getAttribute('href')).not.toMatch(/\/hubs\/\d/);
-    expect(visibleText(container)).toContain('1 source');
-    expect(visibleText(container)).toContain('No sources');
+    expect(visibleText(container)).toContain('1 creator');
+    expect(visibleText(container)).toContain('Nothing in it yet');
   });
 
   it('unfollows the row that was clicked, not the first one', () => {
     // The assertion that catches a key read off the wrong row: with one hub in the
     // list, `followed[0].key` and `hub.key` are the same string.
     followedHubs.value = [
-      { id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] },
-      { id: 6, key: 'Qm7r2dEf', name: 'Second', sources: [] },
+      { id: 5, key: 'Xk3p9aBc', name: 'First', sourceCounts: {} },
+      { id: 6, key: 'Qm7r2dEf', name: 'Second', sourceCounts: {} },
     ];
 
     const container = render(createElement(FollowedHubsSection, {}));
@@ -118,7 +118,7 @@ describe('FollowedHubsSection', () => {
   it('keeps the unfollow control OUTSIDE the link', () => {
     // A button inside an anchor is invalid markup and the click navigates as well as
     // unfollowing — which is a bug you only see in a real browser.
-    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] }];
+    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sourceCounts: {} }];
 
     const container = render(createElement(FollowedHubsSection, {}));
 
@@ -129,7 +129,7 @@ describe('FollowedHubsSection', () => {
   it('reveals the control on hover and on keyboard focus', () => {
     // Hover alone makes it pointer-only. Asserted on the class list rather than on
     // computed style, because component tests load no stylesheet.
-    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] }];
+    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sourceCounts: {} }];
 
     const container = render(createElement(FollowedHubsSection, {}));
     const button = container.querySelector('button[aria-label="Unfollow First"]');
@@ -176,7 +176,7 @@ describe('FollowHubButton', () => {
   });
 
   it('shows Following, and unfollows, for a hub already in the list', () => {
-    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sources: [] }];
+    followedHubs.value = [{ id: 5, key: 'Xk3p9aBc', name: 'First', sourceCounts: {} }];
 
     const container = render(
       createElement(FollowHubButton, { hub: { key: 'Xk3p9aBc', isOwner: false } })
