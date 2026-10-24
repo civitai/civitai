@@ -167,6 +167,12 @@ const featureFlags = createFeatureFlags({
   // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
   // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
   shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // Server CPU switch for the tRPC flag guards (`isFlagProtected`, `appDeveloperProcedure`). ON:
+  // a guard reads only the flag it names from `ctx.features` (lazy, once per HTTP request).
+  // OFF: it reads that flag out of the whole registry (`getFeatureFlags`), as before. Same answer
+  // per key either way; ON drops the whole-result cache's up-to-10s lag on a Flipt change. `[]` =
+  // DARK and fails CLOSED when the key is absent or Flipt is down, so OFF is the default.
+  trpcFlagGuardPerRequest: { availability: [], fliptKey: 'trpc-flag-guard-per-request' },
   // SSR-CPU kill switch for the model page's above-the-fold UI (title row, version buttons, the
   // version-details grid, action row and Details rows, trigger words, AIR, hash): the same
   // `@civitai/components` markup as `shellDesignSystemMarkup`, in place of per-instance Mantine
