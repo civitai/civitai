@@ -166,7 +166,9 @@ export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 /**
  * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
  * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
- * copy is taken back out, so the caller can give the message back instead.
+ * copy is taken back out, so the caller can give the message back instead. components-chat 0.30.0
+ * no longer keeps such a copy while the user dictates, so there it takes nothing out; kept for a
+ * chat that does.
  */
 export async function sendNotJoined(
   chat: Pick<CivitaiChat, 'send' | 'compose'>,
