@@ -11,11 +11,16 @@ export const isConflict = (error: unknown) =>
   (error as TrpcishError | null)?.data?.code === 'CONFLICT';
 
 export function useServiceDeal(id: number) {
-  const { data, isLoading, refetch } = trpc.creatorServiceDeal.get.useQuery(
+  const { data, isLoading, error, refetch } = trpc.creatorServiceDeal.get.useQuery(
     { id },
     { enabled: id > 0, retry: false }
   );
-  return { deal: data, isLoading, refetch };
+  return {
+    deal: data,
+    isLoading,
+    error: error ? { code: error.data?.code } : null,
+    refetch,
+  };
 }
 
 export function useMyServiceDeals({

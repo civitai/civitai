@@ -115,8 +115,18 @@ describe('deal page access', () => {
     expect(dealPageState({ isLoading: false, hasDeal: true })).toEqual({ kind: 'deal' });
   });
 
-  it('is NotFound when the query returns nothing (a non-party, or no such deal)', () => {
-    expect(dealPageState({ isLoading: false, hasDeal: false })).toEqual({ kind: 'notFound' });
+  it('is NotFound when the server refuses the deal (a non-party, or no such deal)', () => {
+    for (const code of ['NOT_FOUND', 'FORBIDDEN'])
+      expect(dealPageState({ isLoading: false, hasDeal: false, error: { code } })).toEqual({
+        kind: 'notFound',
+      });
+  });
+
+  it('is an error, never NotFound, when the query fails any other way', () => {
+    for (const error of [{ code: 'INTERNAL_SERVER_ERROR' }, { code: 'TIMEOUT' }, {}])
+      expect(dealPageState({ isLoading: false, hasDeal: false, error })).toEqual({
+        kind: 'error',
+      });
   });
 });
 
