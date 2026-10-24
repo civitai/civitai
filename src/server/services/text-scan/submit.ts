@@ -14,8 +14,6 @@ import {
   textScanEmEntityType,
   type TextScanVariant,
 } from '~/server/services/text-scan/mode';
-import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
-import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import {
   getTextScanProfile,
   resolveTextScanProfileLabels,
@@ -148,7 +146,6 @@ export function textScanContentHash({
   promptIds,
   model,
   thinking,
-  rulesFingerprint,
   variant,
   segmentBudget,
 }: {
@@ -156,7 +153,6 @@ export function textScanContentHash({
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
-  rulesFingerprint?: string;
   variant?: TextScanVariant;
   segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
@@ -164,8 +160,6 @@ export function textScanContentHash({
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
-  // Appended only when present, so every existing row's hash is unchanged.
-  const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
   const tail = variant ? `\u0000${variant}` : '';
   // Only text over the budget is split, so only its hash may change with the budget: a shorter
   // text keeps its hash and is not rescanned when the budget changes.
@@ -174,7 +168,7 @@ export function textScanContentHash({
       ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
       : '';
   return hashContent(
-    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}${segmenting}`
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}${segmenting}`
   );
 }
 
@@ -263,7 +257,6 @@ async function clearStaleVerdict({
   for (const label of labels) {
     if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
     else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
-    else if (label === 'modelRules') output.modelRules = { matched: [] };
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
@@ -371,11 +364,7 @@ export async function scanEntity({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const [config, prompts, modelRules] = await Promise.all([
-    getTextScanConfig(),
-    getActiveTextScanPrompts(),
-    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
-  ]);
+  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   // The csam gate can open before its prompt exists; that must not stop the other labels.
   if (labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()) {
     await logMissingPrompts({ entityType, entityId, keys: [CSAM_PROMPT_KEY] }).catch(() => null);
@@ -383,7 +372,7 @@ export async function scanEntity({
     passes = planPasses(labels);
     if (!passes.length) return { status: 'skipped', reason: 'off' };
   }
-  const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
+  const ctx = { entityType, entityId, subject, config, prompts, force };
 
   const [first, ...rest] = passes;
   const result = await submitTextScanPass({ ...ctx, fromRetry, pass: first });
@@ -410,7 +399,6 @@ async function submitTextScanPass({
   subject,
   config,
   prompts,
-  modelRules,
   force,
   fromRetry,
   pass: { mode, labels, variant },
@@ -420,7 +408,6 @@ async function submitTextScanPass({
   subject: TextScanSubject;
   config: Awaited<ReturnType<typeof getTextScanConfig>>;
   prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>;
-  modelRules: Awaited<ReturnType<typeof getModelRulesForPrompt>> | undefined;
   force: boolean;
   fromRetry: boolean;
   pass: TextScanPass;
@@ -432,7 +419,6 @@ async function submitTextScanPass({
       labels,
       subject,
       maxInputChars: config.maxInputChars,
-      modelRules,
       maxSegments: config.maxSegments,
     });
   } catch (e) {
@@ -451,7 +437,6 @@ async function submitTextScanPass({
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
-    rulesFingerprint: composed.rulesFingerprint,
     variant,
     segmentBudget: config,
   });
@@ -514,12 +499,6 @@ async function submitTextScanPass({
     segments: composed.segments.length,
     scannedChars: composed.scannedChars,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
-    ...(composed.ruleIds
-      ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
-      : {}),
-    ...(composed.ruleIds && modelRules
-      ? { literalRuleIds: findLiteralHitsInSubject(subject, modelRules) }
-      : {}),
   };
 
   // Before submit: a content-cache hit can call back before submitWorkflow returns.
@@ -630,15 +609,27 @@ export function scanEntitiesInBackground(entityType: TextScanEntityType, entityI
 }
 
 /**
- * The one place a model's rules scan is queued. Callers decide who is scanned (moderator edits
- * are not); the profile skips a model that is not public.
+ * The one place a public model's rules are checked after its text changed. Callers decide who is
+ * checked (moderator edits are not); the check skips a model that is not public.
  */
-export function scanModelRules(modelId: number) {
-  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+export function checkModelRulesInBackground(modelId: number) {
+  // Imported here: the action reaches model-version.service, which imports this module.
+  import('~/server/services/text-scan/actions/model-rules')
+    .then(({ checkModelRulesOnEdit }) => checkModelRulesOnEdit(modelId))
+    .catch((error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'model rules edit check failed',
+        entityType: 'ModelRules',
+        entityId: modelId,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+    );
 }
 
-/** Every Model scan trigger also checks the rules; both profiles skip a model that is not public. */
+/** Every Model scan trigger also checks the rules; both skip a model that is not public. */
 export function scanModelAndRules(modelId: number, { rules = true }: { rules?: boolean } = {}) {
   scanEntityInBackground({ entityType: 'Model', entityId: modelId });
-  if (rules) scanModelRules(modelId);
+  if (rules) checkModelRulesInBackground(modelId);
 }

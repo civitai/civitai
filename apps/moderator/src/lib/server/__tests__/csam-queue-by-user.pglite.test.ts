@@ -29,6 +29,7 @@ CREATE TABLE "Image" (
   "width" INTEGER,
   "height" INTEGER,
   "type" TEXT NOT NULL DEFAULT 'image',
+  "mimeType" TEXT,
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,

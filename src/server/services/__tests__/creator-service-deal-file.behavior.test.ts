@@ -3,6 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -107,6 +108,7 @@ const MIGRATIONS = [
   '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
+  '20261128150000_creator_service_final_malware_scan',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -193,9 +195,10 @@ const readyPreview = async (dealId: number) => {
     mimeType: 'image/png',
     size: 500,
   });
-  await q(`UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed' WHERE id = $1`, [
-    fileId,
-  ]);
+  await q(
+    `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+    [fileId]
+  );
   return fileId;
 };
 
@@ -296,7 +299,10 @@ describe('requesting an upload', () => {
         const id = await accepted('None');
         const final = await uploaded(id);
         await files.deliverServiceDeal({ dealId: id, userId: SELLER });
-        await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [final]);
+        await q(
+          `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+          [final]
+        );
         await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
         return id;
       },
@@ -575,13 +581,20 @@ describe('completing an upload', () => {
 });
 
 describe('the scanner seam', () => {
-  it('can never produce Passed: a completed final stays Pending however often it is submitted', async () => {
+  it('outside production with no orchestrator token, submits nothing and never passes a final', async () => {
+    setEnv({ ORCHESTRATOR_ACCESS_TOKEN: '' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { submitFinalScan } = await import('~/server/services/creator-service-deal-file-scan');
     const dealId = await accepted();
     const fileId = await uploaded(dealId);
     const target = { id: fileId, dealId, s3Key: 'k', mimeType: 'application/zip', size: 1000 };
     for (let i = 0; i < 3; i++) expect(await submitFinalScan(target)).toBe('Pending');
-    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Pending' });
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Pending',
+      malwareScanStatus: 'Pending',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });
 
@@ -687,7 +700,7 @@ describe('delivering', () => {
       code: 'CONFLICT',
     });
     await q(
-      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed' WHERE id = $1`,
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
       [previewId]
     );
     await upload(dealId, { fileName: 'still-uploading.zip' });
@@ -710,7 +723,7 @@ describe('delivering', () => {
       code: 'CONFLICT',
     });
     await q(
-      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed' WHERE id = $1`,
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
       [second]
     );
     await files.deliverServiceDeal({ dealId, userId: SELLER });
@@ -753,7 +766,7 @@ describe('who can download what', () => {
     await files.deliverServiceDeal({ dealId, userId: SELLER });
     await q(
       `UPDATE "ServiceDealFile" SET "scanStatus" = $1::"ServiceDealFileScanStatus",
-        "deliveryKey" = $3, "deliverySize" = 777, "repackedAt" = now() WHERE id = $2`,
+        "malwareScanStatus" = $1::"ServiceDealFileScanStatus", "deliveryKey" = $3, "deliverySize" = 777, "repackedAt" = now() WHERE id = $2`,
       [scan, finalId, DELIVERY_KEY]
     );
     return { dealId, finalId, previewId };
@@ -809,7 +822,7 @@ describe('who can download what', () => {
     const finalId = await uploaded(dealId, { fileName: 'notes.txt', mimeType: 'text/plain' });
     await files.deliverServiceDeal({ dealId, userId: SELLER }).catch(() => null);
     await q(
-      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "repackedAt" = now() WHERE id = $1`,
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed', "repackedAt" = now() WHERE id = $1`,
       [finalId]
     );
     await q(
@@ -968,7 +981,10 @@ describe('what the listing shows', () => {
   it('flags canDownload for the buyer only once the deal is completed and the file Passed', async () => {
     const { dealId, finalId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });
-    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [finalId]);
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [finalId]
+    );
     expect((await list(dealId, BUYER)).find((f) => f.id === finalId)!.canDownload).toBe(false);
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     const unlocked = (await list(dealId, BUYER)).find((f) => f.id === finalId)!;
@@ -979,7 +995,10 @@ describe('what the listing shows', () => {
     const { dealId, finalId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });
     // The completion gate keeps this from happening; it is reached by clearing the scan afterwards.
-    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [finalId]);
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [finalId]
+    );
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Pending' WHERE id = $1`, [finalId]);
     const locked = (await list(dealId, BUYER)).find((f) => f.id === finalId)!;
@@ -1350,7 +1369,10 @@ describe('a scanner verdict on a final', () => {
 
   it('also holds a completed deal whose payout has not been claimed', async () => {
     const { dealId, finalId } = await deliveredWithFinal();
-    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [finalId]);
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [finalId]
+    );
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Pending' WHERE id = $1`, [finalId]);
     await files.recordFinalScanResult({ fileId: finalId, verdict: 'Failed' });

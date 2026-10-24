@@ -138,8 +138,6 @@ export async function seedRun(
     maxCaseId?: number;
     promptIds?: Record<string, number>;
     promptOverrides?: Record<string, string> | null;
-    ruleOverrides?: unknown[] | null;
-    ruleStateHash?: string | null;
     model?: string;
     thinking?: boolean;
     leaseOwner?: string | null;
@@ -161,8 +159,6 @@ export async function seedRun(
       max_case_id: String(over.maxCaseId ?? 2_000_000_000),
       prompt_ids: JSON.stringify(over.promptIds ?? PROMPT_IDS),
       prompt_overrides: draft && over.promptOverrides ? JSON.stringify(over.promptOverrides) : null,
-      rule_overrides: draft && over.ruleOverrides ? JSON.stringify(over.ruleOverrides) : null,
-      rule_state_hash: over.ruleStateHash ?? null,
       model: over.model ?? 'model-a',
       thinking: over.thinking ?? false,
       status: over.status ?? 'queued',

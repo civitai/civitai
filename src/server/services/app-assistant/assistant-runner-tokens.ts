@@ -14,6 +14,9 @@ import { logToAxiom } from '~/server/logging/client';
  *   with its own secret, for five-minute, user-wide App Assistant tokens at
  *   `/api/internal/app-assistant/runner-token`. The conversation and idempotency key it names
  *   (`cid`, `key`) are checked by the runner at start and patch; the mint does not read them.
+ * - A preview grant is a run grant with `use: 'preview'`, for `PREVIEW_GRANT_TTL_SECONDS`: the page
+ *   sends one with its Restart preview, which opens the app's live preview with no reply. The runner
+ *   takes it for that one request and nothing else, and no other grant there.
  */
 export const ASSISTANT_RUNNER_ISSUER = 'civitai';
 export const RUNNER_VIEWER_AUDIENCE = 'assistant-runner:viewer';
@@ -21,6 +24,8 @@ export const RUNNER_VIEWER_TYP = 'assistant-viewer+jwt';
 export const RUN_GRANT_AUDIENCE = 'assistant-runner:run-grant';
 export const RUN_GRANT_TYP = 'assistant-run-grant+jwt';
 export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
+/** A preview grant's life: one Restart preview, start to finish, with room for a slow sandbox. */
+export const PREVIEW_GRANT_TTL_SECONDS = 2 * 60;
 const ALGORITHM = 'ES256';
 const CLOCK_SKEW_SECONDS = 30;
 
@@ -119,22 +124,36 @@ export interface RunGrantFields {
    * word, never from the page's.
    */
   subagents?: boolean;
+  /**
+   * A preview grant (claim `use: 'preview'`), for `PREVIEW_GRANT_TTL_SECONDS` and never with
+   * `subagents`: the runner takes it only for a Restart preview.
+   */
+  use?: 'preview';
 }
 
-/** A run grant for one start, valid for `ASSISTANT_RUNNER_GRANT_TTL_SECONDS`. */
+/**
+ * A run grant for one start, valid for `ASSISTANT_RUNNER_GRANT_TTL_SECONDS`; or, with
+ * `use: 'preview'`, a preview grant for one Restart preview, valid for `PREVIEW_GRANT_TTL_SECONDS`.
+ */
 export function signRunGrant({
   userId,
   conversationId,
   idempotencyKey,
   subagents,
+  use,
 }: RunGrantFields): Promise<SignedRunnerToken> {
+  const preview = use === 'preview';
   return sign(
-    { cid: conversationId, key: idempotencyKey, ...(subagents ? { subagents: true } : {}) },
+    {
+      cid: conversationId,
+      key: idempotencyKey,
+      ...(preview ? { use: 'preview' } : subagents ? { subagents: true } : {}),
+    },
     {
       audience: RUN_GRANT_AUDIENCE,
       typ: RUN_GRANT_TYP,
       subject: String(userId),
-      ttlSeconds: env.ASSISTANT_RUNNER_GRANT_TTL_SECONDS,
+      ttlSeconds: preview ? PREVIEW_GRANT_TTL_SECONDS : env.ASSISTANT_RUNNER_GRANT_TTL_SECONDS,
     }
   );
 }
@@ -171,6 +190,7 @@ export async function verifyRunGrant(token: string): Promise<VerifiedRunGrant | 
       conversationId: payload.cid,
       idempotencyKey: payload.key,
       subagents: payload.subagents === true,
+      ...(payload.use === 'preview' ? { use: 'preview' as const } : {}),
       grantId: payload.jti,
       expiresAt: new Date(payload.exp * 1000),
     };

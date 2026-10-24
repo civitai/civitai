@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   deal: null as Record<string, unknown> | null,
+  error: null as { code?: string } | null,
   list: { deals: [] as unknown[], hiddenOffDomain: 0 },
 }));
 
@@ -17,7 +18,12 @@ vi.mock('~/components/Gated/Gated', () => ({
     createElement('section', { 'data-gate': contentNsfwLevel }, children),
 }));
 vi.mock('~/components/CreatorShop/Services/deals/deal.util', () => ({
-  useServiceDeal: () => ({ deal: mocks.deal, isLoading: false }),
+  useServiceDeal: () => ({
+    deal: mocks.deal,
+    isLoading: false,
+    error: mocks.error,
+    refetch: () => undefined,
+  }),
   useMyServiceDeals: () => ({
     ...mocks.list,
     isLoading: false,
@@ -25,6 +31,9 @@ vi.mock('~/components/CreatorShop/Services/deals/deal.util', () => ({
     hasNextPage: false,
     isFetchingNextPage: false,
   }),
+}));
+vi.mock('~/components/AppLayout/NotFound', () => ({
+  NotFound: () => createElement('div', { 'data-not-found': true }),
 }));
 vi.mock('~/components/Chat/ChatProvider', () => ({ useChatStore: { setState: () => undefined } }));
 vi.mock('~/components/CreatorShop/Services/deals/DealAccountabilitySheet', () => ({
@@ -107,6 +116,27 @@ describe('deal page gate', () => {
     expect(render(createElement(ServiceDealPage, { dealId: 7 }))).toMatch(/>X<\/span>/);
     mocks.deal = deal(2);
     expect(render(createElement(ServiceDealPage, { dealId: 7 }))).not.toMatch(/>PG-13<\/span>/);
+  });
+});
+
+describe('deal page: a deal that does not load', () => {
+  beforeEach(() => {
+    mocks.deal = null;
+    mocks.error = null;
+  });
+
+  it('shows NotFound only when the server says the deal is not there', () => {
+    mocks.error = { code: 'NOT_FOUND' };
+    const html = render(createElement(ServiceDealPage, { dealId: 7 }));
+    expect(html).toContain('data-not-found');
+    expect(html).not.toContain('Try again');
+  });
+
+  it('shows a retryable error, never NotFound, when the server fails', () => {
+    mocks.error = { code: 'INTERNAL_SERVER_ERROR' };
+    const html = render(createElement(ServiceDealPage, { dealId: 7 }));
+    expect(html).not.toContain('data-not-found');
+    expect(html).toMatch(/This deal could not be loaded\.[\s\S]*<button[^>]*>[\s\S]*Try again/);
   });
 });
 
