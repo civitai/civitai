@@ -71,7 +71,7 @@ export function isPaneShown(pane: Element, doc: Document = document): boolean {
 export function createKeepAlive({
   ping,
   isShown,
-  now = Date.now,
+  now = () => Date.now(),
   minIntervalMs = KEEPALIVE_MIN_INTERVAL_MS,
 }: {
   ping: () => Promise<unknown>;

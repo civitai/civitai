@@ -2259,22 +2259,29 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
     expectOnePing();
   });
 
-  test('NEGATIVE CONTROL: on a phone with the Chat tab shown, the hidden preview sends nothing', async () => {
+  test('NEGATIVE CONTROL: on a phone with the Chat tab shown, a press in the hidden preview sends nothing', async () => {
     await page.viewport(375, 900);
     renderWithProviders(<Workspace />);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await openFirst();
     await startPreview('my-app');
+    await settle();
+    console.info(`[keepalive-diag] pings after the preview started: ${pings().length}`);
     await page.getByRole('radio', { name: 'Chat' }).click();
     await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
+    console.info(`[keepalive-diag] pings after Chat was shown: ${pings().length}`);
+    const before = pings().length;
+    // Past the one-minute interval, so a ping before this point cannot be what hides one now.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
 
     pressInPane();
     await settle();
-    expect(pings()).toHaveLength(0);
+    expect(pings()).toHaveLength(before);
 
     // Positive control: the same press with Preview shown does ping.
     await page.getByRole('radio', { name: 'Preview' }).click();
     pressInPane();
-    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    await vi.waitFor(() => expect(pings()).toHaveLength(before + 1));
   });
 });
