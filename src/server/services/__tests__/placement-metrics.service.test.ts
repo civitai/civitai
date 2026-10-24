@@ -20,7 +20,12 @@ const updateEntityMetricDetached = vi.fn();
 const logToAxiom = loggingMock.logToAxiom;
 const isFlipt = vi.fn();
 
-vi.mock('~/env/server', () => ({ env: { CLICKHOUSE_TRACKER_URL: 'http://tracker.test' } }));
+vi.mock('~/env/server', () => ({
+  env: {
+    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
+    NEXT_PUBLIC_CIVITAI_LINK: 'https://civitai.com',
+  },
+}));
 
 vi.mock('~/server/flipt/client', () => ({
   isFlipt,
