@@ -84,6 +84,18 @@ describe('usePreviewKeepAlive', () => {
     expect(ping).not.toHaveBeenCalled();
   });
 
+  test('NEGATIVE CONTROL: the pointer only moving over the pane does not ping', async () => {
+    const ping = vi.fn().mockResolvedValue(true);
+    renderWithProviders(<Pane ping={ping} />);
+    await expect.element(page.getByTestId('pane')).toBeInTheDocument();
+    pane().dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+    pane().dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    expect(ping).not.toHaveBeenCalled();
+    // Positive control: a press on the same pane does.
+    pane().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
   test('a request the app makes for its viewer over the bridge pings', async () => {
     const ping = vi.fn().mockResolvedValue(true);
     const msgs = frameMessages();

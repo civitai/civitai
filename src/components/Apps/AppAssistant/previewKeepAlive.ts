@@ -82,7 +82,7 @@ export function createKeepAlive({
   let last: number | null = null;
   return {
     activity() {
-      // The interval first: it is the cheap check, and pointermove calls this many times a second.
+      // The interval first: it is the cheap check, and wheel events come many times a second.
       const t = now();
       if (last !== null && t - last < minIntervalMs) return false;
       if (!isShown()) return false;
@@ -117,8 +117,12 @@ export async function pingSandbox(
   if (res.status === 401 && !refresh) await pingSandbox(mcpUrl, getToken, fetchImpl, true);
 }
 
-/** What counts as the user working in the pane itself (outside the app's frame). */
-const PANE_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'focusin'] as const;
+/**
+ * What counts as the user working in the pane itself (outside the app's frame). Not `pointermove`: it
+ * can fire with nobody moving the pointer (the pane appearing under a resting one is the likely case),
+ * and the phone-layout workspace test saw a ping before any press while it was listened to.
+ */
+const PANE_EVENTS = ['pointerdown', 'keydown', 'wheel', 'focusin'] as const;
 
 function frameIn(pane: Element, win: unknown): boolean {
   if (!win) return false;
@@ -127,7 +131,7 @@ function frameIn(pane: Element, win: unknown): boolean {
 
 /**
  * While `ping` is set, the user's activity in the preview `pane` keeps the app awake (see the top of
- * this file): pointer, key, wheel or focus in the pane (a click into the app's frame focuses it), or a
+ * this file): a pointer press, key, wheel or focus in the pane (a click into the app's frame focuses it), or a
  * request the app makes for its viewer over the bridge. Pass `ping` null when the app is not running.
  */
 export function usePreviewKeepAlive(
