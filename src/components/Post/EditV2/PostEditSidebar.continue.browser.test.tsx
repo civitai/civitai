@@ -100,6 +100,7 @@ vi.mock('~/components/ShareButton/ShareButton', () => ({
 
 // eslint-disable-next-line import/first
 import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
+import { STORYLINE_SENT_URL } from '~/components/Storyline/storyline-routes';
 
 const OWNER = 9;
 const post = {
@@ -269,12 +270,21 @@ describe('after publishing a continuation', () => {
   }
   const said = () => mocks.notify.mock.calls.at(-1)![0];
 
-  test('submitted: says chapter 5 went to the creator', async () => {
+  // A tester read the old ten-second toast as a failure: it stays, says it waits, and says where.
+  test('submitted: says chapter 5 waits for the owner, and links to the sent list', async () => {
     await publishWith({ storylineId: 2, status: 'submitted', placementId: 8 });
     expect(said()).toMatchObject({
-      message: "Chapter 5 was submitted for the creator's review.",
+      title: 'Submitted, waiting for approval',
       color: 'teal',
+      autoClose: false,
     });
+    renderWithProviders(<div data-testid="said">{said().message}</div>);
+    await expect
+      .element(page.getByTestId('said'))
+      .toHaveTextContent("Chapter 5 is waiting for the storyline owner's approval.");
+    await expect
+      .element(page.getByRole('link', { name: 'See your sent continuations' }))
+      .toHaveAttribute('href', STORYLINE_SENT_URL);
   });
 
   test('chapter written: the owner’s chapter is live', async () => {

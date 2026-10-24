@@ -10,6 +10,7 @@ import clsx from 'clsx';
 import { useId } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import { STORYLINE_SENT_URL } from '~/components/Storyline/storyline-routes';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
   STORYLINE_CONTINUE_POST_LIMIT,
@@ -62,6 +63,7 @@ export function StorylineContinueForm({
   submitting,
   outcome,
   error,
+  onLeave,
 }: {
   viewerId: number;
   storyline: {
@@ -93,6 +95,8 @@ export function StorylineContinueForm({
   submitting?: boolean;
   outcome?: StorylineSubmitOutcome | null;
   error?: string | null;
+  /** Called when a link takes the author elsewhere: the dialog does not close itself on navigation. */
+  onLeave?: () => void;
 }) {
   const post = posts.find((candidate) => candidate.id === postId) ?? null;
   const ceiling = getBrowsingLevelLabel(storyline.maxNsfwLevel);
@@ -117,7 +121,7 @@ export function StorylineContinueForm({
     return !tileVerdict.allowed && tileVerdict.reason === 'aboveRating';
   };
 
-  if (outcome) return <StorylineSubmitted outcome={outcome} price={price} />;
+  if (outcome) return <StorylineSubmitted outcome={outcome} price={price} onLeave={onLeave} />;
 
   if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
     return (
@@ -351,9 +355,11 @@ function StorylinePostTile({
 function StorylineSubmitted({
   outcome,
   price,
+  onLeave,
 }: {
   outcome: StorylineSubmitOutcome;
   price: number;
+  onLeave?: () => void;
 }) {
   if (outcome === 'added')
     return (
@@ -370,14 +376,22 @@ function StorylineSubmitted({
     );
 
   return (
-    <Alert color="blue" icon={<IconClock size={18} />}>
+    <Alert
+      color="blue"
+      icon={<IconClock size={18} />}
+      title="Submitted, waiting for approval"
+      data-testid="storyline-submitted-pending"
+    >
       <Text size="sm">
         {outcome === 'awaitingScan'
-          ? 'Submitted. It reaches the creator once your post finishes being rated.'
-          : 'Submitted. It is waiting for the creator to review.'}{' '}
+          ? 'It goes to the storyline owner once your post finishes being rated, and joins the story when they accept it.'
+          : "It is waiting for the storyline owner's approval, and joins the story when they accept it."}{' '}
         If they do not answer in {STORYLINE_CONTINUATION_EXPIRY_DAYS} days it expires
         {price > 0 ? ` and your ${storylinePriceLabel(price)} is refunded` : ''}.
       </Text>
+      <Anchor component={Link} href={STORYLINE_SENT_URL} size="sm" onClick={onLeave}>
+        See your sent continuations
+      </Anchor>
     </Alert>
   );
 }

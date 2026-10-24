@@ -5,6 +5,9 @@
 
 export const STORYLINES_URL = '/storylines';
 
+/** The continuations you have sent to other people's storylines, and where each stands. */
+export const STORYLINE_SENT_URL = '/user/placements?type=storyline&tab=sent';
+
 export function storylineUrl(storylineId: number) {
   return `${STORYLINES_URL}/${storylineId}`;
 }
