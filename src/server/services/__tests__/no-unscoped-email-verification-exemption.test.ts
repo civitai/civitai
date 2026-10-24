@@ -107,6 +107,7 @@ const DERIVED_BASES: Record<string, string> = {
   promotionProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
+  sharedStorageProcedure: 'publicProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
   storylineWriteProcedure: 'guardedProcedure',

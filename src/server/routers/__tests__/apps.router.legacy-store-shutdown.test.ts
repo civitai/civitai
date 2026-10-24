@@ -13,7 +13,7 @@ import type * as FliptClientModule from '~/server/flipt/client';
 const FLAG = 'app-blocks-legacy-stores-removed';
 const GUIDE = 'https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores';
 
-const { mockIsFlipt, mockVerifyBlockToken, mockPool, mockDbRead } = vi.hoisted(() => {
+const { mockIsFlipt, mockVerifyBlockToken, mockPool } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
     params?: unknown[]
@@ -29,7 +29,6 @@ const { mockIsFlipt, mockVerifyBlockToken, mockPool, mockDbRead } = vi.hoisted((
       connect: vi.fn(async () => client),
       query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
     },
-    mockDbRead: { appBlock: { findUnique: vi.fn() }, account: { count: vi.fn() } },
   };
 });
 
@@ -48,7 +47,6 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: async () => true,
   isAppBlocksSharedStorageEnabled: async () => true,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async () => null },
@@ -67,7 +65,6 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: async () => undefined,
 }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: async () => undefined }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: async () => undefined } }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: async () => undefined,
