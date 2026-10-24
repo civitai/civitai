@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
+import { countPlacements } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import {
@@ -104,12 +107,17 @@ type SpaceTarget = {
  *
  * Written once because the claim decides on it and the UI displays it. Scope it
  * by status later in one of two copies and the surface offers a placement the
- * mutation refuses.
+ * mutation refuses. The predicate is `freePlacementsTodayWhere`, which the
+ * display path's Kysely count (under `kysely-placement-reads`) reads too.
  */
 const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
-  client.placement.count({
-    where: { placerId, free: true, createdAt: { gte: freePlacementDayStart() } },
-  });
+  client.placement.count({ where: freePlacementsTodayWhere(placerId) });
+
+export const freePlacementsTodayWhere = (placerId: number) => ({
+  placerId,
+  free: true,
+  createdAt: { gte: freePlacementDayStart() },
+});
 
 /**
  * Never twice on the same target by the same placer, as one predicate.
@@ -120,12 +128,20 @@ const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
  * on the same image and one should not consume the other — and the daily
  * allowance already makes that pair cost two days, so it raises no farm rate.
  *
- * Shared with the display path for the same reason as the daily count.
+ * Shared with the display path for the same reason as the daily count, through
+ * `freePlacementsOnWhere` the same way.
  */
 const countFreePlacementsOn = (
   client: PlacementClient,
-  { placerId, surface, targetType, targetId }: SpaceTarget & { placerId: number }
-) => client.placement.count({ where: { placerId, free: true, surface, targetType, targetId } });
+  input: SpaceTarget & { placerId: number }
+) => client.placement.count({ where: freePlacementsOnWhere(input) });
+
+export const freePlacementsOnWhere = ({
+  placerId,
+  surface,
+  targetType,
+  targetId,
+}: SpaceTarget & { placerId: number }) => ({ placerId, free: true, surface, targetType, targetId });
 
 export type CreateFreePlacement = SpaceTarget & {
   placerId: number;
@@ -303,7 +319,9 @@ export async function createFreePlacement({
  */
 export async function getFreePlacementAllowance({ placerId }: { placerId: number }) {
   const dayStart = freePlacementDayStart();
-  const used = await countFreePlacementsToday(dbRead, placerId);
+  const used = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? await countPlacements((await loadKyselyDb()).kyselyRead, freePlacementsTodayWhere(placerId))
+    : await countFreePlacementsToday(dbRead, placerId);
 
   return {
     used,
@@ -320,4 +338,6 @@ export async function getFreePlacementAllowance({ placerId }: { placerId: number
  * never the thing a mutation decides on.
  */
 export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) =>
-  (await countFreePlacementsOn(dbRead, input)) > 0;
+  ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? await countPlacements((await loadKyselyDb()).kyselyRead, freePlacementsOnWhere(input))
+    : await countFreePlacementsOn(dbRead, input)) > 0;
