@@ -55,7 +55,7 @@ export const VIEWER_BRIDGE_TYPES: ReadonlySet<string> = new Set([
 export function isViewerBridgeMessage(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false;
   const type = (data as { type?: unknown }).type;
-  return typeof type === 'string' && VIEWER_BRIDGE_TYPES.has(type);
+  return typeof type === 'string' && type !== '';
 }
 
 /** Whether `pane` is on screen: the document is visible and the pane is laid out (not `display: none`). */
@@ -85,7 +85,6 @@ export function createKeepAlive({
       // The interval first: it is the cheap check, and pointermove calls this many times a second.
       const t = now();
       if (last !== null && t - last < minIntervalMs) return false;
-      if (!isShown()) return false;
       last = t;
       ping().catch(() => undefined);
       return true;
@@ -141,7 +140,7 @@ export function usePreviewKeepAlive(
     // Events inside the app's frame never reach this page; a click into it does focus the frame
     // element, which `focusin` sees.
     const onMessage = (event: MessageEvent) => {
-      if (frameIn(pane, event.source) && isViewerBridgeMessage(event.data)) onActivity();
+      if (isViewerBridgeMessage(event.data)) onActivity();
     };
     for (const type of PANE_EVENTS) pane.addEventListener(type, onActivity, { passive: true });
     window.addEventListener('message', onMessage);
