@@ -105,6 +105,15 @@ describe('usePreviewKeepAlive', () => {
     msgs.stop();
   });
 
+  test('the SDK reporting input inside the app frame (VIEWER_ACTIVITY) pings', async () => {
+    const ping = vi.fn().mockResolvedValue(true);
+    const msgs = frameMessages();
+    renderWithProviders(<Pane ping={ping} frame={posting('VIEWER_ACTIVITY')} />);
+    await vi.waitFor(() => expect(msgs.seen).toEqual(['VIEWER_ACTIVITY']));
+    expect(ping).toHaveBeenCalledTimes(1);
+    msgs.stop();
+  });
+
   test('NEGATIVE CONTROL: a message the app sends by itself does not ping', async () => {
     const ping = vi.fn().mockResolvedValue(true);
     const msgs = frameMessages();
