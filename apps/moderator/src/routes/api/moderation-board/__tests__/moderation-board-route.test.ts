@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const board = vi.hoisted(() => ({
   getRecentQueueActivity: vi.fn(async () => new Map()),
@@ -15,6 +15,8 @@ const call = (locals: Record<string, unknown>) =>
   GET({ locals } as unknown as Parameters<typeof GET>[0]) as Promise<Response>;
 
 describe('GET /api/moderation-board', () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it('refuses a request with no moderator session, before reading anything', async () => {
     const res = await call({ tokenClient: 'webhook', grants: {} });
     expect(res.status).toBe(401);
