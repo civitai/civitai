@@ -162,6 +162,12 @@ const featureFlags = createFeatureFlags({
   // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
   // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
   shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // Server CPU switch for the tRPC flag guards (`isFlagProtected`, `appDeveloperProcedure`). ON:
+  // a guard evaluates only the flag it names, once per HTTP request (`getRequestFeatureFlag`).
+  // OFF: it reads that flag out of the whole registry (`getFeatureFlags`), as before. Same answer
+  // per key either way; ON drops the whole-result cache's up-to-10s lag on a Flipt change. `[]` =
+  // DARK and fails CLOSED when the key is absent or Flipt is down, so OFF is the default.
+  trpcFlagGuardPerRequest: { availability: [], fliptKey: 'trpc-flag-guard-per-request' },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
@@ -1282,6 +1288,43 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
     });
   }
   return obj as FeatureAccess;
+}
+
+/**
+ * ONE flag for a server-side guard, evaluated at most once per request. For a guard that reads a
+ * single key (`isFlagProtected`), `getFeatureFlags` builds the whole registry to answer it — one
+ * Flipt evaluation per Flipt-backed flag whenever its whole-result cache misses.
+ *
+ * The value is `isFeatureFlagKeyPresent` — the evaluator eager and lazy share — so it equals
+ * `!!getFeatureFlags(ctx)[key]` for the same inputs. Memoized per request object: every procedure
+ * of a tRPC batch shares one context, so one `req`, and evaluates each flag once. The memo is keyed
+ * on the request, and reused only while the user object and host match the ones it was built
+ * for; region is read from that same request, so it cannot differ. With no `req` nothing is
+ * memoized. Nothing outlives the request (a `WeakMap` on it), so a Flipt change reaches the next
+ * request, not the rest of the current one.
+ */
+type RequestFlagMemo = {
+  user: SessionUser | undefined;
+  host: string | undefined;
+  fliptContext: Record<string, string>;
+  present: Map<FeatureFlagKey, boolean>;
+};
+const requestFlagMemo = new WeakMap<object, RequestFlagMemo>();
+
+export function getRequestFeatureFlag(ctx: FeatureAccessContext, key: FeatureFlagKey): boolean {
+  const { user, req } = ctx;
+  const host = ctx.host ?? req?.headers.host;
+  let memo = req ? requestFlagMemo.get(req) : undefined;
+  if (!memo || memo.user !== user || memo.host !== host) {
+    memo = { user, host, fliptContext: buildFliptContext(user), present: new Map() };
+    if (req) requestFlagMemo.set(req, memo);
+  }
+  let present = memo.present.get(key);
+  if (present === undefined) {
+    present = isFeatureFlagKeyPresent(key, { user, req, host }, memo.fliptContext);
+    memo.present.set(key, present);
+  }
+  return present;
 }
 
 /**
