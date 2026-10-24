@@ -52,6 +52,7 @@ import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
+import { withUserLights } from '~/server/redis/entity-cosmetic-lights';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   publicBrowsingLevelsFlag,
@@ -364,7 +365,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
           record.data = cosmetic.data as ContentDecorationCosmetic['data'];
           if (rawRecord.userData) {
             const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
-            if (userData.lights) record.data.lights = userData.lights;
+            record.data = withUserLights(record.data, userData);
             delete (record as any).userData;
           }
         }
