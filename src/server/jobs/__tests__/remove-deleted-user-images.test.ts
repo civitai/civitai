@@ -8,6 +8,7 @@ const {
   mockLogToAxiom,
   mockSafeError,
   mockGetJobDate,
+  markerView,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
   mockQueueSearchIndex: vi.fn(async () => undefined),
@@ -19,6 +20,8 @@ const {
     stack: (e as Error).stack,
   })),
   mockGetJobDate: vi.fn(),
+  // Whether the database has the hold marker's view; prod does.
+  markerView: { present: true },
 }));
 
 vi.mock('~/server/services/image.service', () => ({
@@ -433,7 +436,7 @@ function seed(next: Record<number, Fixture>) {
       const sql = strings.join('?');
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
-      if (sql.includes('to_regclass')) return Promise.resolve([{ present: false }]);
+      if (sql.includes('to_regclass')) return Promise.resolve([{ present: markerView.present }]);
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
@@ -600,6 +603,7 @@ beforeEach(() => {
   deletedPostIds = [];
   blockedUpdates = [];
   batchChecks = {};
+  markerView.present = true;
   // The compiled default is inert, so a run only happens if something names a budget: every test
   // that is not about the budget itself gets a generous one here.
   mockSysRedis.get.mockResolvedValue('500');
@@ -618,6 +622,18 @@ afterEach(() => {
 });
 
 describe('removeDeletedUserImages', () => {
+  it('drains nothing on a database without the hold marker view', async () => {
+    markerView.present = false;
+    seed({ 7: { deletedAt: NEWER, images: ids(150), posts: [900] } });
+
+    const result = await run();
+
+    expect(result).toMatchObject({ skipped: 'hold-marker-view-missing', deletedImages: 0 });
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(blockedUpdates).toEqual([]);
+  });
+
   it('deletes a deleted user images in batches of 100 and then removes their posts', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(150), posts: [900] } });
