@@ -44,6 +44,30 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
+  // Reads the placement/sticker read family (packages/civitai-db-queries/src/placement.db.ts)
+  // through Kysely-over-pg instead of the Prisma query engine: the space resolution behind every
+  // placement surface, the price range, getCapTier, the free-placement display counts, the pending
+  // badge counts and the sticker listing/counts. DEFAULT-OFF, same semantics as
+  // KYSELY_IMAGE_REACTIONS above: boolean only, evaluated with no entityId.
+  //
+  // 🔴 Each read keeps its database: a `dbWrite` read (the target/owner lookup, the space rows and
+  // getCapTier, which decide whether a placement is allowed and what it costs) moves to
+  // `kyselyWrite` over the shared `pgDbWrite` pool; a `dbRead` read moves to `kyselyRead` over
+  // `pgDbRead`. The counts inside the free-placement claim transaction never switch — they decide
+  // under advisory locks on the Prisma `tx`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every image detail view's space resolution and every session's badge
+  // counts.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` AND `pgDbWrite`. Their acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), where
+  // Prisma's pool times out, so the environment must set a non-zero value before flipping. Failures
+  // surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer maps a pool
+  // timeout to TIMEOUT. The ON window also changes contention on both pg pools, the writer's
+  // included, not only query-engine CPU.
+  KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -112,6 +136,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
+  // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
+  // no entity or context. See `responseWriteSerialize`.
+  TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path

@@ -3,6 +3,7 @@
 export {
   SandboxApiError,
   SandboxSeedNotAppliedError,
+  appExportPath,
   createSandboxClient,
   isRunningLimit,
   isSandboxServiceUrl,
