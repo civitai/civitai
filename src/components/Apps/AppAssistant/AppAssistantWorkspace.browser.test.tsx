@@ -2192,3 +2192,89 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     expect(m.stop).not.toHaveBeenCalled();
   });
 });
+
+describe('AppAssistantWorkspace keeps the app awake while the user works in its preview', () => {
+  const HOST = 'dev-0123456789abcdef.civit.ai';
+  const MCP = `${BASE}/s/sbx-aaaaaaaaaaaa/mcp`;
+  const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const pings = () =>
+    (fetchSpy.mock.calls as unknown as [string, RequestInit][]).filter(([url]) => url === MCP);
+  const pressInPane = () =>
+    document
+      .querySelector('[data-testid="app-assistant-preview-pane"]')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+
+  function expectOnePing() {
+    expect(pings()).toHaveLength(1);
+    const init = pings()[0]![1];
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer sandbox-token');
+    expect(JSON.parse(init.body as string)).toEqual({
+      jsonrpc: '2.0',
+      id: 'keepalive',
+      method: 'ping',
+    });
+  }
+
+  test('a press in the preview pings the open app’s MCP endpoint, the activity its idle clock counts', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('my-app');
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await settle();
+    // NEGATIVE CONTROL: a preview on screen with no one working in it sends nothing.
+    expect(pings()).toHaveLength(0);
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('on the server runner too', async () => {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: HOST },
+      isError: false,
+    });
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).toBeInTheDocument();
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('NEGATIVE CONTROL: on a phone with the Chat tab shown, the hidden preview sends nothing', async () => {
+    await page.viewport(375, 900);
+    renderWithProviders(<Workspace />);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    await startPreview('my-app');
+    await page.getByRole('radio', { name: 'Chat' }).click();
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
+
+    pressInPane();
+    await settle();
+    expect(pings()).toHaveLength(0);
+
+    // Positive control: the same press with Preview shown does ping.
+    await page.getByRole('radio', { name: 'Preview' }).click();
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+  });
+});
