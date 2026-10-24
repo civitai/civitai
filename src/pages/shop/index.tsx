@@ -42,7 +42,7 @@ import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-prof
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
-import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
+import { useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { CosmeticShopSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -174,7 +174,7 @@ export default function CosmeticShopMain() {
           </Stack>
           <div
             className="sticky z-40 -mx-2 flex flex-wrap items-center justify-end gap-2 bg-gray-0 p-2 dark:bg-dark-7"
-            style={{ top: subnavBottom + SUBNAV_STICKY_GAP }}
+            style={{ top: subnavBottom }}
           >
             <TextInput
               className="w-full sm:mr-auto sm:w-80"
