@@ -135,7 +135,9 @@ export class VectorStore {
 
   /** Whether a model revision has been recorded. Once true it stays true, so it is cached. */
   async isStamped() {
-    this.stamped ||= !!(await this.readStamp()).modelRevision;
+    // The image profile too: a video-only first fill leaves it for a later writer to record.
+    const stored = await this.readStamp();
+    this.stamped ||= !!stored.modelRevision && !!stored.profile;
     return this.stamped;
   }
 

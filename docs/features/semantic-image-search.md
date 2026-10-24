@@ -66,25 +66,26 @@ most 8 videos. Identical inputs are served from the orchestrator's cache. The st
 locally until the orchestration client ships it.
 
 - **In-flight budget:** at most `VECTOR_EMBED_MAX_IN_FLIGHT` orchestrator jobs (= steps =
-  images) are in flight per process, default 500. Every call on one process shares it: a
-  backfill's concurrent pages draw from one budget. The consumer and a backfill or reconcile
-  are separate processes, each with its own budget, so when they run together their limits add
-  up. Split the total between them, for example 400 for the backfill and 100 for the consumer.
-  A workflow larger than the budget takes all of it and runs alone.
-- **Queue back-off (optional):** with `VECTOR_QUEUE_PROM_URL` set, submits are held while the
-  orchestrator's queue is deep. The queue depth comes from a Prometheus instant query
-  (`VECTOR_QUEUE_PROM_QUERY`, by default the queued Submodel jobs), optionally with
-  `VECTOR_QUEUE_PROM_BEARER`. Submits stop above `VECTOR_QUEUE_PAUSE_ABOVE` (2000) and resume
-  only below `VECTOR_QUEUE_RESUME_BELOW` (1500). A reading that fails, or comes back empty,
-  holds submits until one succeeds. Readings are reused for 15 s.
-- **Retries:** a 429 or 5xx backs off exponentially with jitter, never sooner than
-  `Retry-After`, and gives up after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a workflow has
+  images) are in flight per process, default 500, and never more than the account's in-flight
+  quota the orchestrator reports (`RateLimit-Policy` `inflight-multimodalEmbedding` `q`). Each
+  workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
+  shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
+  or reconcile are separate processes; the orchestrator's quota is per account and bounds them
+  together. The first response's quota and buzz window are logged at info level
+  (`vector-sync: orchestrator rate limits`).
+- **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
+  `Retry-After`, and every submit on that process waits it out too. There is no other
+  client-side throttling.
+- **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
+  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`; 429s have a separate, larger
+  retry allowance. Each attempt at a workflow has
   one `externalId`, reused across its retries, so a submit that succeeded server-side is not
   paid for twice. It is random rather than derived from the inputs, because the orchestrator
   would also return a _failed_ workflow for its key.
 - **Failures are per step:** a step that fails (or returns a vector of the wrong size or
-  precision) fails only its image, counted as `failed`. A workflow the orchestrator rejects
-  outright (400) is split in half, at most four times, to isolate the bad input.
+  precision, or without a model revision or profile) fails only its image, counted as
+  `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four
+  times, to isolate the bad input.
 - When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
   workflows not yet submitted are skipped. The vectors already returned are stored before the
   error is raised, so a retry pays only for what is missing.
@@ -96,8 +97,10 @@ locally until the orchestration client ships it.
   two models into a new collection. Across processes there is no compare-and-set, so the
   consumer never embeds into a collection whose model is not yet recorded: **the backfill canary
   records it first**. Until then the consumer only deletes and updates payloads.
-- Workflows are not ephemeral: an ephemeral workflow disappears once terminal, so one finishing
-  between two polls would take its vectors with it.
+- **Ephemeral workflows:** the orchestrator keeps no document for them. The result comes back
+  on the submit (`wait=60`) or on a long poll. One that finishes between polls is gone (a 404),
+  and the whole workflow is sent again, which the orchestrator mostly answers from its cache of
+  identical inputs.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync
