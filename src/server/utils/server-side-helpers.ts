@@ -111,14 +111,21 @@ export function createServerSideProps<P>({
   return async function (
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
-    const isClient = context.req.url?.startsWith('/_next/data') ?? false;
+    // A client-side navigation fetches its props from `/_next/data/<build>/<locale>/<path>.json`, but
+    // Next rewrites a locale-prefixed data URL to the page path before this runs, so on a real
+    // navigation `req.url` reads `/models/4201` and this prefix test is false. Next marks those
+    // requests with `x-nextjs-data: 1` instead: it strips that header from incoming requests and
+    // sets it only on data routes, so a browser cannot forge it onto a page request. The header is
+    // honoured below, behind `clientNavSkipsPrefetch`. The session lookup keeps the URL test: it
+    // runs before the flag can be read, since reading it needs the session's user.
+    const isClientByUrl = context.req.url?.startsWith('/_next/data') ?? false;
     // `_app` seeds `req.session` from its own request, which carries this request's headers but not
     // its URL. With an Authorization header the seed holds that token's user but not its
     // credential, so it resolves here, which records the credential on `req.context`.
     const presentsHeader = !!context.req.headers.authorization;
     const session =
       (presentsHeader ? null : ((context.req as any)['session'] as Session | null)) ??
-      (useSession || requireModerator || !isClient || presentsHeader
+      (useSession || requireModerator || !isClientByUrl || presentsHeader
         ? await getServerAuthSession(context)
         : null);
 
@@ -143,6 +150,9 @@ export function createServerSideProps<P>({
     }
 
     const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    const isClient =
+      isClientByUrl ||
+      (!!features.clientNavSkipsPrefetch && context.req.headers['x-nextjs-data'] === '1');
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
@@ -199,6 +209,9 @@ type GetPropsFnResult<P> = {
 type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
   useSession?: boolean;
+  /** `'once'` (default) skips `ssg` on a client navigation, so anything the resolver decides from an
+   *  `ssg` fetch — `gating`, `suppressAds`, a notFound or redirect — is skipped too. Use `'always'`
+   *  when a decision depends on it. */
   prefetch?: 'always' | 'once';
   /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
    *  Authorization header. Redirects everyone else before the resolver runs. */

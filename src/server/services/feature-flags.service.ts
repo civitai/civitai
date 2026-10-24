@@ -84,6 +84,12 @@ const featureFlags = createFeatureFlags({
   // and can be turned off without turning batching off. Has no effect while `trpcBatching`
   // is off. availability ['mod'] is the Flipt-down fallback (mirrors `trpcBatching`).
   trpcBatchingFirstCommit: { availability: ['mod'], fliptKey: 'trpc-batching-first-commit' },
+  // Recognise a client-side navigation by the `x-nextjs-data` header as well as the URL, so a
+  // `prefetch: 'once'` page stops prefetching and dehydrating its queries on navigation (the
+  // client fetches them itself). OFF prefetches on every navigation, exactly as before. See
+  // `createServerSideProps`. `[]`, not `['mod']`: the Flipt `client-nav-skips-prefetch` rollout
+  // is the only on-switch, so the deploy changes nothing and the ramp starts from zero.
+  clientNavSkipsPrefetch: { availability: [], fliptKey: 'client-nav-skips-prefetch' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse

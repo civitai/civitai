@@ -10,6 +10,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  // 'always': ad gating, and any notFound or redirect, is decided from the prefetched entity, so a
+  // client navigation must prefetch too.
+  prefetch: 'always',
   useSession: true,
   // Shared with `GET /api/page-data/images/[imageId]`; see `~/server/page-data/image-detail`.
   resolver: resolveImageDetailPageData,
