@@ -63,6 +63,8 @@ export interface AppAssistantChatProps {
    * unset keeps them in the browser, exactly as before.
    */
   remoteRunner?: ChatRemoteRunner;
+  /** Called once the chat has started (`chatRef` is set). */
+  onReady?: () => void;
   /** The page's own content just above the message box (the chat's `composer-top` slot). */
   composerTop?: ReactNode;
   /** The page's own content after the last message, in the thread's scroll (`thread-end` slot). */
@@ -83,6 +85,7 @@ export function AppAssistantChat({
   onChatChange,
   subagents,
   remoteRunner,
+  onReady,
   composerTop,
   threadEnd,
 }: AppAssistantChatProps) {
@@ -92,6 +95,11 @@ export function AppAssistantChat({
   const remoteRunnerAtStart = useRef(remoteRunner);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (ready) onReadyRef.current?.();
+  }, [ready]);
 
   useEffect(() => {
     let cancelled = false;

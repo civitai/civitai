@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   SandboxApiError,
+  SandboxSeedNotAppliedError,
   appExportPath,
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
+import { openApp } from '@civitai/app-assistant';
 
 const BASE = 'https://sandbox.example';
 const SANDBOX: Sandbox = {
@@ -151,6 +153,70 @@ describe('createSandboxClient', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('a seeded create (forkable apps)', () => {
+  const SEED = {
+    url: 'https://seeds.client.test/fork-seeds/garden-fork-0a0b/abc.zip',
+    sha256: 'd'.repeat(64),
+    bytes: 4096,
+  };
+
+  it('sends the seed object unchanged beside the app, and returns what was unpacked', async () => {
+    const { client, call } = setup(
+      json(201, { ...SANDBOX, app: 'garden-fork-0a0b', seed: { files: 12, skipped: ['.env'] } })
+    );
+    const opened = await client.open('garden-fork-0a0b', SEED);
+    expect(call(0)).toMatchObject({
+      url: `${BASE}/v1/sandboxes`,
+      method: 'POST',
+      body: JSON.stringify({ app: 'garden-fork-0a0b', seed: SEED }),
+    });
+    expect(opened).toMatchObject({ created: true, seed: { files: 12, skipped: ['.env'] } });
+    expect(opened.sandbox.app).toBe('garden-fork-0a0b');
+  });
+
+  it('keeps the service’s code on a refusal', async () => {
+    const { client } = setup(
+      json(409, {
+        error:
+          'a sandbox for this app already exists (sbx-aaaaaaaaaaaa); a seed only creates a new one',
+        code: 'already_exists',
+      }),
+      json(422, { error: 'archive entry "../x" is not allowed', code: 'seed_rejected_entry' })
+    );
+    await expect(client.open('garden-fork-0a0b', SEED)).rejects.toMatchObject({
+      status: 409,
+      kind: 'conflict',
+      code: 'already_exists',
+    });
+    await expect(client.open('garden-fork-0a0b', SEED)).rejects.toMatchObject({
+      status: 422,
+      code: 'seed_rejected_entry',
+    });
+  });
+
+  it('a create answered WITHOUT a seed result (a service that ignores seeds) is not a fork', async () => {
+    const { client } = setup(json(201, { ...SANDBOX, app: 'garden-fork-0a0b' }));
+    const error = await client.open('garden-fork-0a0b', SEED).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SandboxSeedNotAppliedError);
+    expect(error).toMatchObject({ code: 'seed_lost', sandbox: { name: SANDBOX.name } });
+  });
+
+  it('openApp pauses the running app and retries WITH the seed', async () => {
+    const running = { ...SANDBOX, name: 'sbx-bbbbbbbbbbbb', app: 'other' };
+    const { client, call } = setup(
+      json(409, {
+        error:
+          'running-sandbox limit (1) reached: sbx-bbbbbbbbbbbb (app "other") is running; suspend it first',
+      }),
+      json(200, { sandboxes: [running] }),
+      json(200, { ...running, state: 'suspended' }),
+      json(201, { ...SANDBOX, app: 'garden-fork-0a0b', seed: { files: 3, skipped: [] } })
+    );
+    await openApp(client, 'garden-fork-0a0b', SEED);
+    expect(call(3).body).toBe(JSON.stringify({ app: 'garden-fork-0a0b', seed: SEED }));
+  });
 });
 
 describe('isSandboxServiceUrl (who may receive the token)', () => {

@@ -2823,6 +2823,7 @@ enum ApiKeyType {
   User
   Access
   Refresh
+  Worker
 }
 
 model ApiKey {
@@ -2839,8 +2840,12 @@ model ApiKey {
   clientId   String?
   client     OauthClient? @relation(fields: [clientId], references: [id], onDelete: Cascade)
   buzzLimit  Json?        // { daily?: number, weekly?: number, monthly?: number }
+  /// Set on `Worker` tokens only: the device the token was issued to.
+  workerDeviceId Int?
+  workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([workerDeviceId])
 }
 
 model OauthClient {
@@ -2871,8 +2876,45 @@ model OauthClient {
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
   goodPurchases BlockGoodPurchase[] @relation("BlockGoodPurchaseApp")
   connectListings          AppListing[]
+  workerClient             WorkerClient?
+  workerDevices            WorkerDevice[]
 
   @@index([userId])
+}
+
+/// A workload OAuth client: a pool of workers that trade a device credential for a short-lived
+/// `Worker` token at the auth hub's token-exchange grant. One row per provider pool.
+model WorkerClient {
+  clientId               String      @id
+  client                 OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// The orchestrator provider this pool's workers register as.
+  provider               String
+  /// The `subject_token_type` URNs this client may exchange.
+  subjectTokenTypes      String[]    @default([])
+  /// Salad container groups whose IMDS tokens this client accepts.
+  saladContainerGroupIds String[]    @default([])
+  createdAt              DateTime    @default(now())
+}
+
+/// A worker machine seen at the token-exchange grant, keyed by who vouched for it (`issuer`) and its id
+/// there (`subject`). Blocking one refuses its exchanges and ends its live tokens.
+model WorkerDevice {
+  id            Int         @id @default(autoincrement())
+  clientId      String
+  client        OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+  issuer        String
+  subject       String
+  /// `active` or `blocked`.
+  status        String      @default("active")
+  firstSeenAt   DateTime    @default(now())
+  lastSeenAt    DateTime    @default(now())
+  lastIp        String?
+  blockedAt     DateTime?
+  blockedReason String?
+  tokens        ApiKey[]
+
+  @@unique([clientId, issuer, subject])
 }
 
 /// Generic per-user role grants (e.g. "tester"). Read directly by the auth hub — the OAuth /authorize gate
@@ -3018,6 +3060,24 @@ model AppBlock {
   // `appBlock` query without an explicit `select` raises P2022 until it lands.
   spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
   spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
+
+  // FORK PROVENANCE — the app this block was forked from, and the parent commit the fork
+  // started at. Attribution only: no revenue share, no inherited approval, no inherited
+  // paid goods or scopes (a fork's goods and scopes are reviewed on its own publish).
+  //
+  // 🔴 SERVER-WRITTEN ONLY, through `app-fork.service.ts`, and never from the manifest: an
+  // author must not be able to claim (or disclaim) a parent. Write-once.
+  //
+  // 🔴 BOTH FIELDS CARRY THE no-type ANNOTATION, so they are stripped from the generated
+  // client, for the reason `AppListing.visibility` documents: as ordinary fields every
+  // `appBlock` call that returns rows without an explicit `select` would name them, and
+  // would raise P2022 until the manual-apply migration runs. They are read and written by
+  // raw SQL only. The FK (`fork_of_app_block_id` → `app_blocks.id`, ON DELETE SET NULL) and
+  // its partial index live ONLY in migration `20261126120000_app_fork_provenance` — Prisma
+  // cannot declare a relation on a stripped scalar. `fork_of_commit_sha` has no FK, so it
+  // survives the parent's deletion and still marks the block as a fork.
+  forkOfAppBlockId   String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha    String?   @map("fork_of_commit_sha") // @no-type
 
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3243,6 +3303,14 @@ model AppBlockPublishRequest {
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
+  // FORK PROVENANCE carried onto the request — copied from the block's own pair when the
+  // request is created, or set by the fork flow for a fork's first version (no block yet).
+  // Read on approve to link the fork's store listing to its parent's. SERVER-WRITTEN ONLY;
+  // the request's `manifest` is never consulted for it. Same no-type posture as
+  // `AppBlock.forkOfAppBlockId` — raw SQL only; FK (ON DELETE SET NULL) + partial index in
+  // migration `20261126120000_app_fork_provenance`.
+  forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -3404,6 +3472,22 @@ model AppListing {
   // while the columns are absent rather than 500ing the public store.
   isBeta          Boolean      @default(false) @map("is_beta")
   betaMessage     String?      @map("beta_message")
+  // AUTHOR OPT-IN: "Let others fork this app's source". TRIVIAL, NOT MATERIAL (absent from
+  // `MATERIAL_LISTING_PATCH_FIELDS`, never staged on a shadow revision) — the same posture
+  // as `isBeta`. Written to the LIVE listing only.
+  //
+  // FORK PROVENANCE: the store listing this listing's app was forked from. Set on the
+  // FORK'S publish approval from the publish request's server-written provenance, never
+  // from the manifest. ON DELETE SET NULL — the fork's block keeps `fork_of_commit_sha`, so
+  // a fork whose parent is gone still reads as a fork ("Forked from an app that is no
+  // longer available").
+  //
+  // 🔴 BOTH CARRY THE no-type ANNOTATION — stripped from the generated client, read and
+  // written by raw SQL in `app-fork.service.ts` only, for the reason `visibility` below
+  // documents. The FK, the self-reference CHECK and the partial index that serves "forks of
+  // listing X" live ONLY in migration `20261126120000_app_fork_provenance`.
+  forkable        Boolean      @default(false) // @no-type
+  forkOfListingId String?      @map("fork_of_listing_id") // @no-type
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
@@ -7553,6 +7637,25 @@ model ScanLabelFlag {
   @@index([itemId])
 }
 
+/// Shadow audio scan of a video, from a workflow separate from the visual ingestion scan.
+/// Nothing reads it to filter, rate or hide media.
+model ImageAudioScan {
+  imageId       Int       @id
+  workflowId    String    @unique
+  /// Pending | Succeeded | Failed
+  status        String    @default("Pending")
+  /// null when the video has no audio or the scan failed: unknown, never "clean"
+  flagged       Boolean?
+  hasAudio      Boolean?
+  result        Json?
+  resultVersion Int?
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([flagged, createdAt])
+}
+
 model ScanLabelVote {
   itemId    Int
   userId    Int
@@ -7561,6 +7664,7 @@ model ScanLabelVote {
   reasonComment String?
   msOnItem      Int?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+  claimToken    String?  @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId, createdAt])
@@ -7570,6 +7674,7 @@ model ScanLabelClaim {
   itemId    Int
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
+  token     String?  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId])
@@ -10576,8 +10681,14 @@ model ServiceDealFile {
   /// Set when preview processing last started, so a crashed worker's file is picked up again.
   processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
-  /// The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+  /// The malware scanner's own verdict; `scanStatus` can pass only once this has.
   malwareScanStatus ServiceDealFileScanStatus @default(Pending)
+  /// The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+  malwareScanWorkflowId  String?
+  /// When the file was first handed to the scan; the give-up window runs from here.
+  malwareScanStartedAt   DateTime?
+  malwareScanSubmittedAt DateTime?
+  malwareScanAttempts    Int       @default(0)
   /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
   unpackedAt     DateTime?
   /// What a buyer downloads: for a zip, an archive the server built from the entries it checked

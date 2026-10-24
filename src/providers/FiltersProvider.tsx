@@ -36,6 +36,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { publishedDateSchema } from '~/shared/utils/published-range';
 import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
@@ -44,6 +45,8 @@ const modelFilterSchema = z.object({
   // recency instead, and a sort cannot drop rows.
   period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
   periodMode: periodModeSchema,
+  publishedFrom: publishedDateSchema.optional(),
+  publishedTo: publishedDateSchema.optional(),
   sort: z.enum(ModelSort).default(ModelSort.Hot),
   types: z.enum(ModelType).array().optional(),
   checkpointType: z.enum(CheckpointType).optional(),
@@ -67,6 +70,9 @@ const modelFilterSchema = z.object({
   disablePoi: z.boolean().optional(),
   disableMinor: z.boolean().optional(),
 });
+export const modelSortPeriodDefaults = modelFilterSchema
+  .pick({ sort: true, period: true })
+  .parse({});
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
 const questionFilterSchema = z.object({

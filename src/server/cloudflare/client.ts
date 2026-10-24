@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { slugit } from '~/utils/string-helpers';
 
 const log = createLogger('cloudflare', 'green');
 
@@ -22,11 +23,13 @@ const CF_PURGE_RATE_LIMIT = 1000 * 0.9; // 90% to be safe
 const PURGE_BATCH_SIZE = 30;
 export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: string[] }) {
   if (!env.CF_ZONE_ID || !client) return;
-  // Get urls from tag cache
+  // Get urls from tag cache. `edgeCacheIt` records each tag slugged, so read it the same way.
   if (tags) {
     const taggedUrls = (
       await Promise.all(
-        tags.map(async (tag) => redis.sMembers(`${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}`))
+        [...new Set(tags.map(slugit))].map(async (tag) =>
+          redis.sMembers(`${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}`)
+        )
       )
     )
       .flat()

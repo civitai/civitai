@@ -9,13 +9,17 @@ import {
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
+  accountHoldSql,
   assertOwnersNotUnderLegalHold,
+  HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
+import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
@@ -168,11 +172,7 @@ import type { holdModelForLiteralRules } from '~/server/services/text-scan/actio
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import {
-  scanEntitiesInBackground,
-  scanModelAndRules,
-  scanModelRules,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -406,6 +406,13 @@ export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+/**
+ * A flagged model, unless a Model rules takedown flagged it: that is ruled on in the model rule matches queue.
+ * A JSON-null `modelRules` is no takedown, so it stays listed, as it does in the Prisma `AnyNull` filter.
+ */
+export const MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL = Prisma.sql`(m."meta"->>'needsReview' = 'true'
+          AND (m."meta"->'modelRules' IS NULL OR m."meta"->'modelRules' = 'null'::jsonb))`;
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -414,6 +421,8 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  onlyModelIds,
+  excludeModelIds,
   _forceBaseModelMetrics,
   eventDecorationViewer,
   faceBrowsingLevel,
@@ -444,6 +453,12 @@ export const getModelsRaw = async ({
   /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
   publicVersionsOnly?: boolean;
   /**
+   * Restrict to / drop these model ids — the browse feed's official-checkpoint pin. Unlike
+   * `input.ids`, neither relaxes `hidePrivateModels`, so the pinned rows pass every feed filter.
+   */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
+  /**
    * The level that picks each model's .com or .red face when `input.browsingLevel` is a content
    * filter rather than the viewer's (the featured block queries every level, then shows SFW only).
    */
@@ -459,6 +474,11 @@ export const getModelsRaw = async ({
   if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
+  const publishedError = publishedRangeError({
+    from: input.publishedFrom,
+    to: input.publishedTo,
+  });
+  if (publishedError) throw throwBadRequestError(publishedError);
 
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
@@ -487,6 +507,8 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
+    publishedFrom,
+    publishedTo,
     hidden,
     checkpointType,
     status,
@@ -679,7 +701,7 @@ export const getModelsRaw = async ({
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
       (
-        m."meta"->>'needsReview' = 'true'
+        ${MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL}
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv
@@ -818,6 +840,9 @@ export const getModelsRaw = async ({
       )})`
     );
   }
+  const published = publishedRangeBounds({ from: publishedFrom, to: publishedTo });
+  if (published.gte) AND.push(Prisma.sql`m."publishedAt" >= ${published.gte}`);
+  if (published.lt) AND.push(Prisma.sql`m."publishedAt" < ${published.lt}`);
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
     AND.push(Prisma.sql`${pSql}."status" = ${ModelStatus.Published}::"ModelStatus"`);
@@ -849,6 +874,10 @@ export const getModelsRaw = async ({
   if (allowNoCredit !== undefined) AND.push(Prisma.sql`m."allowNoCredit" = ${allowNoCredit}`);
 
   if (!!ids?.length) AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(ids, ',')})`);
+  if (onlyModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(onlyModelIds, ',')})`);
+  if (excludeModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" NOT IN (${Prisma.join(excludeModelIds, ',')})`);
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -1060,7 +1089,26 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const queryWith = Prisma.sql``;
+  // A published range is at most a month, a few tens of thousands of models. Materializing them
+  // gives the planner a small driver; walking the ModelMetric feed index in lastVersionAt order
+  // until enough of them turn up costs up to a second and a half for a year-old range.
+  const rangedModels =
+    published.gte && published.lt
+      ? Prisma.sql`ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE ${
+          !sessionUser?.isModerator || !status?.length
+            ? Prisma.sql`"status" = ${ModelStatus.Published}::"ModelStatus" AND `
+            : Prisma.empty
+        }"publishedAt" >= ${published.gte} AND "publishedAt" < ${published.lt}${
+          types?.length
+            ? Prisma.sql` AND "type" = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`
+            : Prisma.empty
+        }
+      )`
+      : undefined;
+  const queryWith = rangedModels ? Prisma.sql`WITH ${rangedModels}` : Prisma.sql``;
+  const rangedJoin = rangedModels ? Prisma.sql`JOIN ranged ON ranged."id" = m."id"` : Prisma.empty;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -1156,6 +1204,7 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
   const fromAndJoin = Prisma.sql`${fromClause}
+      ${rangedJoin}
       ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
@@ -1506,7 +1555,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (needsReview && sessionUser?.isModerator) {
     AND.push({
       OR: [
-        { meta: { path: ['needsReview'], equals: true } },
+        {
+          // A Model rules takedown is ruled on in the model rule matches queue, not here.
+          AND: [
+            { meta: { path: ['needsReview'], equals: true } },
+            { meta: { path: ['modelRules'], equals: Prisma.AnyNull } },
+          ],
+        },
         { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
       ],
     });
@@ -1667,6 +1722,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain,
   eventDecorationViewer,
   faceBrowsingLevel,
+  onlyModelIds,
+  excludeModelIds,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1679,6 +1736,9 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain?: DomainColor;
   /** See `getModelsRaw`. */
   faceBrowsingLevel?: number;
+  /** See `getModelsRaw`. */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1703,6 +1763,8 @@ export const getModelsWithImagesAndModelVersions = async ({
     include: ['cosmetics'],
     eventDecorationViewer,
     faceBrowsingLevel,
+    onlyModelIds,
+    excludeModelIds,
   });
 
   const modelVersionIds = items
@@ -2198,6 +2260,9 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   return { id, userId: result.userId };
 };
 
+/** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
+export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
@@ -2270,7 +2335,28 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      const deletedModel = await tx.model.delete({ where: { id } });
+      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
+      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
+      // account hold too: its image legs cover the images this deletes.
+      const owner = Prisma.raw('m."userId"');
+      const [deletedModel] = await tx.$queryRaw<
+        { id: number; userId: number; nsfwLevel: number }[]
+      >`
+        DELETE FROM "Model" m
+        WHERE m.id = ${id}
+          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+        RETURNING m.id, m."userId", m."nsfwLevel"
+      `.catch((e: unknown) => {
+        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+      });
+      if (!deletedModel) {
+        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
+        // transaction deleted passed a hold check, so it must not commit.
+        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
+        if (!stillThere)
+          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+      }
       return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }
@@ -3889,8 +3975,7 @@ const publishedModelSelect = {
   status: true,
 } satisfies Prisma.ModelSelect;
 
-// Fails open like the check: a model that cannot be held is published, and the post-publish
-// ModelRules scan is the backstop.
+// Fails open like the check: a model that cannot be held is published.
 async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
   try {
     // Dynamic: the action imports model-version.service, which imports this module.
@@ -4400,7 +4485,13 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
       },
       {
         uploadType: ModelUploadType.Trained,
-        status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+        // Scheduled belongs here, not on the Training tab: getTrainingModelsByUserId
+        // whitelists only Draft/Training, so a trained model scheduled to publish would
+        // otherwise appear on no tab. Draft/Training stay excluded here — they surface on
+        // the Training tab, and listing them notIn [Published, Deleted] would double-list.
+        status: {
+          in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+        },
       },
       // A Published model is excluded by the model-status branches above, so a new
       // version scheduled on it (version status Scheduled, publishedAt in the future)
@@ -5551,6 +5642,7 @@ export async function migrateResourceToCollection({
         data: modelIds.map((id) => ({
           collectionId: collection.id,
           modelId: id,
+          addedById: model.userId,
         })),
       });
 
@@ -5918,6 +6010,14 @@ export const privateModelFromTraining = async ({
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
+  // A version a moderator took down stays down: this flow neither republishes it, posts to it, nor
+  // resets it to a Draft its owner could publish when the flow fails.
+  const keepDowned = user.isModerator
+    ? {}
+    : { status: { notIn: constants.modPublishOnlyStatuses } };
+  const isPublishable = (v: { status: ModelStatus }) =>
+    user.isModerator || !constants.modPublishOnlyStatuses.includes(v.status);
+
   try {
     const result = await dbWrite.model.update({
       select: {
@@ -5942,6 +6042,7 @@ export const privateModelFromTraining = async ({
             : undefined,
           select: {
             id: true,
+            status: true,
           },
         },
       },
@@ -5973,7 +6074,7 @@ export const privateModelFromTraining = async ({
 
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
+        where: { modelId: id, ...keepDowned },
         data: {
           // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
@@ -5981,7 +6082,8 @@ export const privateModelFromTraining = async ({
         },
       });
 
-      // Do this after the fact to avoid some triggers.
+      // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
+      // if a moderator later restores one through a path that leaves availability alone.
       await dbWrite.modelVersion.updateMany({
         where: { modelId: id },
         data: {
@@ -5991,7 +6093,7 @@ export const privateModelFromTraining = async ({
 
       // Create posts:
       await Promise.all(
-        result.modelVersions.map(async (modelVersion) => {
+        result.modelVersions.filter(isPublishable).map(async (modelVersion) => {
           await createModelVersionPostFromTraining({
             modelVersionId: modelVersion.id,
             user,
@@ -6016,7 +6118,7 @@ export const privateModelFromTraining = async ({
     });
 
     await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
+      where: { modelId: id, ...keepDowned },
       data: {
         status: ModelStatus.Draft,
         publishedAt: null,
@@ -6199,7 +6301,6 @@ export const publishPrivateModel = async (
       `;
     }
   });
-  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

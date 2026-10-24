@@ -1349,9 +1349,11 @@ export const getCrucibleEntries = async ({
     viewerId: userId,
     visibleImage: visibleEntryImageSql(crucible.nsfwLevel, viewerLevel),
   };
-  const rows = rankingsFinal
-    ? await getRankedEntries(page)
-    : await getShuffledEntries({ ...page, seed });
+  const [rows, visibleCount] = await Promise.all([
+    rankingsFinal ? getRankedEntries(page) : getShuffledEntries({ ...page, seed }),
+    // Once per list: the first page carries it, a later page has no use for it.
+    cursor ? undefined : countListedEntries(page),
+  ]);
 
   // The row fetched past the page opens the next one, so both page queries compare with `>=`.
   const nextCursor = rows.length > limit ? rows.pop()?.id : undefined;
@@ -1374,7 +1376,7 @@ export const getCrucibleEntries = async ({
         })
       : [];
 
-  return { items, nextCursor, podium };
+  return { items, nextCursor, podium, visibleCount };
 };
 
 const PODIUM_PLACES = 3;
@@ -1441,6 +1443,27 @@ type EntryPageArgs = {
   visibleImage: Prisma.Sql;
 };
 
+/** The entries the grid lists, as `ce`: the one place the list and its count decide what is hidden. */
+const listedEntriesSql = ({
+  crucibleId,
+  viewerId,
+  visibleImage,
+}: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>) => Prisma.sql`
+  FROM "CrucibleEntry" ce
+  JOIN "Image" i ON i.id = ce."imageId"
+  WHERE ce."crucibleId" = ${crucibleId}
+    AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+`;
+
+const countListedEntries = async (
+  args: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>
+) => {
+  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count ${listedEntriesSql(args)}
+  `;
+  return count;
+};
+
 const loadEntriesInOrder = async (ids: { id: number }[]) => {
   if (!ids.length) return [];
   const byId = new Map(
@@ -1476,10 +1499,7 @@ const getRankedEntries = async ({
 }: EntryPageArgs) => {
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (${rankKeySql('ce')}) >= (SELECT ${rankKeySql(
@@ -1508,10 +1528,7 @@ const getShuffledEntries = async ({
   const salt = `:${seed}`;
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (md5(ce.id::text || ${salt}), ce.id) >= (md5(${cursor}::int::text || ${salt}), ${cursor}::int)`

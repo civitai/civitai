@@ -79,8 +79,14 @@ import {
   runningOtherApp,
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
+import {
+  ForkSetupCard,
+  ForkStatus,
+  useAppFork,
+} from '~/components/Apps/AppAssistant/AppAssistantFork';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { FORK_SETUP_MESSAGE } from '~/shared/constants/app-fork.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
@@ -293,6 +299,25 @@ export function AppAssistantWorkspace({
   const exportingRef = useRef(exporting);
   // The open app was seen paused: its notice stays while it starts.
   const [pausedSeen, setPausedSeen] = useState<string | null>(null);
+
+  // FORKABLE APPS — `?fork=<slug>`: the fork's app is created with its files (or, if it exists,
+  // opened), and a fresh one gets a new chat once the chat has started. See `AppAssistantFork`.
+  const [chatReady, setChatReady] = useState(false);
+  const newChatFor = useRef<string | null>(null);
+  const fork = useAppFork({
+    sandboxes,
+    active,
+    onOpened: (sandbox, fresh) => {
+      if (fresh) newChatFor.current = sandbox.name;
+      setActiveName(sandbox.name);
+    },
+  });
+  useEffect(() => {
+    if (!chatReady || !newChatFor.current || newChatFor.current !== activeName) return;
+    newChatFor.current = null;
+    chatRef.current?.newChat();
+  }, [chatReady, activeName]);
+  const dismissForkSetup = fork.dismissSetup;
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
@@ -627,13 +652,16 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
+  // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
+  // commit with the pre-fork `activeName`, would otherwise open the recent app over it.
+  const forkClaimsActiveApp = fork.claimsActiveApp;
   useEffect(() => {
     if (pickedOnLoad.current || !sandboxes.list.data) return;
     pickedOnLoad.current = true;
-    if (activeName) return;
+    if (activeName || forkClaimsActiveApp) return;
     const recent = mostRecentApp(sandboxes.list.data);
     if (recent) setActiveName(recent.name);
-  }, [sandboxes.list.data, activeName]);
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
@@ -723,6 +751,13 @@ export function AppAssistantWorkspace({
   // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
   // app's tools, and nothing would wake the app. It comes back to the user instead.
   const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
+  const forkSetUp = () => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    dismissForkSetup();
+    void chat.send(FORK_SETUP_MESSAGE);
+  };
   useEffect(() => {
     if (runningWithTools || !released.current) return;
     released.current.cancel();
@@ -756,14 +791,17 @@ export function AppAssistantWorkspace({
       lastSent.current = text;
       // A message the user sends takes the free-a-slot card away (its own re-send goes after it went).
       setSlot(null);
+      // A message of the user's (or Set up itself) answers the fork's Set up card.
+      dismissForkSetup();
       // A new turn: the chat's own asks for a reply after it start afresh.
       const chat = `\n${chatIdRef.current}`;
       for (const keys of [autoGaveUp.current, autoWoke.current])
         keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
       onBeforeSend(text, queue);
     },
-    [endResumeAsk, onBeforeSend]
+    [endResumeAsk, onBeforeSend, dismissForkSetup]
   );
+  const onChatReady = useCallback(() => setChatReady(true), []);
   const onChatOpened = useCallback(
     (id: string | null) => {
       if (id !== chatIdRef.current) {
@@ -1024,6 +1062,19 @@ export function AppAssistantWorkspace({
         </Popover>
       )}
       {!switcherOpen && !shownBelow && <AppError error={pageError} />}
+      <ForkStatus
+        creating={fork.creating}
+        problem={fork.problem}
+        retry={fork.retry}
+        retrying={fork.retrying}
+      />
+      {fork.setup && active?.app === fork.setup.app && (
+        <ForkSetupCard
+          parentName={fork.setup.parentName}
+          ready={runningWithTools}
+          onSetUp={forkSetUp}
+        />
+      )}
       {session && (
         <SegmentedControl
           className="shrink-0 md:hidden"
@@ -1094,6 +1145,7 @@ export function AppAssistantWorkspace({
                 />
               ) : null
             }
+            onReady={onChatReady}
           />
         </Paper>
         {session && (

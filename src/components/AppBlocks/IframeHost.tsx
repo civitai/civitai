@@ -28,6 +28,7 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeForkMenuItem } from './ChromeForkEntry';
 import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
@@ -772,6 +773,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* FORKABLE APPS — "Fork": same lazy listing read and same render-its-own-gates shape as
+          the review item above; hidden on the dev tunnel and the review preview. */}
+      <ChromeForkMenuItem slug={slug} hostSurface={hostSurface} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -2059,7 +2063,10 @@ export function IframeHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview,
+        // so `promptViewer` always equals `notify` here and is not read.
+        'model-slot'
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // Sent BEFORE the toast so the block's signal cannot be lost to a throwing

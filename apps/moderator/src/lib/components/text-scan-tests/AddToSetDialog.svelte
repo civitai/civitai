@@ -10,7 +10,7 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { fetchJson } from '$lib/fetch-json';
   import { FormState } from '$lib/form-state.svelte';
-  import type { LabEntityType, LabField, LabLabel, LabRule } from '$lib/text-scan-lab/types';
+  import type { LabEntityType, LabField, LabLabel } from '$lib/text-scan-lab/types';
   import type { Expected } from '$lib/text-scan-tests/expected';
   import type { SetOption, Workspace } from '$lib/text-scan-tests/types';
   import ExpectedEditor from './ExpectedEditor.svelte';
@@ -23,7 +23,6 @@
     fields,
     origin,
     prefill,
-    ruleChoices,
   }: {
     workspace: Workspace;
     entityType: LabEntityType;
@@ -32,7 +31,6 @@
     fields: LabField[] | null;
     origin: 'try' | 'matches';
     prefill: Expected;
-    ruleChoices: readonly LabRule[];
   } = $props();
 
   const NEW = 'new';
@@ -131,7 +129,7 @@
         {/if}
       </div>
 
-      <ExpectedEditor {labels} bind:expected {ruleChoices} {idPrefix} />
+      <ExpectedEditor {labels} bind:expected {idPrefix} />
 
       <div>
         <Label for="{idPrefix}-note" class="text-xs text-dark-2">Note (optional)</Label>

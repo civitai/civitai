@@ -8,6 +8,7 @@ import {
   MODEL_FLAGS_NEEDS_REVIEW_PATH,
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
+import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -98,6 +99,8 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
+      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },
@@ -136,6 +139,7 @@ export const NAVIGATION: NavLink[] = [
           },
         ],
       },
+      { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
     ],
   },
   {
@@ -288,7 +292,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
-      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
   },

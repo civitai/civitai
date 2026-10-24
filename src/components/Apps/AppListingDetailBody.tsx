@@ -71,6 +71,9 @@ import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/market
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { ListingForkAttribution } from '~/components/Apps/ListingForkAttribution';
+import { ListingForksSection } from '~/components/Apps/ListingForksSection';
+import { ListingForkButton } from '~/components/Apps/ForkAppAction';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import {
@@ -1031,6 +1034,10 @@ export function AppListingDetailBody({
                   {detail.tagline}
                 </Text>
               )}
+              {/* FORK PROVENANCE — "Forked from …". In the identity block, and rendered in preview
+                  too: it is presentational, and the server has already decided whether the
+                  parent may be named for this viewer. Not behind the fork rollout flag. */}
+              <ListingForkAttribution forkOf={detail.forkOf} />
               {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
                   filtered server-side to ACCEPTED **and** `displayed` seats and projected
                   to `{id, username, image}` — this renders it verbatim and applies no
@@ -1122,6 +1129,9 @@ export function AppListingDetailBody({
                 </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">
                   <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
+                      flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
+                  <ListingForkButton listing={detail} />
                 </Card.Section>
               </Card>
             )}
@@ -1208,6 +1218,11 @@ export function AppListingDetailBody({
             )}
 
             <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
+
+            {/* "N forks" + the published forks. Live surface only (a preview's `detail.id` is not
+                guaranteed to be a listing id), and the section gates itself on the fork rollout
+                flag — it issues no request while the flag is off. */}
+            {!preview && <ListingForksSection listingId={detail.id} />}
 
             {/* Off-site external destination disclosure (mirrors the live detail).
                 🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —

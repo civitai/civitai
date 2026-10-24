@@ -9,11 +9,7 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import {
-  accountHoldSql,
-  holdMarkerTableExists,
-  holdMarkerViewExists,
-} from '~/server/services/legal-hold.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -101,10 +97,7 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
-/**
- * Every hold on the account, plus the placeholder owner. `id` must not be a column of an unaliased
- * "Image" in the statement: a hold reads "Image" unaliased, and would bind to that row instead.
- */
+/** Every hold on the account, plus the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
   Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
 
@@ -423,13 +416,21 @@ export const removeDeletedUserImages = createJob(
     };
 
     const markerView = await holdMarkerViewExists();
-    // A marker table without its view holds every account, so the drain goes idle: say why.
-    if (!markerView && (await holdMarkerTableExists()))
+    // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
+    // the delete path reads the marker's other objects too, after its DELETE has committed.
+    if (!markerView) {
       await logToAxiom({
         type: 'warning',
         name: 'remove-deleted-user-images',
-        message: 'hold marker table has no view: every account is held',
+        message: 'hold marker view missing: nothing drained this run',
       }).catch(() => undefined);
+      return {
+        skipped: 'hold-marker-view-missing',
+        deletedImages: 0,
+        blockedImages: 0,
+        deletedUsers: 0,
+      };
+    }
     const [freshMark, setFreshMark] = await getJobDate(FRESH_CURSOR_KEY, new Date());
     const [backlogCursor, setBacklogCursor] = await getJobDate(BACKLOG_CURSOR_KEY, CURSOR_START);
 

@@ -68,11 +68,11 @@ import {
   enqueueImageIngestion,
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
-  purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
 import type { StorylinePublishContext } from '~/server/services/storyline-publish.service';
@@ -103,7 +103,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { readImageUploadObjectHead } from '~/utils/s3-utils';
 import {
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
@@ -113,7 +113,7 @@ import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, constants } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -730,6 +730,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   return {
     ...post,
     parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
     collectionTagId,
     images,
     collectionItemExists,
@@ -747,26 +748,9 @@ async function getPostModel({
   if (!modelVersionId) return null;
   const version = await db.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { model: { select: { id: true, userId: true } } },
+    select: { model: { select: { id: true, name: true, userId: true } } },
   });
   return version?.model ?? null;
-}
-
-/**
- * The model a post belongs to, when the post's owner also owns the model: the editor's event card
- * then hats the model. A review post on someone else's model gets null.
- */
-export async function getOwnModelId({
-  modelVersionId,
-  postOwnerId,
-  db,
-}: {
-  modelVersionId: number | null;
-  postOwnerId: number;
-  db?: typeof dbRead | typeof dbWrite;
-}) {
-  const model = await getPostModel({ modelVersionId, db });
-  return model?.userId === postOwnerId ? model.id : null;
 }
 
 export type PostUnpublishContext = {
@@ -883,6 +867,8 @@ export const createPost = async ({
     });
     if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
       throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+    // After the visibility check, so a version the caller cannot see stays not-found.
+    if (data.publishedAt && !isModerator) await assertPublishableVersion(data.modelVersionId);
 
     availability = modelVersion.model.availability;
   }
@@ -963,6 +949,11 @@ export const createPost = async ({
     collectionItemExists = !!collectionItem;
   }
 
+  const model = await getPostModel({
+    modelVersionId: data.modelVersionId ?? null,
+    db: dbWrite,
+  });
+
   return {
     ...post,
     collectionTagId,
@@ -975,14 +966,30 @@ export const createPost = async ({
     wasPublished: false,
     unpublishedAt: null,
     unpublishedBy: null,
-    parentModelId: null,
-    ownModelId: await getOwnModelId({
-      modelVersionId: data.modelVersionId ?? null,
-      postOwnerId: userId,
-      db: dbWrite,
-    }),
+    parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
+    ownModelId: model?.userId === userId ? model.id : null,
   };
 };
+
+/** Whether a post on this version (a SQL expression) sits on one a moderator took down. */
+const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ${modelVersionId}
+    AND (mv.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+      OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
+)`;
+
+const TAKEN_DOWN_PUBLISH_ERROR =
+  "This post can't be published: its model or model version has been taken down.";
+
+/** Refuses a non-moderator publishing straight onto a taken-down version. */
+async function assertPublishableVersion(modelVersionId: number) {
+  const [check] = await dbWrite.$queryRaw<{ downed: boolean }[]>`
+    SELECT ${onDownedVersionSql(Prisma.sql`${modelVersionId}::int`)} AS downed
+  `;
+  if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+}
 
 export const updatePost = async ({
   id,
@@ -1069,8 +1076,21 @@ export const updatePost = async ({
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        AND (${!!user.isModerator} OR NOT ${onDownedVersionSql(
+        Prisma.sql`"Post"."modelVersionId"`
+      )})
         RETURNING "publishedAt"
       `;
+      // A moderator's take-down unpublishes the version's posts; an owner publishing one afterwards
+      // would put it back up. Checked in the same statement as the write, so it cannot race the take-down.
+      // A post already public writes nothing either, and stays the no-op it always was.
+      const alreadyPublic = !!updated.publishedAt && updated.publishedAt <= new Date();
+      if (!writtenRows.length && !user.isModerator && !alreadyPublic) {
+        const [check] = await tx.$queryRaw<{ downed: boolean }[]>`
+          SELECT ${onDownedVersionSql(Prisma.sql`${updated.modelVersionId}::int`)} AS downed
+        `;
+        if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+      }
       // Reflect the actually-written timestamp (may be the stashed
       // prevPublishedAt rather than the submitted value). The controller's
       // wasPublished check (post.controller.ts: `!post?.publishedAt &&
@@ -1399,6 +1419,8 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
   return detailData;
 };
 
+const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
@@ -1419,13 +1441,14 @@ export const addPostImage = async ({
   }
 
   // If no meta was supplied (headless/MCP upload), try to extract it from the
-  // image EXIF. The image is already on the CDN at this point so we can fetch
-  // it by URL. We only do this when meta is absent to avoid overwriting
-  // caller-supplied values.
+  // image EXIF, read from storage. We only do this when meta is absent to avoid
+  // overwriting caller-supplied values. Only the head of the file is read: JPEG
+  // EXIF sits at the start, and the PNG text chunks generators write come before IDAT.
   if (!meta && props.url && props.type !== MediaType.video) {
     try {
-      const edgeUrl = getEdgeUrl(props.url, { original: true });
-      const extracted = await getMetadata(edgeUrl);
+      const extracted = await getMetadata(
+        await readImageUploadObjectHead(props.url, { maxBytes: UPLOAD_METADATA_READ_BYTES })
+      );
       if (extracted && Object.keys(extracted).length > 0) meta = extracted;
     } catch {
       // Non-fatal — proceed without metadata rather than failing the upload
@@ -1678,7 +1701,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
         ...((currentImage.metadata as MixedObject) ?? {}),
       } as Prisma.JsonObject,
     },
-    select: { id: true, url: true, userId: true },
+    select: { id: true, url: true, userId: true, name: true, type: true },
   });
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
@@ -1688,23 +1711,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     imageMetaCache.refresh(image.id),
     userPostCountCache.refresh(result.userId),
   ];
-  if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
-    // 🔴 SCOPED — this image STAYS LIVE. The flip re-keys it (the cache key includes hideMeta), so
-    // what needs clearing is only the variants derived BEFORE the flip, which still carry the
-    // metadata the user just asked to hide and remain publicly fetchable at stable URLs until the
-    // cache bucket ages them out. The post-flip variants are what the page is serving right now;
-    // removing those too would blank a live image until each cache tier caught up.
-    //
-    // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
-    // is already gone and the image must stop serving entirely.
-    cacheRefreshPromises.push(purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' }));
-  }
-  // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
-  // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
-  // embedding (or keep stripping) generation metadata for up to its TTL. The privacy-
-  // sensitive direction (false -> true) is the reason this bust is explicit rather than
-  // TTL-bounded.
-  if (image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta) {
+  const hideMetaChanged =
+    image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta;
+  if (hideMetaChanged && image.hideMeta) {
+    cacheRefreshPromises.push(invalidateHiddenImageMetadata(result));
+  } else if (hideMetaChanged) {
+    // 🔴 No resize purge on un-hide: `keep=hm` retains the hidden variants, which in this direction
+    // are the orphans, so the scope would be inverted. The delivery cache still needs the bust so
+    // the shown state takes effect before its TTL.
     cacheRefreshPromises.push(bustImageDeliveryMetadataCache(result.url));
   }
   await Promise.all(cacheRefreshPromises);

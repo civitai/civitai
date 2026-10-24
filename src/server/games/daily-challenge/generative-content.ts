@@ -26,7 +26,7 @@ import {
 
 // Default model for the daily-challenge pipeline. Routed through OpenRouter.
 //
-// One model drives every stage, chosen against the two failure modes this pipeline actually has:
+// MiMo was chosen for every stage against the two failure modes this pipeline actually has:
 //
 //   - REVIEW must handle NSFW entries without bailing. GPT-5 Nano silently returned "No content
 //     in response" on 1-4 of 24 explicit entries per run (R, X and XXX alike), which surfaces as
@@ -40,17 +40,20 @@ import {
 // MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
 // on an article), which is irrelevant for the once-per-challenge content stages.
 //
-// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
-// pass the URN as `input.model` from the call site or the Playground; the
-// `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
+// REVIEW and WINNERS moved to Qwen 3.8 on the orchestrator after OpenRouter rejected every MiMo
+// call from 2026-10-23; MiMo stays as their fallback. The orchestrator rejects some images outright
+// ("Input image may violate our terms and services"), which the fallback covers.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
+export const DEFAULT_REVIEW_MODEL: AIModel = 'civitai/qwen3.8';
+export const REVIEW_FALLBACK_MODEL: AIModel = AI_MODELS.MIMO;
+const DEFAULT_WINNERS_MODEL: AIModel = 'civitai/qwen3.8';
 
-// URN-prefixed models go through the orchestrator's OpenAI-compatible endpoint
-// (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,
-// moonshotai/*, stepfun/*) stays on OpenRouter.
+function isCivitaiHostedModel(model: string) {
+  return model.startsWith('urn:air:') || model.startsWith('civitai/');
+}
+
 function pickClient(model: string) {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     return civitaiLLM;
   }
@@ -102,7 +105,7 @@ export async function getCompletionWithUsage<T>(
   messages: SimpleMessage[],
   retries: number
 ): Promise<{ content: T; usage: TokenUsage }> {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
     return { content, usage: { promptTokens: 0, completionTokens: 0 } };
@@ -609,23 +612,41 @@ export async function generateWinners(
         }
         IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`;
 
-  const model = input.model ?? DEFAULT_CONTENT_MODEL;
-  const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(
-    model,
-    [
-      prepareSystemMessage(input.config, 'winner', responseStructure),
-      {
-        role: 'user' as const,
-        content: [
-          {
-            type: 'text' as const,
-            text: userText,
-          },
-        ],
-      },
-    ],
-    3
-  );
+  const pick = (model: AIModel) =>
+    getCompletionWithUsage<GeneratedWinners>(
+      model,
+      [
+        prepareSystemMessage(input.config, 'winner', responseStructure),
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: userText,
+            },
+          ],
+        },
+      ],
+      3
+    );
+
+  // An explicit model (the Playground) is the experiment itself, so it gets no fallback.
+  let model = input.model ?? DEFAULT_WINNERS_MODEL;
+  let completion: Awaited<ReturnType<typeof pick>>;
+  try {
+    completion = await pick(model);
+  } catch (error) {
+    if (input.model) throw error;
+    logToAxiom({
+      type: 'daily-challenge-winners-fallback',
+      model,
+      fallbackModel: REVIEW_FALLBACK_MODEL,
+      error: (error as Error).message,
+    });
+    model = REVIEW_FALLBACK_MODEL;
+    completion = await pick(model);
+  }
+  const { content: result, usage } = completion;
 
   // The decided list is the answer, not whatever the model echoed — it was not asked for `winners`
   // and may not have returned the key at all.

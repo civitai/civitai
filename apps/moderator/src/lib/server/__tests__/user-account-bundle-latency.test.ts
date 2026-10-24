@@ -41,6 +41,10 @@ describe('the /api/user-account bundle', () => {
     expect(bundleSource()).not.toContain('getBuzzBalance');
   });
 
+  it("does not count the reviews' images", () => {
+    expect(bundleSource()).not.toContain('getReviewImageCounts');
+  });
+
   it('still fans out to the list queries it exists for', () => {
     // The negative assertions above are satisfied by an empty file. This is what stops the guard
     // passing over an endpoint someone gutted.
@@ -50,18 +54,22 @@ describe('the /api/user-account bundle', () => {
   });
 });
 
-describe('the two reads that were pulled out', () => {
+describe('the reads that were pulled out', () => {
   it('each have an endpoint of their own', () => {
     // Without these the "not in the bundle" assertions above are also satisfied by deleting the
     // feature, which is the other way to make a slow panel fast.
     expect(read('routes/api/user-reactions/[userId]/+server.ts')).toContain('getReactionTargets');
     expect(read('routes/api/user-buzz-balance/[userId]/+server.ts')).toContain('getBuzzBalance');
+    expect(read('routes/api/user-review-image-counts/[userId]/+server.ts')).toContain(
+      'getReviewImageCounts'
+    );
   });
 
   it('are gated on the page that serves them', () => {
     for (const route of [
       'routes/api/user-reactions/[userId]/+server.ts',
       'routes/api/user-buzz-balance/[userId]/+server.ts',
+      'routes/api/user-review-image-counts/[userId]/+server.ts',
     ]) {
       const source = read(route);
       expect(source).toContain('requireUserIdParam');

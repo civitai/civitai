@@ -49,7 +49,7 @@ describe('pack guards on a mystery box listing', () => {
   });
 
   it('updateCreatorShopPack refuses it, for a moderator too', async () => {
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(listing(9));
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce(listing(9));
     await expect(
       updateCreatorShopPack({ id: 6101, userId: MOD_ID, isModerator: true, name: 'x' })
     ).rejects.toThrow('This listing is not a pack');
