@@ -115,6 +115,7 @@ const { syncCdnAccess, reconcileCdnAccess, retryTakedownPersists, sendTakedownPe
   await import('~/server/services/cdn-access.service');
 const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
 const { cdnAccessSync } = await import('~/server/jobs/cdn-access-sync');
+const { purgeHoldGuard } = await import('~/server/jobs/image-ingestion');
 const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
   '~/server/services/cdn-access.service'
 );
@@ -1601,6 +1602,34 @@ describe('persist after a takedown hard delete', () => {
     expect(logsOf('warning', 'takedown-persist-failed')).toHaveLength(30);
     expect(await retryRows()).toHaveLength(30);
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  // The retry retracts a url with no image row left without asking about holds: it relies on the
+  // delete job never deleting a held owner's row. Inlines `deleteImages`' DELETE under the job's
+  // guard; the job passing that guard is pinned in remove-blocked-images-retention.test.ts.
+  it("never retracts a held owner's url, persist failing and retried", async () => {
+    await holdMarker(OWNER);
+    await image(1);
+    await image(2, { userId: OTHER_OWNER });
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    const before = calls.length;
+
+    const rows = (
+      await sql`DELETE FROM "Image" WHERE id IN (1, 2)
+                AND (${purgeHoldGuard({ holdForTrainingCopy: false })}) RETURNING id, url`
+    ).rows as { id: number; url: string }[];
+    scripted = [503];
+    await persistDeletedTakedowns(rows);
+    combinedOk.add(u(2));
+    await retryTakedownPersists();
+
+    const after = calls.slice(before);
+    expect(after.filter(onUrl(u(1))).map(kind)).toEqual([]);
+    expect((await sql`SELECT id FROM "Image"`).rows).toEqual([{ id: 1 }]);
+    // The control: the unheld owner's url is retracted by the retry.
+    expect(after.filter(onUrl(u(2))).map(kind)).toEqual(['deny', 'retract']);
   });
 });
 
