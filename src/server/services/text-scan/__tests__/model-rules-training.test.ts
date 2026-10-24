@@ -78,6 +78,18 @@ describe('trainingMatchesModelRules, a run with a draft model', () => {
     expect(syncModelRulesHold.mock.calls.every(([, held]) => held === null)).toBe(true);
   });
 
+  it('passes a cleared draft whose trigger word matches the same cleared rule', async () => {
+    const textHash = textScanTextHash(subject('Hero One LoRA'));
+    const meta = { modelRulesCleared: { ruleIds: [3], textHash } };
+    await expect(
+      trainingMatchesModelRules({
+        ...trainer,
+        triggerWord: 'Hero One',
+        model: { ...trainer.model, meta },
+      })
+    ).resolves.toBe(false);
+  });
+
   it('closes only a stale training hold when the text matches nothing', async () => {
     loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Plain LoRA')]]));
     await expect(trainingMatchesModelRules(trainer)).resolves.toBe(false);

@@ -50,7 +50,11 @@ async function checkDraftModel(run: TrainingRun, model: NonNullable<TrainingRun[
     meta: model.meta,
   });
   // The request's trigger word may not be in the stored text yet, and a model with no loadable text has none to check.
-  const wordMatches = found.kind === 'hit' ? false : await checkTriggerWord(run, model.id);
+  // A rule a moderator cleared for this text stays cleared for the trigger word too.
+  const wordMatches =
+    found.kind === 'hit'
+      ? false
+      : await checkTriggerWord(run, model.id, found.kind === 'clean' ? found.cleared : []);
   // The verdict is settled before the write: a hold that cannot be recorded must not let a refused run through.
   const refused = found.kind === 'hit' ? found.detection.mode === 'active' : wordMatches;
   try {
@@ -65,7 +69,11 @@ async function checkDraftModel(run: TrainingRun, model: NonNullable<TrainingRun[
 }
 
 /** `bucketId` picks the rollout bucket: the model when there is one, else the account. */
-async function checkTriggerWord({ triggerWord, userId, source }: TrainingRun, bucketId: number) {
+async function checkTriggerWord(
+  { triggerWord, userId, source }: TrainingRun,
+  bucketId: number,
+  cleared: number[] = []
+) {
   const mode = await getTextScanMode('ModelRules', bucketId);
   if (mode === 'off') return false;
   const rules = await getEnabledModelRules();
@@ -74,7 +82,9 @@ async function checkTriggerWord({ triggerWord, userId, source }: TrainingRun, bu
       findLiteralMatchesInSubject(
         { declared: {}, fields: [{ heading: 'Trigger word', text: triggerWord }] },
         rules
-      ).map((match) => match.ruleId)
+      )
+        .map((match) => match.ruleId)
+        .filter((ruleId) => !cleared.includes(ruleId))
     ),
   ];
   if (!ruleIds.length) return false;

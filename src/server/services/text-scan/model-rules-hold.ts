@@ -21,7 +21,7 @@ export type ModelRulesLiteralHold = ModelRulesHoldDetection & { ruleIds: number[
 
 type Detected =
   | { kind: 'skip' }
-  | { kind: 'clean'; mode: ModelRulesHoldMode }
+  | { kind: 'clean'; mode: ModelRulesHoldMode; cleared: number[] }
   | { kind: 'hit'; detection: ModelRulesLiteralHold };
 
 /** Matches a model's text against the Model rules, for the hash and rule snapshot every caller records. */
@@ -63,7 +63,7 @@ export async function detectModelRulesLiteral({
   const matches = findLiteralMatchesInSubject(stored, rules).filter(
     (m) => !cleared.includes(m.ruleId)
   );
-  if (!matches.length) return { kind: 'clean', mode };
+  if (!matches.length) return { kind: 'clean', mode, cleared };
 
   const hit = new Set(matches.map((m) => m.ruleId));
   const matched = rules.filter((rule) => hit.has(rule.id));
