@@ -14,7 +14,7 @@ vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
 // `reservedFreeSlots` stays real: it is one of the in-transaction counts under test.
-const resolveSpace = vi.fn();
+const { resolveSpace } = vi.hoisted(() => ({ resolveSpace: vi.fn() }));
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,

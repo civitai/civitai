@@ -7,7 +7,7 @@ import {
   listPlacementSpacesFor,
 } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -46,7 +46,7 @@ import {
  */
 async function resolveImageTarget(imageId: number, useKysely: boolean) {
   if (useKysely) {
-    const row = await getImagePlacementTarget(kyselyWrite, imageId);
+    const row = await getImagePlacementTarget((await loadKyselyDb()).kyselyWrite, imageId);
     if (!row) throw throwBadRequestError('placement: that image no longer exists');
     return {
       ownerId: row.userId,
@@ -83,7 +83,7 @@ async function resolveImageTarget(imageId: number, useKysely: boolean) {
 /** A model's space is configured on its owner's account only; there is no model or post level. */
 async function resolveModelTarget(modelId: number, useKysely: boolean) {
   if (useKysely) {
-    const row = await getModelPlacementTarget(kyselyWrite, modelId);
+    const row = await getModelPlacementTarget((await loadKyselyDb()).kyselyWrite, modelId);
     if (!row) throw throwBadRequestError('placement: that model no longer exists');
     return { ownerId: row.userId, postId: null, ownerUsername: row.username ?? null };
   }
@@ -127,7 +127,7 @@ async function readChapterTarget(postId: number, useKysely: boolean) {
       },
     });
 
-  const row = await getChapterPlacementTarget(kyselyWrite, postId);
+  const row = await getChapterPlacementTarget((await loadKyselyDb()).kyselyWrite, postId);
   return row
     ? {
         removedAt: row.removedAt,
@@ -287,12 +287,15 @@ export const reservedFreeSlots = (
  * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
  * `reservedFreeSlots(tx, …)` under its lock.
  */
-const displayedReservedFreeSlots = (
+const displayedReservedFreeSlots = async (
   useKysely: boolean,
   target: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
 ) =>
   useKysely
-    ? countReservedFreeSlots(kyselyRead, { ...target, statuses: FREE_SLOT_HOLDING_STATUSES })
+    ? countReservedFreeSlots((await loadKyselyDb()).kyselyRead, {
+        ...target,
+        statuses: FREE_SLOT_HOLDING_STATUSES,
+      })
     : reservedFreeSlots(dbRead, target);
 
 /**
@@ -330,7 +333,7 @@ export async function resolvePlacementSpaceFor({
     { entityType: 'user', entityId: ownerId },
   ];
   const rows = useKysely
-    ? await listPlacementSpacesFor(kyselyWrite, { surface, levels })
+    ? await listPlacementSpacesFor((await loadKyselyDb()).kyselyWrite, { surface, levels })
     : await dbWrite.placementSpace.findMany({
         where: { surface, OR: levels },
         select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },

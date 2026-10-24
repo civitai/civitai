@@ -4,7 +4,7 @@ import {
   getUserPlacementScore,
 } from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
-import { kyselyRead } from '~/server/db/kyselyDb';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
@@ -162,7 +162,7 @@ export async function placementPriceRange(
 
 async function readUserScore(userId: number) {
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    return getUserPlacementScore(kyselyRead, userId);
+    return getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId);
   // Cast through `numeric`: `::int` raises on a fractional stored total rather
   // than truncating it. Text that isn't a number at all still raises.
   return dbRead.$queryRaw<{ score: number | null }[]>`
@@ -283,10 +283,9 @@ export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }
 
 async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    return (await countPendingPlacementsBySurface(kyselyRead, ownerId)).map((row) => [
-      row.surface,
-      row.count,
-    ]);
+    return (await countPendingPlacementsBySurface((await loadKyselyDb()).kyselyRead, ownerId)).map(
+      (row) => [row.surface, row.count]
+    );
   const rows = await dbRead.placement.groupBy({
     by: ['surface'],
     where: { ownerId, status: 'pending' },

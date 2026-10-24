@@ -2,7 +2,7 @@ import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { listUserSubscriptionRows } from '@civitai/db-queries/placement';
 import { dbWrite } from '~/server/db/client';
-import { kyselyWrite } from '~/server/db/kyselyDb';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { inStripeKeyMode, stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
@@ -357,7 +357,7 @@ export const getCapTier = async (userId: number): Promise<string | null> => {
 const getCapTierSubscriptions = async (userId: number) => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS)))
     return getAllUserSubscriptions(userId);
-  const rows = (await listUserSubscriptionRows(kyselyWrite, {
+  const rows = (await listUserSubscriptionRows((await loadKyselyDb()).kyselyWrite, {
     userId,
     excludedStatuses: activeSubscriptionStatuses.notIn,
   })) as UserSubscriptionRow[];

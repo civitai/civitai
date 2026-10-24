@@ -4,7 +4,7 @@ import {
   countFreePlacementsSince,
 } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyRead } from '~/server/db/kyselyDb';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
@@ -312,7 +312,10 @@ export async function createFreePlacement({
 export async function getFreePlacementAllowance({ placerId }: { placerId: number }) {
   const dayStart = freePlacementDayStart();
   const used = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? await countFreePlacementsSince(kyselyRead, { placerId, since: dayStart })
+    ? await countFreePlacementsSince((await loadKyselyDb()).kyselyRead, {
+        placerId,
+        since: dayStart,
+      })
     : await countFreePlacementsToday(dbRead, placerId);
 
   return {
@@ -331,5 +334,5 @@ export async function getFreePlacementAllowance({ placerId }: { placerId: number
  */
 export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) =>
   ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? await countFreePlacementsOnTarget(kyselyRead, input)
+    ? await countFreePlacementsOnTarget((await loadKyselyDb()).kyselyRead, input)
     : await countFreePlacementsOn(dbRead, input)) > 0;

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
 import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyRead } from '~/server/db/kyselyDb';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
@@ -771,7 +771,7 @@ async function readStickerPlacementRows({
   viewerId?: number;
 }): Promise<StickerPlacementRow[]> {
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    return (await listStickerPlacementRows(kyselyRead, {
+    return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetIds: imageIds,
@@ -905,7 +905,7 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
   const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? ((await listApprovedPlacementRows(kyselyRead, {
+    ? ((await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
         surface: SURFACE,
         targetType: TARGET_TYPE,
         targetIds: imageIds,
