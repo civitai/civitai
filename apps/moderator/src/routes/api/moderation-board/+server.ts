@@ -13,9 +13,10 @@ import { bounded } from '$lib/server/bounded';
 // sidebar counts and most-reported: a dozen per-type LIMIT 1 lookups plus a cross-database read do not
 // belong in the dashboard's first paint.
 //
-// Route access is gated in hooks.server.ts. Everything here is a moderator-facing aggregate over data
-// the dashboard already shows, so it carries no narrower check of its own.
-export const GET: RequestHandler = async () => {
+// Requires a moderator session, like the dashboard's other endpoints. Everything here is a
+// moderator-facing aggregate over data the dashboard already shows, so it carries no narrower check.
+export const GET: RequestHandler = async ({ locals }) => {
+  if (!locals.user) return json(null, { status: 401 });
   const [activity, modActivity, lag, sweeps] = await Promise.all([
     getRecentQueueActivity(),
     // Queues that resolve no report log only here, so the board is the union of the two. Bounded:

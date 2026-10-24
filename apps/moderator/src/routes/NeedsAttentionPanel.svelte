@@ -9,6 +9,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import ShortAge from '$lib/components/ShortAge.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { navBadge } from '$lib/nav-links';
   import type { AttentionItem } from '$lib/needs-attention';
   import {
     LAST_ACTIONED_WINDOW_DAYS,
@@ -35,6 +36,8 @@
 
   let showRest = $state(false);
   const shown = $derived(rows ? (showRest ? [...rows.over, ...rows.rest] : rows.over) : []);
+  const uncounted = $derived(!!rows && [...rows.over, ...rows.rest].some((r) => r.partial));
+  const PARTIAL_TITLE = 'Some counts are unavailable';
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
@@ -54,7 +57,11 @@
   {:else}
     {#if rows.over.length === 0}
       <p class="py-2 text-sm text-dark-2">
-        {rows.rest.length ? 'Nothing is over its threshold.' : 'Every queue is clear.'}
+        {uncounted
+          ? 'Nothing counted is over its threshold. Some counts are unavailable.'
+          : rows.rest.length
+            ? 'Nothing is over its threshold.'
+            : 'Every queue is clear.'}
       </p>
     {/if}
     {#if shown.length}
@@ -72,6 +79,7 @@
         <TableBody>
           {#each shown as row (row.path)}
             {@const last = row.countKey ? lastActioned?.[row.countKey] : undefined}
+            {@const waiting = navBadge(row.count, !!row.partial, (n) => n.toLocaleString())}
             {@const badge = lastActioned
               ? lastActionedBadge(row.countKey, last?.at, row.count, now)
               : null}
@@ -84,8 +92,9 @@
                 class="text-right font-semibold tabular-nums {(row.countKey &&
                   queueSeverityClass(row.countKey, row.count)) ||
                   'text-white'}"
+                title={row.partial ? PARTIAL_TITLE : undefined}
               >
-                {row.count?.toLocaleString()}
+                {waiting?.text}
               </TableCell>
               <TableCell class="text-sm tabular-nums">
                 {#await oldest}

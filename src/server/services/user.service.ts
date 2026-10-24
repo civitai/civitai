@@ -2949,7 +2949,9 @@ export const toggleBookmarked = async ({
     // ON CONFLICT DO NOTHING, so the race resolves at the DB with no throw. The return value isn't
     // used (the function returns `!exists`).
     await dbWrite.collectionItem.createMany({
-      data: [{ collectionId: collection.id, [entityProp]: entityId }],
+      // addedById is what the CDC handler attributes the collectedCount event to; without it the
+      // event is dropped and the bookmark never counts.
+      data: [{ collectionId: collection.id, [entityProp]: entityId, addedById: userId }],
       skipDuplicates: true,
     });
   }

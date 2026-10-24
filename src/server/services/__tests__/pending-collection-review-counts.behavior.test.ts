@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleStatus,
   CollectionContributorPermission,
@@ -57,11 +60,16 @@ const {
   getCollectionItemsByCollectionId,
 } = await import('~/server/services/collection.service');
 
+// civitai.red and blue serve every level; civitai.com serves PG and PG-13.
+const ALL = allBrowsingLevelsFlag;
+const SFW = sfwBrowsingLevelsFlag;
+
 const OWNER = 100;
 const MANAGER = 101; // holds MANAGE on someone else's collection
 const FOLLOWER = 102; // holds VIEW + ADD on someone else's collection, never MANAGE
 const STRANGER = 103;
 const REVIEWER = 104; // owns only the per-type visibility collections
+const CONTEST_MANAGER = 105; // owns only the mature-content collections
 
 const OWNED_WITH_QUEUE = 9001;
 const OWNED_EMPTY = 9002; // owned, but every item already decided
@@ -76,6 +84,10 @@ const VIS_IMAGE = 9102;
 const VIS_POST = 9103;
 const VIS_ARTICLE = 9104;
 const VIS_MODEL3D = 9105;
+
+// Every REVIEW item mature (R, X, XXX), and one with a PG item beside a mature one.
+const MATURE_ONLY = 9201;
+const MIXED = 9202;
 
 // Visible targets. `VISIBLE_MODEL` also backs every row in the permission fixtures above, so
 // those tests keep counting what they always counted.
@@ -177,7 +189,9 @@ beforeAll(async () => {
       (${VIS_IMAGE},        ${REVIEWER}, 'Contest'),
       (${VIS_POST},         ${REVIEWER}, 'Contest'),
       (${VIS_ARTICLE},      ${REVIEWER}, 'Contest'),
-      (${VIS_MODEL3D},      ${REVIEWER}, 'Contest');
+      (${VIS_MODEL3D},      ${REVIEWER}, 'Contest'),
+      (${MATURE_ONLY},      ${CONTEST_MANAGER}, 'Contest'),
+      (${MIXED},            ${CONTEST_MANAGER}, 'Contest');
 
     INSERT INTO "CollectionContributor" ("userId","collectionId","permissions") VALUES
       -- A real co-manager. Carries VIEW too, matching every such row on prod.
@@ -197,7 +211,8 @@ beforeAll(async () => {
       -- Blocked only: allBrowsingLevelsFlag has no Blocked bit, so the queue never hydrates it.
       (9, 'Published', NULL, 32),
       -- PG plus Blocked still matches the PG bit and shows.
-      (10, 'Published', NULL, 33);
+      (10, 'Published', NULL, 33),
+      (11, 'Published', NULL, 4);
 
     INSERT INTO "Post" ("id","publishedAt","nsfwLevel") VALUES
       (${PUBLISHED_POST}, now() - interval '1 day', 1),
@@ -217,7 +232,8 @@ beforeAll(async () => {
       (5, 999, 1, false),
       (6, ${PUBLISHED_POST}, 32, false),
       -- Unrated: pending: true keeps nsfwLevel 0 for images, unlike every other target.
-      (7, ${PUBLISHED_POST}, 0, false);
+      (7, ${PUBLISHED_POST}, 0, false),
+      (8, ${PUBLISHED_POST}, 8, false);
 
     INSERT INTO "Article" ("id","status","publishedAt","nsfwLevel") VALUES
       (1, 'Published', now() - interval '1 day', 1),
@@ -225,7 +241,8 @@ beforeAll(async () => {
       (3, 'Unpublished', now() - interval '1 day', 1),
       (4, 'Published', NULL, 1),
       (5, 'Published', now() - interval '1 day', 0),
-      (6, 'Published', now() - interval '1 day', 32);
+      (6, 'Published', now() - interval '1 day', 32),
+      (7, 'Published', now() - interval '1 day', 16);
 
     INSERT INTO "CollectionItem" ("id","collectionId","status","modelId") VALUES
       (1, ${OWNED_WITH_QUEUE}, 'REVIEW',   ${VISIBLE_MODEL}),
@@ -280,12 +297,21 @@ beforeAll(async () => {
       (406, ${VIS_ARTICLE}, 'REVIEW', 6);
     INSERT INTO "CollectionItem" ("id","collectionId","status","model3dId") VALUES
       (501, ${VIS_MODEL3D}, 'REVIEW', 1);
+    INSERT INTO "CollectionItem" ("id","collectionId","status","modelId","imageId","articleId") VALUES
+      (601, ${MATURE_ONLY}, 'REVIEW', 11, NULL, NULL),
+      (602, ${MATURE_ONLY}, 'REVIEW', NULL, 8, NULL),
+      (603, ${MATURE_ONLY}, 'REVIEW', NULL, NULL, 7),
+      (701, ${MIXED}, 'REVIEW', ${VISIBLE_MODEL}, NULL, NULL),
+      (702, ${MIXED}, 'REVIEW', 11, NULL, NULL);
   `);
 });
 
 describe('getPendingCollectionReviewCounts', () => {
   it('counts REVIEW rows in owned collections and nothing else', async () => {
-    const { total, byCollection } = await getPendingCollectionReviewCounts({ userId: OWNER });
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: OWNER,
+      levels: ALL,
+    });
 
     // 2 in OWNED_WITH_QUEUE + 1 in OWNED_CONTEST + 3 in MANAGED + 1 in FOLLOWED,
     // all five owned by OWNER. ACCEPTED and REJECTED rows contribute nothing.
@@ -297,7 +323,7 @@ describe('getPendingCollectionReviewCounts', () => {
     // Absence, not a 0 entry: the sidebar reads `?? 0`, and a present zero would
     // make QueueCountBadge's own "a zero draws nothing" rule the only thing
     // standing between an empty queue and a badge.
-    const { byCollection } = await getPendingCollectionReviewCounts({ userId: OWNER });
+    const { byCollection } = await getPendingCollectionReviewCounts({ userId: OWNER, levels: ALL });
 
     expect(byCollection[OWNED_EMPTY]).toBeUndefined();
   });
@@ -307,13 +333,16 @@ describe('getPendingCollectionReviewCounts', () => {
     // the same /review page reviews it. A `mode` filter added here would look
     // like a reasonable narrowing and would silently blank the badge for almost
     // every queue that actually exists.
-    const { byCollection } = await getPendingCollectionReviewCounts({ userId: OWNER });
+    const { byCollection } = await getPendingCollectionReviewCounts({ userId: OWNER, levels: ALL });
 
     expect(byCollection[OWNED_CONTEST]).toBe(1);
   });
 
   it('counts a collection the user manages but does not own', async () => {
-    const { total, byCollection } = await getPendingCollectionReviewCounts({ userId: MANAGER });
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: MANAGER,
+      levels: ALL,
+    });
 
     expect(byCollection[MANAGED]).toBe(3);
     expect(total).toBe(3);
@@ -324,14 +353,20 @@ describe('getPendingCollectionReviewCounts', () => {
     // permission test that checks for "any contributor row" — or one that
     // overlaps the array instead of testing membership — passes every other
     // case in this file and fails only here.
-    const { total, byCollection } = await getPendingCollectionReviewCounts({ userId: FOLLOWER });
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: FOLLOWER,
+      levels: ALL,
+    });
 
     expect(byCollection).toEqual({});
     expect(total).toBe(0);
   });
 
   it('counts nothing for a user with no collections at all', async () => {
-    const { total, byCollection } = await getPendingCollectionReviewCounts({ userId: STRANGER });
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: STRANGER,
+      levels: ALL,
+    });
 
     expect(total).toBe(0);
     expect(byCollection).toEqual({});
@@ -376,7 +411,10 @@ describe('review counts match what the review queue shows', () => {
     ['Article', VIS_ARTICLE],
     ['Model3D', VIS_MODEL3D],
   ])('the badge counts only %s items the queue can show', async (_type, collectionId) => {
-    const { byCollection } = await getPendingCollectionReviewCounts({ userId: REVIEWER });
+    const { byCollection } = await getPendingCollectionReviewCounts({
+      userId: REVIEWER,
+      levels: ALL,
+    });
 
     expect(byCollection[collectionId] ?? 0).toBe(VISIBLE_IDS[collectionId].length);
   });
@@ -388,7 +426,7 @@ describe('review counts match what the review queue shows', () => {
     ['Article', VIS_ARTICLE],
     ['Model3D', VIS_MODEL3D],
   ])('the Review N button counts only %s items the queue can show', async (_type, collectionId) => {
-    expect(await getPendingReviewCount(collectionId)).toBe(VISIBLE_IDS[collectionId].length);
+    expect(await getPendingReviewCount(collectionId, ALL)).toBe(VISIBLE_IDS[collectionId].length);
   });
 
   // 🔴 Pins the queue reading the same predicate as the counts. Removing the fragment from the
@@ -408,7 +446,7 @@ describe('review counts match what the review queue shows', () => {
           statuses: [CollectionItemStatus.REVIEW],
           forReview: true,
           limit: 50,
-          browsingLevel: allBrowsingLevelsFlag,
+          browsingLevel: ALL,
         } as never,
         user: { id: REVIEWER } as never,
       });
@@ -416,4 +454,77 @@ describe('review counts match what the review queue shows', () => {
       expect(items.map((i) => i.id).sort((a, b) => a - b)).toEqual(VISIBLE_IDS[collectionId]);
     }
   );
+});
+
+// The badge on civitai.com counts only what the .com queue can show. Both counts take the
+// domain's ceiling: PG/PG-13 there, every level on civitai.red, which must count as before.
+describe('review counts hold to the domain ceiling', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(toPglite as never);
+    dbMock.dbWrite.collection.findUniqueOrThrow.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => ({ id: where.id, type: null, mode: CollectionMode.Contest })) as never);
+  });
+
+  const queueIds = async (collectionId: number, browsingLevel: number) => {
+    const { items } = await getCollectionItemsByCollectionId({
+      input: {
+        collectionId,
+        statuses: [CollectionItemStatus.REVIEW],
+        forReview: true,
+        limit: 50,
+        browsingLevel,
+      } as never,
+      user: { id: CONTEST_MANAGER } as never,
+    });
+    return items.map((i) => i.id).sort((a, b) => a - b);
+  };
+
+  it('on civitai.com, counts nothing for a queue holding only mature items', async () => {
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: CONTEST_MANAGER,
+      levels: SFW,
+    });
+
+    expect(byCollection[MATURE_ONLY]).toBeUndefined();
+    expect(byCollection[MIXED]).toBe(1);
+    expect(total).toBe(1);
+    expect(await getPendingReviewCount(MATURE_ONLY, SFW)).toBe(0);
+    expect(await queueIds(MATURE_ONLY, SFW)).toEqual([]);
+    expect(await queueIds(MIXED, SFW)).toEqual([701]);
+  });
+
+  it('keeps Blocked targets out of the queue when the client sends the Blocked bit', async () => {
+    const BLOCKED_BIT = 32;
+    const { items } = await getCollectionItemsByCollectionId({
+      input: {
+        collectionId: VIS_MODEL,
+        statuses: [CollectionItemStatus.REVIEW],
+        forReview: true,
+        limit: 50,
+        browsingLevel: ALL | BLOCKED_BIT,
+      } as never,
+      user: { id: REVIEWER } as never,
+    });
+
+    expect(items.map((i) => i.id).sort((a, b) => a - b)).toEqual(VISIBLE_IDS[VIS_MODEL]);
+  });
+
+  it('counts the mature items at every level, for the civitai.red pointer', async () => {
+    expect(await getPendingReviewCount(MATURE_ONLY, ALL)).toBe(3);
+  });
+
+  it('on civitai.red, still counts and shows every mature item', async () => {
+    const { total, byCollection } = await getPendingCollectionReviewCounts({
+      userId: CONTEST_MANAGER,
+      levels: ALL,
+    });
+
+    expect(byCollection).toEqual({ [MATURE_ONLY]: 3, [MIXED]: 2 });
+    expect(total).toBe(5);
+    expect(await queueIds(MATURE_ONLY, ALL)).toEqual([601, 602, 603]);
+    expect(await queueIds(MIXED, ALL)).toEqual([701, 702]);
+  });
 });
