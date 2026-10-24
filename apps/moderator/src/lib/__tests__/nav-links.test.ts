@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
+import {
+  isNavLinkActive,
+  navBadge,
+  navCount,
+  navHref,
+  navPartial,
+  switcherEntries,
+} from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -142,6 +149,40 @@ describe('the Models section', () => {
         .find((l) => l.label === 'Models')
         ?.children?.[0]?.children?.find((c) => c.path === NEEDS_REVIEW)?.countKey
     ).toBe('modelFlagsNeedsReview');
+  });
+
+  it('marks the Models badge partial while Needs review could not be counted', () => {
+    applyGrants({
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    expect(navPartial(needsReview()!, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    // A count the viewer's badge does not sum leaves it whole.
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReviewMatches']))).toBe(false);
+    expect(navPartial(models, unavailable([]))).toBe(false);
+  });
+
+  it('leaves a group whole when only an informational count is unavailable', () => {
+    const images = NAVIGATION.find((n) => n.children?.some((c) => c.path === '/images/to-ingest'))!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(images, unavailable(['stuckIngestion']))).toBe(false);
+    expect(navPartial(images, unavailable(['ingestionErrors']))).toBe(true);
+  });
+
+  it('writes a partial badge with a "+", and "?+" when nothing in it was counted', () => {
+    expect(navBadge(423, true)).toEqual({ text: '423+', partial: true });
+    expect(navBadge(null, true)).toEqual({ text: '?+', partial: true });
+    expect(navBadge(423, false)).toEqual({ text: '423', partial: false });
+    expect(navBadge(null, false)).toBeNull();
+    expect(navBadge(1746, true, (n) => n.toLocaleString('en-US'))).toEqual({
+      text: '1,746+',
+      partial: true,
+    });
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
