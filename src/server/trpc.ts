@@ -403,7 +403,7 @@ function guardFlagEnabled(
   ctx: FeatureAccessContext & { features?: FeatureAccess },
   flag: keyof FeatureAccess
 ): boolean {
-  if (ctx.features?.trpcFlagGuardPerRequest) return !!getFeatureFlags(ctx)[flag]; // MUTANT: red demo
+  if (ctx.features?.trpcFlagGuardPerRequest) return !!ctx.features[flag];
   return !!getFeatureFlags(ctx)[flag];
 }
 
