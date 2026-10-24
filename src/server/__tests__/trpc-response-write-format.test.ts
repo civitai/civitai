@@ -404,9 +404,9 @@ describe('trpc-fast-superjson-write — the outcome counter', () => {
   });
 
   it('labels a multi-procedure batch as batch, one count per procedure', async () => {
-    const input = encodeURIComponent(JSON.stringify({ 0: {}, 1: {} }));
+    // `{}`: neither call carries an input, as in the one-call batch above.
     const delta = await fastWriteDelta(async () => {
-      const served = await get(`plain,plain?batch=1&input=${input}`);
+      const served = await get(`plain,plain?batch=1&input=${encodeURIComponent('{}')}`);
       expect(served.status).toBe(200);
     });
     expect(delta).toEqual({ 'batch|fast': 2 });
