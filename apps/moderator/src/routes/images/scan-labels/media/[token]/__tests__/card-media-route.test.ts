@@ -5,6 +5,7 @@ vi.mock('$lib/server/scan-label.service', () => ({ mediaForToken }));
 vi.mock('$env/dynamic/public', () => ({ env: { PUBLIC_IMAGE_LOCATION: 'https://cdn.test' } }));
 
 const { GET } = await import('../+server');
+const { getEdgeUrl, getVideoUrls } = await import('$lib/media/edge-url');
 
 const TOKEN = '00000000-0000-4000-8000-000000000005';
 const IMAGE = { url: 'media-key-x7', type: 'image', name: 'upload-name.png' };
@@ -18,6 +19,7 @@ function call({
   user = { id: 7 } as unknown,
   query = '',
   headers = {} as Record<string, string>,
+  method = 'GET',
   fetch = vi.fn(async () => upstream(200, { 'content-type': 'image/webp' })),
 } = {}) {
   const url = new URL(`https://moderator.test/images/scan-labels/media/${token}${query}`);
@@ -25,7 +27,7 @@ function call({
     params: { token },
     url,
     locals: { user },
-    request: new Request(url, { headers }),
+    request: new Request(url, { headers, method }),
     fetch,
   } as unknown as Parameters<typeof GET>[0]) as Promise<Response>;
   return { res, fetch };
@@ -105,10 +107,115 @@ describe('GET /images/scan-labels/media/[token]', () => {
     expect(r.headers.get('cache-control')).toBe('private, no-store');
   });
 
-  it('answers 502 when the CDN fails, without its body', async () => {
-    const fetch = vi.fn(async () => upstream(500, { 'content-type': 'text/plain' }));
-    const r = await call({ fetch }).res;
+  it('answers 502 when the CDN fails, without its body, and releases the upstream body', async () => {
+    const body = upstream(500, { 'content-type': 'text/plain' });
+    const cancel = vi.spyOn(body.body!, 'cancel');
+    const r = await call({ fetch: vi.fn(async () => body) }).res;
     expect(r.status).toBe(502);
     expect(await r.text()).toBe('');
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('answers 502 when the CDN cannot be reached', async () => {
+    const fetch = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
+    expect((await call({ fetch }).res).status).toBe(502);
+  });
+
+  it('passes an unsatisfiable range answer through', async () => {
+    mediaForToken.mockResolvedValue(VIDEO);
+    const fetch = vi.fn(async () => upstream(416, { 'content-range': 'bytes */100' }));
+    const r = await call({ query: '?v=mp4', headers: { range: 'bytes=200-' }, fetch }).res;
+    expect(r.status).toBe(416);
+    expect(r.headers.get('content-range')).toBe('bytes */100');
+  });
+
+  // The variants the page asked for before the route existed: 1200 wide, scaled down, animated.
+  it.each([
+    [
+      IMAGE,
+      '',
+      getEdgeUrl(IMAGE.url, {
+        width: 1200,
+        fit: 'scale-down',
+        anim: true,
+        type: 'image',
+        name: IMAGE.name,
+      }),
+    ],
+    [
+      IMAGE,
+      '?v=mp4',
+      getEdgeUrl(IMAGE.url, {
+        width: 1200,
+        fit: 'scale-down',
+        anim: true,
+        type: 'image',
+        name: IMAGE.name,
+      }),
+    ],
+    [
+      VIDEO,
+      '?v=mp4',
+      getVideoUrls(VIDEO.url, { width: 1200, fit: 'scale-down', name: VIDEO.name }).mp4,
+    ],
+    [
+      VIDEO,
+      '?v=webm',
+      getVideoUrls(VIDEO.url, { width: 1200, fit: 'scale-down', name: VIDEO.name }).webm,
+    ],
+    [
+      VIDEO,
+      '?v=poster',
+      getVideoUrls(VIDEO.url, { width: 1200, fit: 'scale-down', name: VIDEO.name }).poster,
+    ],
+    [
+      VIDEO,
+      '?v=junk',
+      getVideoUrls(VIDEO.url, { width: 1200, fit: 'scale-down', name: VIDEO.name }).mp4,
+    ],
+  ])('fetches the variant the page used to load (%o %s)', async (media, query, expected) => {
+    mediaForToken.mockResolvedValue(media);
+    const { res, fetch } = call({ query });
+    await res;
+    expect((fetch.mock.calls[0] as unknown[])[0]).toBe(expected);
+    expect(expected).toContain('width=1200');
+  });
+
+  it('forwards the browser Accept so the CDN negotiates the same format', async () => {
+    const { res, fetch } = call({ headers: { accept: 'image/avif,image/webp,*/*' } });
+    await res;
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new Headers(init.headers).get('accept')).toBe('image/avif,image/webp,*/*');
+  });
+
+  it('refuses a stored full URL rather than fetching it from the server', async () => {
+    mediaForToken.mockResolvedValue({ ...IMAGE, url: 'https://elsewhere.test/x.png' });
+    const { res, fetch } = call();
+    expect((await res).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('drops the length of an encoded response, which fetch has already decoded', async () => {
+    const fetch = vi.fn(async () =>
+      upstream(200, {
+        'content-type': 'image/webp',
+        'content-length': '3',
+        'content-encoding': 'br',
+      })
+    );
+    const r = await call({ fetch }).res;
+    expect(r.headers.has('content-length')).toBe(false);
+  });
+
+  it('answers HEAD with the headers only, releasing the upstream body', async () => {
+    const body = upstream(200, { 'content-type': 'image/webp', 'content-length': '5' });
+    const cancel = vi.spyOn(body.body!, 'cancel');
+    const r = await call({ method: 'HEAD', fetch: vi.fn(async () => body) }).res;
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-length')).toBe('5');
+    expect(r.body).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });

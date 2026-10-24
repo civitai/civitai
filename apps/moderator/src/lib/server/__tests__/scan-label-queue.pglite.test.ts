@@ -473,12 +473,21 @@ describe('card media', () => {
   it('serves nothing once the lease has run out, or once the card is voted', async () => {
     const it1 = await seedItem(1);
     const { token } = (await claimNext(1, {}, NOW))!;
-    expect(await mediaForToken(token, 1, later(LEASE_MS + 1))).toBeNull();
+    // Dead at its expiry instant, as claimNext counts it.
+    expect(await mediaForToken(token, 1, later(LEASE_MS - 1))).not.toBeNull();
+    expect(await mediaForToken(token, 1, later(LEASE_MS))).toBeNull();
     await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token }, NOW);
     expect(await mediaForToken(token, 1, NOW)).toBeNull();
   });
 
   it('never serves media for a token the vote would not resolve', async () => {
+    const voted = await seedItem(3);
+    const spent = (await claimNext(3, {}, NOW))!;
+    expect(spent.itemId).toBe(voted);
+    await castVote(
+      { itemId: voted, userId: 3, choice: KEEP, msOnItem: 1, claimToken: spent.token },
+      NOW
+    );
     await seedItem(1);
     await seedItem(2);
     const mine = (await claimNext(1, {}, NOW))!.token;
@@ -489,13 +498,18 @@ describe('card media', () => {
       [theirs, 1],
       [theirs, 2],
       ['00000000-0000-4000-8000-000000000000', 1],
+      [spent.token, 3],
+      [spent.token, 1],
     ] as const;
+    let served = 0;
     for (const [token, userId] of cases) {
-      const resolved = await itemForToken(token, userId);
       const media = await mediaForToken(token, userId, NOW);
-      if (resolved === null) expect(media).toBeNull();
-      else expect(media).not.toBeNull();
+      if (media === null) continue;
+      served++;
+      // Media implies the vote's own resolver accepts the token, for the same moderator.
+      expect(await itemForToken(token, userId)).not.toBeNull();
     }
+    expect(served).toBeGreaterThan(0);
   });
 });
 
