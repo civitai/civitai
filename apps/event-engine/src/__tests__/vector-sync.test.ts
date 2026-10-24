@@ -7,12 +7,12 @@ import type { RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
 import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
 import type { QdrantClient } from '@qdrant/js-client-rest';
+import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
   buildEmbedInput,
   takeBatch,
   Embedder,
   JobBudget,
-  parseRateLimitHeader,
   MixedStampError,
 } from '@/vector-sync/embedder';
 import {
@@ -1628,5 +1628,41 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     } finally {
       process.env = saved;
     }
+  });
+});
+
+describe('ratelimit module', () => {
+  test('parses quoted and token names, skips malformed items and non-numeric params', () => {
+    const parsed = parseRateLimitHeader('"a,b";q=5, plain;r=2;t=1, ;q=3, "c";x=abc;q=7');
+    expect(parsed.get('a,b')).toEqual({ q: 5 });
+    expect(parsed.get('plain')).toEqual({ r: 2, t: 1 });
+    expect(parsed.get('c')).toEqual({ q: 7 });
+    expect(parsed.size).toBe(3);
+  });
+
+  test('Retry-After as seconds or an HTTP-date', () => {
+    const now = Date.parse('2026-10-24T02:00:00Z');
+    expect(parseRetryAfter('1', now)).toBe(1000);
+    expect(parseRetryAfter('0.5', now)).toBe(500);
+    expect(parseRetryAfter('Sat, 24 Oct 2026 02:00:30 GMT', now)).toBe(30_000);
+    expect(parseRetryAfter('Sat, 24 Oct 2026 01:00:00 GMT', now)).toBe(0);
+    expect(parseRetryAfter('soon', now)).toBeUndefined();
+    expect(parseRetryAfter(null, now)).toBeUndefined();
+  });
+
+  test('may I send N now / when to retry', () => {
+    const rl = new RateLimiter('inflight-x');
+    expect(rl.allowance(128, false, 0)).toBe(128);
+    rl.observe(
+      new Headers({ 'RateLimit-Policy': '"inflight-x";q=80', RateLimit: '"inflight-x";r=3;t=0' })
+    );
+    expect([rl.quota, rl.remaining]).toEqual([80, 3]);
+    expect(rl.allowance(128, false, 0)).toBe(3);
+    rl.reserve(3);
+    expect(rl.allowance(128, false, 0)).toBe(0);
+    expect(rl.allowance(128, true, 0)).toBe(1);
+    expect(rl.hold(0, 1000)).toBe(250);
+    expect(rl.waitMs(1100)).toBe(150);
+    expect(rl.allowance(128, true, 1100)).toBe(0);
   });
 });

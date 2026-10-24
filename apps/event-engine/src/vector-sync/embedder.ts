@@ -3,6 +3,7 @@ import { config } from '@/config';
 import { logger } from '@/utils/logger';
 import type { ImageRow } from './eligibility';
 import { EMBED_MODEL, VECTOR_DIMENSIONS, type ModelStamp } from './qdrant';
+import { parseRetryAfter, RateLimiter } from './ratelimit';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
@@ -141,73 +142,7 @@ class RetryableError extends Error {
 /** The orchestrator rejected the whole workflow (a 400); splitting it may isolate the input. */
 class WorkflowRejectedError extends Error {}
 
-/** Parses an IETF RateLimit / RateLimit-Policy header: `"name";k=v;k=v, "name";k=v`. */
-export function parseRateLimitHeader(header: string | null): Map<string, Record<string, number>> {
-  const out = new Map<string, Record<string, number>>();
-  for (const item of (header ?? '').split(',')) {
-    const [rawName, ...params] = item.trim().split(';');
-    const name = rawName?.trim().replace(/^"|"$/g, '');
-    if (!name) continue;
-    const values: Record<string, number> = {};
-    for (const param of params) {
-      const [k, v] = param.trim().split('=');
-      if (k && v !== undefined && Number.isFinite(Number(v))) values[k] = Number(v);
-    }
-    out.set(name, values);
-  }
-  return out;
-}
-
 const INFLIGHT_POLICY = 'inflight-multimodalEmbedding';
-
-/**
- * What the orchestrator says about this account's limits, from the headers of every response.
- * `q` is the in-flight quota, `r` what is left of it. The client cap is min(maxInFlight, q),
- * and a workflow is sized to fit `r`; a 429's Retry-After holds every submit on this embedder.
- */
-export class OrchestratorLimits {
-  quota?: number;
-  remaining?: number;
-  holdUntil = 0;
-  private logged = false;
-
-  observe(headers: Headers, onQuota: (q: number) => void) {
-    const policy = parseRateLimitHeader(headers.get('ratelimit-policy'));
-    const state = parseRateLimitHeader(headers.get('ratelimit'));
-    const q = policy.get(INFLIGHT_POLICY)?.q;
-    const r = state.get(INFLIGHT_POLICY)?.r;
-    if (q !== undefined && q !== this.quota) {
-      this.quota = q;
-      onQuota(q);
-    }
-    if (r !== undefined) this.remaining = r;
-    if (!this.logged && (policy.size || state.size)) {
-      this.logged = true;
-      logger.info(
-        {
-          inflightQuota: q,
-          inflightRemaining: r,
-          buzzPolicy: policy.get('buzz'),
-          buzzRemaining: state.get('buzz'),
-        },
-        'vector-sync: orchestrator rate limits'
-      );
-    }
-  }
-
-  /** Steps the next workflow may carry: what the quota says is left, at least 1. */
-  allowance(max: number, nothingRunning: boolean) {
-    if (this.remaining === undefined) return max;
-    // With nothing of ours running, a stale 0 would never refresh: send one step and let a 429
-    // say when to come back.
-    if (this.remaining <= 0) return nothingRunning ? 1 : 0;
-    return Math.min(max, this.remaining);
-  }
-
-  reserve(steps: number) {
-    if (this.remaining !== undefined) this.remaining -= steps;
-  }
-}
 
 export type EmbedResult = {
   vectors: Map<number, number[]>;
@@ -240,8 +175,6 @@ const MAX_SPLIT_DEPTH = 4;
  * than one workflow can run (30 min), since another process may hold the account's quota.
  */
 const RATE_LIMITED_FOR_MS = 2 * 60 * 60_000;
-/** A Retry-After of 0 still waits this long, so a 429 never becomes a tight resubmit loop. */
-const MIN_RETRY_AFTER_MS = 250;
 /** Retries of a poll after a network error or 5xx; the workflow keeps running meanwhile. */
 const POLL_RETRIES = 8;
 
@@ -290,7 +223,9 @@ export class Embedder {
   /** Set once a stamp has been accepted; the collection then has one recorded. */
   private stampSeen = false;
   readonly budget: JobBudget;
-  readonly limits = new OrchestratorLimits();
+  /** The account's in-flight quota, from the orchestrator's RateLimit headers. */
+  readonly limits = new RateLimiter(INFLIGHT_POLICY);
+  private limitsLogged = false;
   private readonly fetch: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -348,17 +283,20 @@ export class Embedder {
 
     // Workflows are sized as they are sent, to what the account's quota has left.
     while (queue.length && !call.result.error) {
-      const hold = this.limits.holdUntil - this.now();
+      const hold = this.limits.waitMs(this.now());
       if (hold > 0) {
         await this.sleep(hold);
         continue;
       }
       const size = this.limits.allowance(
         Math.min(this.batchSize, this.budget.capacity),
-        running.size === 0
+        running.size === 0,
+        this.now()
       );
       if (size === 0) {
-        await Promise.race(running);
+        if (running.size) await Promise.race(running);
+        else
+          await this.sleep(Math.max(this.limits.waitMs(this.now()), this.limits.minRetryAfterMs));
         continue;
       }
       const batch = takeBatch(queue, size);
@@ -465,7 +403,7 @@ export class Embedder {
     let rateLimited = 0;
     const rateLimitedSince = this.now();
     for (;;) {
-      const hold = this.limits.holdUntil - this.now();
+      const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
         return await this.run(batch, externalId);
@@ -535,6 +473,28 @@ export class Embedder {
     return workflow;
   }
 
+  /** Applies the account quota as the cap, and logs the limits once, from the first response. */
+  private observeLimits(headers: Headers) {
+    const before = this.limits.quota;
+    const seen = this.limits.observe(headers);
+    if (seen.quota !== undefined && seen.quota !== before) {
+      this.budget.setCapacity(Math.min(this.opts.maxInFlight, seen.quota));
+    }
+    if (!this.limitsLogged && (seen.policies.size || seen.states.size)) {
+      this.limitsLogged = true;
+      logger.info(
+        {
+          inflightQuota: seen.quota,
+          inflightRemaining: seen.remaining,
+          buzzPolicy: seen.policies.get('buzz'),
+          buzzRemaining: seen.states.get('buzz'),
+          cap: this.budget.capacity,
+        },
+        'vector-sync: orchestrator rate limits'
+      );
+    }
+  }
+
   private async request<T>(
     method: 'GET' | 'POST',
     path: string,
@@ -551,21 +511,14 @@ export class Embedder {
     } catch (err) {
       throw new RetryableError(`network: ${(err as Error).message}`);
     }
-    this.limits.observe(res.headers, (q) =>
-      this.budget.setCapacity(Math.min(this.opts.maxInFlight, q))
-    );
+    this.observeLimits(res.headers);
     if (res.ok) return (await res.json()) as T;
 
     const text = await res.text().catch(() => '');
-    const retryAfter = Number(res.headers.get('retry-after'));
-    const retryAfterMs =
-      Number.isFinite(retryAfter) && retryAfter >= 0 && res.headers.has('retry-after')
-        ? Math.max(MIN_RETRY_AFTER_MS, retryAfter * 1000)
-        : undefined;
+    let retryAfterMs = parseRetryAfter(res.headers.get('retry-after'), this.now());
     if (res.status === 429) {
       // The in-flight quota or the buzz window. Every submit on this embedder waits it out.
-      if (retryAfterMs !== undefined)
-        this.limits.holdUntil = Math.max(this.limits.holdUntil, this.now() + retryAfterMs);
+      if (retryAfterMs !== undefined) retryAfterMs = this.limits.hold(retryAfterMs, this.now());
       throw new RetryableError(`429 ${text.slice(0, 200)}`, retryAfterMs, true);
     }
     if (res.status >= 500)
