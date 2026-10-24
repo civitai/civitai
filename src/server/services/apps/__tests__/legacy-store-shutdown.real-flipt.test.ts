@@ -63,6 +63,9 @@ async function useFlipt(scenario: Scenario) {
     url,
     clientToken: 'test-token',
     environment: 'civitai-app',
+    // The global test setup pins this flag OFF through FLIPT_LOCAL_OVERRIDES; this suite is about
+    // what real Flipt answers, so it must not see that override.
+    localOverrides: {},
     log: () => undefined,
     onInitError: () => undefined,
     onEvalError: () => undefined,

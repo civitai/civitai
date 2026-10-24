@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiHandler } from 'next';
 
-import { isFlipt } from '~/server/flipt/client';
+import { ensureFliptInitialized, isFliptSync } from '~/server/flipt/client';
 import { recordLegacyStoreRefusal, type LegacyStore } from '~/server/prom/legacy-store.metrics';
 
 export type { LegacyStore } from '~/server/prom/legacy-store.metrics';
@@ -12,11 +12,16 @@ export type { LegacyStore } from '~/server/prom/legacy-store.metrics';
  * the bridge procedures answer PRECONDITION_FAILED. Moderator tooling, account wipe,
  * provisioning and the server-side item-key lookup are not gated.
  *
- * Named for the REMOVED state so that an absent flag, an unreachable Flipt or an eval that
- * throws all leave the legacy stores working. Evaluated globally (no entity, no context):
- * set the boolean and add no rules — a segment matches nothing and a percentage is 0 or 100.
+ * Before LEGACY_STORES_FAIL_CLOSED_AT only an explicit ON removes the stores. From then on
+ * they are removed unless the flag is explicitly OFF (the no-deploy rollback): a missing key,
+ * an uninitialised client or an evaluation error all mean removed. Evaluated globally (no
+ * entity, no context): set the boolean and add no rules — a segment matches nothing and a
+ * percentage is 0 or 100.
  */
 export const APP_BLOCKS_LEGACY_STORES_REMOVED_FLAG = 'app-blocks-legacy-stores-removed';
+
+/** The announced removal date: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores */
+export const LEGACY_STORES_FAIL_CLOSED_AT = Date.parse('2026-11-10T00:00:00Z');
 
 export const LEGACY_STORE_REMOVED_CODE = 'legacy_store_removed';
 export const LEGACY_STORE_MIGRATION_GUIDE_URL =
@@ -40,11 +45,15 @@ export function legacyStoreRemovedBody(store: LegacyStore) {
 }
 
 export async function areLegacyStoresRemoved(): Promise<boolean> {
-  try {
-    return (await isFlipt(APP_BLOCKS_LEGACY_STORES_REMOVED_FLAG)) === true;
-  } catch {
-    return false;
+  // `isFlipt` answers false for an explicit OFF and for a missing key or no client alike;
+  // `isFliptSync` answers null for the last two, which is the distinction the cutoff needs.
+  let answer = isFliptSync(APP_BLOCKS_LEGACY_STORES_REMOVED_FLAG);
+  if (answer === null) {
+    await ensureFliptInitialized();
+    answer = isFliptSync(APP_BLOCKS_LEGACY_STORES_REMOVED_FLAG);
   }
+  if (Date.now() < LEGACY_STORES_FAIL_CLOSED_AT) return answer === true;
+  return answer !== false;
 }
 
 /** Bridge (tRPC) refusal. The stable code leads the message, which the hosts forward to the block. */
