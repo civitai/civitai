@@ -360,10 +360,12 @@ function inkRect(el: HTMLElement): DOMRect | null {
   );
 }
 
+/** The element's tag, except that a `div` and a `span` (Mantine's badge root vs the design system's) read alike. */
 function describeEl(el: HTMLElement) {
-  return `${el.tagName.toLowerCase()} "${(el.textContent ?? '').trim().slice(0, 40)}" ${
-    el.getAttribute('aria-label') ?? ''
-  }`;
+  const tag = el.tagName.toLowerCase();
+  return `${tag === 'div' || tag === 'span' ? 'box' : tag} "${(el.textContent ?? '')
+    .trim()
+    .slice(0, 40)}" ${el.getAttribute('aria-label') ?? ''}`;
 }
 
 function look(el: HTMLElement) {

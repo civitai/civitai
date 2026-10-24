@@ -12,6 +12,8 @@
 
   .badge {
     --badge-height: var(--ds-badge-height, 20px);
+    /* `globals.css` gives every `.mantine-Badge-root` this. */
+    flex-shrink: 0;
     -webkit-tap-highlight-color: transparent;
     font-size: var(--ds-badge-fz, 11px);
     border-radius: var(--ds-badge-radius, var(--mantine-radius-sm));
@@ -222,8 +224,9 @@
     font-size: var(--mantine-font-size-sm);
     white-space: nowrap;
     border-radius: var(--mantine-radius-default);
-    background-color: var(--mantine-color-gray-9);
-    color: var(--mantine-color-white);
+    /* civitai's override of Mantine's inverted bubble (`.mantine-Tooltip-tooltip` in `globals.css`). */
+    background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+    color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
     /* Undo the design system's in-wrapper placement and hover-only reveal. */
     bottom: auto;
     opacity: 1;
@@ -234,11 +237,6 @@
     line-height: var(--mantine-line-height);
     font-weight: normal;
     text-align: start;
-  }
-
-  :global([data-mantine-color-scheme='dark']) .bubble {
-    background-color: var(--mantine-color-gray-2);
-    color: var(--mantine-color-black);
   }
 
   .arrow {

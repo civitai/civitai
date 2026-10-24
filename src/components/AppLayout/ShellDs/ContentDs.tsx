@@ -70,7 +70,10 @@ function BadgeContent({
   return (
     <>
       {leftSection != null && <span className={classes.badgeSection}>{leftSection}</span>}
-      <span className={classes.badgeLabel}>{children}</span>
+      {/* `data-badge-label`: what `globals.css` keys Mantine's `.mantine-Badge-label *` rule on. */}
+      <span className={classes.badgeLabel} data-badge-label="">
+        {children}
+      </span>
     </>
   );
 }
