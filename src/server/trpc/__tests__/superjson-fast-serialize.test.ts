@@ -20,10 +20,6 @@ function expectIdentical(value: unknown) {
   const actual = fastSuperjsonSerialize(value);
   expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
   expect(actual).toStrictEqual(expected);
-  // And it decodes back to what superjson's own output decodes to.
-  expect(superjson.deserialize(JSON.parse(JSON.stringify(actual)))).toStrictEqual(
-    superjson.deserialize(JSON.parse(JSON.stringify(expected)))
-  );
 }
 
 /** Runs `fastSuperjsonSerialize` and reports whether it fell back to `superjson.serialize`. */
