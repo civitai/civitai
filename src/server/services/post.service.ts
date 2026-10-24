@@ -75,6 +75,7 @@ import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
+import type { StorylinePublishContext } from '~/server/services/storyline-publish.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import type {
   getCosmeticsForUsers,
@@ -112,7 +113,7 @@ import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, constants } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -729,6 +730,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   return {
     ...post,
     parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
     collectionTagId,
     images,
     collectionItemExists,
@@ -746,26 +748,9 @@ async function getPostModel({
   if (!modelVersionId) return null;
   const version = await db.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { model: { select: { id: true, userId: true } } },
+    select: { model: { select: { id: true, name: true, userId: true } } },
   });
   return version?.model ?? null;
-}
-
-/**
- * The model a post belongs to, when the post's owner also owns the model: the editor's event card
- * then hats the model. A review post on someone else's model gets null.
- */
-export async function getOwnModelId({
-  modelVersionId,
-  postOwnerId,
-  db,
-}: {
-  modelVersionId: number | null;
-  postOwnerId: number;
-  db?: typeof dbRead | typeof dbWrite;
-}) {
-  const model = await getPostModel({ modelVersionId, db });
-  return model?.userId === postOwnerId ? model.id : null;
 }
 
 export type PostUnpublishContext = {
@@ -882,6 +867,8 @@ export const createPost = async ({
     });
     if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
       throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+    // After the visibility check, so a version the caller cannot see stays not-found.
+    if (data.publishedAt && !isModerator) await assertPublishableVersion(data.modelVersionId);
 
     availability = modelVersion.model.availability;
   }
@@ -915,15 +902,33 @@ export const createPost = async ({
     }
   }
 
-  const post = await dbWrite.post.create({
-    data: {
-      ...data,
-      availability,
-      userId,
-      tags: tagsToAdd.length > 0 ? { create: tagData } : undefined,
-    },
-    select: postSelect,
-  });
+  const { storylineId, parentChapterId, ...postData } = data;
+  const insertPost = (db: Prisma.TransactionClient | typeof dbWrite) =>
+    db.post.create({
+      data: {
+        ...postData,
+        availability,
+        userId,
+        tags: tagsToAdd.length > 0 ? { create: tagData } : undefined,
+      },
+      select: postSelect,
+    });
+  const linksStoryline = !!storylineId || !!parentChapterId;
+  // The chapter is written when the post is published, from the editor; a post created published
+  // would skip that step and leave the link pending.
+  if (linksStoryline && postData.publishedAt)
+    throw throwBadRequestError('A storyline chapter is published from the post editor');
+  // Imported on use: the storyline layer imports this module, through report.service.
+  const { linkPendingChapter } = linksStoryline
+    ? await import('~/server/services/storyline.service')
+    : { linkPendingChapter: undefined };
+  const post = linkPendingChapter
+    ? await dbWrite.$transaction(async (tx) => {
+        const created = await insertPost(tx);
+        await linkPendingChapter(tx, { postId: created.id, userId, storylineId, parentChapterId });
+        return created;
+      })
+    : await insertPost(dbWrite);
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
@@ -944,6 +949,11 @@ export const createPost = async ({
     collectionItemExists = !!collectionItem;
   }
 
+  const model = await getPostModel({
+    modelVersionId: data.modelVersionId ?? null,
+    db: dbWrite,
+  });
+
   return {
     ...post,
     collectionTagId,
@@ -956,20 +966,42 @@ export const createPost = async ({
     wasPublished: false,
     unpublishedAt: null,
     unpublishedBy: null,
-    parentModelId: null,
-    ownModelId: await getOwnModelId({
-      modelVersionId: data.modelVersionId ?? null,
-      postOwnerId: userId,
-      db: dbWrite,
-    }),
+    parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
+    ownModelId: model?.userId === userId ? model.id : null,
   };
 };
+
+/** Whether a post on this version (a SQL expression) sits on one a moderator took down. */
+const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ${modelVersionId}
+    AND (mv.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+      OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
+)`;
+
+const TAKEN_DOWN_PUBLISH_ERROR =
+  "This post can't be published: its model or model version has been taken down.";
+
+/** Refuses a non-moderator publishing straight onto a taken-down version. */
+async function assertPublishableVersion(modelVersionId: number) {
+  const [check] = await dbWrite.$queryRaw<{ downed: boolean }[]>`
+    SELECT ${onDownedVersionSql(Prisma.sql`${modelVersionId}::int`)} AS downed
+  `;
+  if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+}
 
 export const updatePost = async ({
   id,
   user,
+  storyline,
   ...data
-}: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
+}: Omit<PostUpdateInput, 'expectedPrice'> & {
+  user: SessionUser;
+  availability?: Availability;
+  /** From the publish request, for a post drafted as a storyline continuation. */
+  storyline?: StorylinePublishContext;
+}) => {
   await throwOnBlockedUserContent([data.title, data.detail], {
     isModerator: user.isModerator,
     surface: 'post',
@@ -981,6 +1013,31 @@ export const updatePost = async ({
   // Mirrors the pattern in updateModelVersion (model-version.service.ts).
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+
+  // A post drafted from a storyline becomes its chapter as it is published. Checked before the
+  // write, so a continuation price the contributor was not shown refuses the publish whole. With
+  // no storyline request (the flag off, the post planner) an owner's draft is written by the
+  // readiness pass instead, and a contributor's is left as it is.
+  // Imported on use: the storyline layer imports this module, through report.service.
+  const storylineLink =
+    publishedAt !== undefined &&
+    !!storyline &&
+    (await dbWrite.storylinePendingChapter.findUnique({
+      where: { postId: id },
+      select: { postId: true },
+    }));
+  const storylinePublish =
+    storylineLink && storyline
+      ? await import('~/server/services/storyline-publish.service')
+      : undefined;
+  const storylineStep =
+    storylinePublish && storyline
+      ? await storylinePublish.prepareStorylinePublish({
+          postId: id,
+          actorId: user.id,
+          context: storyline,
+        })
+      : undefined;
 
   let publishedAtWritten = false;
   const post = await dbWrite.$transaction(async (tx) => {
@@ -1019,8 +1076,21 @@ export const updatePost = async ({
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        AND (${!!user.isModerator} OR NOT ${onDownedVersionSql(
+        Prisma.sql`"Post"."modelVersionId"`
+      )})
         RETURNING "publishedAt"
       `;
+      // A moderator's take-down unpublishes the version's posts; an owner publishing one afterwards
+      // would put it back up. Checked in the same statement as the write, so it cannot race the take-down.
+      // A post already public writes nothing either, and stays the no-op it always was.
+      const alreadyPublic = !!updated.publishedAt && updated.publishedAt <= new Date();
+      if (!writtenRows.length && !user.isModerator && !alreadyPublic) {
+        const [check] = await tx.$queryRaw<{ downed: boolean }[]>`
+          SELECT ${onDownedVersionSql(Prisma.sql`${updated.modelVersionId}::int`)} AS downed
+        `;
+        if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+      }
       // Reflect the actually-written timestamp (may be the stashed
       // prevPublishedAt rather than the submitted value). The controller's
       // wasPublished check (post.controller.ts: `!post?.publishedAt &&
@@ -1044,7 +1114,11 @@ export const updatePost = async ({
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
-  return post;
+  const storylineOutcome =
+    publishedAtWritten && storylinePublish && storylineStep
+      ? await storylinePublish.finishStorylinePublish(storylineStep)
+      : undefined;
+  return storylineOutcome ? { ...post, storyline: storylineOutcome } : post;
 };
 
 /**
@@ -1154,9 +1228,11 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
         RETURNING id, "nsfwLevel"
       `;
 
-      // Skipped images keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
-      // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
-      const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
+      // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+      // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+      // never revisits them — their docs must be dropped here.
+      const deletedIds = new Set(deletedImages.map(({ id }) => id));
+      const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
 
       const imageOwnerIds = uniq(images.map((image) => image.userId));
 

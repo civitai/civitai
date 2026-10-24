@@ -13,6 +13,7 @@ export type ModeratorGrantId =
   | 'user.purge'
   | 'user.removeReactions'
   | 'user.membership.code'
+  | 'user.membership.gift'
   | 'user.creatorScore.grant'
   | 'user.creatorScore.grantLarge'
   | 'user.creatorProgram.ban'

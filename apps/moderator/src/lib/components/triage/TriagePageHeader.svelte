@@ -14,9 +14,10 @@
     searchLabel,
   }: {
     title: string;
-    subtitle: string;
-    placeholder: string;
-    searchLabel: string;
+    subtitle?: string;
+    /** Both this and `searchLabel` render a search box that writes `?q=`; without them the page has none. */
+    placeholder?: string;
+    searchLabel?: string;
   } = $props();
 
   const q = $derived(page.url.searchParams.get('q') ?? '');
@@ -43,33 +44,35 @@
 <header class="flex flex-nowrap items-start justify-between gap-6 pt-2.5 pr-6 pb-3 pl-14">
   <div class="min-w-0 flex-1">
     <h1 class="m-0 text-xl font-semibold text-white">{title}</h1>
-    <p class="m-0 mt-0.5 text-[13px] text-dark-2">{subtitle}</p>
+    {#if subtitle}<p class="m-0 mt-0.5 text-[13px] text-dark-2">{subtitle}</p>{/if}
   </div>
-  <form
-    method="GET"
-    class="relative w-[260px] shrink-0"
-    onsubmit={(event) => {
-      event.preventDefault();
-      search.enter(value);
-    }}
-  >
-    {#each carried as [name, val], i (`${name}:${i}`)}
-      <input type="hidden" {name} value={val} />
-    {/each}
-    <IconSearch
-      class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-dark-2"
-      aria-hidden="true"
-    />
-    <Input
-      name="q"
-      bind:value
-      oninput={(event: Event) => search.input((event.currentTarget as HTMLInputElement).value)}
-      oncompositionstart={() => search.compositionStart()}
-      oncompositionend={(event: CompositionEvent) =>
-        search.compositionEnd((event.currentTarget as HTMLInputElement).value)}
-      {placeholder}
-      aria-label={searchLabel}
-      class="h-[30px] rounded-md border-dark-4 bg-dark-7 pl-8 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
-    />
-  </form>
+  {#if placeholder && searchLabel}
+    <form
+      method="GET"
+      class="relative w-[260px] shrink-0"
+      onsubmit={(event) => {
+        event.preventDefault();
+        search.enter(value);
+      }}
+    >
+      {#each carried as [name, val], i (`${name}:${i}`)}
+        <input type="hidden" {name} value={val} />
+      {/each}
+      <IconSearch
+        class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-dark-2"
+        aria-hidden="true"
+      />
+      <Input
+        name="q"
+        bind:value
+        oninput={(event: Event) => search.input((event.currentTarget as HTMLInputElement).value)}
+        oncompositionstart={() => search.compositionStart()}
+        oncompositionend={(event: CompositionEvent) =>
+          search.compositionEnd((event.currentTarget as HTMLInputElement).value)}
+        {placeholder}
+        aria-label={searchLabel}
+        class="h-[30px] rounded-md border-dark-4 bg-dark-7 pl-8 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
+      />
+    </form>
+  {/if}
 </header>

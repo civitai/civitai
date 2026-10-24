@@ -6,6 +6,7 @@ import {
   notBlockedBetween,
   notThreadMuted,
 } from '~/server/notifications/base.notifications';
+import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
@@ -138,6 +139,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
     crucible: `/crucibles/${threadParentId}?${queryString}`,
+    storyline: `${storylineUrl(threadParentId)}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
     comicProject: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
@@ -365,6 +367,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyEntryId",
                 root."challengeId",
                 root."crucibleId",
+                root."storylineId",
                 root."model3dId",
                 root."comicProjectId"
              ),
@@ -380,6 +383,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
                 WHEN root."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN root."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN root."model3dId" IS NOT NULL THEN 'model3d'
                 WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
                 -- App-store listing threads are SLUG-addressed, so this arm keys on the
@@ -487,6 +491,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyEntryId",
                 root."challengeId",
                 root."crucibleId",
+                root."storylineId",
                 root."model3dId",
                 root."comicProjectId",
                 t."imageId",
@@ -500,6 +505,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyEntryId",
                 t."challengeId",
                 t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."comicProjectId"
              ),
@@ -515,6 +521,7 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+              WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- SLUG-addressed; see the same arm in new-comment-reply above.
@@ -534,6 +541,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyEntryId",
                 t."challengeId",
                 t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -549,6 +557,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
                 WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN t."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
@@ -1107,6 +1116,47 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_crucible_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-crucible-comment');
+    `,
+  },
+  'new-storyline-comment': {
+    displayName: 'New comments on your storylines',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your storyline: "${details.storylineTitle}"`,
+      url: `${storylineUrl(details.storylineId)}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_storyline_comment AS (
+        SELECT DISTINCT
+          s."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'storylineId', s.id,
+            'storylineTitle', s.title,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."storylineId" IS NOT NULL
+        JOIN "Storyline" s ON s.id = t."storylineId"
+        WHERE s."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != s."userId"
+          AND NOT s."tosViolation"
+          AND ${notBlockedBetween('s."userId"', 'c."userId"')}
+          AND ${notThreadMuted('s."userId"', 't.id')}
+      )
+      SELECT
+        concat('new-comment-storyline:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId" "userId",
+        'new-storyline-comment' "type",
+        details
+      FROM new_storyline_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-storyline-comment');
     `,
   },
   // Model3D comments — mirror the Model 3-tier (`new-comment` /

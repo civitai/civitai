@@ -1,11 +1,5 @@
 import { fail, type ActionFailure } from '@sveltejs/kit';
 import { z } from 'zod';
-import {
-  MODEL_RULE_LIMITS,
-  modelRuleAliasesField,
-  modelRuleDescriptionField,
-  modelRuleSubjectField,
-} from '@civitai/moderation/model-rules';
 import { jsonField, parseForm } from '$lib/server/query';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
@@ -32,7 +26,6 @@ import {
   PROMPT_KEYS,
   isPromptKey,
   type LabEntityType,
-  type LabRuleOverride,
   type LabScanResult,
   type LabText,
   type PromptChanges,
@@ -40,6 +33,7 @@ import {
 } from '$lib/text-scan-lab/types';
 import { LabError, refused } from './errors';
 import { FREE_TEXT_KEY, composeEntities, scanTexts, type LabRun } from './harness-client';
+import { recordChatMessageReads, type Reader } from '../chat-read-audit';
 
 /** A draft overrides its prompt, so a blank one would scan an empty prompt: refused, never dropped.
  *  Unknown keys are refused first, so a blank one is never named as a prompt it is not. */
@@ -60,31 +54,6 @@ export const promptChangesField = jsonField(
   'Malformed prompts.'
 );
 
-export const ruleOverridesField = jsonField(
-  z
-    .array(
-      z.object({
-        id: z
-          .number()
-          .int()
-          .refine((id) => id !== 0, 'Malformed rule.'),
-        subject: modelRuleSubjectField('A rule needs a subject.'),
-        description: modelRuleDescriptionField,
-        aliases: modelRuleAliasesField,
-        enabled: z.boolean(),
-      })
-    )
-    .max(
-      MODEL_RULE_LIMITS.rulesPerTry,
-      `At most ${MODEL_RULE_LIMITS.rulesPerTry} edited rules can be tried at once.`
-    )
-    .refine(
-      (rules) => new Set(rules.map((r) => r.id)).size === rules.length,
-      'Two edited rules share an id; reload the page.'
-    ),
-  'Malformed rules.'
-);
-
 const PROFILE_TYPES = ['UserProfile', 'User'] as const satisfies readonly LabEntityType[];
 
 const trySchema = z.object({
@@ -100,7 +69,6 @@ const trySchema = z.object({
   judgeAs: z.enum(LAB_ENTITY_TYPES).catch('CommentV2'),
   profileAs: z.enum(PROFILE_TYPES).catch('UserProfile'),
   prompts: promptChangesField.optional().default({}),
-  rules: ruleOverridesField.optional().default([]),
 });
 type TryInput = z.infer<typeof trySchema>;
 
@@ -128,6 +96,7 @@ const textPlan = (
 };
 
 async function entityPlan(
+  reader: Reader,
   entityType: LabEntityType,
   ids: number[],
   title: (id: number) => string
@@ -145,16 +114,18 @@ async function entityPlan(
       });
     else skipped.push({ entityId: c.entityId, error: c.error });
   }
+  if (entityType === 'ChatMessage')
+    await recordChatMessageReads(
+      reader,
+      subjects.flatMap((s) => (s.entityId === null ? [] : [s.entityId]))
+    );
   return { entityType, subjects, skipped, notice: null };
 }
 
-const MODELS_ONLY =
-  'The Model rules check judges models only: paste a model link, a model id, or some text.';
-
 async function plan(
+  reader: Reader,
   input: TryInput,
-  edited: readonly PromptKey[],
-  only: 'ModelRules' | null
+  edited: readonly PromptKey[]
 ): Promise<Plan | string> {
   const parsed = parseCheckInput(input.input);
   if (parsed.kind === 'empty') return 'Paste a Civitai link, an id, or some text.';
@@ -163,17 +134,21 @@ async function plan(
   if (parsed.kind === 'refused') return parsed.notice;
 
   const source = sourceTypeOf(parsed, input);
-  if (only && !judgeCandidates(source, []).includes(only)) return MODELS_ONLY;
-  const candidates = only ? [only] : judgeCandidates(source, edited);
+  const candidates = judgeCandidates(source, edited);
   const judged = candidates.includes(input.judgeAs) ? input.judgeAs : candidates[0];
   const named = (id: number) => `${ENTITY_TYPE_NAMES[judged]} ${id}`;
 
   if (parsed.kind === 'ids' || parsed.kind === 'entity')
-    return entityPlan(judged, parsed.ids, named);
+    return entityPlan(reader, judged, parsed.ids, named);
   if (parsed.kind === 'user') {
     const userId = await userIdByUsername(parsed.username);
     if (userId === null) return `No user called "${parsed.username}".`;
-    return entityPlan(judged, [userId], () => `${ENTITY_TYPE_NAMES[judged]} · ${parsed.username}`);
+    return entityPlan(
+      reader,
+      judged,
+      [userId],
+      () => `${ENTITY_TYPE_NAMES[judged]} · ${parsed.username}`
+    );
   }
   return textPlan(judged, parsed.text, parsed.kind === 'unknown-url' ? parsed.notice : null);
 }
@@ -188,18 +163,14 @@ const byKey = (run: LabRun) => new Map(run.results.map((r) => [r.key, r] as cons
 async function scanSubjects(
   entityType: LabEntityType,
   subjects: TrySubject[],
-  drafts: { prompts: PromptChanges; rules: LabRuleOverride[] }
+  drafts: { prompts: PromptChanges }
 ): Promise<{ items: TryItem[]; current: TrySide; edited: TrySide | null }> {
   const texts: LabText[] = subjects.map(({ key, fields }) => ({ key, fields }));
-  const rules = entityType === 'ModelRules' ? drafts.rules : [];
-  const withDrafts = Object.keys(drafts.prompts).length > 0 || rules.length > 0;
+  const withDrafts = Object.keys(drafts.prompts).length > 0;
   const [current, edited] = await Promise.allSettled([
     scanTexts(entityType, texts),
     withDrafts
-      ? scanTexts(entityType, texts, {
-          prompts: drafts.prompts as Record<string, string>,
-          rules,
-        })
+      ? scanTexts(entityType, texts, { prompts: drafts.prompts as Record<string, string> })
       : Promise.resolve(null),
   ]);
   if (current.status === 'rejected') throw current.reason;
@@ -222,16 +193,14 @@ async function scanSubjects(
         ? { key: s.key, ok: false, error: refusal }
         : editedByKey?.get(s.key) ?? missing(s.key),
     })),
-    current: { system: current.value.system, rules: current.value.rules },
-    edited: withDrafts
-      ? { system: editedRun?.system ?? null, rules: editedRun?.rules ?? null }
-      : null,
+    current: { system: current.value.system },
+    edited: withDrafts ? { system: editedRun?.system ?? null } : null,
   };
 }
 
 export async function runTry(
-  form: FormData,
-  opts: { only?: 'ModelRules' | null } = {}
+  reader: Reader,
+  form: FormData
 ): Promise<TryResult | ActionFailure<{ error: string }>> {
   const input = parseForm(trySchema, form);
   if (typeof input === 'string') return fail(400, { error: input });
@@ -245,7 +214,7 @@ export async function runTry(
 
   let planned: Plan | string;
   try {
-    planned = await plan(input, editedPromptKeys(prompts, input.rules), opts.only ?? null);
+    planned = await plan(reader, input, editedPromptKeys(prompts));
   } catch (e) {
     return refused(e);
   }
@@ -257,7 +226,7 @@ export async function runTry(
     });
 
   try {
-    const scanned = await scanSubjects(entityType, subjects, { prompts, rules: input.rules });
+    const scanned = await scanSubjects(entityType, subjects, { prompts });
     return {
       tried: true,
       entityType,

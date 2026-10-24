@@ -60,10 +60,16 @@ export type CrucibleHeaderData = {
 
 type CrucibleHeaderProps = {
   crucible: CrucibleHeaderData;
+  /** The entries the viewer can see listed; the raw `_count.entries` also counts hidden ones. */
+  entryCount?: number;
   className?: string;
 };
 
-export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
+export function CrucibleHeader({
+  crucible,
+  entryCount: listedCount,
+  className,
+}: CrucibleHeaderProps) {
   const {
     name,
     description,
@@ -82,7 +88,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     paidEntryCount,
     entrantCount,
   } = crucible;
-  const entryCount = _count.entries ?? 0;
+  const entryCount = listedCount ?? _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
   const currentUser = useCurrentUser();

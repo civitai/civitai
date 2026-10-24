@@ -89,6 +89,6 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       data: { error, input: req.body },
     });
 
-    return res.status(500).json({ error: 'Internal Server Error', details: error });
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });

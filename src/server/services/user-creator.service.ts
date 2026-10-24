@@ -1,6 +1,6 @@
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL, constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
@@ -204,6 +204,11 @@ export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creat
  * Drop both copies of these users' creator card: the Redis entry first, then the edge cache. Never
  * throws.
  *
+ * Responses are tagged by id and by username, so the purge covers both: the current username is read
+ * from the primary (call this after the write commits, so a rename purges the new name too), plus any
+ * `usernames` the caller passes, e.g. the name before a rename. If that read fails the id tags are
+ * still purged.
+ *
  * The Redis bust is always awaited. The edge purge is dispatched without being awaited, which is
  * right for a single user's write. A BULK caller looping over chunks must pass `awaitPurge: true`:
  * `purgeCache` reads one Redis set per tag and paces its dispatch to the CDN's rate limit, and that
@@ -211,11 +216,18 @@ export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creat
  */
 export async function bustUserCreator(
   userIds: number | number[],
-  { awaitPurge = false }: { awaitPurge?: boolean } = {}
+  { awaitPurge = false, usernames = [] }: { awaitPurge?: boolean; usernames?: string[] } = {}
 ) {
   const ids = [...new Set([userIds].flat())];
   if (!ids.length) return;
   await bustUserCreatorCache(ids);
-  const purge = purgeCache({ tags: ids.map(userCreatorEdgeTag) }).catch(() => undefined);
+  const purge = dbWrite.user
+    .findMany({ where: { id: { in: ids } }, select: { username: true } })
+    .then((rows) => rows.flatMap((row) => (row.username ? [row.username] : [])))
+    .catch(() => [] as string[])
+    .then((current) =>
+      purgeCache({ tags: [...ids, ...current, ...usernames].map(userCreatorEdgeTag) })
+    )
+    .catch(() => undefined);
   if (awaitPurge) await purge;
 }

@@ -598,12 +598,15 @@ export const createReport = async ({
       }
 
     if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
+      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
+      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
       await dbWrite.report.updateMany({
         where: {
           reason: { not: ReportReason.CSAM },
+          status: { not: ReportStatus.Actioned },
           image: { imageId: id },
         },
-        data: { status: ReportStatus.Actioned },
+        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
       });
       await dbWrite.image.update({
         where: { id },
@@ -1101,7 +1104,8 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Keep in step with the moderator app's exclusion lookup.
+// Keep the CSAM legs in step with the moderator app's exclusion lookup; the hold-marker leg is
+// this app's alone, since a kept image is only offered for appeal here.
 export async function getAppealExcludedIds({
   imageIds,
   userIds,
@@ -1127,9 +1131,26 @@ export async function getAppealExcludedIds({
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
+        -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
+        OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
+}
+
+/** Whether the owner is under a hold marker or the image is one it kept. Unreadable counts as yes. */
+export async function isAppealBlockedByHoldMarker({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  const [row] = await dbWrite.$queryRaw<{ blocked: unknown }[]>`
+    SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
+      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" WHERE "imageId" = ${imageId}) AS blocked
+  `;
+  return row?.blocked !== false;
 }
 
 async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {

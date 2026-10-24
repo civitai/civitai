@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -7,7 +8,10 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NAV_KEYS } from '~/shared/constants/nav.constants';
-import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_BADGE_ITEM_IDS,
+  USER_MENU_ITEM_IDS,
+} from '~/shared/constants/user-menu.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -328,10 +332,19 @@ export const navigationSettingsSchema = z
  * the defaults.
  */
 export const userMenuSettingsSchema = z.object({
+  // Absent until the viewer edits their pins, so a viewer who only muted a count keeps following
+  // the default pins.
   pinned: z
     .array(z.enum(USER_MENU_ITEM_IDS))
     .max(USER_MENU_ITEM_IDS.length)
-    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice'),
+    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice')
+    .optional(),
+  // Absent for everyone who never muted a count: every count counts.
+  mutedBadges: z
+    .array(z.enum(USER_MENU_BADGE_ITEM_IDS))
+    .max(USER_MENU_BADGE_ITEM_IDS.length)
+    .refine((ids) => new Set(ids).size === ids.length, 'A count cannot be muted twice')
+    .optional(),
 });
 
 export const userSettingsSchema = z.object({
@@ -466,7 +479,7 @@ export const setUserSettingsInput = z.object({
   // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
   // outright. The modal must send every zone, not a delta.
   navigation: navigationSettingsSchema.optional(),
-  // Whole-object writes, like `navigation`: the menu always sends the full pin order.
+  // Whole-object writes, like `navigation`: the menu always sends the full pin order and muted counts.
   userMenu: userMenuSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
@@ -582,10 +595,15 @@ export const updateContentSettingsSchema = z.object({
   autoplayGifs: z.boolean().optional(),
 });
 
+/** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */
+export const handBanReasonSchema = z
+  .enum(BanReasonCode)
+  .refine((code) => !banReasonDetails[code].systemOnly, 'This reason is set only by the system');
+
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
 export const toggleBanUserSchema = z.object({
   id: z.number(),
-  reasonCode: z.enum(BanReasonCode).optional(),
+  reasonCode: handBanReasonSchema.optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),

@@ -34,8 +34,9 @@ describe('Model Flag Appeals', () => {
   it.each(['', '?view=redetected', '?view=bogus'])(
     'serves appeals and never queries held detections for %s',
     async (query) => {
-      await (load as unknown as (e: { url: URL }) => Promise<unknown>)({
+      await (load as unknown as (e: { url: URL; locals: { user: null } }) => Promise<unknown>)({
         url: new URL(`http://x/models/flags/appeals${query}`),
+        locals: { user: null },
       });
       expect(getMinorFlagAppealsForReview).toHaveBeenCalledTimes(1);
       expect(getFlaggedModels).not.toHaveBeenCalled();
@@ -47,9 +48,13 @@ describe('Model Flag Appeals', () => {
     'falls back to All for the retired filter %s',
     async (query) => {
       const data = await (
-        load as unknown as (e: { url: URL }) => Promise<{ appealFilters: unknown }>
+        load as unknown as (e: {
+          url: URL;
+          locals: { user: null };
+        }) => Promise<{ appealFilters: unknown }>
       )({
         url: new URL(`http://x/models/flags/appeals${query}`),
+        locals: { user: null },
       });
       const all = { source: 'all', flag: 'all', sort: 'oldest' };
       expect(data.appealFilters).toEqual(all);

@@ -7,8 +7,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import Lightbox from '$lib/components/Lightbox.svelte';
+  import type { LightboxItem } from '$lib/lightbox';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
+  import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userUrl } from '$lib/entity-url';
   import { getEdgeUrl } from '$lib/media/edge-url';
@@ -50,6 +52,20 @@
   const resolver = $derived(
     row.resolver ? (row.resolver.username ?? `User #${row.resolver.id}`) : null
   );
+  const lightboxItems = $derived<LightboxItem[]>(
+    row.preview.images.map((img, i) => ({
+      id: img.url,
+      type: img.type === 'video' ? 'video' : 'image',
+      caption: `${img.type === 'video' ? 'Video' : 'Image'} ${i + 1} of ${row.preview.images.length} · ${getBrowsingLevelLabel(img.nsfwLevel)}`,
+    }))
+  );
+  let openIndex = $state<number | null>(null);
+  // A modified click keeps the link's own behaviour: a new tab with the full-size original.
+  const openInLightbox = (e: MouseEvent, i: number) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    openIndex = i;
+  };
   const disputesHref = $derived(
     urlWith(page.url, {
       owner: row.user.id,
@@ -77,12 +93,14 @@
   </TriageCard>
 {/snippet}
 
-{#snippet bar()}
+{#snippet decision()}
   <RatingDecisionForm {row} {submit} {actionHref} bind:chosen />
 {/snippet}
 
-<TriageDetailFrame {verdict} {error} actions={pending ? bar : undefined}>
-  {#snippet children()}
+<!-- What is being rated in the middle, under the dispute's header; the levels, the owner's case and
+     the ruling in the sidebar. A ruled dispute takes no decision here, so it has no bar. -->
+<TriageColumns {verdict} {error} decision={pending ? decision : undefined}>
+  {#snippet header()}
     <div class="space-y-2">
       <TriageDetailHeader {title} reference="#{row.entityId}" linksBeside>
         {#snippet chips()}
@@ -138,56 +156,76 @@
         {/if}
       </p>
     </div>
+  {/snippet}
 
-    <section aria-label="Images" class="space-y-2">
-      <div class="flex flex-wrap items-baseline gap-x-3">
-        <h3 class="m-0 text-[11px] font-semibold tracking-[0.5px] text-dark-2">{caption.title}</h3>
-        {#if caption.hint}<span class="text-xs text-dark-2">{caption.hint}</span>{/if}
-      </div>
-      {#if row.preview.images.length}
-        <!-- Same tile as the sibling queues' evidence images; one scrolling strip so many images never wrap. -->
-        <ul class="m-0 flex list-none gap-2.5 overflow-x-auto p-0 pb-2">
-          {#each row.preview.images as img, i (img.id)}
-            {@const nsfw = isNsfwRating(img.nsfwLevel)}
-            {@const media = img.type === 'video' ? 'video' : 'image'}
-            <li
-              class={cn(
-                'relative aspect-[4/5] w-40 shrink-0 overflow-hidden rounded-lg border bg-dark-6',
-                nsfw ? 'border-amber-500' : 'border-dark-4'
-              )}
-            >
-              <a
-                href={getEdgeUrl(img.url, { type: media, original: true })}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open {media} {i + 1} of {row.preview.images.length} full size"
-                class="block size-full"
-              >
-                <EdgeMedia
-                  src={img.url}
-                  type={img.type}
-                  anim={img.type === 'video' ? false : undefined}
-                  width={450}
-                  class="size-full object-cover object-top"
-                />
-              </a>
-              <span
+  {#snippet evidence()}
+    <div class="space-y-5">
+      <section aria-label="Images" class="space-y-2">
+        <div class="flex flex-wrap items-baseline gap-x-3">
+          <h3 class="m-0 text-[11px] font-semibold tracking-[0.5px] text-dark-2">{caption.title}</h3>
+          {#if caption.hint}<span class="text-xs text-dark-2">{caption.hint}</span>{/if}
+        </div>
+        {#if row.preview.images.length}
+          <!-- The middle column has the width for a grid, so every image is in view at once. -->
+          <ul class="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2.5 p-0">
+            {#each row.preview.images as img, i (img.id)}
+              {@const nsfw = isNsfwRating(img.nsfwLevel)}
+              {@const media = img.type === 'video' ? 'video' : 'image'}
+              <li
                 class={cn(
-                  'pointer-events-none absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',
-                  nsfw ? 'bg-amber-500 text-black' : 'bg-black/60 text-white'
+                  'relative aspect-[4/5] overflow-hidden rounded-lg border bg-dark-6',
+                  nsfw ? 'border-amber-500' : 'border-dark-4'
                 )}
               >
-                {getBrowsingLevelLabel(img.nsfwLevel)}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="m-0 text-sm text-dark-2">No images</p>
-      {/if}
-    </section>
+                <a
+                  href={getEdgeUrl(img.url, { type: media, original: true })}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open {media} {i + 1} of {row.preview.images.length}"
+                  class="block size-full"
+                  onclick={(e) => openInLightbox(e, i)}
+                >
+                  <EdgeMedia
+                    src={img.url}
+                    type={img.type}
+                    anim={img.type === 'video' ? false : undefined}
+                    width={450}
+                    class="size-full object-cover object-top"
+                  />
+                </a>
+                <span
+                  class={cn(
+                    'pointer-events-none absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',
+                    nsfw ? 'bg-amber-500 text-black' : 'bg-black/60 text-white'
+                  )}
+                >
+                  {getBrowsingLevelLabel(img.nsfwLevel)}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="m-0 text-sm text-dark-2">No images</p>
+        {/if}
+        <Lightbox
+          items={lightboxItems}
+          index={openIndex}
+          onIndex={(next) => (openIndex = next)}
+          onClose={() => (openIndex = null)}
+          label="Dispute image"
+        />
+      </section>
 
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {#if row.scannedText}
+        {#key row.id}
+          <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
+        {/key}
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet info()}
+    <div class="grid grid-cols-3 gap-2">
       {@render levelCard('Current', levelLabel(row.currentLevel), 'current rating')}
       {@render levelCard('Owner asks', levelLabel(row.suggestedLevel), 'approving applies this', 'blue')}
       {#if row.scan}
@@ -211,12 +249,6 @@
       <p class="m-0 text-sm text-dark-2">No comment from owner</p>
     {/if}
 
-    {#if row.scannedText}
-      {#key row.id}
-        <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
-      {/key}
-    {/if}
-
     {#if !pending}
       <TriageCard title="Resolution" dense>
         <div class="space-y-1.5 text-dark-0">
@@ -237,4 +269,4 @@
       </TriageCard>
     {/if}
   {/snippet}
-</TriageDetailFrame>
+</TriageColumns>

@@ -50,6 +50,14 @@ describe('flagInForce', () => {
     expect(flagInForce({ minor: false, poi: true, textScanFlags: lifted })).toBe(false);
     expect(flagInForce({ minor: false, poi: true, textScanFlags: null })).toBe(false);
   });
+  it('holds for a hash-applied real-person flag with no verdict, as the appeal resolver does', () => {
+    expect(poiInForce({ minor: false, poi: true, textScanFlags: null, poiHashFlag: true })).toBe(
+      true
+    );
+    expect(poiInForce({ minor: false, poi: false, textScanFlags: null, poiHashFlag: true })).toBe(
+      false
+    );
+  });
   it('is false with no flag', () => {
     expect(flagInForce({ minor: false, poi: false, textScanFlags: open })).toBe(false);
   });

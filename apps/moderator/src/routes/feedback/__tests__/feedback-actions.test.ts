@@ -569,25 +569,26 @@ describe('promote action', () => {
   });
 
   /**
-   * 🔴 THE WHOLE POINT OF THE BOX. The main app's ClickUp webhook closes a board entry by finding
+   * 🔴 THE WHOLE POINT OF THE BOX. The main app's completion webhook closes a board entry by finding
    * the entry whose `clickupUrl` holds the id of the task that completed. Every issue promoted from
    * a report used to be stored with no link at all, so none of them could ever auto-close. Passing
    * the URL through is what puts a promoted issue on the same footing as one raised on the board.
    */
-  it('stores the ClickUp task URL so the completion webhook can find the issue', async () => {
+  it.each([
+    ['an HQ task URL', 'https://hq.civitai.com/t/868kfwm3j'],
+    ['an older ClickUp task URL', 'https://app.clickup.com/t/8459928/868kfwm3j'],
+  ])('stores %s so the completion webhook can find the issue', async (_label, clickupUrl) => {
     await actions.promote(
       event({
         id: '5',
         mode: 'create',
         title: 'Sort resets on back',
         summary: 'The store loses ?sort on Back.',
-        clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j',
+        clickupUrl,
       })
     );
 
-    expect(promoteFeedbackToBug).toHaveBeenCalledWith(
-      expect.objectContaining({ clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j' })
-    );
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith(expect.objectContaining({ clickupUrl }));
   });
 
   /**
@@ -608,7 +609,7 @@ describe('promote action', () => {
     );
 
     expect(failure(result).status).toBe(400);
-    expect(failure(result).error).toMatch(/ClickUp task link/);
+    expect(failure(result).error).toMatch(/does not look like a task link/);
     expect(promoteFeedbackToBug).not.toHaveBeenCalled();
   });
 

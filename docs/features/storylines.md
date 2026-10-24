@@ -33,11 +33,15 @@ section).
   band where the story forks and where a branch joins back. Any chapter opens in storyline mode over
   the page, along the route the list draws to it. It shows the first 300 chapters, nearest the start;
   a chapter the reader cannot see is a placeholder that does not open.
-- **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
-  chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
-  review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
-  collaborators says so instead. The in-app tool for making the next section is not built yet:
-  "Create the next section" joins an early-access list.
+- **Continuing it.** At the end of a chapter "Write the next chapter" opens the post editor already
+  knowing which chapter it continues (`/posts/create?continues=<chapter>`). Publishing that draft
+  submits it as the next chapter at the price the writer was shown (Free or N Buzz); it goes to the
+  creator's review unless the writer is an endorsed collaborator, and the creator's own draft is
+  added as soon as it is published. "or use a post you already made" submits an existing post
+  instead. A storyline that is closed or open only to collaborators says so instead. A small
+  "Story tool coming soon · get early access" link joins a waitlist for a future story-creation
+  tool; it is not a way to write a chapter. Moderators read the sign-ups in the moderator app under
+  Storylines.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
   The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
@@ -46,12 +50,18 @@ section).
   take it down. A storyline flagged for a minor stays up but can only hold safe-for-work chapters,
   forks included: anything above is a placeholder, and new chapters above it are refused. Editing the
   title has it checked again.
+- **Captions.** Each image of a chapter can carry its author's caption, shown as a note at
+  the bottom of the image; tapping it opens the rest. Once its text check is rolled out, a caption is
+  checked like a title: one the check refuses is not shown, and one rated above the storyline's
+  maximum or the reader's browsing level is hidden for that reader.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
   moderators. A chapter is reported as its post or image.
 
 ## For creators
 
-- **Starting one.** A published post becomes the first chapter of a new storyline.
+- **Starting one.** "Start a storyline" on /storylines names it and sets its terms, then opens the post
+  editor with the storyline already attached. The post that is published from there becomes chapter 1.
+  Until then the storyline is empty and only its creator sees it.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
@@ -85,7 +95,8 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, and deleting a storyline: its creator
+An in-app tool for making the next section, a way for authors to write image captions (the server
+side is built), and deleting a storyline: its creator
 marks it complete instead, and moderators take down one that breaks the rules.
 
 ## Trying it locally

@@ -728,6 +728,39 @@ export const createMessage = async ({
 };
 
 /**
+ * Overwrites a message's content and keeps the text it replaced in `ChatMessageEdit`, in ONE statement:
+ * the history row and the edit land together or not at all. The row lock is taken inside it, so two
+ * edits racing on the same message each record the version the other left rather than both recording
+ * the same original. Returns the replaced text, or null when the message is gone or was deleted.
+ */
+export const editChatMessageContent = async ({
+  messageId,
+  editorId,
+  content,
+  editedAt,
+}: {
+  messageId: number;
+  editorId: number;
+  content: string;
+  editedAt: Date;
+}) => {
+  const [row] = await dbWrite.$queryRaw<{ previousContent: string }[]>`
+    WITH prev AS (
+      SELECT id, content FROM "ChatMessage"
+      WHERE id = ${messageId} AND "deletedAt" IS NULL
+      FOR UPDATE
+    ), history AS (
+      INSERT INTO "ChatMessageEdit" ("messageId", "editorId", "previousContent", "createdAt")
+      SELECT id, ${editorId}, content, ${editedAt} FROM prev
+    )
+    UPDATE "ChatMessage" m SET content = ${content}, "editedAt" = ${editedAt}
+    FROM prev WHERE m.id = prev.id
+    RETURNING prev.content AS "previousContent"
+  `;
+  return row?.previousContent ?? null;
+};
+
+/**
  * Hides a message from everyone in the chat and retains the row: the delete is recorded, so a report
  * filed against the thread afterwards still resolves to what was actually said. Authors delete their
  * own; moderators delete anyone's. A message already deleted is returned as is.

@@ -37,6 +37,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
+  '/api/mod/membership-gift/refund-unfulfilled': () =>
+    import('~/pages/api/mod/membership-gift/refund-unfulfilled'),
+  '/api/mod/membership-gift/revoke-unpaid': () =>
+    import('~/pages/api/mod/membership-gift/revoke-unpaid'),
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
@@ -52,6 +56,9 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
   '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),
   '/api/mod/model/unpublish': () => import('~/pages/api/mod/model/unpublish'),
+  '/api/mod/poi-flag/confirm': () => import('~/pages/api/mod/poi-flag/confirm'),
+  '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
+  '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),

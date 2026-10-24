@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dayjs from 'dayjs';
+import type { Stripe } from 'stripe';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Every asserted call in this file is one `membership-gift.service` spells as `dbWrite`.
@@ -108,6 +109,7 @@ import {
   recordGiftMonthConsumed,
   releaseArmedGiftMonth,
   restoreArmedGiftMonth,
+  restoreUndeliveredResidualMonths,
   revokeMembershipGift,
   sweepGiftArming,
 } from '~/server/services/membership-gift.service';
@@ -173,6 +175,7 @@ const stripeSub = ({
   discount = null as any,
   interval = 'month',
   unitAmount = 5000,
+  tier = 'gold',
 } = {}) => ({
   id: 'sub_1',
   status,
@@ -186,7 +189,12 @@ const stripeSub = ({
     data: [
       {
         id: 'si_1',
-        price: { id: 'price_gold_usd', unit_amount: unitAmount, recurring: { interval } },
+        price: {
+          id: `price_${tier}_${currency}`,
+          product: `prod_${tier}`,
+          unit_amount: unitAmount,
+          recurring: { interval },
+        },
       },
     ],
   },
@@ -207,9 +215,18 @@ beforeEach(() => {
   mockDbWrite.membershipGift.update.mockResolvedValue({});
   mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.delete.mockResolvedValue({});
+  mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.findMany.mockResolvedValue([]);
   mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
   mockCreateCustomer.mockResolvedValue('cus_recipient');
+  mockDbWrite.product.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: string };
+  }) => ({
+    id: where.id,
+    metadata: { tier: where.id.replace('prod_', '') },
+  })) as never);
   mockStripe.paymentMethods.list.mockResolvedValue({ data: [] });
   mockStripe.billingPortal.sessions.create.mockResolvedValue({ url: 'https://portal.stripe/x' });
 });
@@ -709,6 +726,52 @@ describe('armNextGiftMonth', () => {
   });
 });
 
+// Webhooks write our CustomerSubscription row in no guaranteed order, so after a plan change it can
+// still name the old plan. The subscription retrieved from Stripe is the plan the gift will be billed on.
+describe('armNextGiftMonth prices against the live Stripe plan, not our row', () => {
+  const active = { ...baseGift, status: 'Active', monthsRemaining: 3, acceptedAt: new Date() };
+
+  it('a holder our row still calls bronze, now gold in Stripe, gets a silver gift as cash value', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ ...active, tier: 'silver' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'bronze' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ tier: 'gold' }));
+
+    await armNextGiftMonth({ userId: 2 });
+
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.percent_off).toBeUndefined();
+    expect(coupon).toMatchObject({ amount_off: 2500, currency: 'usd' });
+  });
+
+  it('a holder our row still calls monthly, now yearly in Stripe, gets cash value', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ ...active, tier: 'gold' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      dbSub({ tier: 'gold', interval: 'month' })
+    );
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      stripeSub({ tier: 'gold', interval: 'year', unitAmount: 50000 })
+    );
+
+    await armNextGiftMonth({ userId: 2 });
+
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.percent_off).toBeUndefined();
+    expect(coupon).toMatchObject({ amount_off: 3 * 5000, currency: 'usd' });
+  });
+
+  it('does not arm when the live price names a product we have no row for', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([active]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ tier: 'gold' }));
+    mockDbWrite.product.findUnique.mockResolvedValue(null);
+
+    const result = await armNextGiftMonth({ userId: 2 });
+
+    expect(result).toMatchObject({ armed: false, reason: 'unknown-product' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('armNextGiftMonth on a subscription billed yearly', () => {
   const active = { ...baseGift, status: 'Active', monthsRemaining: 3, acceptedAt: new Date() };
   const armYearly = async ({ giftTier = 'gold', holderTier = 'gold', unitAmount = 50000 } = {}) => {
@@ -717,7 +780,7 @@ describe('armNextGiftMonth on a subscription billed yearly', () => {
       dbSub({ tier: holderTier, interval: 'year' })
     );
     mockStripe.subscriptions.retrieve.mockResolvedValue(
-      stripeSub({ interval: 'year', unitAmount })
+      stripeSub({ interval: 'year', unitAmount, tier: holderTier })
     );
     await armNextGiftMonth({ userId: 2 });
     return mockStripe.coupons.create.mock.calls[0][0];
@@ -938,6 +1001,157 @@ describe('honorGiftResidualsForUser', () => {
     expect(await honorGiftResidualsForUser({ userId: 2 })).toEqual({ minted: 0 });
     expect(mockStripe.subscriptions.create).not.toHaveBeenCalled();
   });
+
+  it('gives back the owed months when the holder cancels their residual subscription', async () => {
+    // A 3-month residual cancelled in its first month: Stripe ends it at the period end, one
+    // month in. The gift was completed at mint, so without a restore the 2 months are gone.
+    const start = dayjs().subtract(1, 'month');
+    const completed = {
+      ...baseGift,
+      status: 'Completed',
+      monthsRemaining: 0,
+      monthsConsumed: 3,
+      stripeSubscriptionId: 'sub_residual',
+      stripeCouponId: 'gift_gift_1_residual',
+    };
+    mockDbWrite.membershipGift.findUnique.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length
+        ? { ...completed, status: 'Active', monthsRemaining: 2, monthsConsumed: 1 }
+        : completed
+    );
+    mockDbWrite.membershipGift.findMany.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length ? [{ id: 'gift_1' }] : []
+    );
+
+    await honorGiftResidualsForUser({
+      userId: 2,
+      endedSubscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith({
+      where: { id: 'gift_1', status: 'Completed', stripeSubscriptionId: 'sub_residual' },
+      data: { status: 'Active', monthsRemaining: 2, monthsConsumed: 1 },
+    });
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.duration_in_months).toBe(2);
+    // The first residual coupon is single-use and already redeemed.
+    expect(coupon.id).not.toBe('gift_gift_1_residual');
+    expect(mockStripe.subscriptions.create).toHaveBeenCalled();
+  });
+});
+
+const residualSub = ({
+  start,
+  endedAt,
+  metadata = { membershipGiftId: 'gift_1', residualMonths: '3' } as Record<string, string>,
+  cancellationComment = null as string | null,
+}: {
+  start: dayjs.Dayjs;
+  endedAt: dayjs.Dayjs;
+  metadata?: Record<string, string>;
+  cancellationComment?: string | null;
+}) =>
+  ({
+    id: 'sub_residual',
+    status: 'canceled',
+    start_date: start.unix(),
+    ended_at: endedAt.unix(),
+    canceled_at: endedAt.unix(),
+    cancellation_details: { comment: cancellationComment },
+    discount: { coupon: { id: 'gift_gift_1_residual', duration_in_months: 3 } },
+    metadata,
+  } as unknown as Stripe.Subscription);
+
+describe('restoreUndeliveredResidualMonths', () => {
+  const start = dayjs().subtract(2, 'month');
+
+  beforeEach(() => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Completed',
+      monthsConsumed: 3,
+      stripeSubscriptionId: 'sub_residual',
+      stripeCouponId: 'gift_gift_1_residual',
+    });
+  });
+
+  it('counts the first month as used even when cancelled minutes after the mint', async () => {
+    // Its invoice already granted the month; giving it back would let cancel-and-re-mint
+    // repeat forever.
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(4, 'minute') }),
+    });
+    expect(result).toMatchObject({ restored: 2 });
+  });
+
+  it('does not count the next period as started when the end lands just past a boundary', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month').add(30, 'second') }),
+    });
+    expect(result).toMatchObject({ restored: 2 });
+  });
+
+  it('counts a period cut short as used', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(2, 'month').subtract(2, 'day') }),
+    });
+    expect(result).toMatchObject({ restored: 1 });
+  });
+
+  it('restores nothing when the subscription ran its full course', async () => {
+    // It ends at the cancel_at set at mint, seconds before start + months.
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(3, 'month').subtract(5, 'second') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the months off the coupon for a residual minted before they were recorded', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({
+        start,
+        endedAt: start.add(2, 'month'),
+        metadata: { membershipGiftId: 'gift_1' },
+      }),
+    });
+    expect(result).toMatchObject({ restored: 1 });
+  });
+
+  it('does not restore a residual ended by a refund or chargeback', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({
+        start,
+        endedAt: start.add(1, 'day'),
+        cancellationComment: 'membership-gift-revoked',
+      }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not restore for a holder whose account was banned', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Completed',
+      stripeSubscriptionId: 'sub_residual',
+      holder: { id: 2, bannedAt: new Date(), deletedAt: null },
+    });
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op once the gift has moved past that subscription', async () => {
+    mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockStripe.coupons.del).not.toHaveBeenCalled();
+  });
 });
 
 describe('sweepGiftArming', () => {
@@ -1039,7 +1253,9 @@ describe('revokeMembershipGift', () => {
 
     await revokeMembershipGift({ paymentIntentId: 'pi_1', reason: 'refund' });
 
-    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual', {
+      cancellation_details: { comment: 'membership-gift-revoked' },
+    });
   });
 
   it('is idempotent once revoked', async () => {

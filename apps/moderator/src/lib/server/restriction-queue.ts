@@ -25,7 +25,6 @@ import {
   type RestrictionRow,
 } from '$lib/server/user-restriction.service';
 
-const PAGE_SIZE = 20;
 const TRIAGE_PAGE_SIZE = 50;
 
 type QueueConfig = {
@@ -61,46 +60,7 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
 const selectedSchema = z.coerce.number().int().positive().optional().catch(undefined);
 
 /**
- * The list read shared by every restriction queue. Defaults to Pending, as the main app's page did:
- * without it the queue opens with already-ruled rows interleaved at the top, and `advance()` has
- * nothing to advance past.
- *
- * `type` has no "any" member, unlike `status`. Mixing two kinds of review into one list would put a
- * moderator one keystroke from ruling on a case with the wrong queue's assumptions in mind, and the
- * ruling copy differs per type — so each queue names the types it offers and `.catch()` sends an
- * unknown or absent value back to its default.
- */
-export async function restrictionQueueLoad(url: URL, queue: QueueConfig) {
-  const { type, status, q, page, selected, username, userId } = parseQueueQuery(url, queue, {
-    selected: selectedSchema,
-  });
-
-  const { items, totalCount } = await getGenerationRestrictions({
-    page,
-    limit: PAGE_SIZE,
-    type,
-    status: status === 'any' ? undefined : status,
-    username,
-    userId,
-  });
-
-  const current: RestrictionRow | null = items.find((i) => i.id === selected) ?? null;
-
-  return {
-    items,
-    current,
-    totalCount,
-    page,
-    pageCount: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
-    type,
-    status,
-    q,
-    wide: true,
-  };
-}
-
-/**
- * The two-pane triage read. Same filters as `restrictionQueueLoad` plus the origin facet, but the whole
+ * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
 export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
@@ -206,7 +166,7 @@ async function restrictionById(
  *
  * This is a refusal rather than a hidden button because the check has to hold against a posted id, not
  * just against what the page chose to render. (The buttons are disabled as well — see
- * `RestrictionDetail.svelte`. That is an addition to this check, never a substitute for it.)
+ * `RestrictionDecisionForm.svelte`. That is an addition to this check, never a substitute for it.)
  *
  * 🔴 KEPT even though the refusal is now enforced by `resolveUserRestriction` itself — which is what
  * closes the surfaces this check could never reach: the retool User Lookup panel, the tRPC router and

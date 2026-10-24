@@ -227,6 +227,25 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(0);
   });
 
+  // The system account (-1, a literal so a changed constant cannot follow along) is Eligible in
+  // Postgres and files reports on Civitai's behalf; it must still be paid nothing. Reporter 42 beside
+  // it is the control: same tier, same bonus, paid in full.
+  it('writes 0 for a report filed by the system account, whatever its eligibility row says', async () => {
+    const rows = await rowsFor({
+      tiers: [
+        [-1, cached(1)],
+        [42, cached(1)],
+      ],
+      storedBonus: 20,
+    });
+    expect(
+      rows.map((r: { toUserId: number; multiplier: number }) => [r.toUserId, r.multiplier])
+    ).toEqual([
+      [-1, 0],
+      [42, 2],
+    ]);
+  });
+
   it('pays a garbage cached tier exactly what a missing one pays, and says so', async () => {
     // NaN is `typeof 'number'`, so it walks past the tier guard and reaches the column as a value
     // it cannot parse. Letting the clamp catch it instead pays 1 rather than 2, because the clamp

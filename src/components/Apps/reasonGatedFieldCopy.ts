@@ -3,8 +3,8 @@
  * counter and its inline error, as pure (React-free) functions.
  *
  * Extracted from {@link ReasonGatedField} for the reason the rest of this feature's
- * view models were extracted: the browser-mode suites are REPORT-ONLY in this repo's
- * CI, so a string built inline in JSX is pinned by nothing that can block a merge.
+ * view models were extracted: a string built inline in JSX is reachable only from
+ * browser-mode suites.
  * The CEILING half is the case that motivated it — deleting the `(max N)` suffix left
  * every blocking suite green while the one moderator field with a server-enforced
  * maximum silently stopped naming it, which is exactly the state that lets a

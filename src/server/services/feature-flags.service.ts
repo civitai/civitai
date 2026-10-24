@@ -138,6 +138,9 @@ const featureFlags = createFeatureFlags({
   // the server render and the hydrating render read the same serialised flags. gSSP does not read
   // the flag: its prefetches are the same in both states.
   modelPageDeferBelowFold: { availability: [], fliptKey: 'model-page-defer-below-fold' },
+  // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
+  // moderator cohort is a Flipt rollout, never this static list.
+  shellImages: { availability: [], fliptKey: 'shell-images' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
@@ -165,6 +168,11 @@ const featureFlags = createFeatureFlags({
   // Ramp it by percentage in Flipt. `[]`, not `['mod']`: nobody gets it until the Flipt flag
   // exists (see `reactionCountsUnknown`).
   siteSearchProxy: { availability: [], fliptKey: 'site-search-proxy' },
+  // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
+  // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
+  // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
+  // []` = DARK by default and fails CLOSED when the key is absent or Flipt is down.
+  shellImagesRenderSample: { availability: [], fliptKey: 'shell-images-render-sample' },
   // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
   // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
   // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
@@ -609,7 +617,7 @@ const featureFlags = createFeatureFlags({
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
-  emerchantpayPayments: ['public'],
+  emerchantpayPayments: [],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   datapacketRead: ['public'],
@@ -761,6 +769,12 @@ const featureFlags = createFeatureFlags({
   // Off, the page runs replies in the browser as before, `/api/apps/assistant/run-grant` refuses to
   // start one on the runner, and the runner's token mints refuse (its kill switch).
   appAssistantRemoteRunner: { availability: [], fliptKey: 'app-assistant-remote-runner' },
+  // Forkable apps — the fork count/list on a parent's store page, the author's "Let others fork
+  // this app's source" setting, and (with `canAccessAppAssistant`) the Fork action. `[]`: dark for
+  // everyone, mods included, until the Flipt flag exists — the client twin of the server's
+  // fail-closed `isAppBlocksForkEnabled`, so the two agree while the flag is absent. "Forked from …"
+  // attribution is not behind it.
+  appBlocksFork: { availability: [], fliptKey: 'app-blocks-fork' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag

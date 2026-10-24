@@ -27,15 +27,19 @@
     placeholder="Username or user ID"
     searchLabel="Search restrictions"
   />
-  {#if GENERATOR_RESTRICTION_TYPES.length > 1}
-    <RestrictionTypeTabs
-      types={GENERATOR_RESTRICTION_TYPES}
-      current={data.type}
-      fallbackType={RESTRICTION_TYPE}
-      counts={data.facets?.type}
-    />
-  {/if}
-  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-    <RestrictionTriage {data} {form} fallbackType={RESTRICTION_TYPE} />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-dark-4">
+    <RestrictionTriage {data} {form} fallbackType={RESTRICTION_TYPE}>
+      {#snippet tabs()}
+        {#if GENERATOR_RESTRICTION_TYPES.length > 1}
+          <RestrictionTypeTabs
+            compact
+            types={GENERATOR_RESTRICTION_TYPES}
+            current={data.type}
+            fallbackType={RESTRICTION_TYPE}
+            counts={data.facets?.type}
+          />
+        {/if}
+      {/snippet}
+    </RestrictionTriage>
   </div>
 </div>

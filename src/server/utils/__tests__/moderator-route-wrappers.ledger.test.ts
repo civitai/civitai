@@ -202,6 +202,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
   'v1/permissions/check': 'entity access check that also admits owners and public entities',
+  'webhooks/stripe': 'a lost dispute skips banning a payer who is a moderator; not a caller gate',
 };
 
 /**

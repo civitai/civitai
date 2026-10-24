@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import ModelFlagTabs from '../ModelFlagTabs.svelte';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { sameFileAppealBadge } from '$lib/minor-flags/appeal-row';
@@ -35,7 +36,7 @@
   let {
     data,
     form,
-  }: { data: AppealQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+  }: { data: AppealQueueData & { civitaiUrl: string; canViewTrainingData: boolean }; form: QueueForm | undefined } = $props();
 
   let current = $state<number | null>(null);
   const ruling = rulingDraft<AppealRuling>(() => current);
@@ -99,7 +100,10 @@
 {/snippet}
 
 {#snippet listHeader()}
-  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="appeal" />
+  <div class="flex flex-col gap-2.5">
+    <ModelFlagTabs />
+    <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="appeal" />
+  </div>
 {/snippet}
 
 {#snippet empty()}
@@ -174,6 +178,7 @@
     <AppealDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       verdict={state.verdict}
       error={state.error}
       submit={state.submit}

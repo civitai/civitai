@@ -5,6 +5,7 @@ import {
   intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
+  viewerCollectionCap,
 } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -152,8 +153,7 @@ describe('resolveViewerBrowsingLevel', () => {
  * Everything above tests pure resolvers that these components merely have to
  * CHOOSE to use. Every defect in this area so far has been one hook name at one
  * call site, and no test of a resolver can reach that. The hooks are React, so a
- * render test lands in the `component` project, which runs in no CI job; this
- * reads the sources instead.
+ * render test lands in the `component` project; this reads the sources instead.
  *
  * ⚠️ What a source guard is worth, stated because it flatters itself: it catches
  * a revert to `useBrowsingLevelDebounced`, which is the regression that keeps
@@ -211,8 +211,11 @@ describe.each(VIEWER_SCOPED)('$file reads the viewer, not the page', ({ file, wh
 describe('a collection ceiling is a cap, not an override', () => {
   const collection = () => read('..', '..', 'Collections', 'Collection.tsx');
 
-  it('passes it as forcedBrowsingLevel', () => {
-    expect(collection()).toContain('forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel');
+  it('passes it as forcedBrowsingLevel, narrowed to the viewer', () => {
+    expect(collection()).toContain('forcedBrowsingLevel={collectionCap}');
+    expect(collection()).toMatch(
+      /collectionCap = viewerCollectionCap\(\s*collection\.metadata\.forcedBrowsingLevel,\s*userBrowsingLevel,/
+    );
   });
 
   it('does not pass it through the override slot', () => {
@@ -239,6 +242,15 @@ describe('a collection ceiling is a cap, not an override', () => {
 describe('a post ceiling is cleared when the post has none', () => {
   const postDetail = () => read('..', '..', 'Post', 'Detail', 'PostDetail.tsx');
 
+  it('narrows the contest ceiling to the viewer before using it', () => {
+    expect(postDetail()).toMatch(
+      /const forcedBrowsingLevel = viewerCollectionCap\(\s*collectionForcedLevel,\s*userBrowsingLevel,/
+    );
+    // The images query must read the narrowed level too, not the collection's own.
+    expect(postDetail()).toContain('browsingLevel: forcedBrowsingLevel,');
+    expect(postDetail()).not.toContain('browsingLevel: collectionForcedLevel');
+  });
+
   it('sets the cap unconditionally', () => {
     expect(postDetail()).toContain('setForcedBrowsingLevel?.(forcedBrowsingLevel);');
   });
@@ -248,5 +260,43 @@ describe('a post ceiling is cleared when the post has none', () => {
       postDetail().includes('if (forcedBrowsingLevel) {'),
       'guarding the set means a stale ceiling outlives the collection that set it'
     ).toBe(false);
+  });
+});
+
+/**
+ * 🔴 A collection's ceiling may narrow what a viewer browses, never widen it. A contest whose level
+ * was raised after a scan must not serve a viewer anything above their own setting. Do not go back
+ * to returning the ceiling as is.
+ */
+describe('viewerCollectionCap', () => {
+  const { PG, PG13, R, X, XXX } = NsfwLevel;
+  const SFW = PG | PG13;
+
+  it('serves an SFW-only viewer none of a mature ceiling', () => {
+    expect(viewerCollectionCap(X | XXX, SFW)! & (X | XXX)).toBe(0);
+    expect(viewerCollectionCap(SFW | R | X, SFW)).toBe(SFW);
+  });
+
+  it('serves a mature viewer the mature ceiling', () => {
+    expect(viewerCollectionCap(X | XXX, allBrowsingLevelsFlag)).toBe(X | XXX);
+  });
+
+  it('still lowers a mature viewer to an SFW ceiling', () => {
+    expect(viewerCollectionCap(SFW, allBrowsingLevelsFlag)).toBe(SFW);
+  });
+
+  // 0 reads as "no filter" on the server.
+  it('never returns 0 when nothing overlaps', () => {
+    expect(viewerCollectionCap(X | XXX, SFW)).toBe(PG);
+  });
+
+  it('keeps the full ceiling for those judging it', () => {
+    expect(viewerCollectionCap(X | XXX, SFW, true)).toBe(X | XXX);
+  });
+
+  it('is absent when the collection sets no ceiling', () => {
+    expect(viewerCollectionCap(undefined, SFW)).toBeUndefined();
+    expect(viewerCollectionCap(null, SFW)).toBeUndefined();
+    expect(viewerCollectionCap(0, SFW)).toBeUndefined();
   });
 });

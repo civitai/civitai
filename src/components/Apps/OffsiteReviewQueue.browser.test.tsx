@@ -9,7 +9,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 P3a — /apps/review off-site (external-link) queue. Browser-mode render test
- * (report-only in Tekton): a pending off-site row renders in the kind-aware queue,
+ * (`Component tests` in CI): a pending off-site row renders in the kind-aware queue,
  * and opening it shows the CONTENT-ONLY checklist (https / asset presence, NO code
  * items) + the external URL + Approve/Reject.
  */
@@ -571,7 +571,7 @@ describe('OffsiteReviewModal — readOnly (history) posture hides the action but
 // On-site listing-MEDIA revision (kind: 'onsite') — the same listing modal reviews
 // it, but it renders kind-aware: a "listing media" header (NOT "external app"), NO
 // external URL, NO connect panel, the shadow-asset content checklist, and a
-// cap-at-app-rating review (media must not exceed the app's rating). Report-only.
+// cap-at-app-rating review (media must not exceed the app's rating).
 describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)', () => {
   const ONSITE_MEDIA_ROW = {
     id: 'lmr-1',

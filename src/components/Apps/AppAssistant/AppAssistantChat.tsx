@@ -62,6 +62,8 @@ export interface AppAssistantChatProps {
    * unset keeps them in the browser, exactly as before.
    */
   remoteRunner?: ChatRemoteRunner;
+  /** Called once the chat has started (`chatRef` is set). */
+  onReady?: () => void;
 }
 
 export function AppAssistantChat({
@@ -78,6 +80,7 @@ export function AppAssistantChat({
   onChatChange,
   subagents,
   remoteRunner,
+  onReady,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
   // The page's flags cannot change while it is open, so these are read once, at setup.
@@ -85,6 +88,11 @@ export function AppAssistantChat({
   const remoteRunnerAtStart = useRef(remoteRunner);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (ready) onReadyRef.current?.();
+  }, [ready]);
 
   useEffect(() => {
     let cancelled = false;

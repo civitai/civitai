@@ -9,10 +9,10 @@ import {
   listPlaybooks,
   listTurns,
   renameChat,
-  sumTokens,
   tokensTodayByModel,
 } from '$lib/server/assistant/store';
-import { DAILY_TOKEN_CAP, TURN_DEADLINE_MS } from '$lib/server/assistant/loop';
+import { TURN_DEADLINE_MS } from '$lib/server/assistant/loop';
+import { allowanceToday } from '$lib/server/assistant/turn.service';
 import { listPrices, resolveModel } from '$lib/server/assistant/openrouter';
 import { ASSISTANT_MODELS, estimateSpend } from '$lib/assistant/models';
 import { canSeeAddresses } from '$lib/server/access';
@@ -33,13 +33,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
   // Closes out a turn its process died during, which would otherwise hold the composer disabled.
   await hasRunningTurn(locals.user.id, TURN_DEADLINE_MS * 2);
   const text = canSeeAddresses(locals) ? (t: string) => t : redactAddresses;
-  const [turns, playbooks, today, prices] = await Promise.all([
+  const [turns, playbooks, today, prices, allowance] = await Promise.all([
     listTurns(chatId),
     listPlaybooks(),
     tokensTodayByModel(locals.user.id),
     listPrices(),
+    allowanceToday({ id: locals.user.id, roles: locals.user.roles ?? [] }),
   ]);
-  const used = sumTokens(today);
   return {
     models: ASSISTANT_MODELS.map(({ id, label }) => ({ id, label })),
     // A chat keeps the model it was last asked on, unless that model has left the list.
@@ -52,7 +52,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
       title,
       summary: text(summary),
     })),
-    allowance: { used, cap: DAILY_TOKEN_CAP },
+    allowance: { spentUsd: allowance.spentUsd, capUsd: allowance.capUsd },
   };
 };
 

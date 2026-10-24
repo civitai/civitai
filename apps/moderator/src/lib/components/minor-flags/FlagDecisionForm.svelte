@@ -164,6 +164,7 @@
 {#snippet fields()}
   {#if reasonOptions}
     <InlineReasonFields
+      compact
       options={reasonOptions}
       bind:reason={
         () => reason,
@@ -193,6 +194,7 @@
   <input type="hidden" name="flags" value={JSON.stringify(flags)} />
   <input type="hidden" name="hasPendingAppeal" value={hasPendingAppeal} />
   <TriageDecisionBar
+    compact
     buttons={decisionButtons}
     picker={reasonOptions && reasonPicker.open !== null ? picker : undefined}
     fields={reasonOptions ? fields : undefined}

@@ -204,14 +204,18 @@ describe('CI coverage for commits on main', () => {
     ).toEqual([]);
   });
 
-  // Every commit on main must get its OWN verdict. A concurrency group keyed on
-  // `github.ref` is one group for the whole branch, so a busy main cancels its
-  // own runs and only the last commit is ever checked — and the losers render as
-  // `cancelled`, which this repo already cannot distinguish from a real failure.
+  // A push to main must never share a concurrency group with a PR run. A group
+  // that does not vary by ref (e.g. a bare `lint`) is one group for every PR AND
+  // for main, so with cancel-in-progress a PR push would cancel main's run and
+  // main would sit with no verdict, the failure this file exists for.
   //
-  // This asserts the group VARIES per commit, the only property that matters;
-  // `github.sha` is the way to say that in a GitHub expression.
-  it('gives each commit on main its own concurrency group', () => {
+  // Keying on `github.ref` IS allowed, and is what lint.yml and windows-dev-env
+  // use since 2026-10: a newer commit on main cancels the older one's run. The
+  // newest run checks a tree containing every older commit, so main keeps a
+  // verdict; intermediate commits show `cancelled`. That trade was made to stop
+  // per-commit main runs queueing behind PRs under a concurrent-job limit.
+  // `github.sha` (one group per commit, nothing cancels) also passes.
+  it('never lets a PR run cancel the run for a commit on main', () => {
     for (const { file, doc } of workflows) {
       if (!triggersOnPushToMain(doc)) continue;
       const group = doc.concurrency?.group;
@@ -219,9 +223,9 @@ describe('CI coverage for commits on main', () => {
       if (group === undefined) continue; // no grouping at all: nothing cancels anything
       if (cancels === false || cancels === undefined) continue; // grouped but never cancels
       expect(
-        group,
-        `${file} cancels in-progress runs and its concurrency group does not vary per commit, so commits on main would cancel each other and only the last would be checked.`
-      ).toContain('github.sha');
+        /github\.(ref|sha)\b/.test(group),
+        `${file} cancels in-progress runs and its concurrency group (${group}) varies by neither github.ref nor github.sha, so a PR run and a run for a commit on main share a group and can cancel each other.`
+      ).toBe(true);
     }
   });
 });

@@ -15,6 +15,8 @@ vi.mock('$lib/server/access', () => ({ canAccess: () => true }));
 
 const { POST } = await import('../+server');
 
+const allowance = { spentUsd: 0, capUsd: 1, usedTokens: 0 };
+
 const post = (body: unknown) =>
   (POST as unknown as (e: unknown) => Promise<Response>)({
     params: { chatId: '7' },
@@ -22,11 +24,14 @@ const post = (body: unknown) =>
       method: 'POST',
       body: JSON.stringify(body),
     }),
-    locals: { user: { id: 1, username: 'mod' }, grants: { 'assistant.use': true } },
+    locals: {
+      user: { id: 1, username: 'mod', roles: ['moderator:mod-high-access'] },
+      grants: { 'assistant.use': true },
+    },
   });
 
 beforeEach(() => {
-  admitTurn.mockReset().mockResolvedValue({ ok: true, used: 0 });
+  admitTurn.mockReset().mockResolvedValue({ ok: true, allowance });
   executeTurn.mockReset().mockResolvedValue({});
 });
 
@@ -50,5 +55,12 @@ describe('POST /assistant/[chatId]/turn', () => {
     const res = await post({ prompt: 'q' });
     await res.text();
     expect(executeTurn).toHaveBeenCalledWith(expect.objectContaining({ model: null }));
+  });
+
+  it("admits the turn against the moderator's own roles, and runs it on that allowance", async () => {
+    const res = await post({ prompt: 'q' });
+    await res.text();
+    expect(admitTurn).toHaveBeenCalledWith(7, { id: 1, roles: ['moderator:mod-high-access'] });
+    expect(executeTurn).toHaveBeenCalledWith(expect.objectContaining({ allowance }));
   });
 });

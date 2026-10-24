@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { IconZoomCancel } from '@tabler/icons-svelte';
@@ -62,10 +63,13 @@
     data,
     form,
     fallbackType,
+    tabs,
   }: {
     data: QueueData;
     form: { error?: string } | null | undefined;
     fallbackType: RestrictionType;
+    /** A page's type switch, at the top of the list column. */
+    tabs?: Snippet;
   } = $props();
 
   // The open restriction, reported by the shell; a chosen verdict belongs to it alone.
@@ -154,12 +158,15 @@
 {/snippet}
 
 {#snippet listHeader()}
-  <div class="flex flex-col gap-1.5">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
-      <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+  <div class="flex flex-col gap-2.5">
+    {@render tabs?.()}
+    <div class="flex flex-col gap-1.5">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
+        <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+      </div>
+      <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
     </div>
-    <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
   </div>
 {/snippet}
 

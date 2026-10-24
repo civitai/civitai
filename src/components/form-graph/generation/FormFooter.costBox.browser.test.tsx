@@ -114,7 +114,10 @@ import {
   SubmitButton,
 } from '~/components/form-graph/generation/FormFooter';
 
-const store = { getSnapshot: () => ({ state: {} }) } as unknown as GenerationStore;
+const store = {
+  getSnapshot: () => ({ state: {} }),
+  subscribe: () => () => undefined,
+} as unknown as GenerationStore;
 
 const footerUi = () => (
   <div>
