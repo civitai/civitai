@@ -131,7 +131,9 @@ describe('getDraftModelsByUserId', () => {
         },
         {
           uploadType: ModelUploadType.Trained,
-          status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+          status: {
+            in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+          },
         },
       ])
     );

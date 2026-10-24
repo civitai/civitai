@@ -50,6 +50,23 @@ export function navCount(
   return total;
 }
 
+/** Whether a link's badge leaves out a count that could not be read: it, or a child it sums. */
+export function navPartial(link: NavLink, isUnavailable: (key: string) => boolean): boolean {
+  if (!link.children) return !!link.countKey && isUnavailable(link.countKey);
+  return link.children.some((child) => !child.informational && navPartial(child, isUnavailable));
+}
+
+/** A badge's text: the count, with "+" when it leaves out a count that could not be read ("?+" when
+ *  it has none it could). Null when there is nothing to show. */
+export function navBadge(
+  count: number | null,
+  partial: boolean,
+  format: (n: number) => string = String
+): { text: string; partial: boolean } | null {
+  if (partial) return { text: `${count === null ? '?' : format(count)}+`, partial };
+  return count === null ? null : { text: format(count), partial };
+}
+
 /**
  * The worst threshold step among a link's queues, 0 worst; `null` when none has a standard. Skips
  * informational children, as `navCount` does: nobody works through them.

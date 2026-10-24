@@ -83,6 +83,13 @@ export const setCanonChapterSchema = storylineChapterSchema.extend({
   parentChapterId: z.number().int().positive().optional(),
 });
 
+export const insertStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  parentChapterId: z.number().int().positive(),
+  childChapterId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),

@@ -256,6 +256,7 @@ describe('deleteImages retraction opt-in', () => {
 
     expect(invalidateCalls()).toHaveLength(1);
     expect(lastUrl()).not.toContain('retractPublicBlobs');
+    expect(lastUrl()).not.toContain('persist');
   });
 
   it('does not ask for retraction when the option is explicitly false', async () => {
@@ -298,6 +299,7 @@ describe('deleteImageById never retracts', () => {
 
     expect(invalidateCalls()).toHaveLength(1);
     expect(lastUrl()).not.toContain('retractPublicBlobs');
+    expect(lastUrl()).not.toContain('persist');
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'image-blob-retraction-requested' })
     );

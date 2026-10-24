@@ -502,6 +502,9 @@ export const createSubscribeSession = async ({
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
+    // A bank debit takes days to clear, but the membership goes active on checkout, so a
+    // bounced first payment has already granted the tier. Link is left out: it can pay from a bank.
+    payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
@@ -565,11 +568,19 @@ export const createDonateSession = async ({
   return { sessionId: session.id, url: session.url };
 };
 
+// Every portal session uses this configuration, so its payment-method settings decide what a
+// member can add from the portal. Unset, Stripe uses the account's default configuration.
+const portalConfiguration = () =>
+  env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+    ? { configuration: env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }
+    : {};
+
 export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/membership`,
   });
@@ -592,6 +603,7 @@ export const createSubscriptionChangeSession = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {
@@ -634,6 +646,7 @@ export const createCancelSubscriptionSession = async ({ customerId }: { customer
   }
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {

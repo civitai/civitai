@@ -110,13 +110,18 @@ const markerAppearedSql = Prisma.raw(
   `(to_regclass('"${HOLD_MARKER_VIEW}"') IS NOT NULL OR to_regclass('"${HOLD_MARKER_TABLE}"') IS NOT NULL)`
 );
 
+/** The hold-marker leg of `accountHoldSql` alone. */
+export function holdMarkerSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return markerView ? markerSql(id) : markerAppearedSql;
+}
+
 /**
  * Every hold on the account `id` (an int SQL expression) as one condition, for a statement that must
  * not touch a held account's rows even when a hold lands after the check. `markerView` is what
  * `assertAccountNotUnderLegalHold` returned.
  */
 export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
-  const legs = [...Object.values(holdLegsSql(id)), markerView ? markerSql(id) : markerAppearedSql];
+  const legs = [...Object.values(holdLegsSql(id)), holdMarkerSql(id, markerView)];
   return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
 }
 

@@ -77,7 +77,7 @@ export async function applyBountyPoi({
     await createNotification({
       userId: flagged.userId!,
       type: 'bounty-text-scan-flagged',
-      category: NotificationCategory.System,
+      category: NotificationCategory.Moderation,
       key: `bounty-text-scan-flagged:${entityId}:${workflowId}`,
       details: { bountyId: entityId, bountyName: flagged.name },
     });

@@ -452,6 +452,7 @@
     empty="No images to review in this queue."
     itemClass={cardClass}
     {selected}
+    heldMedia={data.view === 'csam'}
   >
     {#snippet card(item)}
       {@render userHeader(item)}

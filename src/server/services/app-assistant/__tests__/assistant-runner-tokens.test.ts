@@ -56,6 +56,18 @@ describe('the runner’s credentials, as the runner reads them', () => {
     expect(payload.exp! - payload.iat!).toBe(300);
   });
 
+  it('signs a preview grant: use preview, two minutes whatever the env says, never subagents', async () => {
+    setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
+    const { token } = await signRunGrant({ ...GRANT, use: 'preview', subagents: true });
+    const { payload } = await jwtVerify(token, keys.publicKey, {
+      issuer: 'civitai',
+      audience: 'assistant-runner:run-grant',
+    });
+    expect(payload).toMatchObject({ sub: '42', cid: 'c-1', key: 'k-1', use: 'preview' });
+    expect(payload).not.toHaveProperty('subagents');
+    expect(payload.exp! - payload.iat!).toBe(120);
+  });
+
   it('takes the grant TTL from the env', async () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
     const { payload } = await jwtVerify((await signRunGrant(GRANT)).token, keys.publicKey);

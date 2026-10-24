@@ -23,6 +23,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { respondWithRows } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
@@ -423,5 +424,52 @@ describe('bustImageDeliveryMetadataCache', () => {
   it('swallows a Redis del error (best-effort bust never throws)', async () => {
     redisDel.mockRejectedValueOnce(new Error('redis down'));
     await expect(bustImageDeliveryMetadataCache(URL)).resolves.toBeUndefined();
+  });
+
+  it('retries once, so a single transient Redis error still clears the entry', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
+    await getCachedImageDeliveryMetadata(URL);
+    redisDel.mockRejectedValueOnce(new Error('redis blip'));
+
+    await bustImageDeliveryMetadataCache(URL);
+
+    expect(redisDel).toHaveBeenCalledTimes(2);
+    expect(store.has(`${KEY_PREFIX}:${URL}`)).toBe(false);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+
+  // The bust runs inside the user's save, so a hung Redis must not hold it past the deadline.
+  it('gives up within one second on a hung Redis, across both attempts, and logs', async () => {
+    vi.useFakeTimers();
+    try {
+      redisDel.mockReturnValue(new Promise(() => undefined));
+
+      let settled = false;
+      const done = bustImageDeliveryMetadataCache(URL).then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      // Read the flag rather than awaiting `done`: a regression then fails here instead of hanging.
+      expect(settled).toBe(true);
+      await done;
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A failed bust leaves the old hideMeta served for up to the TTL; it must be visible.
+  it('logs when the bust still fails after the retry', async () => {
+    redisDel.mockRejectedValue(new Error('redis down'));
+
+    await expect(bustImageDeliveryMetadataCache(URL)).resolves.toBeUndefined();
+
+    expect(redisDel).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
+    );
   });
 });

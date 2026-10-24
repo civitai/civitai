@@ -101,12 +101,14 @@ const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
  * (shard 3 at 17,079 vs 17,036, 2026-09-25) with sharding working correctly, three weeks
  * after BASE_TESTS was last re-pinned for the same reason. Do not move this back to tests.
  *
- * BASE_FILES is the whole unit suite's file count: 515 + 514 + 514 + 514 = 2,057, the four
- * shards' "across N files" figures on `main`, 2026-09-25 (run 36084791308). A stale-low
- * figure trips the ceiling only once the suite grows 80% past it.
+ * BASE_FILES is the whole unit suite's file count: 927 + 927 + 926 + 926 = 3,706, the four
+ * shards' "across N files" figures on `main` at 24ee0e73a8, 2026-10-24 (run 40113886304).
+ * The previous pin (2,057, 2026-09-25) went stale in a month: the suite grew 80% and the
+ * ceiling turned shards 1 and 2 red on `main` with every test passing. A stale-low figure
+ * trips the ceiling only once the suite grows 80% past it.
  */
-const BASE_FILES = 2057;
-const BASE_FILES_MEASURED = '2026-09-25';
+const BASE_FILES = 3706;
+const BASE_FILES_MEASURED = '2026-10-24';
 const MAX_FILES = Math.round((BASE_FILES / total) * 1.8);
 
 if (!existsSync(reportPath)) {

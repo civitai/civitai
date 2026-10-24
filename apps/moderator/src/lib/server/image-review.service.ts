@@ -35,6 +35,10 @@ export type ImageReviewItem = {
   postTitle: string | null;
   entityType: string | null;
   entityId: number | null;
+  mimeType: string | null;
+  /** Raw `metadata` text, for the placeholder of a file that cannot be shown. */
+  size: string | null;
+  duration: string | null;
   reviewTags: ReviewTag[];
 };
 
@@ -99,6 +103,9 @@ export async function getImageReviewQueue({
       'p.title as postTitle',
       'ic.entityType',
       'ic.entityId',
+      'i.mimeType',
+      sql<string | null>`i.metadata ->> 'size'`.as('size'),
+      sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
