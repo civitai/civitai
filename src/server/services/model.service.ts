@@ -6038,89 +6038,92 @@ export const privateModelFromTraining = async ({
   try {
     // One transaction: the model row stays locked until its versions are written, so a model
     // take-down waits, and its own cascade then takes these versions down with it.
-    const result = await dbWrite.$transaction(async (tx) => {
-      const result = await tx.model
-        .update({
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            nsfwLevel: true,
-            poi: true,
-            minor: true,
-            sfwOnly: true,
-            nsfw: true,
-            gallerySettings: true,
-            status: true,
-            meta: true,
-            modelVersions: {
-              where: modelVersionIds
-                ? {
-                    id: {
-                      in: modelVersionIds,
-                    },
-                  }
-                : undefined,
-              select: {
-                id: true,
-                status: true,
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const result = await tx.model
+          .update({
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              nsfwLevel: true,
+              poi: true,
+              minor: true,
+              sfwOnly: true,
+              nsfw: true,
+              gallerySettings: true,
+              status: true,
+              meta: true,
+              modelVersions: {
+                where: modelVersionIds
+                  ? {
+                      id: {
+                        in: modelVersionIds,
+                      },
+                    }
+                  : undefined,
+                select: {
+                  id: true,
+                  status: true,
+                },
               },
             },
-          },
-          // Re-checked by the write itself, so a model take-down that lands after the check above wins.
-          where: { id, ...keepDowned },
-          data: {
-            ...data,
-            meta: {
-              // This write replaces meta wholesale. A moderator's form never holds the hidden
-              // moderation-owned keys, so they are carried under the moderator's input.
-              ...(user.isModerator
-                ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
-                : {}),
-              ...(stripServerOwnedMeta(
-                stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
-              ) ?? {}),
-              ...pickServerOwnedMeta(storedMeta),
-              ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
-              // Makes it so these models cannot go into auctions or be promoted
-              cannotPromote: true,
-              ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+            // Re-checked by the write itself, so a model take-down that lands after the check above wins.
+            where: { id, ...keepDowned },
+            data: {
+              ...data,
+              meta: {
+                // This write replaces meta wholesale. A moderator's form never holds the hidden
+                // moderation-owned keys, so they are carried under the moderator's input.
+                ...(user.isModerator
+                  ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+                  : {}),
+                ...(stripServerOwnedMeta(
+                  stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
+                ) ?? {}),
+                ...pickServerOwnedMeta(storedMeta),
+                ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+                // Makes it so these models cannot go into auctions or be promoted
+                cannotPromote: true,
+                ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+              },
+              availability: Availability.Private,
+              status: ModelStatus.Published,
+              sfwOnly: true, // Private models only allow sfw generation
             },
-            availability: Availability.Private,
-            status: ModelStatus.Published,
-            sfwOnly: true, // Private models only allow sfw generation
-          },
-        })
-        .catch((error) => {
-          if (error?.code !== 'P2025') throw error;
-          takenDown = true;
-          throw throwAuthorizationError('You are not authorized to publish this model');
-        });
+          })
+          .catch((error) => {
+            if (error?.code !== 'P2025') throw error;
+            takenDown = true;
+            throw throwAuthorizationError('You are not authorized to publish this model');
+          });
 
-      if (result.modelVersions.length > 0) {
-        const now = new Date();
+        if (result.modelVersions.length > 0) {
+          const now = new Date();
 
-        // Make this private:
-        await tx.modelVersion.updateMany({
-          where: { modelId: id, ...keepDowned },
-          data: {
-            // availability: Availability.Private, -- moved to second updateMany
-            publishedAt: now,
-            status: ModelStatus.Published,
-          },
-        });
+          // Make this private:
+          await tx.modelVersion.updateMany({
+            where: { modelId: id, ...keepDowned },
+            data: {
+              // availability: Availability.Private, -- moved to second updateMany
+              publishedAt: now,
+              status: ModelStatus.Published,
+            },
+          });
 
-        // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
-        // if a moderator later restores one through a path that leaves availability alone.
-        await tx.modelVersion.updateMany({
-          where: { modelId: id },
-          data: {
-            availability: Availability.Private,
-          },
-        });
-      }
-      return result;
-    });
+          // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
+          // if a moderator later restores one through a path that leaves availability alone.
+          await tx.modelVersion.updateMany({
+            where: { modelId: id },
+            data: {
+              availability: Availability.Private,
+            },
+          });
+        }
+        return result;
+      },
+      { timeout: 10000 }
+    );
 
     if (result.modelVersions.length > 0) {
       // Create posts:

@@ -149,6 +149,28 @@ describe('making a model with a taken-down version private', () => {
 
   // Ruled by the Moderation Lead (hq:ky1cf68gw8ec): a moderator's run keeps them down too.
   // Restoring a taken-down version is its own explicit moderator action, not a side effect of this one.
+  // One transaction, so a model take-down landing between the model write and the version writes waits,
+  // then takes the versions down with it. The race itself was measured on Postgres; the mocked client
+  // runs a transaction on dbWrite, so this pins that every write goes through it.
+  it('writes the model and its versions in one transaction', async () => {
+    const onTx: string[] = [];
+    const tx = {
+      model: {
+        update: (args: never) => (onTx.push('model.update'), dbMock.dbWrite.model.update(args)),
+      },
+      modelVersion: {
+        updateMany: (args: never) => (
+          onTx.push('modelVersion.updateMany'), dbMock.dbWrite.modelVersion.updateMany(args)
+        ),
+      },
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce(((fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
+    await makePrivate();
+
+    expect(onTx).toEqual(['model.update', 'modelVersion.updateMany', 'modelVersion.updateMany']);
+  });
+
   it('keeps them down when a moderator runs it', async () => {
     await makePrivate(true);
 
