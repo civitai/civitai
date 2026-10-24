@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -237,16 +237,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     >
       {inView && (
         <>
-          <EdgeMedia
-            src={image.url}
-            name={image.name ?? image.id.toString()}
-            alt={image.name ?? undefined}
-            type={image.type}
-            width={450}
-            placeholder="empty"
-            style={{ width: '100%' }}
-            onClick={toggleSelected}
-          />
+          <HeldMedia image={image} onClick={toggleSelected} />
           <Checkbox
             checked={checked}
             onChange={toggleSelected}
@@ -261,5 +252,49 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
         </>
       )}
     </MasonryCard>
+  );
+}
+
+/** From storage through `/api/mod/held-media`; the CDN only for an image that route will not serve,
+ *  which is one it does not hold. */
+function HeldMedia({ image, onClick }: { image: ModerationImageModel; onClick: () => void }) {
+  const [refused, setRefused] = useState(false);
+  const src = `/api/mod/held-media/${image.id}`;
+  if (refused)
+    return (
+      <EdgeMedia
+        src={image.url}
+        name={image.name ?? image.id.toString()}
+        alt={image.name ?? undefined}
+        type={image.type}
+        width={450}
+        placeholder="empty"
+        style={{ width: '100%' }}
+        onClick={onClick}
+      />
+    );
+  if (image.type === 'video')
+    return (
+      <video
+        src={src}
+        muted
+        playsInline
+        preload="metadata"
+        style={{ width: '100%' }}
+        onClick={onClick}
+        onError={() => setRefused(true)}
+      />
+    );
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={image.name ?? ''}
+      loading="lazy"
+      decoding="async"
+      style={{ width: '100%' }}
+      onClick={onClick}
+      onError={() => setRefused(true)}
+    />
   );
 }

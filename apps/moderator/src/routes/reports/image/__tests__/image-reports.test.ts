@@ -26,6 +26,7 @@ vi.mock('$lib/server/sticker-placement-actions', () => ({
 }));
 const verbs = { ...imageQueueActions, removePlacement };
 vi.mock('$lib/server/access', () => ({ denied: (id: string) => `needs ${id}` }));
+vi.mock('$lib/server/held-media', () => ({ recordHeldGridView: vi.fn() }));
 
 const { load, actions } = await import('../+page.server');
 const { load: imagesLoad } = await import('../../../images/[slug]/+page.server');
