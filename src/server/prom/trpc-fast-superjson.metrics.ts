@@ -48,12 +48,18 @@ const fastSuperjsonWritesCounter = registerInstrumentationMetric(
 let procedureRegistry: Record<string, unknown> | undefined;
 
 /**
- * Called once by the tRPC route with `appRouter._def.procedures`. The map is kept by reference:
- * a lazily loaded sub-router adds its procedures to it when it loads, which is always before a
- * response from one of them is serialized.
+ * Called once by the tRPC route with the app router. Its `_def.procedures` (at runtime the
+ * flattened `{ 'model.getAll': procedure }` map, though typed as the nested record) is kept by
+ * reference: a lazily loaded sub-router adds its procedures to it when it loads, which is always
+ * before a response from one of them is serialized. Never throws, so the route module always
+ * loads; a router without the map leaves every path label `other`.
  */
-export function setTrpcProcedureRegistry(procedures: Record<string, unknown>): void {
-  procedureRegistry = procedures;
+export function setTrpcProcedureRegistry(router: unknown): void {
+  const procedures = (router as { _def?: { procedures?: unknown } } | undefined)?._def?.procedures;
+  procedureRegistry =
+    procedures && typeof procedures === 'object'
+      ? (procedures as Record<string, unknown>)
+      : undefined;
 }
 
 /** The bounded `path` label for a raw request path. */

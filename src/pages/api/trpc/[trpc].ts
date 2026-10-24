@@ -54,9 +54,8 @@ export const config = {
   },
 };
 
-// Bounds the `path` label of the fast-superjson write counter to procedures that exist. At runtime
-// `_def.procedures` is the flattened `{ 'model.getAll': procedure }` map (typed as the nested record).
-setTrpcProcedureRegistry(appRouter._def.procedures as unknown as Record<string, unknown>);
+// Bounds the `path` label of the fast-superjson write counter to procedures that exist.
+setTrpcProcedureRegistry(appRouter);
 
 const trpcHandler = createNextApiHandler({
   router: appRouter,
