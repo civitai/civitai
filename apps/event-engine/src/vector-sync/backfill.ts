@@ -3,7 +3,7 @@
  *
  *   node dist/vector-sync/backfill.js run --watermark <id> [--limit N] [--dry-run] [--confirm]
  *        [--floor <id>] [--span 5000] [--pages 2] [--name images] [--cursor-file path]
- *        [--without-image-cdc]
+ *        [--without-image-cdc] [--max-rate <writes/s>] [--window HH:MM-HH:MM (UTC)]
  *   node dist/vector-sync/backfill.js pause|resume|status|reset [--name images]
  *
  * Pages are id windows, not LIMIT queries, so a page's cost is bounded by its span however
@@ -37,7 +37,26 @@ export type BackfillOptions = {
   /** Stop after this many eligible images. */
   limit?: number;
   logEveryMs?: number;
+  /** Qdrant writes (points embedded, rewritten or deleted) per second, averaged per page. */
+  maxRate?: number;
+  /** Start new pages only inside this UTC window, e.g. "22:00-06:00" (may wrap midnight). */
+  window?: string;
 };
+
+/** Minutes after midnight of each end of an `HH:MM-HH:MM` window; throws on a bad one. */
+export function parseWindow(window: string): [number, number] {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/.exec(window);
+  if (!m) throw new Error(`--window must be HH:MM-HH:MM (UTC), got ${window}`);
+  const [from, to] = [Number(m[1]) * 60 + Number(m[2]), Number(m[3]) * 60 + Number(m[4])];
+  if (from === to) throw new Error('--window start and end must differ');
+  return [from, to];
+}
+
+export function inWindow(ms: number, [from, to]: [number, number]) {
+  const d = new Date(ms);
+  const minute = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return from < to ? minute >= from && minute < to : minute >= from || minute < to;
+}
 
 export type BackfillResult = ReturnType<typeof emptyStats> & {
   scanned: number;
@@ -54,6 +73,7 @@ type BackfillDeps = SyncDeps & {
   gateEveryMs?: number;
   /** True once another run may own the cursor; this one then stops writing it. */
   leaseLost?: () => boolean;
+  now?: () => number;
 };
 
 const LEASE_MS = 120_000;
@@ -93,6 +113,16 @@ export async function runBackfill(
 
 async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<BackfillResult> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const now = deps.now ?? Date.now;
+  const window = opts.window ? parseWindow(opts.window) : null;
+  // The disk Qdrant writes to is shared, so pages are paced: each finished page pushes the next
+  // start back by its writes / maxRate.
+  let nextPageAt = 0;
+  const holdReason = () => {
+    if (window && !inWindow(now(), window)) return `outside window ${opts.window} UTC`;
+    if (now() < nextPageAt) return 'rate limit';
+    return null;
+  };
   const total = { ...emptyStats(), scanned: 0, cursor: 0, done: false };
   const start = (await deps.state.getCursor()) ?? opts.watermark + 1;
   let next = Math.min(start, opts.watermark + 1);
@@ -107,6 +137,11 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
         ...total,
         cursor: committed,
         perSec: Math.round((total.embedded + total.updated) / Math.max(secs, 1)),
+        writesPerSec: Math.round(
+          (total.embedded + total.updated + total.deleted) / Math.max(secs, 1)
+        ),
+        maxRate: opts.maxRate ?? null,
+        window: opts.window ?? null,
       },
       msg
     );
@@ -134,6 +169,10 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
         const stats = await syncRows(rows, [], deps);
         total.scanned += rows.length;
         addStats(total, stats);
+        if (opts.maxRate) {
+          const writes = stats.embedded + stats.updated + stats.deleted;
+          nextPageAt = Math.max(now(), nextPageAt) + (writes / opts.maxRate) * 1000;
+        }
         return;
       } catch (err) {
         // Retry a blip (Qdrant, Postgres); a model mismatch repeats, and each retry pays.
@@ -171,7 +210,8 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
       next <= opts.floor ||
       (opts.limit !== undefined && total.eligible >= opts.limit) ||
       deps.shouldStop?.();
-    if (!stop && !gateBlocked && !(await deps.state.isPaused()) && inFlight.size < opts.pages) {
+    const held = gateBlocked ?? holdReason();
+    if (!stop && !held && !(await deps.state.isPaused()) && inFlight.size < opts.pages) {
       const hi = next;
       next = Math.max(opts.floor, hi - opts.span);
       inFlight.set(
@@ -185,12 +225,12 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
     }
     if (!inFlight.size) {
       if (stop) break;
-      // Paused with nothing running.
+      // Held with nothing running: the pause flag, the gate, the window or the rate limit.
       if (Date.now() - lastLog > 60_000) {
-        log('vector-backfill: paused');
+        log(`vector-backfill: waiting (${held ?? 'paused'})`);
         lastLog = Date.now();
       }
-      await sleep(5000);
+      await sleep(held === 'rate limit' ? Math.min(5000, Math.max(0, nextPageAt - now())) : 5000);
       continue;
     }
     await Promise.race(inFlight.values());
@@ -225,15 +265,22 @@ function parseArgs(argv: string[]) {
   const int = (name: string, fallback?: number) => {
     const v = flags[name];
     if (v === undefined) return fallback;
+    if (v === true) throw new Error(`--${name} needs a value`);
     const n = Number(v);
     if (!Number.isInteger(n) || n < 0) throw new Error(`--${name} must be a non-negative integer`);
     return n;
   };
-  return { command, flags, int };
+  const positive = (name: string) => {
+    if (flags[name] === true) throw new Error(`--${name} needs a value`);
+    const n = Number(flags[name]);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`--${name} must be a positive number`);
+    return n;
+  };
+  return { command, flags, int, positive };
 }
 
 async function main() {
-  const { command, flags, int } = parseArgs(process.argv.slice(2));
+  const { command, flags, int, positive } = parseArgs(process.argv.slice(2));
   const name = String(flags.name ?? 'images');
   // Logged by every command: pause or status run with another VECTOR_COLLECTION addresses
   // another run.
@@ -266,6 +313,10 @@ async function main() {
     const watermark = int('watermark');
     if (watermark === undefined) throw new Error('--watermark <id> is required');
     const dryRun = flags['dry-run'] === true;
+    // Fail on a bad window or rate before any lease or connection is taken.
+    if (flags.window !== undefined) parseWindow(String(flags.window));
+    if (flags['max-rate'] !== undefined) positive('max-rate');
+    for (const name of ['limit', 'floor', 'span', 'pages']) int(name);
     let gateCheck: (() => Promise<string | null>) | undefined;
     if (!dryRun) {
       if (flags.confirm !== true) throw new Error('Writing needs --confirm (or pass --dry-run)');
@@ -305,6 +356,8 @@ async function main() {
           span: Math.max(1, int('span', 5000)!),
           pages: Math.max(1, int('pages', 2)!),
           limit: int('limit'),
+          maxRate: flags['max-rate'] === undefined ? undefined : positive('max-rate'),
+          window: flags.window === undefined ? undefined : String(flags.window),
         },
         {
           pg,

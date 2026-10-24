@@ -85,7 +85,12 @@ const bridge = (tx: { query: PGlite['query'] }) => {
       }
       return run(strings, ...values);
     };
-  return { $executeRaw: hooked(raw.executeRaw), $queryRaw: hooked(raw.queryRaw) };
+  return {
+    $executeRaw: hooked(raw.executeRaw),
+    $queryRaw: hooked(raw.queryRaw),
+    // The listing itself is mocked, not a row here; the takedown reads and archives it in a tx.
+    cosmeticShopItem: dbMock.dbWrite.cosmeticShopItem,
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);

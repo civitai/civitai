@@ -48,8 +48,13 @@
   display: block;
   white-space: pre;
   line-height: var(--cnf-row);
-  transform: translateY(calc(var(--cnf-n, 0) * -1 * var(--cnf-row)));
-  transition: transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* Roll with a layout offset, not a transform. Firefox rounds a translated line to device pixels
+     separately from the same glyph laid out normally, so with a fractional device pixel ratio
+     (a 225% Windows display, DPR 2.25) digit columns painted 1 device pixel apart. Layout offsets
+     snap the same way for every digit, in Firefox and Chromium. */
+  position: relative;
+  top: calc(var(--cnf-n, 0) * -1 * var(--cnf-row));
+  transition: top 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .gradient .stack,

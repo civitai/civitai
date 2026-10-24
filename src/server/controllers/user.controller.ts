@@ -63,6 +63,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { countUnclaimedPrizes } from '~/server/services/prize.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
@@ -326,10 +327,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
-      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
-        total: 0,
-        byCollection: {},
-      })),
+      getPendingCollectionReviewCounts({ userId: id, levels: requestServableLevels(ctx) }).catch(
+        () => ({
+          total: 0,
+          byCollection: {},
+        })
+      ),
     ]);
 
     // `pendingPlacements` rides along here rather than getting its own query:

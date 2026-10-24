@@ -30,6 +30,7 @@ import { isDefined } from '~/utils/type-guards';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -127,6 +128,7 @@ function RenderFilters() {
         attribute="baseModel"
         limit={100}
         searchable
+        renderOption={renderBaseModelOption}
       />
     </>
   );

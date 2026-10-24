@@ -70,7 +70,7 @@ export const notifyStorylineTitleModerated = (
 ) =>
   createNotification({
     userId: storyline.userId,
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     type: STORYLINE_TITLE_MODERATED,
     // Per verdict: a redelivered callback is the same notice, a later scan is a new one.
     key: `${STORYLINE_TITLE_MODERATED}-${details.storylineId}-${
