@@ -73,7 +73,13 @@ export type DocListQuery = {
 
 export type DocListResult = { items: DocRecord[]; nextCursor: string | null };
 
-/** Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer). */
+/**
+ * Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer).
+ * `app` is the app's SHARED documents only — what the app ceiling (`appBytes` / `appDocs`)
+ * measures. `viewer` is everything charged to the viewer: their private documents, the shared
+ * documents they authored and the counter documents their increment created — what the
+ * per-viewer ceiling (`userBytes` / `userDocs`) measures. So `viewer` can exceed `app`.
+ */
 export type DocStoreUsage = {
   app: { bytes: number; docs: number };
   viewer: { bytes: number; docs: number } | null;
@@ -86,7 +92,11 @@ export type DocStoreLimits = {
   userDocs: number;
 };
 
-/** Per-(app, namespace) and per-(app, namespace, user) ceilings, in the stored unit. */
+/**
+ * Per-(app, namespace) and per-(app, namespace, user) ceilings, in the stored unit. The app
+ * ceiling counts SHARED documents only; a private document counts toward its viewer's ceiling
+ * alone (see WHICH CEILINGS in `doc-store.ts`).
+ */
 export const DEFAULT_DOC_STORE_LIMITS: DocStoreLimits = {
   appBytes: 50 * 1024 * 1024,
   appDocs: 1_000_000,
@@ -159,7 +169,10 @@ export type AccountWipeNamespaceResult = {
   mode: 'namespace' | 'user';
   /** Private documents deleted (their index rows went with them). */
   privateDocs: number;
-  /** Bytes refunded to the app's usage for those documents. */
+  /**
+   * Bytes of those documents. They were charged to the account's own usage only, which the wipe
+   * deletes; the app's usage never carried them, so nothing is refunded to it.
+   */
   privateBytes: number;
   /** Shared documents the account authored, deleted as a moderator delete does. */
   sharedDocs: number;
