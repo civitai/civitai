@@ -145,24 +145,26 @@ export type PlacementPriceRange = {
 export async function placementPriceRange(
   userId: number,
   surface: PlacementSurface,
-  config?: PlacementConfig
+  config?: PlacementConfig,
+  /** `kysely-placement-reads`, when the caller already evaluated it for this request. */
+  useKysely?: boolean
 ): Promise<PlacementPriceRange> {
+  const kysely = useKysely ?? (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS));
   const [scoreRow, capTier, resolvedConfig] = await Promise.all([
-    readUserScore(userId),
+    readUserScore(userId, kysely),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId),
+    getCapTier(userId, { useKysely: kysely }),
     config ?? getPlacementConfig(),
   ]);
 
   return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
 }
 
-async function readUserScore(userId: number) {
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    return getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId);
+async function readUserScore(userId: number, useKysely: boolean) {
+  if (useKysely) return getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId);
   // Cast through `numeric`: `::int` raises on a fractional stored total rather
   // than truncating it. Text that isn't a number at all still raises.
   return dbRead.$queryRaw<{ score: number | null }[]>`

@@ -7,8 +7,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// SQL pinned in packages/civitai-db-queries/src/placement.db.test.ts; rows against Prisma's in
-// placement-reads.kysely-parity.test.ts.
+// SQL pinned in packages/civitai-db-queries/src/placement.db.test.ts; rows against Prisma's in the
+// opt-in (not in CI) placement-reads.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   const actual = await importOriginal<typeof PlacementQueries>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));

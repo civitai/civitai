@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  countFreePlacementsOnTarget,
-  countFreePlacementsSince,
   countPendingPlacementsBySurface,
-  countReservedFreeSlots,
+  countPlacements,
   getChapterPlacementTarget,
   getImagePlacementTarget,
   getModelPlacementTarget,
@@ -26,8 +24,9 @@ const only = () => {
   return harness.lastQuery();
 };
 
-// Pins the EXACT SQL and parameters. Parity with the Prisma reads these replace is pinned against a
-// real database in src/server/services/__tests__/placement-reads.kysely-parity.test.ts. Every
+// Pins the EXACT SQL and parameters. Row parity with the Prisma reads these replace is written in
+// src/server/services/__tests__/placement-reads.kysely-parity.test.ts, which is opt-in and does
+// NOT run in CI. Every
 // fixture value is distinct, so a swapped or hardcoded parameter shows in `parameters`.
 describe('placement.db', () => {
   it('getImagePlacementTarget reads the image with its owner username in one statement', async () => {
@@ -94,12 +93,15 @@ describe('placement.db', () => {
     expect(harness.queries).toHaveLength(0);
   });
 
-  it('countReservedFreeSlots counts free rows in the holding statuses on one space', async () => {
-    await countReservedFreeSlots(harness.db, {
+  // Each where below is the shape a service builder produces (reservedFreeSlotsWhere,
+  // freePlacementsTodayWhere, freePlacementsOnWhere). Clauses follow the object's key order.
+  it('countPlacements compiles equality, `in` and the reserved-slot predicate', async () => {
+    await countPlacements(harness.db, {
       surface: 'sticker',
       targetType: 'image',
       targetId: 21,
-      statuses: ['pending', 'approved'],
+      free: true,
+      status: { in: ['pending', 'approved'] },
     });
     const { sql, parameters } = only();
     expect(sql).toBe(
@@ -109,22 +111,11 @@ describe('placement.db', () => {
     expect(parameters).toEqual(['sticker', 'image', 21, true, 'pending', 'approved']);
   });
 
-  it('countReservedFreeSlots answers 0 with no statement for an empty status list', async () => {
-    expect(
-      await countReservedFreeSlots(harness.db, {
-        surface: 'sticker',
-        targetType: 'image',
-        targetId: 21,
-        statuses: [],
-      })
-    ).toBe(0);
-    expect(harness.queries).toHaveLength(0); // `in ()` is a Postgres syntax error
-  });
-
-  it('countFreePlacementsSince bounds createdAt by the UTC instant, whatever the process zone', async () => {
-    await countFreePlacementsSince(harness.db, {
+  it('countPlacements bounds a Date by its UTC instant, whatever the process zone', async () => {
+    await countPlacements(harness.db, {
       placerId: 31,
-      since: new Date(Date.UTC(2026, 9, 23)),
+      free: true,
+      createdAt: { gte: new Date(Date.UTC(2026, 9, 23)) },
     });
     const { sql, parameters } = only();
     expect(sql).toBe(
@@ -134,32 +125,38 @@ describe('placement.db', () => {
     expect(parameters).toEqual([31, true, '2026-10-23T00:00:00.000Z']);
   });
 
-  it('countFreePlacementsOnTarget counts this placer free rows on one space, every status', async () => {
-    await countFreePlacementsOnTarget(harness.db, {
-      placerId: 32,
-      surface: 'sticker',
-      targetType: 'image',
-      targetId: 33,
-    });
+  it('countPlacements skips an undefined filter, as Prisma does', async () => {
+    await countPlacements(harness.db, { placerId: 32, surface: undefined, free: true });
     const { sql, parameters } = only();
     expect(sql).toBe(
-      'select count(*) as "count" from "Placement" where "placerId" = $1 and "free" = $2 ' +
-        'and "surface" = $3 and "targetType" = $4 and "targetId" = $5'
+      'select count(*) as "count" from "Placement" where "placerId" = $1 and "free" = $2'
     );
-    expect(parameters).toEqual([32, true, 'sticker', 'image', 33]);
+    expect(parameters).toEqual([32, true]);
   });
 
-  it('the counts answer a JS number (0 when no row comes back)', async () => {
-    expect(
-      await countFreePlacementsOnTarget(harness.db, {
-        placerId: 32,
-        surface: 'sticker',
-        targetType: 'image',
-        targetId: 33,
-      })
-    ).toBe(0);
+  it('countPlacements answers 0 with no statement for an empty `in`, as Prisma does', async () => {
+    expect(await countPlacements(harness.db, { placerId: 33, status: { in: [] } })).toBe(0);
+    expect(harness.queries).toHaveLength(0); // `in ()` is a Postgres syntax error
   });
 
+  it('countPlacements answers a JS number (0 when no row comes back)', async () => {
+    expect(await countPlacements(harness.db, { placerId: 34 })).toBe(0);
+  });
+
+  // A Prisma operator this translator does not know must fail loudly: dropped, it would widen the
+  // Kysely count only, and the A/B would compare two different predicates.
+  it.each([
+    ['notIn', { status: { notIn: ['removed'] } }],
+    ['a null (IS NULL in Prisma)', { removedBy: null }],
+    ['a Date equality', { createdAt: new Date(0) }],
+    ['two operators on one column', { createdAt: { gte: new Date(0), lt: new Date(1) } }],
+    ['gte on a non-Date', { amount: { gte: 5 } }],
+  ])('countPlacements refuses %s instead of ignoring it', async (_, where) => {
+    await expect(countPlacements(harness.db, where as never)).rejects.toThrow(
+      /countPlacements: unsupported condition/
+    );
+    expect(harness.queries).toHaveLength(0);
+  });
   it('countPendingPlacementsBySurface groups one owner pending rows by surface', async () => {
     await countPendingPlacementsBySurface(harness.db, 41);
     const { sql, parameters } = only();

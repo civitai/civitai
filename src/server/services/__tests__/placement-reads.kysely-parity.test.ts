@@ -4,10 +4,8 @@ import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
-  countFreePlacementsOnTarget,
-  countFreePlacementsSince,
   countPendingPlacementsBySurface,
-  countReservedFreeSlots,
+  countPlacements,
   getChapterPlacementTarget,
   getImagePlacementTarget,
   getModelPlacementTarget,
@@ -311,59 +309,59 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
   });
 
   describe('the counts', () => {
-    it('countReservedFreeSlots matches reservedFreeSlots, as a number', async () => {
-      const where = {
+    // countPlacements is handed the SAME where object as Prisma, as the services do (one builder
+    // per predicate), so what is compared is the translation, on real rows.
+    const both = (where: Parameters<typeof countPlacements>[1]) =>
+      Promise.all([
+        countPlacements(kysely, where),
+        prisma.placement.count({ where: where as never }),
+      ]);
+
+    it('the reserved-slot predicate counts the same, as a number', async () => {
+      const [k, p] = await both({
         surface: 'sticker',
         targetType: 'image',
         targetId: TARGET,
         free: true,
         status: { in: ['pending', 'approved'] },
-      };
-      const [k, p] = await Promise.all([
-        countReservedFreeSlots(kysely, {
-          surface: 'sticker',
-          targetType: 'image',
-          targetId: TARGET,
-          statuses: ['pending', 'approved'],
-        }),
-        prisma.placement.count({ where }),
-      ]);
+      });
       expect(p).toBe(3); // rows 2, 3, 6: pending and approved free rows on TARGET, not 4 (declined)
       expect(k).toBe(p);
     });
 
-    it('countFreePlacementsSince matches the daily allowance count on both sides of the UTC midnight', async () => {
+    it('the daily-allowance predicate counts the same on both sides of the UTC midnight', async () => {
+      const counts: number[] = [];
       for (const [placerId, since] of [
         [PLACER, DAY],
         [PLACER, new Date(DAY.getTime() - 1)],
         [STRANGER, DAY],
       ] as const) {
-        const [k, p] = await Promise.all([
-          countFreePlacementsSince(kysely, { placerId, since }),
-          prisma.placement.count({ where: { placerId, free: true, createdAt: { gte: since } } }),
-        ]);
+        const [k, p] = await both({ placerId, free: true, createdAt: { gte: since } });
         expect(k).toBe(p);
+        counts.push(k);
       }
-      // Positive control that the boundary is seen: 23:59:59.999 is in the second window only.
-      expect(await countFreePlacementsSince(kysely, { placerId: PLACER, since: DAY })).toBe(1);
-      expect(
-        await countFreePlacementsSince(kysely, {
-          placerId: PLACER,
-          since: new Date(DAY.getTime() - 1),
-        })
-      ).toBe(2);
+      // Positive control that the boundary is seen: 23:59:59.999 is in the second window only, and
+      // the 00:00:00.000 row is inside the third (gte).
+      expect(counts).toEqual([1, 2, 1]);
     });
 
-    it('countFreePlacementsOnTarget matches the never-twice-here count, every status', async () => {
-      const input = { placerId: PLACER, surface: 'sticker', targetType: 'image', targetId: TARGET };
-      const [k, p] = await Promise.all([
-        countFreePlacementsOnTarget(kysely, input),
-        prisma.placement.count({ where: { ...input, free: true } }),
-      ]);
+    it('the never-twice-here predicate counts the same, every status', async () => {
+      const [k, p] = await both({
+        placerId: PLACER,
+        free: true,
+        surface: 'sticker',
+        targetType: 'image',
+        targetId: TARGET,
+      });
       expect(p).toBe(3); // rows 2, 4, 6
       expect(k).toBe(p);
     });
 
+    it('an empty `in` counts 0 on both', async () => {
+      const [k, p] = await both({ placerId: PLACER, status: { in: [] } });
+      expect(p).toBe(0);
+      expect(k).toBe(p);
+    });
     it('countPendingPlacementsBySurface matches the pending-badge groupBy', async () => {
       const [k, p] = await Promise.all([
         countPendingPlacementsBySurface(kysely, OWNER),

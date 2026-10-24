@@ -132,7 +132,7 @@ describe('the free-placement claim under kysely-placement-reads', () => {
     tx.placement.count.mockImplementation(async ({ where }) =>
       where.createdAt ? FREE_PLACEMENTS_PER_DAY : 0
     );
-    q.countFreePlacementsSince.mockResolvedValue(0);
+    q.countPlacements.mockResolvedValue(0);
 
     await expect(claim()).rejects.toThrow(/used your free placement for today/);
     expect(tx.placement.create).not.toHaveBeenCalled();
@@ -146,23 +146,27 @@ describe('the free-placement display counts under kysely-placement-reads', () =>
       used: 1,
       remaining: Math.max(FREE_PLACEMENTS_PER_DAY - 1, 0),
     });
-    expect(q.countFreePlacementsSince).not.toHaveBeenCalled();
+    expect(q.countPlacements).not.toHaveBeenCalled();
   });
 
   it('ON: the same allowance, through Kysely on the replica, since UTC midnight', async () => {
     dbMock.dbRead.placement.count.mockResolvedValue(1);
     const off = await getFreePlacementAllowance({ placerId: PLACER });
+    const prismaWhere = dbMock.dbRead.placement.count.mock.calls[0][0].where;
     dbMock.dbRead.placement.count.mockClear();
     flag.mockResolvedValue(true);
-    q.countFreePlacementsSince.mockResolvedValue(1);
+    q.countPlacements.mockResolvedValue(1);
 
     await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toEqual(off);
     expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();
-    expect(q.countFreePlacementsSince.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
     expect(kyselyRead).not.toBe(kyselyWrite);
-    expect(q.countFreePlacementsSince.mock.calls[0][1]).toEqual({
+    // Twin guard: the Kysely count gets the predicate the Prisma count got, which is the daily one.
+    expect(q.countPlacements.mock.calls[0][1]).toEqual(prismaWhere);
+    expect(prismaWhere).toEqual({
       placerId: PLACER,
-      since: freePlacementDayStart(),
+      free: true,
+      createdAt: { gte: freePlacementDayStart() },
     });
   });
 
@@ -178,10 +182,12 @@ describe('the free-placement display counts under kysely-placement-reads', () =>
     } as const;
     dbMock.dbRead.placement.count.mockResolvedValue(count);
     await expect(hasUsedFreePlacementOn(input)).resolves.toBe(used);
+    const prismaWhere = dbMock.dbRead.placement.count.mock.calls[0][0].where;
     flag.mockResolvedValue(true);
-    q.countFreePlacementsOnTarget.mockResolvedValue(count);
+    q.countPlacements.mockResolvedValue(count);
     await expect(hasUsedFreePlacementOn(input)).resolves.toBe(used);
-    expect(q.countFreePlacementsOnTarget.mock.calls[0]).toEqual([kyselyRead, input]);
-    expect(q.countFreePlacementsOnTarget.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[0][1]).toEqual(prismaWhere);
+    expect(prismaWhere).toEqual({ ...input, free: true });
   });
 });

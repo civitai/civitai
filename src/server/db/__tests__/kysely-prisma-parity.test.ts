@@ -82,7 +82,8 @@ const PORTED_QUERIES: Array<
 // Also not listed: the placement read family (@civitai/db-queries/placement). Its ports join, alias
 // and select expressions, all outside `selectedColumns`. Every column they select is scalar or JSONB
 // (no array type), and their rows are compared to Prisma's, `toStrictEqual`, in
-// src/server/services/__tests__/placement-reads.kysely-parity.test.ts.
+// src/server/services/__tests__/placement-reads.kysely-parity.test.ts — opt-in like this suite, so
+// it does NOT run in CI.
 
 /**
  * The (table, column) pairs a compiled single-table SELECT reads.

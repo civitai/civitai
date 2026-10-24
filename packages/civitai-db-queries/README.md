@@ -32,8 +32,10 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   the pending-badge counts and the sticker listing. It is served behind the default-off server Flipt
   flag `kysely-placement-reads`; off, the original Prisma reads run. Each read keeps its database
   (`dbWrite` reads move to `kyselyWrite`, `dbRead` reads to `kyselyRead`), and the counts inside the
-  free-placement claim transaction never move. Parity is pinned by
-  `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts`.
+  free-placement claim transaction never move. Row parity is written in
+  `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts`, which is opt-in
+  (`KYSELY_PARITY_DATABASE_URL`) and does **not** run in CI. The free-slot and allowance counts take
+  the same where-object builders as their Prisma originals (`countPlacements`).
 
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The

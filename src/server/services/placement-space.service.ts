@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import {
-  countReservedFreeSlots,
+  countPlacements,
   getChapterPlacementTarget,
   getImagePlacementTarget,
   getModelPlacementTarget,
@@ -258,7 +258,8 @@ export type ResolvedPlacementSpace = {
  * Paid placements are not counted. The two counters are independent, so a
  * fully-booked paid image still shows its free slots as available.
  *
- * ⚠️ The display path's Kysely twin, `countReservedFreeSlots`, must change with it.
+ * The predicate is `reservedFreeSlotsWhere`, which the display path's Kysely count
+ * reads too, so the two cannot disagree.
  */
 export const reservedFreeSlots = (
   /**
@@ -267,35 +268,26 @@ export const reservedFreeSlots = (
    * outside the lock it just took, and the count would be a listing again.
    */
   client: Pick<typeof dbWrite, 'placement'>,
-  {
-    surface,
-    targetType,
-    targetId,
-  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
-) =>
-  client.placement.count({
-    where: {
-      surface,
-      targetType,
-      targetId,
-      free: true,
-      status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
-    },
-  });
+  target: SpaceTarget
+) => client.placement.count({ where: reservedFreeSlotsWhere(target) });
+
+type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number };
+
+export const reservedFreeSlotsWhere = ({ surface, targetType, targetId }: SpaceTarget) => ({
+  surface,
+  targetType,
+  targetId,
+  free: true,
+  status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
+});
 
 /**
  * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
  * `reservedFreeSlots(tx, …)` under its lock.
  */
-const displayedReservedFreeSlots = async (
-  useKysely: boolean,
-  target: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
-) =>
+const displayedReservedFreeSlots = async (useKysely: boolean, target: SpaceTarget) =>
   useKysely
-    ? countReservedFreeSlots((await loadKyselyDb()).kyselyRead, {
-        ...target,
-        statuses: FREE_SLOT_HOLDING_STATUSES,
-      })
+    ? countPlacements((await loadKyselyDb()).kyselyRead, reservedFreeSlotsWhere(target))
     : reservedFreeSlots(dbRead, target);
 
 /**
@@ -370,7 +362,7 @@ export async function resolvePlacementSpaceFor({
 
   // One read: the price range needs the same row.
   const config = await getPlacementConfig();
-  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface, config);
+  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface, config, useKysely);
   const shares = config.approvalShares(surface);
   const hostDeclineFeePercent = isDeclineFeeHostAdjustable(surface)
     ? resolveHostDeclineFeePercent(surface, resolved.settings)

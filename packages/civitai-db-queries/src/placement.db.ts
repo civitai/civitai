@@ -5,8 +5,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 // placement.service.ts, subscriptions.service.ts (getCapTier), free-placement.service.ts and
 // sticker-placement.service.ts. Every function returns what the Prisma read returned after the
 // caller's own mapping: counts as JS numbers, timestamps as UTC Dates (the pg parsers registered by
-// @civitai/db/kysely), enums and JSON exactly as pg decodes them. Parity is pinned against a real
-// database by <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts.
+// @civitai/db/kysely), enums and JSON exactly as pg decodes them. Row parity against a real
+// database is written in <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts,
+// which is opt-in (KYSELY_PARITY_DATABASE_URL) and does NOT run in CI.
 //
 // None of these may run inside the free-placement claim transaction: those counts decide under an
 // advisory lock and stay on the Prisma `tx`.
@@ -74,68 +75,52 @@ export async function listPlacementSpacesFor(
 
 const countOf = (row: { count: string | number | bigint } | undefined) => Number(row?.count ?? 0);
 
-/** Free placements on one space whose status still holds a slot. */
-export async function countReservedFreeSlots(
-  db: Kysely<DB>,
-  input: {
-    surface: string;
-    targetType: string;
-    targetId: number;
-    statuses: readonly string[];
-  }
-) {
-  if (!input.statuses.length) return 0;
-  return countOf(
-    await db
-      .selectFrom('Placement')
-      .select((eb) => eb.fn.countAll().as('count'))
-      .where('surface', '=', input.surface)
-      .where('targetType', '=', input.targetType)
-      .where('targetId', '=', input.targetId)
-      .where('free', '=', true)
-      .where('status', 'in', [...input.statuses])
-      .executeTakeFirst()
-  );
-}
+type PlacementColumn = keyof DB['Placement'] & string;
+type Scalar = string | number | boolean;
 
 /**
- * Free placements a placer has made since `since`, across every surface and status.
- *
- * `since` is sent as a UTC ISO string cast to `timestamp`: `createdAt` is `timestamp without time
- * zone` holding UTC, and pg serialises a Date parameter in the PROCESS time zone, whose offset
- * Postgres drops on that cast — so a bare Date would shift the window off UTC midnight anywhere the
- * process is not on UTC.
+ * The subset of a Prisma `placement.count({ where })` object this count understands: equality on a
+ * scalar, `{ in: [...] }` and `{ gte: Date }`, ANDed. The display counts pass the SAME where object
+ * the Prisma path builds (one builder per predicate, in the service), so the two cannot drift.
+ * Anything else THROWS rather than being dropped: a filter silently ignored here would widen the
+ * count on the Kysely path only.
  */
-export async function countFreePlacementsSince(
-  db: Kysely<DB>,
-  input: { placerId: number; since: Date }
-) {
-  return countOf(
-    await db
-      .selectFrom('Placement')
-      .select((eb) => eb.fn.countAll().as('count'))
-      .where('placerId', '=', input.placerId)
-      .where('free', '=', true)
-      .where('createdAt', '>=', sql<Date>`${input.since.toISOString()}::timestamp`)
-      .executeTakeFirst()
-  );
-}
+export type PlacementCountWhere = Partial<
+  Record<PlacementColumn, Scalar | { in: readonly Scalar[] } | { gte: Date }>
+>;
 
-export async function countFreePlacementsOnTarget(
-  db: Kysely<DB>,
-  input: { placerId: number; surface: string; targetType: string; targetId: number }
-) {
-  return countOf(
-    await db
-      .selectFrom('Placement')
-      .select((eb) => eb.fn.countAll().as('count'))
-      .where('placerId', '=', input.placerId)
-      .where('free', '=', true)
-      .where('surface', '=', input.surface)
-      .where('targetType', '=', input.targetType)
-      .where('targetId', '=', input.targetId)
-      .executeTakeFirst()
-  );
+/**
+ * `placement.count({ where })`. A Date bound is sent as a UTC ISO string cast to `timestamp`:
+ * `createdAt` is `timestamp without time zone` holding UTC, and pg serialises a Date parameter in
+ * the PROCESS time zone, whose offset Postgres drops on that cast.
+ */
+export async function countPlacements(db: Kysely<DB>, where: PlacementCountWhere) {
+  let query = db.selectFrom('Placement').select((eb) => eb.fn.countAll().as('count'));
+  let matchesNothing = false;
+  for (const [column, condition] of Object.entries(where)) {
+    // Prisma ignores an `undefined` filter; so does this.
+    if (condition === undefined) continue;
+    const ref = sql.ref(column);
+    if (typeof condition !== 'object') {
+      query = query.where(ref, '=', condition);
+      continue;
+    }
+    const operators = Object.keys(condition ?? {});
+    if (operators.length === 1 && 'in' in condition) {
+      // Prisma answers `in: []` with no match; Kysely would compile the syntax error `IN ()`.
+      if (!condition.in.length) matchesNothing = true;
+      else query = query.where(ref, 'in', [...condition.in]);
+    } else if (operators.length === 1 && 'gte' in condition && condition.gte instanceof Date) {
+      query = query.where(ref, '>=', sql<Date>`${condition.gte.toISOString()}::timestamp`);
+    } else {
+      throw new Error(
+        `countPlacements: unsupported condition on "${column}": ${JSON.stringify(condition)}`
+      );
+    }
+  }
+  // After the loop, so an unsupported condition still throws beside an empty `in`.
+  if (matchesNothing) return 0;
+  return countOf(await query.executeTakeFirst());
 }
 
 /** Pending placements per surface for one owner. Counts are numbers, as Prisma's `_count` was. */

@@ -9,7 +9,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: vi.fn(),
 }));
 // Every placement query stubbed: their SQL is pinned in packages/civitai-db-queries/src/
-// placement.db.test.ts and their rows against Prisma's in placement-reads.kysely-parity.test.ts.
+// placement.db.test.ts; their rows against Prisma's are compared in the opt-in (not in CI)
+// placement-reads.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   const actual = await importOriginal<typeof PlacementQueries>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
@@ -105,7 +106,7 @@ function givenBothPaths({
   } as never);
   q.getModelPlacementTarget.mockResolvedValue({ userId: OWNER, username: 'creator' } as never);
   q.listPlacementSpacesFor.mockResolvedValue([USER_SPACE] as never);
-  q.countReservedFreeSlots.mockResolvedValue(RESERVED);
+  q.countPlacements.mockResolvedValue(RESERVED);
   q.getUserPlacementScore.mockResolvedValue([{ score }] as never);
   q.listUserSubscriptionRows.mockResolvedValue(subscriptions as never);
 }
@@ -194,6 +195,7 @@ describe('resolvePlacementSpaceFor', () => {
   it('ON: resolves the same image space through Kysely only, each read on its own database', async () => {
     givenBothPaths();
     const off = await imageSpace();
+    const prismaReservedWhere = dbMock.dbRead.placement.count.mock.calls[0][0].where;
     vi.clearAllMocks();
     flag.mockResolvedValue(true);
 
@@ -215,12 +217,17 @@ describe('resolvePlacementSpaceFor', () => {
     });
     expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.getUserPlacementScore.mock.calls[0][0]).toBe(kyselyRead);
-    expect(q.countReservedFreeSlots.mock.calls[0][0]).toBe(kyselyRead);
-    expect(q.countReservedFreeSlots.mock.calls[0][1]).toEqual({
+    expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
+    // The reserved count's twin guard: the Kysely count gets the very predicate the Prisma count
+    // got, and that predicate is the reserved-slot one (pinned literally, so neither side can
+    // drift with the other).
+    expect(q.countPlacements.mock.calls[0][1]).toEqual(prismaReservedWhere);
+    expect(prismaReservedWhere).toEqual({
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
-      statuses: ['pending', 'approved'],
+      free: true,
+      status: { in: ['pending', 'approved'] },
     });
   });
 
@@ -331,7 +338,7 @@ describe('placementPriceRange', () => {
 });
 
 describe('getCapTier', () => {
-  it('ON: reads the subscriptions from the primary and keeps every filter the Prisma path applies', async () => {
+  it('useKysely: reads the subscriptions from the primary and keeps every filter the Prisma path applies', async () => {
     const rows = [
       goldSubscription({ status: 'past_due' }), // bad state: buys no cap
       goldSubscription({ metadata: { renewalEmailSent: true } }), // no longer counts
@@ -344,9 +351,8 @@ describe('getCapTier', () => {
     givenBothPaths({ subscriptions: rows });
     const off = await getCapTier(OWNER);
     expect(off).toBe('bronze');
-    flag.mockResolvedValue(true);
 
-    await expect(getCapTier(OWNER)).resolves.toBe(off);
+    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe(off);
     expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.listUserSubscriptionRows.mock.calls[0][1]).toEqual({
       userId: OWNER,
@@ -354,10 +360,9 @@ describe('getCapTier', () => {
     });
   });
 
-  it('ON: a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
+  it('useKysely: a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
     givenBothPaths();
-    flag.mockResolvedValue(true);
-    await expect(getCapTier(OWNER)).resolves.toBe('gold');
+    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe('gold');
   });
 });
 
