@@ -6254,16 +6254,12 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
   const tagsForImages = await tagIdsForImagesCache.fetch(Object.keys(images).map(Number));
-  return Object.keys(images).reduce(
-    (acc, imageId) => ({
-      ...acc,
-      [imageId]: {
-        ...images[imageId],
-        tags: tagsForImages[imageId]?.tags,
-      },
-    }),
-    images
-  );
+  const result: typeof images = {};
+  for (const imageId of Object.keys(images)) {
+    const entry = { ...images[imageId], tags: tagsForImages[imageId]?.tags };
+    result[imageId] = entry;
+  }
+  return result;
 }
 
 export async function deleteImagesForModelVersionCache(modelVersionId: number | number[]) {

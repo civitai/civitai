@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.364",
+  "version": "5.1.365",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -468,7 +468,8 @@
     ],
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
-      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch"
+      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch",
+      "next@16.3.1": "patches/next@16.3.1.patch"
     }
   }
 }
