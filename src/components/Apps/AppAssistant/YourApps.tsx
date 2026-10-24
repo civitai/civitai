@@ -11,6 +11,8 @@ export const APP_STATUS: Record<Sandbox['state'], string> = {
   running: 'Running',
   starting: 'Starting…',
   suspended: 'Paused',
+  // A fork whose files never arrived (see `AppAssistantFork`).
+  seed_lost: 'Fork failed',
 };
 
 /** The apps' latest failure. A failed poll keeps the last list, so its error shows only when there is none. */
