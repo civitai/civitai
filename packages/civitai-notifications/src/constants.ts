@@ -12,6 +12,7 @@ export const notificationCategories = [
   'Creator',
   'Referral',
   'System',
+  'Moderation',
   'Other',
 ] as const;
 

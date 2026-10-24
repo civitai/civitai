@@ -19,9 +19,12 @@ import { createJob } from './job';
 const SYSTEM_USER_ID = constants.system.user.id;
 const { COUNTERPARTY_REVIEW_MIN, COUNTERPARTY_REVIEW_WARNINGS } = REDIS_SYS_KEYS.CREATOR_PROGRAM;
 
+/** Buzz each way with one counterparty; a positive stored value overrides it. */
+export const DEFAULT_COUNTERPARTY_REVIEW_MIN = 25_000;
+
 export async function readMinimum() {
   const value = Number(decodeRedisString(await sysRedis.get(COUNTERPARTY_REVIEW_MIN)));
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_COUNTERPARTY_REVIEW_MIN;
 }
 
 async function getWarning(userId: number): Promise<WarningRecord | null> {
