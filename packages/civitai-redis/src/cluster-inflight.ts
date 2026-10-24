@@ -29,17 +29,18 @@
 
 let clusterInflight = 0;
 
-/** Increment on command start. */
-export function incClusterInflight(): void {
-  clusterInflight++;
+/** Increment on command start, by `n` for a batch of `n` commands (default 1). */
+export function incClusterInflight(n = 1): void {
+  clusterInflight += n;
 }
 
 /**
  * Decrement on command settle, FLOORED at 0 so a post-heal burst of rejected commands can't
  * drive the counter negative (FIX #2). Returns the new value.
  */
-export function decClusterInflight(): number {
-  clusterInflight = Math.max(0, clusterInflight - 1);
+export function decClusterInflight(n = 1): number {
+  // One floored step of `n` equals `n` floored steps of 1: max(0, max(0, x - 1) - 1) = max(0, x - 2).
+  clusterInflight = Math.max(0, clusterInflight - n);
   return clusterInflight;
 }
 

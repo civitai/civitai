@@ -936,9 +936,11 @@ function parseClusterNodes(fallbackUrl: string): { url: string }[] {
 // this type at COMPILE time instead: see the `redisMetricsBridge` const in
 // `src/server/prom/client.ts`. Adding a field here without publishing it there is a type error.
 export type RedisMetricsBridge = {
+  // `value` is the step, default 1 (prom-client's Gauge signature): a batch of n commands moves
+  // the gauge with ONE inc(labels, n) / dec(labels, n) rather than n calls.
   redisCommandsInflight: {
-    inc: (labels: { client: string }) => void;
-    dec: (labels: { client: string }) => void;
+    inc: (labels: { client: string }, value?: number) => void;
+    dec: (labels: { client: string }, value?: number) => void;
   };
   // NOTE ON SCOPE: this histogram closes when the redis ROUND TRIP closes — inside the command
   // wrapper's done() below. It deliberately does NOT include the packed decode (msgpack unpack,
@@ -1167,6 +1169,11 @@ export interface InstrumentCommandsOptions {
  * The per-command bookkeeping every instrumented command shares — the ONE place it lives, so a
  * routed command (instrumentCommands) and a pipelined batch (trackClusterCommands) cannot drift.
  * Counts `count` commands as started now, and returns `done`, which settles all of them.
+ *
+ * A batch of `count` is accounted exactly as `count` separate commands: the in-flight gauge and
+ * the local counter move by `count` in ONE step each rather than `count` steps of 1 (each gauge
+ * write hashes its labels, and a pipelined multi-key read can be hundreds of keys); on settle
+ * there are still `count` duration samples and `count` slow-settle observations.
  */
 function startCommandAccounting(
   clientLabel: 'cluster' | 'sys',
@@ -1177,13 +1184,11 @@ function startCommandAccounting(
   // Capture the metric handles ONCE so inc/dec stay balanced even if the app's prom module loads
   // mid-flight (a dec without its inc would drive the gauge negative).
   const metrics = getRedisMetrics();
-  for (let i = 0; i < count; i++) {
-    metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
-    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
-    if (clientLabel === 'cluster') incClusterInflight();
-    else incSysInflight();
-  }
+  metrics?.redisCommandsInflight.inc(labels, count);
+  // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+  // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
+  if (clientLabel === 'cluster') incClusterInflight(count);
+  else incSysInflight(count);
   const start = Date.now();
   let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
   return () => {
@@ -1192,15 +1197,16 @@ function startCommandAccounting(
       // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
       // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
       // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
-      // is what keeps the counter accurate post-heal so the watchdog can re-arm.
-      for (let i = 0; i < count; i++) {
-        if (clientLabel === 'cluster') decClusterInflight();
-        else decSysInflight();
-      }
+      // is what keeps the counter accurate post-heal so the watchdog can re-arm. One floored step
+      // of `count` lands where `count` floored steps of 1 would.
+      if (clientLabel === 'cluster') decClusterInflight(count);
+      else decSysInflight(count);
       dec = true;
     }
+    metrics?.redisCommandsInflight.dec(labels, count);
     for (let i = 0; i < count; i++) {
-      metrics?.redisCommandsInflight.dec(labels);
+      // One duration sample and one slow-settle observation per command: a histogram has no
+      // weighted observe, and its count is what the command-rate panels read.
       // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
       // brotli-decompress on the compress-aware paths), which runs afterwards in
       // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram

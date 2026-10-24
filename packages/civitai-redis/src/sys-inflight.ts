@@ -36,17 +36,18 @@
 
 let sysInflight = 0;
 
-/** Increment on command start. */
-export function incSysInflight(): void {
-  sysInflight++;
+/** Increment on command start, by `n` for a batch of `n` commands (default 1). */
+export function incSysInflight(n = 1): void {
+  sysInflight += n;
 }
 
 /**
  * Decrement on command settle, FLOORED at 0 so a post-heal burst of rejected commands can't
  * drive the counter negative. Returns the new value.
  */
-export function decSysInflight(): number {
-  sysInflight = Math.max(0, sysInflight - 1);
+export function decSysInflight(n = 1): number {
+  // One floored step of `n` equals `n` floored steps of 1: max(0, max(0, x - 1) - 1) = max(0, x - 2).
+  sysInflight = Math.max(0, sysInflight - n);
   return sysInflight;
 }
 
