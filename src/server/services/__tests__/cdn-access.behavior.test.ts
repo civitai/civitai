@@ -167,6 +167,16 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+    -- The view's WHERE as the evidence_hold migration writes it.
+    CREATE TABLE "EvidenceHold" (
+      "userId" int NOT NULL, "releasedAt" timestamp(3), "releaseAt" timestamp(3),
+      "extendedUntil" timestamp(3)
+    );
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold"
+      WHERE "releasedAt" IS NULL
+        AND ("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())
+      GROUP BY "userId";
   `);
   await pg.db.exec(readFileSync(BLOCKED_QUEUE_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
@@ -181,7 +191,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await pg.db.exec(`
     TRUNCATE "JobQueue", "Image", "Post", "ModelVersion", "Model", "ModActivity", "CsamReport",
-      "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim";
+      "EvidenceHold", "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim";
     INSERT INTO "Model" (id, status) VALUES (1, 'Published');
     INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1, 1, 'Published');
   `);
@@ -674,6 +684,21 @@ describe('evidence holds', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
+  it('an unsent report on the owner holds an image another verified report covers', async () => {
+    await image(1);
+    await image(2, { userId: OTHER_OWNER });
+    await verifiedReport([1]);
+    await verifiedReport([2], OTHER_OWNER);
+    await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`;
+    await sql`INSERT INTO "CsamReport" ("userId", details)
+              VALUES (${MOD}, jsonb_build_object('secondaryUserId', ${OTHER_OWNER}::int))`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
   it('a failed hold lookup holds everyone', async () => {
     await image(1);
     await moderatorBlock(1);
@@ -682,6 +707,42 @@ describe('evidence holds', () => {
       await syncCdnAccess();
     } finally {
       await pg.db.exec(`ALTER TABLE "CsamReportAway" RENAME TO "CsamReport"`);
+    }
+    expect(callsFor(u(1))).toEqual(['deny']);
+  });
+
+  it('an active hold marker on the owner caps a takedown at deny', async () => {
+    await image(1);
+    await image(2, { userId: OTHER_OWNER });
+    await sql`INSERT INTO "EvidenceHold" ("userId") VALUES (${OWNER})`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['retract']);
+  });
+
+  it('a released or expired hold marker does not hold', async () => {
+    await image(1);
+    await image(2, { userId: OTHER_OWNER });
+    await sql`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${OWNER}, now())`;
+    await sql`INSERT INTO "EvidenceHold" ("userId", "releaseAt")
+              VALUES (${OTHER_OWNER}, now() - interval '1 day')`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract']);
+    expect(callsFor(u(2))).toEqual(['retract']);
+  });
+
+  it('a missing hold marker view holds everyone', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await pg.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserAway"`);
+    try {
+      await syncCdnAccess();
+    } finally {
+      await pg.db.exec(`ALTER VIEW "EvidenceHeldUserAway" RENAME TO "EvidenceHeldUser"`);
     }
     expect(callsFor(u(1))).toEqual(['deny']);
   });
@@ -808,6 +869,15 @@ describe('moderator-app deletes', () => {
     await queueDelete(1, GONE);
     await syncCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
+  });
+
+  it('denies when the owner has an active hold marker', async () => {
+    await sql`INSERT INTO "EvidenceHold" ("userId") VALUES (${OWNER})`;
+    await queueDelete(1, GONE);
+    await queueDelete(2, DELETED, { userId: OTHER_OWNER });
+    await syncCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny']);
+    expect(callsFor(DELETED)).toEqual(['retract']);
   });
 
   it('denies only when the deleted image was flagged for CSAM review, or the row does not say', async () => {
