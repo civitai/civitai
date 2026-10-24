@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { isGlobalFliptFlagOn } from '~/server/flipt/global-sync';
 import { runMiddlewares } from '~/server/middleware';
+import { recordTrpcProxySkipped } from '~/server/prom/trpc-proxy-skip.metrics';
 import {
   TRPC_PATH_PREFIX,
   TRPC_SKIP_PROXY_MIDDLEWARE_FLAG,
@@ -18,6 +19,7 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith(TRPC_PATH_PREFIX) &&
     isGlobalFliptFlagOn(TRPC_SKIP_PROXY_MIDDLEWARE_FLAG)
   ) {
+    recordTrpcProxySkipped();
     return NextResponse.next();
   }
   return runMiddlewares(request);
