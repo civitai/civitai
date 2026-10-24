@@ -299,7 +299,7 @@ const BankableBuzzInfo = ({
         <p className="text-xs">
           You&apos;ve paid other users <BuzzAmount amount={paid - bankable.earned} /> more than
           you&apos;ve earned since {cutover}. That comes out of your unbanked Buzz from {cutover},
-          then out of what you earn next.
+          and anything beyond it out of what you earn next.
         </p>
       )}
 
