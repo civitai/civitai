@@ -2114,7 +2114,13 @@ export async function getStorylineGraph({
   const { storyline, blockedUserIds } = await getStorylineForRead(id, viewer, browsingLevel);
   const rows = await dbRead.storylineChapter.findMany({
     where: { storylineId: id },
-    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+    select: {
+      id: true,
+      depth: true,
+      removedAt: true,
+      placementId: true,
+      post: { select: chapterPostSelect },
+    },
     orderBy: [{ depth: 'asc' }, { id: 'asc' }],
     take: STORYLINE_GRAPH_LIMIT + 1,
   });
@@ -2141,7 +2147,10 @@ export async function getStorylineGraph({
     rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
     chapters: await withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      chapters.map((c) => toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)))
+      chapters.map((c) => ({
+        ...toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)),
+        viaPlacement: c.placementId != null,
+      }))
     ),
     edges: edges.filter((e) => ids.has(e.parentChapterId)),
     truncated: rows.length > STORYLINE_GRAPH_LIMIT,
