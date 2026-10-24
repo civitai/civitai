@@ -1,6 +1,7 @@
 import {
   REMOTE_PREVIEW,
   TURN_LIMIT_REFUSAL,
+  isKeepLimitResult,
   assistantRules,
   assistantSubagentRules,
   assistantSubagentInstructions,
@@ -581,6 +582,35 @@ describe('what the page is told of a call', () => {
       output: expect.stringMatching(/^exit_code: 0/),
     });
     expect((reported[1].output as string).length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('the kept-apps limit, as the page is told of it', () => {
+  it('a create_app refused at the cap reaches the page as the limit, in this reply and the next call', async () => {
+    fake.add('my-app');
+    fake.add('second-app', 'suspended');
+    fake.add('third-app', 'suspended');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    const before = opensApps().length;
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(2);
+    expect(creates.map(isKeepLimitResult)).toEqual([true, true]);
+    // The cap was asked once; the second call was refused by the gate.
+    expect(opensApps().length - before).toBe(1);
+  });
+
+  it('NEGATIVE CONTROL: under the cap, create_app is not reported as the limit', async () => {
+    fake.add('my-app');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    await call(tools.tools, 'create_app', { name: 'Fourth app' });
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(1);
+    expect(creates[0].isError).toBe(false);
+    expect(isKeepLimitResult(creates[0])).toBe(false);
   });
 });
 
