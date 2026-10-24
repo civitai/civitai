@@ -65,6 +65,7 @@ import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
 import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
 import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
+import { shopItemReviewVersion } from '~/server/services/creator-shop.data';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -533,12 +534,13 @@ function CreatorShopReviewPage() {
   // A pack's verdict names its edit; re-read after every attempt, since a success or an "edit
   // changed" refusal leaves the pane on a stale one.
   const review = async (
-    input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId'>
+    input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId' | 'reviewedVersion'>
   ) => {
     try {
       await reviewItem.mutateAsync({
         ...input,
         boxRevisionId: boxRevision?.id,
+        reviewedVersion: shopItemReviewVersion(selectedMeta),
       });
       setReason('');
     } catch {

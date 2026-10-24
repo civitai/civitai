@@ -268,7 +268,10 @@ it is an exact `count` with **no cap and no mode exclusion** — resist adding e
 items the review queue can show: the count, the sidebar badge and the queue share one predicate
 (`reviewQueueVisibleTargetSql`), so a target the queue cannot hydrate (unpublished, archived,
 Blocked-only) is not counted. The predicate's comment lists the few hydration drops it does not
-mirror.
+mirror. It takes the level cap the queue is held to (`requestServableLevels`), so on civitai.com,
+or in a restricted region, the counts skip mature items the queue cannot show. On civitai.com
+outside a restricted region, `getById` also returns `redPendingReviewCount`, the items only
+civitai.red can show, and the empty .com queue links to the same review page there.
 
 The reason that is safe is not in `schema.full.prisma`. The only `CollectionItem` index that file
 declares that a status-filtered count could use is `@@index([collectionId], type: Hash)`, which
