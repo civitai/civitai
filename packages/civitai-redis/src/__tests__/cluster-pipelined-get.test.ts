@@ -218,7 +218,12 @@ describe('wedge accounting: a batch counts as its key count', () => {
     const observed: number[] = [];
     let inflightGauge = 0;
     (globalThis as any).__civitaiRedisMetrics = {
-      redisCommandsInflight: { inc: () => inflightGauge++, dec: () => inflightGauge-- },
+      // Honours the value argument, as prom-client's Gauge does: a batch may be written as one
+      // inc(labels, n) rather than n inc(labels) calls, and both must read the same.
+      redisCommandsInflight: {
+        inc: (_l: unknown, v = 1) => (inflightGauge += v),
+        dec: (_l: unknown, v = 1) => (inflightGauge -= v),
+      },
       redisCommandDuration: { observe: (_l: unknown, v: number) => observed.push(v) },
     };
     try {
