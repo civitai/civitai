@@ -27,6 +27,14 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   CPU per query can be compared with it on and off; off, the original Prisma read runs. Parity is
   pinned in the same suite.
 
+  `placement.db.ts` is the placement/sticker read family: the space resolution behind every placement
+  surface, the price range's score, `getCapTier`'s subscriptions, the free-placement display counts,
+  the pending-badge counts and the sticker listing. It is served behind the default-off server Flipt
+  flag `kysely-placement-reads`; off, the original Prisma reads run. Each read keeps its database
+  (`dbWrite` reads move to `kyselyWrite`, `dbRead` reads to `kyselyRead`), and the counts inside the
+  free-placement claim transaction never move. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts`.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
