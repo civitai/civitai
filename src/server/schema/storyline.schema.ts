@@ -90,6 +90,12 @@ export const insertStorylineChapterSchema = z.object({
   postId: z.number().int().positive(),
 });
 
+export const moveStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  chapterId: z.number().int().positive(),
+  afterChapterId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),
