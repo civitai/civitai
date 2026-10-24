@@ -212,6 +212,12 @@ export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
 export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
 /** An image still Pending this long after its row was created is failed, so a round never hangs. */
 export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
+/** A Final's malware scan is submitted at most this many times before the Final is failed. */
+export const SERVICE_FINAL_SCAN_MAX_ATTEMPTS = 5;
+/** A malware scan that could not run is submitted again no sooner than this. */
+export const SERVICE_FINAL_SCAN_RETRY_MS = 10 * 60_000;
+/** A malware scan workflow with no verdict this long after submission is abandoned and resubmitted. */
+export const SERVICE_FINAL_SCAN_STALE_MS = 2 * HOUR;
 
 /**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about

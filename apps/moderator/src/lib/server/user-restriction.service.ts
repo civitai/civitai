@@ -179,6 +179,17 @@ const toView = (raw: RestrictionTrigger, key: string): RestrictionTriggerView =>
   return { ...trigger, cleanup, key };
 };
 
+/** What `/users/scam-restrictions` has left to review. Index-only on (type, status). */
+export async function countPendingScamRestrictions(): Promise<number> {
+  const row = await dbRead
+    .selectFrom('UserRestriction')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('type', '=', 'scam')
+    .where('status', '=', 'Pending')
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 export async function getGenerationRestrictions(query: RestrictionQuery): Promise<{
   items: RestrictionRow[];
   totalCount: number;

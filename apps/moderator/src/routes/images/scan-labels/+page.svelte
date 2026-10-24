@@ -20,7 +20,7 @@
   let submitting = $state(false);
   let shownAt = 0;
   $effect.pre(() => {
-    void data.card?.itemId;
+    void data.card?.token;
     shownAt = Date.now();
   });
 
@@ -32,7 +32,7 @@
 
   let videoState = $state<'loading' | 'ready' | 'failed'>('loading');
   $effect.pre(() => {
-    void data.card?.itemId;
+    void data.card?.token;
     videoState = 'loading';
   });
 
@@ -152,7 +152,7 @@
   {/if}
 
   {#if data.card}
-    {#key data.card.itemId}
+    {#key data.card.token}
       <section
         class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
         class:opacity-50={submitting}
@@ -185,7 +185,7 @@
             </div>
           {/if}
         </div>
-        <VoteForm itemId={data.card.itemId} {submitting} onsubmit={submitVote} />
+        <VoteForm token={data.card.token} {submitting} onsubmit={submitVote} />
       </section>
     {/key}
   {:else}

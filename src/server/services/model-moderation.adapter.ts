@@ -25,7 +25,7 @@ import {
   submitTextModerationOrScan,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
 } from '~/server/services/text-scan/route';
-import { scanModelRules } from '~/server/services/text-scan/submit';
+import { checkModelRulesInBackground } from '~/server/services/text-scan/submit';
 import { removeTags } from '~/utils/string-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -320,7 +320,7 @@ export async function submitModelTextModeration(model: {
   name: string;
   description?: string | null;
   isModerator?: boolean;
-  /** False when the caller starts the ModelRules scan itself (the publish paths). */
+  /** False when the caller checks the Model rules itself (the publish paths). */
   rules?: boolean;
 }): Promise<void> {
   // Same carve-out as the profanity branch's `!isModerator` guard in `upsertModel`: an
@@ -329,7 +329,7 @@ export async function submitModelTextModeration(model: {
   // stays cleared going into this call).
   if (model.isModerator) return;
 
-  if (model.rules !== false) scanModelRules(model.id);
+  if (model.rules !== false) checkModelRulesInBackground(model.id);
   const content = buildModelModerationText(model);
   try {
     if (!(await isPublicModel(model.id))) return;

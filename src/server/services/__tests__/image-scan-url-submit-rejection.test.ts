@@ -74,10 +74,10 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     // The one write is the submit-failure stamp: permanent class -> ingestion=Error,
     // so the cron terminalizes on this attempt instead of retrying forever.
     expect(captured).toHaveLength(1);
-    // Args: (template, isPermanent, ImageIngestionStatus.Error, at, errorJson, imageId).
+    // Args: (template, isPermanent, ImageIngestionStatus.Error, ...the rest, imageId).
     expect(captured[0][1]).toBe(true);
     expect(captured[0][2]).toBe('Error');
-    const errorJson = JSON.parse(String(captured[0][4]));
+    const errorJson = JSON.parse(String(captured[0].find((v) => String(v).includes('send-fail'))));
     expect(errorJson.failureType).toBe('send-fail');
     expect(errorJson.responseStatus).toBe(400);
     expect(errorJson.failureClass).toBe('permanent');

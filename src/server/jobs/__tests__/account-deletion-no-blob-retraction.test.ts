@@ -209,8 +209,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return touched;
   }
 
-  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): neither exists.
-  if (sql.includes('to_regclass')) return [{ present: false }];
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
+  // on prod. The marker holds nobody (below).
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
 
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {

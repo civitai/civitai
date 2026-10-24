@@ -41,7 +41,6 @@ export type RunView = {
   baselineRunId: number | null;
   promptIds: Record<string, number>;
   overriddenKeys: string[];
-  ruleOverrides: number;
   model: string;
   thinking: boolean;
   caseTotal: number;
@@ -72,7 +71,6 @@ export function toRunView(r: RunRow, now = Date.now()): RunView {
     baselineRunId: r.baseline_run_id === null ? null : Number(r.baseline_run_id),
     promptIds: r.prompt_ids as Record<string, number>,
     overriddenKeys: Object.keys((r.prompt_overrides as Record<string, string> | null) ?? {}),
-    ruleOverrides: ((r.rule_overrides as unknown[] | null) ?? []).length,
     model: r.model,
     thinking: r.thinking,
     caseTotal: r.case_total,
@@ -97,7 +95,7 @@ export type SetOverview = {
 };
 
 export async function setOverview(
-  deps: Pick<RunsDeps, 'db' | 'getPrompts' | 'liveRuleState'>,
+  deps: Pick<RunsDeps, 'db' | 'getPrompts'>,
   setId: number
 ): Promise<SetOverview> {
   const set = await requireSet(deps.db, setId);
@@ -185,7 +183,6 @@ export async function baselineHistory(db: Db, setId: number): Promise<HistoryPoi
 export type ResultView = {
   status: ResultStatus;
   output: unknown;
-  literalRuleIds: number[];
   workflowId: string | null;
   error: string | null;
   segments: number | null;
@@ -225,7 +222,6 @@ async function resultsByCase(db: Db, runId: number): Promise<Map<number, ResultV
       {
         status: r.status as ResultStatus,
         output: r.output,
-        literalRuleIds: (r.literal_rule_ids as number[] | null) ?? [],
         workflowId: r.workflow_id,
         error: r.error,
         segments: r.segments,

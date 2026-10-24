@@ -371,15 +371,20 @@ export const updateCommentReportStatusByReason = ({
   id,
   reason,
   status,
+  actorId,
 }: {
   id: number;
   reason: ReportReason;
   status: ReportStatus;
+  actorId: number;
 }) => {
   // Skip reports that are already in the target status so re-running the
   // bulk TOS handler does not double-fire reportAcceptedReward.
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    UPDATE "Report" r SET
+      status = ${status}::"ReportStatus",
+      "statusSetAt" = now(),
+      "statusSetBy" = ${actorId}
     FROM "CommentReport" c
     WHERE c."reportId" = r.id
       AND c."commentId" = ${id}
@@ -417,6 +422,7 @@ export async function bulkSetCommentTosViolation({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: actor.id,
     });
     rewardedReports += reports.length;
 

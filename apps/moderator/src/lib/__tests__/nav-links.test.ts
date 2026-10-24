@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
+import {
+  isNavLinkActive,
+  navBadge,
+  navCount,
+  navHref,
+  navPartial,
+  switcherEntries,
+} from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -144,6 +151,40 @@ describe('the Models section', () => {
     ).toBe('modelFlagsNeedsReview');
   });
 
+  it('marks the Models badge partial while Needs review could not be counted', () => {
+    applyGrants({
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    expect(navPartial(needsReview()!, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    // A count the viewer's badge does not sum leaves it whole.
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReviewMatches']))).toBe(false);
+    expect(navPartial(models, unavailable([]))).toBe(false);
+  });
+
+  it('leaves a group whole when only an informational count is unavailable', () => {
+    const images = NAVIGATION.find((n) => n.children?.some((c) => c.path === '/images/to-ingest'))!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(images, unavailable(['stuckIngestion']))).toBe(false);
+    expect(navPartial(images, unavailable(['ingestionErrors']))).toBe(true);
+  });
+
+  it('writes a partial badge with a "+", and "?+" when nothing in it was counted', () => {
+    expect(navBadge(423, true)).toEqual({ text: '423+', partial: true });
+    expect(navBadge(null, true)).toEqual({ text: '?+', partial: true });
+    expect(navBadge(423, false)).toEqual({ text: '423', partial: false });
+    expect(navBadge(null, false)).toBeNull();
+    expect(navBadge(1746, true, (n) => n.toLocaleString('en-US'))).toEqual({
+      text: '1,746+',
+      partial: true,
+    });
+  });
+
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
     applyGrants({ [APPEALS]: ['moderator:reviewer'] });
     expect(flags()?.children?.map((c) => c.path)).toEqual([APPEALS]);
@@ -218,6 +259,7 @@ describe('/admin grantable pages', () => {
       '/models/flags/appeals',
       '/models/flags/auto',
       '/models/flags/needs-review',
+      '/models/rule-matches',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);
@@ -370,5 +412,21 @@ describe('switcherEntries', () => {
 
   it('skips a group with no reachable page', () => {
     expect(switcherEntries([{ label: 'Empty', children: [] }], civitai)).toEqual([]);
+  });
+});
+
+describe('Model rule matches', () => {
+  it('sits under Models with its own grant, apart from the model flag queues', () => {
+    applyGrants({ '/models/rule-matches': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(true);
+    expect(canAccess(reviewer, '/models/flags/needs-review')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Models')
+        ?.children?.map((c) => [c.path, c.label])
+    ).toEqual([['/models/rule-matches', 'Model rule matches']]);
+
+    applyGrants({ '/models/flags/needs-review': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(false);
   });
 });
