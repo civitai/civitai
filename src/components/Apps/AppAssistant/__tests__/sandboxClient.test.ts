@@ -3,6 +3,7 @@ import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   SandboxApiError,
   SandboxSeedNotAppliedError,
+  appExportPath,
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -234,5 +235,105 @@ describe('isSandboxServiceUrl (who may receive the token)', () => {
 
   it('refuses everything when the configured base cannot be parsed', () => {
     expect(isSandboxServiceUrl(`${BASE}/s/x/mcp`, 'not a url')).toBe(false);
+  });
+});
+
+describe('createSandboxClient exportApp (the app as a zip, from the sandbox gateway)', () => {
+  const zip = () =>
+    new Response(new Blob(['PK-zip-bytes'], { type: 'application/zip' }), { status: 200 });
+
+  it('GETs /s/<sandbox>/export?app=<blockId> with the bearer token and hands back the zip', async () => {
+    const { client, call } = setup(zip());
+    const blob = await client.exportApp('sbx-0123456789ab', 'tip-calculator');
+    expect(await blob.text()).toBe('PK-zip-bytes');
+    expect(call(0)).toMatchObject({
+      url: `${BASE}/s/sbx-0123456789ab/export?app=tip-calculator`,
+      method: 'GET',
+      headers: { authorization: 'Bearer cached-token' },
+    });
+  });
+
+  it('the contract lives in one function', () => {
+    expect(appExportPath('sbx-0123456789ab', 'tip-calculator')).toBe(
+      '/s/sbx-0123456789ab/export?app=tip-calculator'
+    );
+  });
+
+  it('asks for a fresh token once after a 401', async () => {
+    const { client, call } = setup(json(401, { error: 'expired' }), zip());
+    await client.exportApp('sbx-0123456789ab', 'tip-calculator');
+    expect(call(1).headers).toMatchObject({ authorization: 'Bearer fresh-token' });
+  });
+
+  it.each([
+    [413, 'bad_request'],
+    [409, 'conflict'],
+    [500, 'unavailable'],
+  ] as const)('a %i is a SandboxApiError with that status', async (status, kind) => {
+    const { client } = setup(json(status, { error: `export refused (${status})` }));
+    const error = await client.exportApp('sbx-0123456789ab', 'tip-calculator').catch((e) => e);
+    expect(error).toBeInstanceOf(SandboxApiError);
+    expect(error).toMatchObject({ status, kind });
+  });
+
+  it.each([['../v1/sandboxes'], ['SBX-AAA'], ['a?x']])(
+    'refuses %j as a sandbox name without sending anything',
+    async (name) => {
+      const { client, fetchMock } = setup();
+      await expect(client.exportApp(name, 'tip-calculator')).rejects.toBeInstanceOf(
+        SandboxApiError
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('createSandboxClient reads that hang', () => {
+  /** A fetch that never answers, only failing once its signal aborts (as the browser's does). */
+  function hanging() {
+    const seen: (AbortSignal | undefined)[] = [];
+    const fetchMock = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          seen.push(init?.signal ?? undefined);
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        })
+    );
+    const client = createSandboxClient({
+      baseUrl: BASE,
+      getToken: async () => 'cached-token',
+      fetch: fetchMock,
+      readTimeoutMs: 30,
+    });
+    return { client, seen };
+  }
+
+  it.each([
+    ['list', (c: ReturnType<typeof createSandboxClient>) => c.list()],
+    ['get', (c: ReturnType<typeof createSandboxClient>) => c.get('sbx-0123456789ab')],
+  ])('%s fails as unavailable (504) after its timeout instead of hanging', async (_name, call) => {
+    const { client, seen } = hanging();
+    const error = await call(client).catch((e) => e);
+    expect(error).toBeInstanceOf(SandboxApiError);
+    expect(error).toMatchObject({
+      status: 504,
+      kind: 'unavailable',
+      message: 'The sandbox service did not answer in time',
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.aborted).toBe(true);
+  });
+
+  it('NEGATIVE CONTROL: a read that answers in time is unaffected', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, { sandboxes: [SANDBOX] }));
+    const client = createSandboxClient({
+      baseUrl: BASE,
+      getToken: async () => 'cached-token',
+      fetch: fetchMock,
+      readTimeoutMs: 1_000,
+    });
+    expect(await client.list()).toEqual([SANDBOX]);
   });
 });

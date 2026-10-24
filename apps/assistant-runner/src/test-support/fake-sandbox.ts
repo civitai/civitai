@@ -73,6 +73,8 @@ export class FakeSandboxService {
   startsAfter = 1;
   /** Apps deleted just before their next open: the open then makes a new, empty one (201). */
   readonly deleteBeforeOpen = new Set<string>();
+  /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
+  keepLimit = Infinity;
   readonly tools = new Map<string, FakeToolBody>();
   #server: HttpServer | undefined;
   #base = '';
@@ -174,6 +176,8 @@ export class FakeSandboxService {
         if (found.state === 'suspended') found.state = 'starting';
         return json(200, this.#view(found));
       }
+      if (this.sandboxes.length >= this.keepLimit)
+        return json(409, { error: `sandbox limit (${this.keepLimit}) reached; delete one first` });
       return json(201, this.#view(this.add(app, 'starting')));
     }
     const item = /^\/v1\/sandboxes\/([a-z0-9-]+)(\/suspend)?$/.exec(url.pathname);

@@ -11,7 +11,7 @@ export const NO_APP_REFUSAL =
   'There is no app yet to plan features for. Start the app the user described first, then list its features.';
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
-  'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.';
+  'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
 // openApp pauses the others and retries once, so this is that retry refused.
 export const RUNNING_LIMIT =
   'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
@@ -24,6 +24,26 @@ export function appOpenFailure(error: unknown): string {
   if (error instanceof SandboxApiError && error.kind === 'limit') return KEEP_LIMIT;
   if (error instanceof SandboxApiError && error.kind === 'conflict') return APPS_CHANGING;
   return APPS_UNREACHABLE;
+}
+
+/**
+ * Whether a finished tool call, as the page is told of it (the browser's `tool-result`, or the server
+ * runner's `tool-reported`), is `create_app` refused at the cap on apps kept: thrown by the tool, or
+ * refused by the gate for the rest of that reply. Never the running-app cap, which `openApp` handles by
+ * pausing. The one place the page tells it.
+ */
+export function isKeepLimitResult(result: {
+  name: string;
+  output: unknown;
+  isError: boolean;
+}): boolean {
+  if (result.name !== CREATE_APP || !result.isError) return false;
+  const output = result.output;
+  return (
+    output !== null &&
+    typeof output === 'object' &&
+    (output as { error?: unknown }).error === KEEP_LIMIT
+  );
 }
 
 export interface AppToolsOptions {
