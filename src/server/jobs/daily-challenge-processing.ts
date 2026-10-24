@@ -612,6 +612,11 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   return challengeToLegacyFormat(challenge);
 }
 
+type ReviewEntriesOptions = {
+  /** Re-run one past tick: review only entries promoted in [from, to) and leave the watermark alone. */
+  replayWindow?: { from: Date; to: Date };
+};
+
 // Indirection seam: reviewEntries() calls reviewEntriesForChallenge() through this object
 // (rather than the bare function reference) so tests can substitute per-challenge processing
 // via `vi.spyOn(challengeReviewInternals, 'reviewEntriesForChallenge')` without needing to mock
@@ -683,7 +688,10 @@ export async function reviewEntries() {
  * Process entries for a single challenge.
  * Extracted from reviewEntries() to support multi-challenge processing.
  */
-async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
+async function reviewEntriesForChallenge(
+  currentChallenge: DailyChallengeDetails,
+  options?: ReviewEntriesOptions
+) {
   log('Processing entries for challenge:', currentChallenge.challengeId);
   // Start of the tick's budget. Measured across the WHOLE function, not just the placement drain:
   // the job lock does not care which phase spent the time.
@@ -956,7 +964,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Paid challenges skip the since-last-review window: the watermark advances even when an
   // entry's review fails, so a single provider error would otherwise leave it unjudged for good.
-  const reviewedSince = judgeAllEntries
+  const replayWindow = options?.replayWindow;
+  const reviewedSince = replayWindow
+    ? Prisma.sql`AND ci."reviewedAt" >= ${replayWindow.from} AND ci."reviewedAt" < ${replayWindow.to}`
+    : judgeAllEntries
     ? Prisma.empty
     : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
 
@@ -1424,7 +1435,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Update last review time in Challenge metadata
   // ----------------------------------------------
-  if (currentChallenge.challengeId) {
+  if (currentChallenge.challengeId && !replayWindow) {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "Challenge"
       SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"reviewedAt": ${reviewing}}'
