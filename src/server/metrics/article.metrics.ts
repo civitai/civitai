@@ -17,7 +17,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   executeRefresh,
   getAffected,
-  getEntityMetricTasks,
+  getEntityMetricEventIds,
   reactionCountKeys,
   snippets,
 } from '~/server/metrics/metric-helpers';
@@ -185,8 +185,45 @@ async function getCommentTasks(ctx: MetricContext) {
   return tasks;
 }
 
-async function getCollectionTasks(ctx: MetricContext) {
-  return getEntityMetricTasks(ctx)('Article', 'collectedCount');
+/**
+ * People other than the author who saved the article, each counted once however many of their
+ * collections hold it. The ClickHouse total sums collection items instead, so one account saving
+ * into N private collections added N. ClickHouse still says which articles had a save or unsave.
+ *
+ * A row with no `addedById` (an old bookmark, or a deleted saver) counts the collection's owner.
+ */
+export async function getCollectionTasks(ctx: MetricContext) {
+  const eventIds = (await getEntityMetricEventIds(ctx, 'Article', 'collectedCount')) ?? [];
+  const affected = [...new Set([...eventIds, ...ctx.queue])].sort((a, b) => a - b);
+  ctx.addAffected(affected);
+  if (!affected.length) return [];
+  const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow());
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getCollectionTasks', i + 1, 'of', tasks.length);
+    // An article with no savers left returns no row, and a missing row keeps the stored count.
+    for (const id of ids) (ctx.updates[id] ??= { [ctx.idKey]: id }).collectedCount = 0;
+    await getMetrics(ctx)`
+      -- get article collection metrics
+      SELECT
+        r."articleId",
+        COUNT(DISTINCT r."userId")::int AS "collectedCount"
+      FROM (
+        SELECT ci."articleId", COALESCE(ci."addedById", c."userId") AS "userId"
+        FROM "CollectionItem" ci
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        WHERE ci."articleId" IN (${ids})
+      ) r
+      JOIN "Article" a ON a.id = r."articleId"
+      WHERE r."userId" <> a."userId"
+        ${excludedFilter}
+      GROUP BY r."articleId"
+    `;
+    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
 }
 
 async function getBuzzTasks(ctx: MetricContext) {

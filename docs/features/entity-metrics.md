@@ -124,10 +124,16 @@ duplication is not by design; it’s an unfinished migration.
 | **Comic** | Postgres `ComicProjectMetric` | **Postgres** `ComicProjectMetric` (reads via `ComicChapterRead`) |
 | **Image** | **ClickHouse** (feed) *and* `ImageMetric` (some paths) | ClickHouse |
 
-Exception: `collectedCount` on Model, Article and Post (and Collection `itemCount`) is a ClickHouse
+Exception: `collectedCount` on Model and Post (and Collection `itemCount`) is a ClickHouse
 sum written back into the Postgres `*Metric` row by the metric jobs, fed by the `CollectionItem` CDC
-handler. A row counts only if `addedById` is set. Bookmarks were once written without it;
+handler. It counts collection items, so one account saving into N collections counts N. A row counts
+only if `addedById` is set. Bookmarks were once written without it;
 `apps/event-engine/scripts/backfill-collection-item-adder.mjs` repairs the bookmark rows, one entity per run.
+
+Article `collectedCount` is the exception's exception: the people other than the author who saved
+the article, each counted once, recounted from `CollectionItem` in Postgres. The CDC events only say
+which articles to recount. Articles saved before that change are recounted through
+`/api/admin/temp/recount-article-collected`.
 
 Image is the one that reads tips from ClickHouse on the hot feed, and ClickHouse
 image tips also feed **search ranking** (`stats.tippedAmountCountAllTime:desc`)

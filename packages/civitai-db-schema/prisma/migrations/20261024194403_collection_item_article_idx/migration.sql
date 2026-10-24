@@ -1,0 +1,21 @@
+-- Index `CollectionItem."articleId"` so the article metric job can count an article's savers.
+--
+-- `ArticleMetric.collectedCount` is now the number of people other than the author who saved the
+-- article (src/server/metrics/article.metrics.ts, getCollectionTasks), read from the article's
+-- CollectionItem rows on every metric run that saw a save. CollectionItem has no other
+-- `articleId` index, so without this one each of those reads scans the whole table.
+--
+-- 🔴 APPLY THIS BEFORE DEPLOYING THE CODE THAT READS IT.
+--
+-- 🔴 NO `IF NOT EXISTS`, DELIBERATELY. `CREATE INDEX CONCURRENTLY` leaves an INVALID index behind
+-- when it fails, and that index still occupies the name, so `IF NOT EXISTS` would make the retry a
+-- silent no-op. Recovery if it fails partway (check: `SELECT indisvalid, indisready FROM pg_index
+-- WHERE indexrelid = '"CollectionItem_articleId_idx"'::regclass;`; anything but `t | t` is
+-- unusable):
+--
+--   DROP INDEX CONCURRENTLY "CollectionItem_articleId_idx";
+--   -- then re-run the CREATE below
+--
+-- CONCURRENTLY cannot run inside a transaction block. Partial, so it indexes article rows only.
+CREATE INDEX CONCURRENTLY "CollectionItem_articleId_idx" ON "CollectionItem" ("articleId")
+  WHERE "articleId" IS NOT NULL;

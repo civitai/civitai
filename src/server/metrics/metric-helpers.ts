@@ -188,6 +188,34 @@ const floorToAggInterval = (date: Date) =>
 const hasCrossedAggBoundary = (lastUpdate: Date) =>
   getAggInterval(lastUpdate) !== getAggInterval(new Date());
 
+/**
+ * Entities with an (entityType, metricType) event since the last agg refresh this job read, or
+ * null when no refresh has happened since — there is nothing new to read yet.
+ */
+export async function getEntityMetricEventIds(
+  ctx: Pick<EntityMetricContext, 'ch' | 'lastUpdate'>,
+  entityType: EntityType,
+  metricType: string
+): Promise<number[] | null> {
+  if (!hasCrossedAggBoundary(ctx.lastUpdate)) {
+    log(`getEntityMetricEventIds(${entityType}, ${metricType}) skipped - no new agg data`);
+    return null;
+  }
+
+  // Floor lastUpdate to the agg refresh interval to ensure we don't miss events
+  // that were processed in the latest agg table refresh
+  const lastUpdateFloored = floorToAggInterval(ctx.lastUpdate);
+
+  const events = await ctx.ch.$query<{ entityId: number }>`
+    SELECT DISTINCT entityId
+    FROM entityMetricEvents_month
+    WHERE entityType = '${entityType}'
+      AND metricType = '${metricType}'
+      AND createdAt >= ${lastUpdateFloored}
+  `;
+  return events.map((x) => x.entityId);
+}
+
 export function getEntityMetricTasks(ctx: EntityMetricContext) {
   return async function (
     entityType: EntityType,
@@ -200,27 +228,11 @@ export function getEntityMetricTasks(ctx: EntityMetricContext) {
     const queue = options?.queue ?? ctx.queue;
     const addAffected = options?.addAffected ?? ctx.addAffected;
 
-    // Skip if we haven't crossed an agg refresh boundary (no new data to fetch)
-    if (!hasCrossedAggBoundary(ctx.lastUpdate)) {
-      log(`getEntityMetricTasks(${entityType}, ${metricType}) skipped - no new agg data`);
-      return [];
-    }
-
-    // Floor lastUpdate to the agg refresh interval to ensure we don't miss events
-    // that were processed in the latest agg table refresh
-    const lastUpdateFloored = floorToAggInterval(ctx.lastUpdate);
-
-    // Get affected entities from ClickHouse
-    const events = await ctx.ch.$query<{ entityId: number }>`
-      SELECT DISTINCT entityId
-      FROM entityMetricEvents_month
-      WHERE entityType = '${entityType}'
-        AND metricType = '${metricType}'
-        AND createdAt >= ${lastUpdateFloored}
-    `;
+    const eventIds = await getEntityMetricEventIds(ctx, entityType, metricType);
+    if (!eventIds) return [];
 
     // Merge with queue
-    const affected = [...new Set([...events.map((x) => x.entityId), ...queue])];
+    const affected = [...new Set([...eventIds, ...queue])];
 
     // Track affected if callback provided
     if (addAffected) {
