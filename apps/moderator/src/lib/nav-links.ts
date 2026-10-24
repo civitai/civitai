@@ -1,4 +1,5 @@
 import type { NavLink } from '$lib/server/access';
+import { queueSeverityRank } from './queue-thresholds';
 
 export const isPathActive = (href: string, path: string) =>
   href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
@@ -47,6 +48,25 @@ export function navCount(
     if (count !== null) total = (total ?? 0) + count;
   }
   return total;
+}
+
+/**
+ * The worst threshold step among a link's queues, 0 worst; `null` when none has a standard. Skips
+ * informational children, as `navCount` does: nobody works through them.
+ */
+export function navWorstRank(
+  link: NavLink,
+  countFor: (key: string | undefined) => number | null
+): number | null {
+  if (!link.children)
+    return link.countKey ? queueSeverityRank(link.countKey, countFor(link.countKey)) : null;
+  let worst: number | null = null;
+  for (const child of link.children) {
+    if (child.informational) continue;
+    const rank = navWorstRank(child, countFor);
+    if (rank !== null && (worst === null || rank < worst)) worst = rank;
+  }
+  return worst;
 }
 
 export type SwitcherEntry = { label: string; href: string; external: boolean };

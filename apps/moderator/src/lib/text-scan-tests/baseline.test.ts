@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   baselineState,
-  canonicalRuleState,
   labelsOf,
   promptIdsFor,
   promptKeyOf,
@@ -41,23 +40,10 @@ describe('comparisons', () => {
     expect(samePromptIds({ base: 1, scam: 2 }, { scam: 2, base: 1 })).toBe(true);
     expect(samePromptIds({ base: 1 }, { base: 1, scam: 2 })).toBe(false);
   });
-
-  it('canonicalises rule state regardless of order', () => {
-    const a = [
-      { id: 2, versionId: 5, enabled: true },
-      { id: 1, versionId: null, enabled: false },
-    ];
-    expect(canonicalRuleState(a)).toBe(canonicalRuleState([...a].reverse()));
-  });
 });
 
 describe('baselineState', () => {
-  const live: LiveState = {
-    promptIds: { base: 1, scam: 2 },
-    model: 'm',
-    thinking: false,
-    ruleStateHash: null,
-  };
+  const live: LiveState = { promptIds: { base: 1, scam: 2 }, model: 'm', thinking: false };
 
   it('is none without a baseline', () => {
     expect(baselineState(null, live)).toBe('none');
@@ -71,16 +57,10 @@ describe('baselineState', () => {
     expect(baselineState({ ...live, status: 'queued' }, live)).toBe('running');
   });
 
-  it('goes stale when a prompt is saved, the model changes or a rule changes', () => {
+  it('goes stale when a prompt is saved or the model changes', () => {
     expect(baselineState({ ...live, status: 'done', promptIds: { base: 1, scam: 1 } }, live)).toBe(
       'stale'
     );
     expect(baselineState({ ...live, status: 'done', model: 'other' }, live)).toBe('stale');
-    expect(
-      baselineState(
-        { ...live, status: 'done', ruleStateHash: 'h1' },
-        { ...live, ruleStateHash: 'h2' }
-      )
-    ).toBe('stale');
   });
 });

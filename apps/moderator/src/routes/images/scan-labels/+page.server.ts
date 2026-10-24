@@ -11,11 +11,13 @@ import {
   getCounters,
   getOpenFlaggerVersions,
   isControlFlaggerVersion,
+  itemForToken,
   getVotedItemOwner,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
 import {
   BLOCK_REASON_IDS,
+  pageCard,
   REASON_COMMENT_MAX,
   REASON_NEEDING_COMMENT,
   scanLabelFiltersSchema,
@@ -35,12 +37,18 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     getCounters(userId, filters),
     getOpenFlaggerVersions(),
   ]);
-  return { card, counters, versions, day: query.day ?? '', version: query.version ?? '' };
+  return {
+    card: card && pageCard(card),
+    counters,
+    versions,
+    day: query.day ?? '',
+    version: query.version ?? '',
+  };
 };
 
 const voteSchema = z
   .object({
-    itemId: z.coerce.number().int().positive().max(2_147_483_647),
+    token: z.string().uuid(),
     block: z.enum(['1', '0'], { message: 'Choose Block or Don’t block.' }),
     reason: z.enum(BLOCK_REASON_IDS).optional().catch(undefined),
     reasonComment: z
@@ -65,22 +73,31 @@ const voteSchema = z
     return { ...rest, choice: { block: true, reason, reasonComment: comment } as VoteChoice };
   });
 
-const REFUSAL: Record<'not-open' | 'already-voted' | 'full', string> = {
+const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'not-yours', string> = {
   'not-open': 'Someone else finished this one. Here is the next.',
+  'not-yours': 'This card is not held by you. Here is the next.',
   full: 'Your hold on this one ran out and the others took its slots. Here is the next.',
   'already-voted': 'You already voted on this one. Here is the next.',
 };
 
+const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
+
 export const actions: Actions = {
   vote: async (event) => {
     const { request, locals } = event;
-    const input = parseForm(voteSchema, await request.formData());
+    const form = await request.formData();
+    // A page rendered before the claim token shipped posts an item id: say how to recover.
+    if (!form.has('token')) return fail(400, { error: STALE_PAGE });
+    const input = parseForm(voteSchema, form);
     if (typeof input === 'string') return fail(400, { error: input });
+    const itemId = await itemForToken(input.token, locals.user.id);
+    if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
     const result = await castVote({
-      itemId: input.itemId,
+      itemId,
       userId: locals.user.id,
       choice: input.choice,
       msOnItem: input.ms,
+      claimToken: input.token,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
     // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
@@ -94,7 +111,7 @@ export const actions: Actions = {
         isModerationBlocked,
       }
     ).catch((e) => console.error('scan label block sweep failed', e));
-    const owner = await getVotedItemOwner(input.itemId, locals.user.id).catch((e) => {
+    const owner = await getVotedItemOwner(itemId, locals.user.id).catch((e) => {
       console.error('scan label owner read failed', e);
       return null;
     });

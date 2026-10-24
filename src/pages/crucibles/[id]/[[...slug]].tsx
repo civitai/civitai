@@ -251,7 +251,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
-  const entryCount = crucible._count?.entries ?? 0;
+  // What the grid lists, not the raw row count: entries hidden from this viewer are not claimed.
+  const entryCount = entriesData?.pages[0]?.visibleCount ?? crucible._count?.entries ?? 0;
   const { paidEntryCount } = crucible;
   const entryFeePool = crucible.entryFee * paidEntryCount;
   const totalPrizePool = getCrucibleTotalPrizePool({
@@ -419,6 +420,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         {/* Hero Section */}
         <CrucibleHeader
           className="-mt-3"
+          entryCount={entryCount}
           crucible={{
             id: crucible.id,
             name: crucible.name,

@@ -87,6 +87,8 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 
 The crucible card and page show how many different people have entered next to the entry count. It is a bare number, never who, so judging stays blind. It is the same count the 10-entrant creator milestone uses: distinct users with an entry, the host excluded, entries since removed or withdrawn included.
 
+The entry count on the crucible page is the number of entries its grid lists to the viewer. An entry whose image was deleted, is not yet scanned, is held for review, is unpublished or falls outside the viewer's browsing level is left out, as it is from the grid; the viewer's own entries still count unless their image was deleted. The crucible cards in the feed and the entry cap still count every entry.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).

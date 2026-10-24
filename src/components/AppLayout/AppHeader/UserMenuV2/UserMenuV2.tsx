@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { UserMenuTrigger } from '~/components/AppLayout/AppHeader/UserMenu';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -29,6 +30,8 @@ export default function UserMenuV2() {
 
   const setOpen = (next: boolean) => {
     if (!next) pins.flush();
+    // On a phone the menu sheet and the chat window are both full-screen.
+    if (next && isMobile) useChatStore.setState({ open: false });
     setOpenState(next);
   };
 

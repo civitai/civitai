@@ -14,17 +14,10 @@ vi.mock('~/server/services/text-scan/actions/collection', () => ({
   applyCollectionTextScan: vi.fn(async () => undefined),
 }));
 
-// Hand-listed: the real action reaches model.service, whose graph builds clients at load.
-vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
-  applyModelRulesTextScan: vi.fn(async () => undefined),
-}));
-
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
 const { applyBountyNsfwTextScan } = await import('~/server/services/text-scan/actions/bounty-nsfw');
 const { applyCollectionTextScan } = await import('~/server/services/text-scan/actions/collection');
-
-const { applyModelRulesTextScan } = await import('~/server/services/text-scan/actions/model-rules');
 
 const args = {
   entityId: 1,
@@ -53,9 +46,26 @@ describe('rated-entity text-scan adapters', () => {
   });
 });
 
-describe('model-rules text-scan adapter', () => {
-  it('ModelRules is registered and runs the model-rules action', async () => {
-    await getModerationAdapter('ModelRules')!.applyTextScan!(args as never);
-    expect(applyModelRulesTextScan).toHaveBeenCalledWith(args);
-  });
+describe('retired model-rules text-scan adapter', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s rows are neither retried nor acted on',
+    async (entityType) => {
+      const adapter = getModerationAdapter(entityType)!;
+      await expect(adapter.isEnabled!({ entityId: 1 })).resolves.toBe(false);
+      expect(adapter.applyTextScan).toBeUndefined();
+    }
+  );
+});
+
+describe('leftover ModelRules rows', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s is registered but never enabled, so the retry cron skips it',
+    async (type) => {
+      const adapter = getModerationAdapter(type);
+      expect(adapter).toBeDefined();
+      expect(await adapter!.isEnabled!({ entityId: 1 })).toBe(false);
+      expect(adapter!.applyTextScan).toBeUndefined();
+      expect(adapter!.applyFailure).toBeUndefined();
+    }
+  );
 });

@@ -42,8 +42,8 @@ describe('needsReviewBranches', () => {
     expect(needsReviewBranches(both, { source: 'text-scan', flag: 'all' })).toEqual(detectionsOnly);
   });
 
-  it('drops file matches under a real-person filter: they are minor leads', () => {
-    expect(needsReviewBranches(both, { source: 'all', flag: 'poi' })).toEqual(detectionsOnly);
+  it('keeps file matches under either label filter: there are minor and real-person matches', () => {
+    expect(needsReviewBranches(both, { source: 'all', flag: 'poi' })).toEqual(both);
     expect(needsReviewBranches(both, { source: 'all', flag: 'minor' })).toEqual(both);
   });
 });
@@ -85,12 +85,16 @@ describe('needsReviewTotal', () => {
 describe('leadRefs', () => {
   const held = { label: 'minor' as const, source: 'redetected' as const, textHash: 'h', extra: 1 };
 
-  it('rules held detections first, then the file match as a minor lead', () => {
-    expect(leadRefs({ flags: [held], match: { hash: 'aa' } })).toEqual([
+  it('rules held detections first, then each file match under its own label', () => {
+    expect(leadRefs({ flags: [held], match: { hash: 'aa' }, poiMatch: { hash: 'bb' } })).toEqual([
       { label: 'minor', source: 'redetected', textHash: 'h' },
       { label: 'minor', source: 'file-match', textHash: null },
+      { label: 'poi', source: 'file-match', textHash: null },
     ]);
-    expect(leadRefs({ flags: [], match: null })).toEqual([]);
+    expect(leadRefs({ flags: [], match: null, poiMatch: { hash: 'bb' } })).toEqual([
+      { label: 'poi', source: 'file-match', textHash: null },
+    ]);
+    expect(leadRefs({ flags: [], match: null, poiMatch: null })).toEqual([]);
   });
 });
 
