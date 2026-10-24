@@ -105,7 +105,7 @@ describe('doc-store: a connection the pool cannot hand out is a retryable servic
     ],
   ])('%s', async (_name, fault) => {
     const { db, sent } = scriptedDb({ connect: fault });
-    const store = createDocStore({ db }).store;
+    const store = createDocStore({ db });
     const err = await rejection(store.get(CTX, PREFS, 'k'));
     expect(err).toBeInstanceOf(DocStoreError);
     expect(err).toMatchObject(UNAVAILABLE);
@@ -152,7 +152,7 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
     ],
   ])('%s on a statement after BEGIN', async (_name, fault) => {
     const { db, sent } = scriptedDb({ failOn: (sql) => (isInTx(sql) ? fault : undefined) });
-    const store = createDocStore({ db }).store;
+    const store = createDocStore({ db });
     const err = await rejection(store.get(CTX, PREFS, 'k'));
     expect(err).toMatchObject(UNAVAILABLE);
     expect(sent.some(isInTx)).toBe(true);
@@ -162,7 +162,7 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
 
   it('on BEGIN itself', async () => {
     const { db } = scriptedDb({ failOn: (sql) => (isBegin(sql) ? pgError('57P01') : undefined) });
-    const err = await rejection(createDocStore({ db }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toMatchObject(UNAVAILABLE);
   });
 
@@ -170,7 +170,7 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
     const { db, released } = scriptedDb({
       failOn: (sql) => (isRole(sql) ? new Error('Connection terminated unexpectedly') : undefined),
     });
-    const err = await rejection(createDocStore({ db }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toMatchObject(UNAVAILABLE);
     expect(released).toHaveLength(1);
   });
@@ -180,7 +180,7 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
     const { db, sent, released } = scriptedDb({
       failOn: (sql) => (isInTx(sql) || sql === 'ROLLBACK' ? lost : undefined),
     });
-    const err = await rejection(createDocStore({ db }).store.put(CTX, PREFS, 'k', { a: 1 }));
+    const err = await rejection(createDocStore({ db }).put(CTX, PREFS, 'k', { a: 1 }));
     expect(err).toMatchObject(UNAVAILABLE);
     expect(sent.filter(isBegin)).toHaveLength(1);
     expect(sent).toContain('ROLLBACK');
@@ -199,25 +199,25 @@ describe('doc-store: what stays as it was', () => {
     ['SQLSTATE 22008 (datetime overflow)', pgError('22008')],
   ])('%s inside the transaction is rethrown untouched (the route sends 500)', async (_n, fault) => {
     const { db } = scriptedDb({ failOn: (sql) => (isInTx(sql) ? fault : undefined) });
-    const err = await rejection(createDocStore({ db }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toBe(fault);
   });
 
   it('a connection lost on COMMIT is NOT retryable: the write may have landed', async () => {
     const lost = new Error('Connection terminated unexpectedly');
     const { db } = scriptedDb({ failOn: (sql) => (sql === 'COMMIT' ? lost : undefined) });
-    const err = await rejection(createDocStore({ db }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toBe(lost);
   });
 
   it('INVARIANT GUARD: lock contention (55P03) is still rate_limited, not service_unavailable', async () => {
     const { db } = scriptedDb({ failOn: (sql) => (isInTx(sql) ? pgError('55P03') : undefined) });
-    const err = await rejection(createDocStore({ db }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
     expect(err).toMatchObject({ code: 'rate_limited', details: { reason: 'contention' } });
   });
 
   it('INVARIANT GUARD: no pool at all is still storage_disabled', async () => {
-    const err = await rejection(createDocStore({ db: null }).store.get(CTX, PREFS, 'k'));
+    const err = await rejection(createDocStore({ db: null }).get(CTX, PREFS, 'k'));
     expect(err).toMatchObject({ code: 'storage_disabled' });
   });
 });
