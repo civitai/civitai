@@ -104,11 +104,15 @@ export async function snapshot(h: Harness, appId: string) {
   return out;
 }
 
-/** Recompute usage from the documents themselves and compare with the counters. */
+/**
+ * Recompute usage from the documents themselves and compare with the counters. The app's
+ * row counts SHARED documents only (`scope_uid = 0`); a private document is charged to its
+ * viewer's row alone.
+ */
 export async function assertUsageConsistent(h: Harness, appId: string, ns: string) {
   const [recomputed] = await h.raw(
     `SELECT COALESCE(sum(size_bytes), 0)::bigint AS bytes, count(*)::int AS docs
-       FROM appdata.doc WHERE app_id = $1 AND ns = $2`,
+       FROM appdata.doc WHERE app_id = $1 AND ns = $2 AND scope_uid = 0`,
     [appId, ns]
   );
   const [usage] = await h.raw(
@@ -1105,7 +1109,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('quota (sequential)', () => {
-    it('refuses the write that would cross a ceiling, and a delete or shrink always passes', async () => {
+    it('refuses the shared write that would cross the app ceiling, and a delete or shrink always passes', async () => {
       const app = freshApp('quota');
       // `{"p": "xxxxxxxxxx"}` is 19 bytes of jsonb text; 3 fit under 60, a 4th does not.
       const tight = createDocStore({
@@ -1113,22 +1117,151 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         limits: { appBytes: 60, appDocs: 100, userBytes: 1000, userDocs: 100 },
       });
       const me = ctx(app, NS_PROD, VIEWER_1);
-      for (const k of ['q1', 'q2', 'q3']) await tight.put(me, PREFS, k, { p: 'xxxxxxxxxx' });
+      for (const k of ['q1', 'q2', 'q3']) await tight.put(me, BOARD, k, { p: 'xxxxxxxxxx' });
       const err = await expectCode(
-        tight.put(me, PREFS, 'q4', { p: 'xxxxxxxxxx' }),
+        tight.put(me, BOARD, 'q4', { p: 'xxxxxxxxxx' }),
         'quota_exceeded'
       );
       expect(err.details).toEqual({ ceiling: 'app' });
-      expect(await tight.get(me, PREFS, 'q4')).toBeNull();
+      expect(await tight.get(me, BOARD, 'q4')).toBeNull();
       // Growing an existing doc past the ceiling is refused; shrinking is not.
       // 19 → 23 bytes takes 57 to 61.
-      await expectCode(tight.put(me, PREFS, 'q1', { p: 'xxxxxxxxxxxxxx' }), 'quota_exceeded');
-      await tight.put(me, PREFS, 'q1', { p: 'x' });
-      await tight.delete(me, PREFS, 'q2');
-      await tight.put(me, PREFS, 'q4', { p: 'xxxxxxxxxx' });
+      await expectCode(tight.put(me, BOARD, 'q1', { p: 'xxxxxxxxxxxxxx' }), 'quota_exceeded');
+      await tight.put(me, BOARD, 'q1', { p: 'x' });
+      await tight.delete(me, BOARD, 'q2');
+      await tight.put(me, BOARD, 'q4', { p: 'xxxxxxxxxx' });
       await assertUsageConsistent(h, app, NS_PROD);
       const [u] = await h.raw(`SELECT bytes, docs FROM appdata.usage_app WHERE app_id = $1`, [app]);
       expect({ bytes: Number(u.bytes), docs: Number(u.docs) }).toEqual({ bytes: 48, docs: 3 });
+    });
+
+    it('the app ceiling refuses a shared write from a user who has written nothing before', async () => {
+      const app = freshApp('quotashared');
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 60, appDocs: 100, userBytes: 1000, userDocs: 100 },
+      });
+      // Three different authors fill the app's shared space; a fourth author is refused by the
+      // APP ceiling (their own row is empty), so the refusal is the app's, not theirs.
+      for (const uid of [301, 302, 303]) {
+        await tight.put(ctx(app, NS_PROD, uid), BOARD, `n${uid}`, { p: 'xxxxxxxxxx' });
+      }
+      const err = await expectCode(
+        tight.put(ctx(app, NS_PROD, 304), BOARD, 'n304', { p: 'xxxxxxxxxx' }),
+        'quota_exceeded'
+      );
+      expect(err.details).toEqual({ ceiling: 'app' });
+      // The doc-count side of the app ceiling binds shared documents too.
+      const fewDocs = createDocStore({
+        db: h.db,
+        limits: { appBytes: 10_000, appDocs: 3, userBytes: 1000, userDocs: 100 },
+      });
+      const docsErr = await expectCode(
+        fewDocs.put(ctx(app, NS_PROD, 304), BOARD, 'n304', { p: 'x' }),
+        'quota_exceeded'
+      );
+      expect(docsErr.details).toEqual({ ceiling: 'app' });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('private documents are charged to the viewer only: 26 viewers at their own ceiling never fill the app', async () => {
+      const app = freshApp('privnoapp');
+      // 25 viewers' worth of the per-viewer ceiling (25 × 38 bytes) is the app's whole byte
+      // ceiling, and 26 viewers' private docs (52) are over its doc ceiling. Were private docs
+      // charged to the app, the 26th viewer's first private write would already be refused.
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 950, appDocs: 51, userBytes: 40, userDocs: 10 },
+      });
+      const DOC19 = { p: 'xxxxxxxxxx' }; // 19 bytes of jsonb text
+      const fillers = Array.from({ length: 26 }, (_, i) => 1001 + i);
+      for (const uid of fillers) {
+        const v = ctx(app, NS_PROD, uid);
+        await tight.put(v, PREFS, 'a', DOC19);
+        await tight.put(v, PREFS, 'b', DOC19);
+        // Each filler is at its OWN ceiling (38 of 40): the next private write is the viewer's.
+        const own = await expectCode(tight.put(v, PREFS, 'c', DOC19), 'quota_exceeded');
+        expect(own.details).toEqual({ ceiling: 'viewer' });
+      }
+      // The 27th viewer: a private write and a shared write both land.
+      const late = ctx(app, NS_PROD, 1027);
+      expect((await tight.put(late, PREFS, 'mine', DOC19)).version).toBe(1);
+      expect((await tight.put(late, BOARD, 'shared', DOC19)).version).toBe(1);
+
+      const [u] = await h.raw(
+        `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
+        [app, NS_PROD]
+      );
+      // Shared only: one 19-byte doc. Every landed write still took a seq: 26 × 2 private, then
+      // 1 private + 1 shared by the 27th viewer (a refused write takes none).
+      expect({ bytes: Number(u.bytes), docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({
+        bytes: 19,
+        docs: 1,
+        seq: 54,
+      });
+      // What `info()` reports: `app` is the shared data; `viewer` is everything the viewer holds.
+      expect(await tight.usage(late)).toEqual({
+        app: { bytes: 19, docs: 1 },
+        viewer: { bytes: 38, docs: 2 },
+      });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('a collection whose visibility changes between manifest versions: each document stays charged by the key space it was written in', async () => {
+      const app = freshApp('visflip');
+      const asPrivate: DocCollection = { name: 'flip', config: decl({ visibility: 'private' }) };
+      const asShared: DocCollection = {
+        name: 'flip',
+        config: decl({ visibility: 'shared', write: 'own' }),
+      };
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(me, asPrivate, 'p', { p: 'xxxxxxxxxx' }); // 19, private key space
+      // Redeclared shared: the private document is not in the shared key space and stays charged
+      // to its viewer only; a new shared write is charged to the app and the author.
+      expect(await store.get(me, asShared, 'p')).toBeNull();
+      await store.put(me, asShared, 's', { p: 'x' }); // 10, shared key space
+      expect(await store.usage(me)).toEqual({
+        app: { bytes: 10, docs: 1 },
+        viewer: { bytes: 29, docs: 2 },
+      });
+      // Redeclared private again: the shared document stays on the app's ceiling.
+      expect(await store.get(me, asPrivate, 's')).toBeNull();
+      expect(await store.delete(me, asPrivate, 'p')).toEqual({ deleted: true });
+      expect(await store.usage(me)).toEqual({
+        app: { bytes: 10, docs: 1 },
+        viewer: { bytes: 10, docs: 1 },
+      });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('a private delete refunds the viewer and leaves the app untouched, and still takes a seq', async () => {
+      const app = freshApp('privdel');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(me, BOARD, 's', { p: 'xxxxxxxxxx' });
+      await store.put(me, PREFS, 'a', { p: 'xxxxxxxxxx' });
+      await store.put(me, PREFS, 'a', { p: 'xxxxxxxxxxxxxx' }); // grows 19 → 23
+      // The create and the growth charged the viewer, not the app.
+      expect(await store.usage(me)).toEqual({
+        app: { bytes: 19, docs: 1 },
+        viewer: { bytes: 42, docs: 2 },
+      });
+      expect(await store.delete(me, PREFS, 'a')).toEqual({ deleted: true });
+      const [u] = await h.raw(
+        `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
+        [app, NS_PROD]
+      );
+      expect({ bytes: Number(u.bytes), docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({
+        bytes: 19,
+        docs: 1,
+        seq: 4,
+      });
+      const tombs = await h.raw(`SELECT key, seq FROM appdata.doc_tomb WHERE app_id = $1`, [app]);
+      expect(tombs.map((r) => [r.key, Number(r.seq)])).toEqual([['a', 4]]);
+      expect(await store.usage(me)).toEqual({
+        app: { bytes: 19, docs: 1 },
+        viewer: { bytes: 19, docs: 1 },
+      });
+      await assertUsageConsistent(h, app, NS_PROD);
     });
 
     it('a shrink and a delete pass even when usage is already over a lowered ceiling', async () => {
@@ -1152,10 +1285,23 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       const app2 = freshApp('firstwrite');
       await expectCode(
-        tiny.put(ctx(app2, NS_PROD, VIEWER_1), PREFS, 'a', { p: 'x' }),
+        tiny.put(ctx(app2, NS_PROD, VIEWER_1), BOARD, 'a', { p: 'x' }),
         'quota_exceeded'
       );
       expect(await h.raw(`SELECT 1 FROM appdata.usage_app WHERE app_id = $1`, [app2])).toEqual([]);
+      // A first PRIVATE write under the same ceiling lands: it creates the app's row (the seq)
+      // with nothing charged to it.
+      expect((await tiny.put(ctx(app2, NS_PROD, VIEWER_1), PREFS, 'a', { p: 'x' })).version).toBe(
+        1
+      );
+      const rows = await h.raw(
+        `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1`,
+        [app2]
+      );
+      expect(
+        rows.map((r) => ({ bytes: Number(r.bytes), docs: Number(r.docs), seq: Number(r.last_seq) }))
+      ).toEqual([{ bytes: 0, docs: 0, seq: 1 }]);
+      await assertUsageConsistent(h, app2, NS_PROD);
     });
 
     it('per-user ceilings: viewer for private docs, author for shared, doc counts too', async () => {
