@@ -32,7 +32,7 @@ import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue
 import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess, FeatureAccessContext } from '~/server/services/feature-flags.service';
-import { getFeatureFlags, getRequestFeatureFlag } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
 import {
   assertSessionOrFullUserKey,
@@ -394,11 +394,16 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
   });
 });
 
-// The one flag a guard names. Behind `trpcFlagGuardPerRequest`, only that flag is evaluated, once
-// per HTTP request; off, it is read out of the whole registry. Same answer per key either way.
-function guardFlagEnabled(ctx: FeatureAccessContext, flag: keyof FeatureAccess): boolean {
-  if (getRequestFeatureFlag(ctx, 'trpcFlagGuardPerRequest'))
-    return getRequestFeatureFlag(ctx, flag);
+// The one flag a guard names. Behind `trpcFlagGuardPerRequest` it is read from `ctx.features`, the
+// per-request lazy object `createContext` builds (`getFeatureFlagsLazy`): it evaluates only the key
+// read, once per request, through the same per-key evaluator as `getFeatureFlags`. Off, it is read
+// out of the whole registry, as before. Same answer per key either way. `?.`: a context built
+// without `features` takes the old path.
+function guardFlagEnabled(
+  ctx: FeatureAccessContext & { features?: FeatureAccess },
+  flag: keyof FeatureAccess
+): boolean {
+  if (ctx.features?.trpcFlagGuardPerRequest) return !!getFeatureFlags(ctx)[flag]; // MUTANT: red demo
   return !!getFeatureFlags(ctx)[flag];
 }
 
