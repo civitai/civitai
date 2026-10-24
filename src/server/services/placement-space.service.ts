@@ -287,7 +287,13 @@ export const reservedFreeSlotsWhere = ({ surface, targetType, targetId }: SpaceT
  */
 const displayedReservedFreeSlots = async (useKysely: boolean, target: SpaceTarget) =>
   useKysely
-    ? countPlacements((await loadKyselyDb()).kyselyRead, reservedFreeSlotsWhere(target))
+    ? // MUTATION A (do not merge): the display twin hand-builds its predicate and drops `free`.
+      countPlacements((await loadKyselyDb()).kyselyRead, {
+        surface: target.surface,
+        targetType: target.targetType,
+        targetId: target.targetId,
+        status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
+      })
     : reservedFreeSlots(dbRead, target);
 
 /**

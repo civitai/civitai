@@ -141,7 +141,15 @@ export const freePlacementsOnWhere = ({
   surface,
   targetType,
   targetId,
-}: SpaceTarget & { placerId: number }) => ({ placerId, free: true, surface, targetType, targetId });
+}: SpaceTarget & { placerId: number }) => ({
+  placerId,
+  free: true,
+  surface,
+  targetType,
+  targetId,
+  // MUTATION B (do not merge): an operator countPlacements does not translate.
+  status: { notIn: ['removed'] },
+});
 
 export type CreateFreePlacement = SpaceTarget & {
   placerId: number;
