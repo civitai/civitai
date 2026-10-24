@@ -116,6 +116,9 @@ export async function deliverMembershipCosmetics({
           cs."cancelAt" IS NULL
           AND pd.provider = 'Civitai'
           AND cs."currentPeriodEnd" BETWEEN ${NO_CANCEL_AT_REVOKE_FROM} AND ${lastDelivered}
+          -- An immediate cancel or a supersede leaves the period end in the future; one before the
+          -- cutoff is backlog.
+          AND (cs."canceledAt" IS NULL OR cs."canceledAt" >= ${NO_CANCEL_AT_REVOKE_FROM})
           -- A day of grace for a live membership whose next period isn't written yet: referral
           -- chunks advance at :05, a renewal webhook can land after this job. By the clock, not
           -- lastDelivered, so a manual rerun doesn't shrink it.

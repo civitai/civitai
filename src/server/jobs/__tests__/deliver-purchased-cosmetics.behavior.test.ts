@@ -105,7 +105,8 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL,
       "cancelAt" timestamp(3),
       "cancelAtPeriodEnd" boolean NOT NULL DEFAULT false,
-      "endedAt" timestamp(3)
+      "endedAt" timestamp(3),
+      "canceledAt" timestamp(3)
     );
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY,
@@ -462,6 +463,7 @@ describe('deliverMembershipCosmetics: memberships that end without a cancelAt', 
   const BUZZ_CURRENT = 34;
   const STRIPE_STALE_RENEWING = 35;
   const REFERRAL_HANDOVER = 38;
+  const CANCELED_BEFORE_CUTOFF = 40;
   const SUPERSEDED_TO_CASH = 39;
   const STRIPE_ENDED_NO_CANCEL_AT = 37;
 
@@ -471,13 +473,17 @@ describe('deliverMembershipCosmetics: memberships that end without a cancelAt', 
     productId: string,
     status: string,
     end: Date,
-    { cancelAtPeriodEnd = true, endedAt = null as Date | null } = {}
+    {
+      cancelAtPeriodEnd = true,
+      endedAt = null as Date | null,
+      canceledAt = null as Date | null,
+    } = {}
   ) =>
     `('${id}', ${userId}, '${productId}', '${status}', '${ts(
       new Date(end.getTime() - 30 * day)
     )}', '${ts(end)}', '2026-01-01', NULL, ${cancelAtPeriodEnd}, ${
       endedAt ? `'${ts(endedAt)}'` : 'NULL'
-    })`;
+    }, ${canceledAt ? `'${ts(canceledAt)}'` : 'NULL'})`;
 
   beforeEach(async () => {
     await holder.db.exec(`
@@ -488,6 +494,11 @@ describe('deliverMembershipCosmetics: memberships that end without a cancelAt', 
         ${row('buzz-after', BUZZ_LAPSED_AFTER, CIVITAI_BUZZ_BRONZE, 'active', at(1))},
         ${row('redeemable-code-ended', CODE_ENDED_AFTER, CIVITAI_BRONZE, 'canceled', at(1), {
           endedAt: at(1),
+          canceledAt: at(1),
+        })},
+        ${row('civ-canceled-early', CANCELED_BEFORE_CUTOFF, CIVITAI_BRONZE, 'canceled', at(1), {
+          endedAt: at(-23),
+          canceledAt: at(-23),
         })},
         ${row(
           's-ended-no-cancel-at',
@@ -535,6 +546,7 @@ describe('deliverMembershipCosmetics: memberships that end without a cancelAt', 
         (${BUZZ_LAPSED_BEFORE}, ${CIVITAI_SEP_BRONZE}), (${BUZZ_LAPSED_BEFORE}, ${PERMANENT_BADGE}),
         (${BUZZ_LAPSED_AFTER}, ${CIVITAI_SEP_BRONZE}), (${BUZZ_LAPSED_AFTER}, ${PERMANENT_BADGE}),
         (${CODE_ENDED_AFTER}, ${CIVITAI_SEP_BRONZE}),
+        (${CANCELED_BEFORE_CUTOFF}, ${CIVITAI_SEP_BRONZE}),
         (${CODE_EXPIRED_CLAIMABLE}, ${CIVITAI_SEP_BRONZE}),
         (${BUZZ_CURRENT}, ${CIVITAI_SEP_BRONZE}),
         (${STRIPE_STALE_RENEWING}, ${SEP_BRONZE}),
@@ -563,6 +575,11 @@ describe('deliverMembershipCosmetics: memberships that end without a cancelAt', 
     await runAfterCutoff();
     expect(await badgesOf(CODE_ENDED_AFTER)).toEqual([]);
     expect(await badgesOf(CODE_EXPIRED_CLAIMABLE)).toEqual([]);
+  });
+
+  it('a membership canceled before the cutoff keeps them when its unexpired period ends after it', async () => {
+    await runAfterCutoff();
+    expect(await badgesOf(CANCELED_BEFORE_CUTOFF)).toEqual([CIVITAI_SEP_BRONZE]);
   });
 
   it('a Buzz membership still inside its period keeps them', async () => {
