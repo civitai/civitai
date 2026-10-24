@@ -11,6 +11,9 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   useStorylineForkShares: () => ({ data: undefined }),
   useStorylineGraph: () => ({ data: mocks.graph, isLoading: false }),
 }));
+vi.mock('~/components/Storyline/storyline.data', () => ({
+  useMoveStorylineChapter: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+}));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
 }));
