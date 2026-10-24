@@ -30,7 +30,10 @@ import type {
   BlockScopeRefusal,
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
-import type { AppBlockEndpoint } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordDocStoreError,
+  type DocStoreEndpoint,
+} from '~/server/metrics/app-block-runtime.metrics';
 import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
@@ -154,7 +157,7 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
 }
 
 /** The metrics label for a request, from its method and path shape only. */
-export function storageEndpointLabel(req: NextApiRequest): AppBlockEndpoint {
+export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
@@ -227,7 +230,21 @@ function envelope(code: StorageApiCode, message: string, details?: Record<string
   return body;
 }
 
-function sendError(res: NextApiResponse, err: unknown): void {
+/**
+ * Every error envelope this route sends leaves through here or `storageRefusalBody`, and both
+ * count it in `civitai_app_block_doc_store_errors_total` under the envelope's own code.
+ */
+function sendEnvelope(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  status: number,
+  body: StorageErrorBody
+): void {
+  recordDocStoreError(storageEndpointLabel(req), body.code);
+  res.status(status).json(body);
+}
+
+function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
       {
@@ -238,7 +255,7 @@ function sendError(res: NextApiResponse, err: unknown): void {
       },
       'app-blocks'
     ).catch(() => undefined);
-    res.status(500).json(envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
+    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
@@ -248,7 +265,7 @@ function sendError(res: NextApiResponse, err: unknown): void {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
-  res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
+  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
 }
 
 /**
@@ -268,8 +285,13 @@ const MIDDLEWARE_REFUSAL: Record<BlockScopeRefusalKind, { code: StorageApiCode; 
     context_binding: { code: 'not_eligible', reason: 'context_binding' },
   };
 
-export function storageRefusalBody(refusal: BlockScopeRefusal): StorageErrorBody {
+export function storageRefusalBody(
+  refusal: BlockScopeRefusal,
+  req: NextApiRequest
+): StorageErrorBody {
   const { code, reason } = MIDDLEWARE_REFUSAL[refusal.kind];
+  // The middleware sends this body; it is counted here, the one place it is built.
+  recordDocStoreError(storageEndpointLabel(req), code);
   return envelope(code, refusal.error, reason ? { reason } : undefined);
 }
 
@@ -887,9 +909,12 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
-        res
-          .status(STORAGE_ERROR_STATUS.method_not_allowed)
-          .json(envelope('method_not_allowed', 'method not allowed'));
+        sendEnvelope(
+          req,
+          res,
+          STORAGE_ERROR_STATUS.method_not_allowed,
+          envelope('method_not_allowed', 'method not allowed')
+        );
         return;
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
@@ -906,11 +931,11 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
         // A client abort is not a server fault: no error log, and nothing written to a
         // connection that is already gone. A still-open one gets a plain refusal.
         if (!req.destroyed && !res.destroyed && !res.writableEnded) {
-          res.status(400).json(envelope('invalid_request', 'request body was not received'));
+          sendEnvelope(req, res, 400, envelope('invalid_request', 'request body was not received'));
         }
         return;
       }
-      sendError(res, err);
+      sendError(req, res, err);
     }
   };
 }
