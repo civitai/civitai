@@ -12,6 +12,35 @@ import {
 // Operator actions on workload clients and worker devices. They take the db as an argument and import
 // nothing from `$lib`/`$env`, so scripts/worker-client.ts can run them outside SvelteKit.
 
+/** civitai-orchestration's `Provider` enum names, spelled exactly. Add a name when the enum gains one. */
+const WORKER_PROVIDERS = [
+  'Civitai',
+  'OctoML',
+  'SaladML',
+  'PicFinder',
+  'RunPods',
+  'ValdiAI',
+  'OctoMLNext',
+  'RunDiffusion',
+  'SaladShared',
+  'BaseTen',
+  'Cerebrium',
+  'Cloudflare',
+  'FalAI',
+  'Haiper',
+  'Runware',
+  'Kling',
+  'MiniMax',
+  'Vidu',
+  'Byteplus',
+  'Submodel',
+  'Alibaba',
+  'Google',
+  'Krea',
+  'Sonilo',
+  'OpenRouter',
+] as const;
+
 export type CreateWorkerClientInput = {
   id: string;
   name: string;
@@ -21,14 +50,23 @@ export type CreateWorkerClientInput = {
   saladContainerGroupIds?: string[];
 };
 
+function clientIdError(id: string): string | null {
+  // Basic credentials are decoded differently across the token, revoke and introspect routes for any
+  // character that form-encoding changes, such as `+`.
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) {
+    return 'a client id may contain only letters, digits, ".", "_" and "-"';
+  }
+  return null;
+}
+
 /** Why `input` is not a valid workload client, or null. */
 export function workerClientInputError(input: CreateWorkerClientInput): string | null {
   const types = input.subjectTokenTypes;
   const groups = input.saladContainerGroupIds ?? [];
-  // Basic credentials are decoded differently across the token, revoke and introspect routes for any
-  // character that form-encoding changes, such as `+`.
-  if (!/^[A-Za-z0-9._-]+$/.test(input.id)) {
-    return 'a client id may contain only letters, digits, ".", "_" and "-"';
+  const idError = clientIdError(input.id);
+  if (idError) return idError;
+  if (!(WORKER_PROVIDERS as readonly string[]).includes(input.provider)) {
+    return `unknown provider ${input.provider}; use one of ${WORKER_PROVIDERS.join(', ')}`;
   }
   if (types.length === 0) return 'at least one subject token type is required';
   const unknown = types.find((t) => t !== DEVICE_ID_TOKEN_TYPE && t !== JWT_TOKEN_TYPE);
@@ -53,15 +91,7 @@ export async function createWorkerClient(
   const invalid = workerClientInputError(input);
   if (invalid) throw new Error(`Invalid workload client: ${invalid}`);
 
-  const owners = await db
-    .selectFrom('UserRole')
-    .select('userId')
-    .where('role', '=', SYSTEM_WORKLOAD_ROLE)
-    .execute();
-  if (owners.length !== 1) {
-    throw new Error(`Expected exactly one ${SYSTEM_WORKLOAD_ROLE} account, found ${owners.length}`);
-  }
-
+  const ownerId = await systemWorkloadOwner(db);
   const secret = generateKey(64);
   await db.transaction().execute(async (trx) => {
     await trx
@@ -73,7 +103,7 @@ export async function createWorkerClient(
         grants: [TOKEN_EXCHANGE_GRANT],
         allowedScopes: TokenScope.WorkerRegister,
         isConfidential: true,
-        userId: owners[0].userId,
+        userId: ownerId,
         updatedAt: new Date(),
       })
       .execute();
@@ -88,6 +118,54 @@ export async function createWorkerClient(
       .execute();
   });
   return { clientId: input.id, secret };
+}
+
+/**
+ * Register a client whose only use is to call introspection, once its id is on
+ * OAUTH_WORKER_INTROSPECTION_CLIENT_IDS. It has no grants, so the token route issues it nothing. Returns
+ * the client secret, which is stored only as its hash: the caller shows it once.
+ */
+export async function createIntrospectorClient(
+  db: Kysely<DB>,
+  input: { id: string; name: string }
+): Promise<{ clientId: string; secret: string }> {
+  const invalid = clientIdError(input.id);
+  if (invalid) throw new Error(`Invalid introspector client: ${invalid}`);
+  const existing = await db
+    .selectFrom('OauthClient')
+    .select('id')
+    .where('id', '=', input.id)
+    .executeTakeFirst();
+  if (existing) throw new Error(`An OAuth client ${input.id} already exists`);
+
+  const ownerId = await systemWorkloadOwner(db);
+  const secret = generateKey(64);
+  await db
+    .insertInto('OauthClient')
+    .values({
+      id: input.id,
+      secret: generateSecretHash(secret),
+      name: input.name,
+      grants: [],
+      allowedScopes: 0,
+      isConfidential: true,
+      userId: ownerId,
+      updatedAt: new Date(),
+    })
+    .execute();
+  return { clientId: input.id, secret };
+}
+
+async function systemWorkloadOwner(db: Kysely<DB>): Promise<number> {
+  const owners = await db
+    .selectFrom('UserRole')
+    .select('userId')
+    .where('role', '=', SYSTEM_WORKLOAD_ROLE)
+    .execute();
+  if (owners.length !== 1) {
+    throw new Error(`Expected exactly one ${SYSTEM_WORKLOAD_ROLE} account, found ${owners.length}`);
+  }
+  return owners[0].userId;
 }
 
 /**
