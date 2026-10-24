@@ -219,6 +219,8 @@ export type StorageErrorBody = {
  */
 const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
   storage_disabled: 'document storage is unavailable',
+  // The store's connection-fault message names the driver error (`doc-store.ts`).
+  service_unavailable: 'storage is temporarily unavailable',
 };
 
 function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {

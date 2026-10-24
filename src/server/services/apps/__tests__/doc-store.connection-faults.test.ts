@@ -15,7 +15,7 @@ import { PREFS } from './doc-store.functional';
 
 const CTX: DocStoreContext = { appId: 'ab_CONNFAULTAPP', ns: 'prod', viewerUid: 4242 };
 
-/** The retryable refusal every connection fault becomes, with nothing of the cause in it. */
+/** The retryable refusal every connection fault becomes; `details` carries nothing of the cause. */
 const UNAVAILABLE = {
   name: 'DocStoreError',
   code: 'service_unavailable',
@@ -109,8 +109,9 @@ describe('doc-store: a connection the pool cannot hand out is a retryable servic
     const err = await rejection(store.get(CTX, PREFS, 'k'));
     expect(err).toBeInstanceOf(DocStoreError);
     expect(err).toMatchObject(UNAVAILABLE);
-    // The client is told nothing about the server: no address, no driver message.
-    expect((err as Error).message).toBe('storage is temporarily unavailable');
+    // The message names the cause for the store's internal callers, which log it (the account
+    // wipe, review cleanup); the route never sends it — pinned in doc-store-api.contract.test.ts.
+    expect((err as Error).message).toBe(`storage is temporarily unavailable: ${fault.message}`);
     expect(sent).toEqual([]);
     // ...but the original is logged, since the route no longer sees it.
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(

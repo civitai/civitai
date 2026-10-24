@@ -89,7 +89,6 @@ import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
   DocStoreError,
-  docStoreUnavailable,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
 
@@ -1928,23 +1927,28 @@ function isPgConnectionFault(err: unknown): boolean {
 }
 
 /**
- * The retryable refusal for a database the store could not use. The client is told nothing of
- * the cause (`docStoreUnavailable` carries only the retry delay), so the original is logged here
- * — the route's own fault log only ever sees the translated error.
+ * The retryable refusal for a database the store could not use. Its message names the cause for
+ * the store's internal callers, which log `err.message` (the account wipe, review cleanup); the
+ * storage route never sends it (`CLIENT_MESSAGE` in `doc-store-api.ts`), and `details` carries
+ * only the retry delay. The original is also logged here, because the route's own fault log
+ * only ever sees the translated error.
  */
 function connectionUnavailable(err: unknown): unknown {
   if (err instanceof DocStoreError) return err;
+  const cause = err instanceof Error ? err.message : String(err);
   logToAxiom(
     {
       name: 'app-blocks-doc-store-connection-fault',
       type: 'error',
       error: err instanceof Error ? err.name : typeof err,
       code: (err as { code?: unknown } | null)?.code,
-      message: err instanceof Error ? err.message : String(err),
+      message: cause,
     },
     'app-blocks'
   ).catch(() => undefined);
-  return docStoreUnavailable();
+  return new DocStoreError('service_unavailable', `storage is temporarily unavailable: ${cause}`, {
+    retryAfter: 1,
+  });
 }
 
 function translatePgError(err: unknown, opts: { outcomeUnknown?: boolean } = {}): unknown {
