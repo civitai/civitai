@@ -237,15 +237,17 @@ export const processScheduledPublishing = createJob(
           // Lock the posts' versions, then the posts, in the order a moderator's version takedown
           // takes them before unpublishing its owner's live posts, which these are not yet: unlocked,
           // a takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
-          // The posts are locked too, so none can move to another, unlocked, version meanwhile.
-          await tx.$queryRaw`
-            SELECT mv.id FROM "ModelVersion" mv
+          // Only the (post, version) pairs locked here are published: a post moved to another
+          // version while this waited has that version unlocked, so it waits for the next run.
+          const locked = await tx.$queryRaw<{ postId: number; versionId: number }[]>`
+            SELECT p.id AS "postId", mv.id AS "versionId" FROM "ModelVersion" mv
             JOIN "Post" p ON p."modelVersionId" = mv.id
             WHERE p.id IN (${Prisma.join(scheduledPostIds)})
             FOR NO KEY UPDATE OF mv, p
           `;
 
-          await tx.$queryRaw<{ id: number }[]>`
+          if (locked.length)
+            await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
           -- Respect prevPublishedAt metadata to preserve original date on republish
           UPDATE "Post" p
@@ -258,7 +260,9 @@ export const processScheduledPublishing = createJob(
             "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
-          WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+          WHERE (p.id, p."modelVersionId") IN (${Prisma.join(
+            locked.map(({ postId, versionId }) => Prisma.sql`(${postId}, ${versionId})`)
+          )})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}

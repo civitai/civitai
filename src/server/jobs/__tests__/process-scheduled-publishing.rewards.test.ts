@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -417,10 +417,12 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     );
   });
 
-  // A version takedown locks the version before unpublishing its live posts, so the scheduled posts
-  // publish only after the job holds their versions; the post UPDATE then sees a takedown in flight.
-  it("locks the posts' versions before publishing the posts", async () => {
-    const txQueryRaw = vi.fn().mockResolvedValue([]);
+  // A version takedown locks the version, then unpublishes its live posts, so the scheduled posts
+  // publish only after the job holds their versions and the posts themselves.
+  it('locks the posts and their versions before publishing the posts', async () => {
+    const txQueryRaw = vi.fn(async (strings: string[]) =>
+      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    );
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
     );
@@ -437,6 +439,49 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     const publish = sql.findIndex((q) => q.includes('UPDATE "Post" p'));
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(publish).toBeGreaterThan(lock);
+  });
+
+  // A post a merge moved to another version while the lock waited is not among the locked pairs,
+  // and its new version is unlocked: publishing it by id alone could put it live on a version a
+  // takedown is downing. Keep the UPDATE keyed on the (post, version) pairs the lock returned.
+  it('publishes only the post and version pairs the lock returned', async () => {
+    const txQueryRaw = vi.fn(async (strings: string[]) =>
+      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    );
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
+    );
+    stubReads({
+      scheduled: [
+        { id: 7, userId: 10 },
+        { id: 8, userId: 10 },
+      ],
+    });
+
+    await runJob();
+
+    const publish = txQueryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join(' ').includes('UPDATE "Post" p')
+    );
+    expect(publish).toBeDefined();
+    const [strings, ...values] = publish as unknown as [string[], ...unknown[]];
+    const flat = Prisma.sql(strings, ...values);
+    expect(flat.text).toContain('(p.id, p."modelVersionId") IN (($1, $2))');
+    expect(flat.values.slice(0, 2)).toEqual([7, 70]);
+    expect(flat.values).not.toContain(8);
+  });
+
+  it('publishes no posts when the lock returned none of them', async () => {
+    const txQueryRaw = vi.fn().mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
+    );
+    stubReads({ scheduled: [{ id: 7, userId: 10 }] });
+
+    await runJob();
+
+    const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
+    expect(sql.some((q) => q.includes('UPDATE "Post" p'))).toBe(false);
   });
 
   it('publishes no early access when the UPDATE published none of them', async () => {
