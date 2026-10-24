@@ -429,7 +429,13 @@ describe('awardBountyEntry', () => {
     await awardBountyEntry({ id: 10, userId: 5 });
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
       expect.objectContaining({
-        details: { entityId: 4, entityType: 'Bounty', supporterIds: [5], supporterAmounts: [100] },
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [100],
+          supporterChargedAt: [0],
+        },
       }),
     ]);
   });
@@ -448,6 +454,7 @@ describe('awardBountyEntry', () => {
           entityType: 'Bounty',
           supporterIds: [5, 6],
           supporterAmounts: [100, 50],
+          supporterChargedAt: [0, 0],
         },
       }),
     ]);
@@ -470,12 +477,49 @@ describe('awardBountyEntry', () => {
     expect(
       Object.fromEntries(transactions.map((t) => [t.toAccountType, [t.amount, t.details]]))
     ).toEqual({
-      green: [60, { entityId: 4, entityType: 'Bounty', supporterIds: [5], supporterAmounts: [60] }],
+      green: [
+        60,
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [60],
+          supporterChargedAt: [0],
+        },
+      ],
       yellow: [
         90,
-        { entityId: 4, entityType: 'Bounty', supporterIds: [5, 6], supporterAmounts: [40, 50] },
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 6],
+          supporterAmounts: [40, 50],
+          supporterChargedAt: [0, 0],
+        },
       ],
     });
+  });
+
+  // Bankable netting counts only what was charged from its cutover: the cutover balance already
+  // reflects a charge made before it.
+  it('names when each supporter was charged, one entry per charge', async () => {
+    benefactors[0].buzzTransactionId = ['bounty-4-5-1792454400000', 'bounty-4-5-1793836800000'];
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix.endsWith('1792454400000') ? 30 : 70 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 100,
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 5],
+          supporterAmounts: [30, 70],
+          supporterChargedAt: [1792454400, 1793836800],
+        },
+      }),
+    ]);
   });
 
   it('refuses a refunded bounty read under the lock', async () => {

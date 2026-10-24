@@ -435,29 +435,36 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
 
 describe('paidToUsersSql', () => {
   // Pinned whole: a wrong account column still returns a plausible number.
-  it('counts payments from the creator, sales they bought and their part of bounties they funded', () => {
+  // FINAL on a closed window: its total is stored for good, so a duplicate row not yet merged away
+  // would stay in it.
+  it('counts payments from the creator, sales they bought and their part of bounties they funded, each row once', () => {
     const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= toDateTime('2026-11-01 00:00:00', 'UTC') AND date < toDateTime('2026-12-01 00:00:00', 'UTC')`;
     expect(
       squash(paidToUsersSql(42, { from: BANKABLE_CUTOVER, to: new Date('2026-12-01T00:00:00Z') }))
     ).toBe(
       squash(`SELECT sum(amount) AS spent FROM (
-        SELECT toInt64(amount) AS amount FROM buzzTransactions
+        SELECT toInt64(amount) AS amount FROM buzzTransactions FINAL
         WHERE fromAccountId = 42 AND ${paidTo}
           AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
         UNION ALL
-        SELECT toInt64(amount) AS amount FROM buzzTransactions
+        SELECT toInt64(amount) AS amount FROM buzzTransactions FINAL
         WHERE (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0) AND ${paidTo}
           AND JSONExtractInt(details, 'purchasedBy') = 42
         UNION ALL
-        SELECT intDiv(amount * amts[indexOf(ids, 42)], arraySum(amts)) AS amount
+        SELECT intDiv(amount * arraySum(arrayMap((id, a, t) -> if(id = 42 AND t >= 1793491200, a, 0), ids, amts, ats)), arraySum(amts)) AS amount
         FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
             JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
-            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
-          FROM buzzTransactions
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts,
+            JSONExtract(details, 'supporterChargedAt', 'Array(Int64)') AS ats
+          FROM buzzTransactions FINAL
           WHERE ${paidTo} AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
-            AND length(ids) = length(amts) AND arraySum(amts) > 0 )
+            AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0 )
         WHERE has(ids, 42) )`)
     );
+  });
+
+  it('reads the live window without FINAL', () => {
+    expect(paidToUsersSql(42, { from: BANKABLE_CUTOVER })).not.toContain('FINAL');
   });
 });
 
@@ -479,10 +486,11 @@ describe('receivedFromUsersSql', () => {
         SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
         FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
             JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
-            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts,
+            JSONExtract(details, 'supporterChargedAt', 'Array(Int64)') AS ats
           FROM buzzTransactions
           WHERE toAccountId = 1 AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
-            AND length(ids) = length(amts) AND arraySum(amts) > 0 ) ARRAY JOIN arrayZip(ids, amts) AS s
+            AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0 ) ARRAY JOIN arrayZip(ids, amts) AS s
       ) GROUP BY recipient, payer`)
     );
   });

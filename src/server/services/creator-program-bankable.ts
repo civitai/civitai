@@ -86,13 +86,15 @@ export const PLATFORM_PAID_SALE_SQL = `(type = 'sell' AND fromAccountId = 0 AND 
  */
 export const BOUNTY_AWARD_SQL = `(type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')`;
 
-/** A bounty award's supporters and what each put in, as `ids` and `amts`. */
-const bountyAwardsSql = (where: string) => `
+/** A bounty award's charges: who was charged (`ids`), how much (`amts`) and when (`ats`). */
+const bountyAwardsSql = (where: string, table = 'buzzTransactions') => `
   SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
     JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
-    JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
-  FROM buzzTransactions
-  WHERE ${where} AND ${BOUNTY_AWARD_SQL} AND length(ids) = length(amts) AND arraySum(amts) > 0
+    JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts,
+    JSONExtract(details, 'supporterChargedAt', 'Array(Int64)') AS ats
+  FROM ${table}
+  WHERE ${where} AND ${BOUNTY_AWARD_SQL}
+    AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0
 `;
 
 /** Read as UTC whatever the server's time zone. */
@@ -200,18 +202,25 @@ async function getCutoverSnapshot(userId: number, now: Date) {
 export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: Date }) {
   const paidTo = `toAccountId > 0 AND toAccountId != ${userId} AND toAccountType IN (${buzzBankTypesSql})
     AND date >= ${clickhouseDateTime(from)}${to ? ` AND date < ${clickhouseDateTime(to)}` : ''}`;
+  // A closed window's total is stored for good, so a duplicate row not yet merged away would stay
+  // in it.
+  const table = to ? 'buzzTransactions FINAL' : 'buzzTransactions';
+  // The creator's charges for a bounty award; the cutover balance already reflects one made before it.
+  const ownCharges = `(id, a, t) -> if(id = ${userId} AND t >= ${
+    BANKABLE_CUTOVER.getTime() / 1000
+  }, a, 0)`;
   return `
     SELECT sum(amount) AS spent FROM (
-      SELECT toInt64(amount) AS amount FROM buzzTransactions
+      SELECT toInt64(amount) AS amount FROM ${table}
       WHERE fromAccountId = ${userId} AND ${paidTo}
         AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
       UNION ALL
-      SELECT toInt64(amount) AS amount FROM buzzTransactions
+      SELECT toInt64(amount) AS amount FROM ${table}
       WHERE ${PLATFORM_PAID_SALE_SQL} AND ${paidTo}
         AND JSONExtractInt(details, 'purchasedBy') = ${userId}
       UNION ALL
-      SELECT intDiv(amount * amts[indexOf(ids, ${userId})], arraySum(amts)) AS amount
-      FROM (${bountyAwardsSql(paidTo)})
+      SELECT intDiv(amount * arraySum(arrayMap(${ownCharges}, ids, amts, ats)), arraySum(amts)) AS amount
+      FROM (${bountyAwardsSql(paidTo, table)})
       WHERE has(ids, ${userId})
     )
   `;

@@ -1112,32 +1112,49 @@ const bountyAwardTransactionId = (bountyId: number, accountType: string) =>
 
 type AwardedFunds = { userId: number; unitAmount: number; buzzTransactionId: string[] | null };
 
+type SupporterCharge = { userId: number; chargedAt: number; amount: number };
+
+/** Unix seconds, from the time the charge prefix carries; 0 for a charge that has none. */
+const prefixChargedAt = (prefix: string) =>
+  Math.floor((Number(prefix.split('-').at(-1)) || 0) / 1000);
+
 /**
- * What each supporter put in, by colour: each colour is paid as its own row. Throws when a lookup
- * fails: an award paid on partial amounts would spend its keys on them.
+ * What each supporter was charged, by colour and charge time: each colour is paid as its own row.
+ * Throws when a lookup fails: an award paid on partial amounts would spend its keys on them.
  */
 async function bountyAwardAmounts(benefactors: AwardedFunds[]) {
-  const amounts: Partial<Record<BuzzAccountType, Map<number, number>>> = {};
-  const add = (accountType: BuzzAccountType, userId: number, amount: number) => {
+  const amounts: Partial<Record<BuzzAccountType, SupporterCharge[]>> = {};
+  const add = (accountType: BuzzAccountType, userId: number, chargedAt: number, amount: number) => {
     if (amount <= 0) return;
-    const bySupporter = (amounts[accountType] ??= new Map());
-    bySupporter.set(userId, (bySupporter.get(userId) ?? 0) + amount);
+    const charges = (amounts[accountType] ??= []);
+    const same = charges.find((c) => c.userId === userId && c.chargedAt === chargedAt);
+    if (same) same.amount += amount;
+    else charges.push({ userId, chargedAt, amount });
   };
   for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
     const ids = buzzTransactionId ?? [];
     const prefixes = ids.filter(isBountyTransactionPrefix);
-    const charges = (
-      await Promise.all(prefixes.map((prefix) => getMultiAccountTransactionsByPrefix(prefix)))
-    ).flat();
-    if (prefixes.length && prefixes.length === ids.length && !charges.length && unitAmount > 0)
+    const charged = await Promise.all(
+      prefixes.map(async (prefix) => ({
+        chargedAt: prefixChargedAt(prefix),
+        charges: await getMultiAccountTransactionsByPrefix(prefix),
+      }))
+    );
+    if (
+      prefixes.length &&
+      prefixes.length === ids.length &&
+      !charged.some((c) => c.charges.length) &&
+      unitAmount > 0
+    )
       throw new Error('No charge transactions found for the award');
-    let charged = 0;
-    for (const charge of charges) {
-      add(charge.accountType as BuzzAccountType, userId, charge.amount);
-      charged += charge.amount;
-    }
+    let total = 0;
+    for (const { chargedAt, charges } of charged)
+      for (const charge of charges) {
+        add(charge.accountType as BuzzAccountType, userId, chargedAt, charge.amount);
+        total += charge.amount;
+      }
     // Charges made before multi-account Buzz have no per-type record; they were yellow.
-    if (prefixes.length < ids.length || !ids.length) add('yellow', userId, unitAmount - charged);
+    if (prefixes.length < ids.length || !ids.length) add('yellow', userId, 0, unitAmount - total);
   }
   return amounts;
 }
@@ -1168,11 +1185,11 @@ async function payBountyAward(bountyId: number, winnerUserId: number | null) {
   if (!funds.length) return true;
 
   const transactions = Object.entries(await bountyAwardAmounts(funds)).map(
-    ([accountType, bySupporter = new Map<number, number>()]) => ({
+    ([accountType, charges = []]) => ({
       fromAccountId: 0,
       toAccountId: winnerUserId,
       toAccountType: accountType as BuzzAccountType,
-      amount: [...bySupporter.values()].reduce((sum, amount) => sum + amount, 0),
+      amount: charges.reduce((sum, c) => sum + c.amount, 0),
       type: TransactionType.Bounty,
       description: 'Reason: Bounty entry has been awarded!',
       // Who funded the award, on the ledger row itself: it outlives the bounty, and bankable
@@ -1180,9 +1197,10 @@ async function payBountyAward(bountyId: number, winnerUserId: number | null) {
       details: {
         entityId: bountyId,
         entityType: 'Bounty',
-        // Flat number arrays, the shape tips already store (`targetUserIds`).
-        supporterIds: [...bySupporter.keys()],
-        supporterAmounts: [...bySupporter.values()],
+        // Flat number arrays, one entry per charge, the shape tips already store (`targetUserIds`).
+        supporterIds: charges.map((c) => c.userId),
+        supporterAmounts: charges.map((c) => c.amount),
+        supporterChargedAt: charges.map((c) => c.chargedAt),
       },
       externalTransactionId: bountyAwardTransactionId(bountyId, accountType),
     })
