@@ -1,6 +1,7 @@
 import { getBrowsingLevelLabel } from '@civitai/shared';
 import { bytes, ordinal, plural } from '$lib/format';
 import { ago, yearMonth } from '$lib/minor-flags/appeal-row';
+import type { FlagLabel } from '$lib/minor-flags/text-scan-verdicts';
 
 /** The payload of `<tab>/detail/[modelId]`: what only the open detail pane shows. */
 export type ModelFlagDetail = {
@@ -123,7 +124,7 @@ export const textSinceFlag = (
 };
 
 /** The provenance line of a hash flag: "hash sweep, 3 d ago · 27 days left, then the flag is presumed
- *  correct". `daysLeft` is null outside the review window's reach (a confirmed or manual flag). */
+ *  correct". `daysLeft` is null outside the review window's reach (a confirmed, manual or real-person flag). */
 export const hashSweepText = (
   flaggedAt: Date | string | null,
   daysLeft: number | null,
@@ -137,5 +138,7 @@ export const hashSweepText = (
 };
 
 /** Why a hash flag was applied, in the words the Flagged and Appeals why-cards share. */
-export const HASH_FLAG_REASON =
-  'Its main file is byte-identical to a file in a model a moderator flagged as minor. The uploader is the same account, so the flag was applied automatically.';
+export const hashFlagReason = (label: FlagLabel) =>
+  label === 'poi'
+    ? 'Its main file is byte-identical to a file in a model a moderator flagged as depicting a real person. The uploader is the same account, so the flag was applied automatically.'
+    : 'Its main file is byte-identical to a file in a model a moderator flagged as minor. The uploader is the same account, so the flag was applied automatically.';

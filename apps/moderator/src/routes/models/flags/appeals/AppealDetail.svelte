@@ -103,8 +103,16 @@
     draft: RulingDraft<AppealRuling>;
   } = $props();
 
-  // A moderator confirming a hash flag keeps `confirmedFrom`, so those appeals show the match too.
-  const matchedByHash = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash');
+  // A moderator confirming a hash flag keeps `confirmedFrom`, so those appeals show the match too. A
+  // real-person snapshot only ever comes from a hash match.
+  const hashLabels = $derived([
+    ...(row.flagSnapshotLabel === 'minor' &&
+    effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash'
+      ? (['minor'] as const)
+      : []),
+    ...(row.poiHashFlag ? (['poi'] as const) : []),
+  ]);
+  const matchedByHash = $derived(hashLabels.length > 0);
 
   const modelId = $derived(row.modelId);
   const promptKey = $derived(promptKeyOf(openVerdicts(row.textScanFlags).map(({ label, flag }) => flagPromptId(flag.promptIds, label))));
@@ -292,9 +300,9 @@
       appealedAt={row.appealCreatedAt}
       nthThisYear={row.appealNthThisYear}
     />
-    {#if matchedByHash}
-      <SharedFileCard {row} {civitaiUrl} status={{ label: 'under appeal', tone: 'blue' }} />
-    {/if}
+    {#each hashLabels as label (label)}
+      <SharedFileCard {row} {civitaiUrl} {label} status={{ label: 'under appeal', tone: 'blue' }} />
+    {/each}
     <WhyFlaggedCard {row} {canUphold} {detail} />
 
     <PriorRulingsCard
