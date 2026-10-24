@@ -13,7 +13,8 @@
 // or delete names exactly one app and runs in that app's transaction, so it cannot touch
 // another app's rows — the module's `$1`/`$2` predicates and RLS each refuse it
 // independently. The cost is one transaction per app per queue read (bounded by
-// `MOD_APP_CONCURRENCY` at a time).
+// `MOD_APP_CONCURRENCY` at a time); the per-app fan-out is `readEachApp`
+// (`doc-store-per-app.ts`), shared with the owner storage-usage read.
 //
 // Only the production namespace is moderated. `dev:<uid>` namespaces are a developer's
 // own sandbox, and `rev:` namespaces belong to a pending review.
@@ -27,16 +28,15 @@
 // Reading a document is not audited: a shared document is readable by every viewer of
 // the app, so a moderator reading it reads nothing private.
 import type { Prisma } from '@prisma/client';
-import pLimit from 'p-limit';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   ModeratedDoc,
   ModeratedDocStatus,
   ReportedDocRow,
 } from '~/server/services/apps/doc-store';
-import { logToAxiom } from '~/server/logging/client';
 import { PUBLISHED_NS } from '~/server/services/apps/doc-store';
 import { getDocStoreModeration } from '~/server/services/apps/doc-store-moderation.instance';
+import { DOC_STORE_APP_CONCURRENCY, readEachApp } from '~/server/services/apps/doc-store-per-app';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
@@ -45,7 +45,7 @@ import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 export const MOD_NS = PUBLISHED_NS;
 
 /** Per-app store transactions in flight at once while building the queue. */
-export const MOD_APP_CONCURRENCY = 4;
+export const MOD_APP_CONCURRENCY = DOC_STORE_APP_CONCURRENCY;
 /** Reported documents read from each app. */
 export const MOD_QUEUE_PER_APP = 50;
 /** Reported documents returned in total. */
@@ -165,40 +165,26 @@ export async function listReportedDocs(input: {
 }): Promise<{ items: ReportedDocItem[]; truncated: boolean; failedApps: number }> {
   const apps = await allApps();
   const mod = getDocStoreModeration();
-  const limit = pLimit(MOD_APP_CONCURRENCY);
-  const perApp = await Promise.all(
-    apps.map((app) =>
-      limit(async () => {
-        try {
-          // One more than kept, to know whether this app was cut off.
-          const rows = await mod.listReported(app.appBlockId, MOD_NS, {
-            status: input.status,
-            limit: MOD_QUEUE_PER_APP + 1,
-          });
-          return {
-            failed: false,
-            cut: rows.length > MOD_QUEUE_PER_APP,
-            rows: rows
-              .slice(0, MOD_QUEUE_PER_APP)
-              .map((row) => ({ app, appId: app.appBlockId, row })),
-          };
-        } catch (err) {
-          // Storage as a whole being off (no pool, or a role RLS does not bind) is not one
-          // app's failure: it surfaces as such, never as "N apps could not be read".
-          if (isDocStoreError(err, 'storage_disabled')) throw err;
-          logToAxiom(
-            {
-              type: 'error',
-              event: 'doc_store_mod_queue_app_failed',
-              appBlockId: app.appBlockId,
-              error: err instanceof Error ? err.message : String(err),
-            },
-            'app-blocks'
-          ).catch(() => undefined);
-          return { failed: true, cut: false, rows: [] };
+  const reads = await readEachApp(
+    apps,
+    // One more than kept, to know whether this app was cut off.
+    (app) =>
+      mod.listReported(app.appBlockId, MOD_NS, {
+        status: input.status,
+        limit: MOD_QUEUE_PER_APP + 1,
+      }),
+    'doc_store_mod_queue_app_failed'
+  );
+  const perApp = reads.map((r) =>
+    r.ok
+      ? {
+          failed: false,
+          cut: r.value.length > MOD_QUEUE_PER_APP,
+          rows: r.value
+            .slice(0, MOD_QUEUE_PER_APP)
+            .map((row) => ({ app: r.app, appId: r.app.appBlockId, row })),
         }
-      })
-    )
+      : { failed: true, cut: false, rows: [] }
   );
   const merged = perApp.flatMap((p) => p.rows).sort(compareQueue);
   const page = merged.slice(0, MOD_QUEUE_MAX);

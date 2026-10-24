@@ -11,12 +11,14 @@ export const LISTING_FORKS_PAGE_MAX = 24;
 export const FORK_OPT_IN_LABEL = "Let others fork this app's source";
 
 /**
- * The consent copy under the checkbox. Plain about the one thing that cannot be undone: a fork's
- * "Forked from" credit stays. Also says what a fork does NOT get, and what turning it off does.
+ * The consent copy under the checkbox. Says forks USUALLY credit the original — not always: a
+ * forker who renames the app's blockId before publishing publishes with no "Forked from" credit
+ * (a parent can never be forged, only dropped). Also says what a fork does NOT get, and what
+ * turning it off does.
  */
 export const FORK_OPT_IN_DESCRIPTION =
   "Others can copy your app's source into their own App Assistant workspace and publish it as a new app. " +
-  'Every published fork shows “Forked from” with a link to your app, and that credit can’t be removed. ' +
+  'Published forks usually show “Forked from” with a link back to your app. ' +
   'Forks don’t share your earnings, and a fork has to pass its own review before it can sell anything. ' +
   'Turning this off stops new forks; forks that already exist stay up.';
 
