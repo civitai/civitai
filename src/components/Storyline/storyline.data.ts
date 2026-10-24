@@ -161,6 +161,21 @@ export function useInsertStorylineChapter({ onSuccess }: { onSuccess: () => void
   };
 }
 
+export function useMoveStorylineChapter(): {
+  isPending: boolean;
+  error: string | null;
+  mutate: (input: { storylineId: number; chapterId: number; afterChapterId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.moveChapter.useMutation();
+  return {
+    isPending: mutation.isPending,
+    error: mutation.error?.message ?? null,
+    mutate: (input) =>
+      mutation.mutate(input, { onSuccess: () => void utils.storyline.invalidate() }),
+  };
+}
+
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;

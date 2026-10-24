@@ -1,5 +1,22 @@
-import { Text } from '@mantine/core';
-import { IconGitFork, IconGitMerge, IconPlus } from '@tabler/icons-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
+import { ActionIcon, Alert, Menu, Text } from '@mantine/core';
+import {
+  IconDotsVertical,
+  IconGitFork,
+  IconGitMerge,
+  IconGripVertical,
+  IconPlus,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
@@ -12,12 +29,15 @@ import {
   laneColor,
   storylineInsertableEdges,
   storylineMayBranch,
+  storylineMoveRuns,
+  storylineMoveTargets,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import {
   getForkShare,
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
+import { useMoveStorylineChapter } from '~/components/Storyline/storyline.data';
 import {
   useStorylineForkShares,
   useStorylineGraph,
@@ -65,6 +85,20 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
     () => (isOwner && graph ? storylineInsertableEdges(graph) : null),
     [isOwner, graph]
   );
+  const moveRuns = useMemo(
+    () => (isOwner && graph ? storylineMoveRuns(graph, storyline.userId) : null),
+    [isOwner, graph, storyline.userId]
+  );
+  const move = useMoveStorylineChapter();
+  const [dragging, setDragging] = useState<number | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const moveAfter = (chapterId: number, afterChapterId: number) =>
+    move.mutate({ storylineId: storyline.id, chapterId, afterChapterId });
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    setDragging(null);
+    if (over) moveAfter(Number(active.id), Number(over.id));
+  };
+
   const map = useMemo(() => (graph ? buildStorylineLaneMap(graph) : null), [graph]);
   const canonById = useMemo(
     () => new Map(storyline.mainPath.map((c) => [c.chapterId, c])),
@@ -118,6 +152,32 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
       return band === undefined ? at(point) : { x: 0, y: band };
     });
   const canonRows = rows.flatMap((r, i) => (r.canon ? [i] : []));
+  // Halfway along the rail between one chapter's number and the next's, or below the last.
+  const gapY = (n: number) => {
+    const next = canonRows[n + 1];
+    const row = canonRows[n];
+    return next === undefined
+      ? tops[row].top + 26 + (size.row - 24) / 2
+      : (tops[row].top + 26 + tops[next].top + 2) / 2;
+  };
+  const reorderOf = (chapterId: number) => {
+    const run = moveRuns?.get(chapterId);
+    const targets = run ? storylineMoveTargets(run, chapterId) : [];
+    if (!run || !targets.length) return undefined;
+    const at = run.ids.indexOf(chapterId);
+    const only = (id: number | undefined) => (id !== undefined && targets.includes(id) ? id : null);
+    return { up: only(run.ids[at - 2]), down: only(run.ids[at + 1]) };
+  };
+  const dropSlots =
+    dragging !== null && moveRuns?.get(dragging)
+      ? canonRows.flatMap((row, n) =>
+          storylineMoveTargets(moveRuns.get(dragging)!, dragging).includes(
+            rows[row].canon?.chapterId as number
+          )
+            ? [{ afterChapterId: rows[row].canon?.chapterId as number, y: gapY(n) }]
+            : []
+        )
+      : [];
   const insertSlots = insertable
     ? canonRows.flatMap((row, n) => {
         const parent = rows[row].canon;
@@ -130,8 +190,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
             parentChapterId: parent.chapterId,
             childChapterId: child.chapterId,
             parentPostId,
-            // Halfway along the rail between one chapter's number and the next's.
-            y: (tops[row].top + 26 + tops[canonRows[n + 1]].top + 2) / 2,
+            y: gapY(n),
           },
         ];
       })
@@ -139,6 +198,11 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
 
   return (
     <div data-testid="storyline-lanes">
+      {move.error && (
+        <Alert color="red" mb="sm" role="alert">
+          {move.error}
+        </Alert>
+      )}
       <div className="flex">
         <div className="relative min-w-0 flex-1" style={{ height }}>
           {canonRows.length > 1 && (
@@ -165,24 +229,38 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
               ))}
             </div>
           ))}
-          <ol aria-label="Chapters on the canon path" className="m-0 list-none p-0">
-            {rows.map((row, i) =>
-              row.canon ? (
-                <CanonStop
-                  key={row.canon.chapterId}
-                  node={row.canon}
-                  canon={canonById.get(row.canon.chapterId)}
-                  forkId={canonForkOf.get(row.canon.chapterId)}
-                  collaboratorIds={collaboratorIds}
-                  size={size}
-                  top={tops[i].top}
-                />
-              ) : null
-            )}
-          </ol>
-          {insertSlots.map((slot) => (
-            <InsertHere key={`${slot.parentChapterId}:${slot.childChapterId}`} {...slot} />
-          ))}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={({ active }) => setDragging(Number(active.id))}
+            onDragEnd={onDragEnd}
+            onDragCancel={() => setDragging(null)}
+          >
+            <ol aria-label="Chapters on the canon path" className="m-0 list-none p-0">
+              {rows.map((row, i) =>
+                row.canon ? (
+                  <CanonStop
+                    key={row.canon.chapterId}
+                    node={row.canon}
+                    canon={canonById.get(row.canon.chapterId)}
+                    forkId={canonForkOf.get(row.canon.chapterId)}
+                    collaboratorIds={collaboratorIds}
+                    size={size}
+                    top={tops[i].top}
+                    reorder={reorderOf(row.canon.chapterId)}
+                    onMove={moveAfter}
+                  />
+                ) : null
+              )}
+            </ol>
+            {dropSlots.map((slot) => (
+              <DropSlot key={slot.afterChapterId} {...slot} />
+            ))}
+          </DndContext>
+          {dragging === null &&
+            insertSlots.map((slot) => (
+              <InsertHere key={`${slot.parentChapterId}:${slot.childChapterId}`} {...slot} />
+            ))}
         </div>
 
         {branchLanes > 0 && (
@@ -255,6 +333,31 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
   );
 }
 
+function DropSlot({ afterChapterId, y }: { afterChapterId: number; y: number }) {
+  const { setNodeRef, isOver } = useDroppable({ id: afterChapterId });
+  return (
+    <div
+      ref={setNodeRef}
+      className="absolute inset-x-0 z-10 flex h-10 -translate-y-1/2 items-center pl-9"
+      style={{ top: y }}
+      data-testid="storyline-drop-slot"
+      data-over={isOver}
+    >
+      <span
+        className={clsx(
+          'h-1 flex-1 rounded-full',
+          isOver ? 'bg-[var(--mantine-color-blue-6)]' : 'bg-[var(--mantine-color-blue-2)]'
+        )}
+      />
+      {isOver && (
+        <span className="ml-2 whitespace-nowrap text-xs font-bold text-[var(--mantine-color-blue-6)]">
+          Move here
+        </span>
+      )}
+    </div>
+  );
+}
+
 function InsertHere({
   parentChapterId,
   childChapterId,
@@ -306,8 +409,13 @@ function CanonStop({
   collaboratorIds,
   size,
   top,
+  reorder,
+  onMove,
 }: {
   node: LaneNode;
+  /** Where the owner may move it by one place, set only inside a straight run of their own. */
+  reorder?: { up: number | null; down: number | null };
+  onMove: (chapterId: number, afterChapterId: number) => void;
   /** The canon fork this chapter is a way on from, whose reader split it shows. */
   forkId: number | undefined;
   /** The same chapter from the canon path, which carries its author for the avatar. */
@@ -319,12 +427,59 @@ function CanonStop({
   const post = canon?.post ?? node.chapter.post;
   const link = node.href ? { href: node.href, read: node.read } : null;
   const share = useForkShare(forkId, node.chapterId);
+  const drag = useDraggable({ id: node.chapterId, disabled: !reorder });
   return (
     <li
-      className="absolute inset-x-0 flex gap-3.5 pl-9"
-      style={{ top, height: size.row }}
+      ref={drag.setNodeRef}
+      className={clsx(
+        'absolute inset-x-0 flex gap-3.5 pl-9',
+        reorder && 'pr-14',
+        drag.isDragging && 'z-20 opacity-70'
+      )}
+      style={{ top, height: size.row, transform: CSS.Translate.toString(drag.transform) }}
       data-testid="storyline-chapter"
     >
+      {reorder && (
+        <div className="absolute right-0 top-0 flex">
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                aria-label={`Reorder chapter ${node.number}`}
+              >
+                <IconDotsVertical size={18} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                disabled={reorder.up === null}
+                onClick={() => reorder.up !== null && onMove(node.chapterId, reorder.up)}
+              >
+                Move up
+              </Menu.Item>
+              <Menu.Item
+                disabled={reorder.down === null}
+                onClick={() => reorder.down !== null && onMove(node.chapterId, reorder.down)}
+              >
+                Move down
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            aria-label={`Drag chapter ${node.number} to reorder`}
+            ref={drag.setActivatorNodeRef}
+            {...drag.listeners}
+            {...drag.attributes}
+            tabIndex={-1}
+            style={{ touchAction: 'none', cursor: 'grab' }}
+          >
+            <IconGripVertical size={18} />
+          </ActionIcon>
+        </div>
+      )}
       <span
         aria-hidden
         className={clsx(
