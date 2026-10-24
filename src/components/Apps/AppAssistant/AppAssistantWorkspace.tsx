@@ -63,6 +63,7 @@ import {
   runnerPreviewAction,
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import { pingSandbox, usePreviewKeepAlive } from '~/components/Apps/AppAssistant/previewKeepAlive';
 import {
   RESTART_PREVIEW_FAILED,
   appAssistantRemoteRunnerFor,
@@ -497,6 +498,16 @@ export function AppAssistantWorkspace({
         : NO_MCP_SERVERS,
     [mcpUrl, tokens]
   );
+  // Working in the preview keeps the running app from pausing as idle (previewKeepAlive.ts).
+  const [previewPane, setPreviewPane] = useState<HTMLDivElement | null>(null);
+  const keepAwake = useMemo(
+    () =>
+      mcpUrl
+        ? () => pingSandbox(mcpUrl, (opts) => tokens.getToken({ ...opts, purpose: 'sandbox' }))
+        : null,
+    [mcpUrl, tokens]
+  );
+  usePreviewKeepAlive(previewPane, keepAwake);
 
   // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
   // so a paused app would not be woken and the reply would go on without its tools. The ask is held
@@ -1249,6 +1260,7 @@ export function AppAssistantWorkspace({
           <Paper
             withBorder
             radius="md"
+            ref={setPreviewPane}
             data-testid="app-assistant-preview-pane"
             className={clsx(
               'min-h-0 flex-1 flex-col overflow-hidden md:flex',

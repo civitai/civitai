@@ -183,6 +183,7 @@ export default function StorylineContinueModal({
               submitting={ownerAdd ? addOwn.isPending : submit.isPending}
               error={ownerAdd ? addOwn.error : submit.error}
               outcome={outcome}
+              onLeave={dialog.onClose}
               onSubmit={() => {
                 const post = posts.find((candidate) => candidate.id === postId);
                 if (ownerAdd && parentChapterId) {

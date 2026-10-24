@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ReactNode } from 'react';
@@ -3077,5 +3077,103 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await confirmDelete('app-bbbb');
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
+  });
+});
+
+describe('AppAssistantWorkspace keeps the app awake while the user works in its preview', () => {
+  const HOST = 'dev-0123456789abcdef.civit.ai';
+  const MCP = `${BASE}/s/sbx-aaaaaaaaaaaa/mcp`;
+  const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const pings = () =>
+    (fetchSpy.mock.calls as unknown as [string, RequestInit][]).filter(([url]) => url === MCP);
+  const pressInPane = () =>
+    document
+      .querySelector('[data-testid="app-assistant-preview-pane"]')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+
+  function expectOnePing() {
+    expect(pings()).toHaveLength(1);
+    const init = pings()[0]![1];
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer sandbox-token');
+    expect(JSON.parse(init.body as string)).toEqual({
+      jsonrpc: '2.0',
+      id: 'keepalive',
+      method: 'ping',
+    });
+  }
+
+  test('a press in the preview pings the open app’s MCP endpoint, the activity its idle clock counts', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('my-app');
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await settle();
+    // NEGATIVE CONTROL: a preview on screen with no one working in it sends nothing.
+    expect(pings()).toHaveLength(0);
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('on the server runner too', async () => {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: HOST },
+      isError: false,
+    });
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).toBeInTheDocument();
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('NEGATIVE CONTROL: on a phone with the Chat tab shown, a press in the hidden preview sends nothing', async () => {
+    // The suite loads no Tailwind utilities, so the pane's `hidden` class would not hide it here as
+    // it does in production (CI showed the pane still laid out, 0 px tall, and pinging). Give this
+    // test that one rule; at this width no `md:` rule applies.
+    const tailwindHidden = document.createElement('style');
+    tailwindHidden.textContent = '.hidden { display: none; }';
+    document.head.appendChild(tailwindHidden);
+    onTestFinished(() => tailwindHidden.remove());
+    await page.viewport(375, 900);
+    renderWithProviders(<Workspace />);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    await startPreview('my-app');
+    await settle();
+    await page.getByRole('radio', { name: 'Chat' }).click();
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
+    const before = pings().length;
+    // Past the one-minute interval, so a ping before this point cannot be what hides one now.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+
+    pressInPane();
+    await settle();
+    expect(pings()).toHaveLength(before);
+
+    // Positive control: the same press with Preview shown does ping.
+    await page.getByRole('radio', { name: 'Preview' }).click();
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(before + 1));
   });
 });

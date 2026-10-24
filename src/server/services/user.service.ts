@@ -37,7 +37,13 @@ import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
-import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
+import {
+  articleMetrics,
+  modelCollectionMetrics,
+  modelMetrics,
+  postMetrics,
+  userMetrics,
+} from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
@@ -2870,7 +2876,8 @@ const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | 
   ((
     {
       [CollectionType.Article]: articleMetrics,
-      [CollectionType.Model]: modelMetrics,
+      // Model collectedCount is its own job; modelMetrics' queue never reached it.
+      [CollectionType.Model]: modelCollectionMetrics,
       [CollectionType.Post]: postMetrics,
     } as Partial<Record<CollectionType, typeof articleMetrics>>
   )[type]);

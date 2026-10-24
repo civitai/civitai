@@ -128,7 +128,10 @@ export type QuotaRow = {
   days: { day: string; votes: number; status: QuotaStatus }[];
 };
 
-/** The card as the page gets it: the claim token stands in for every internal id. */
-export function pageCard({ token, url, type, name, width, height, leaseExpiresAt }: ScanLabelCard) {
-  return { token, url, type, name, width, height, leaseExpiresAt };
+/** Where a card's media is served: keyed by the claim token, like the vote. */
+export const cardMediaPath = (token: string) => `/images/scan-labels/media/${token}`;
+
+/** The card as the page gets it: the claim token stands in for every internal id and media key. */
+export function pageCard({ token, type, width, height, leaseExpiresAt }: ScanLabelCard) {
+  return { token, type, width, height, leaseExpiresAt, mediaSrc: cardMediaPath(token) };
 }

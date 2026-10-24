@@ -1,78 +1,67 @@
 #!/usr/bin/env node
 
 /**
- * Backfill CollectionItem.addedById, and the collection metric events it should have produced
+ * Backfill CollectionItem.addedById on bookmark rows, then have the metric jobs recount
  *
- * Bookmark rows used to be written with no addedById. collectionItemHandler attributes every
- * event to addedById and drops events with no user, so those bookmarks never counted toward
- * Model/Article/Post collectedCount or Collection itemCount, all of which are sums of ClickHouse
- * events. Their deletes are dropped the same way, so the counts are short by exactly the rows
- * still present with no adder.
+ * Model, Post and Article collectedCount and Collection itemCount are counted from Postgres by
+ * the metric jobs (src/server/metrics/collection-item-counts.ts): distinct collectors, ACCEPTED
+ * rows only. The jobs recount an entity when it has a CollectionItem event in ClickHouse since
+ * their last run. Two gaps keep that from reaching every entity on its own:
+ *   - Bookmark rows were written without addedById, and the CDC handler drops events with no
+ *     user, so deleting one of them never marks its entity for a recount.
+ *   - An entity with no new activity keeps the count it was given under the old rules (a sum of
+ *     per-row events, every status, plus a November 2025 bulk seed) until it next changes.
  *
- * For each id range this sets addedById to the collection owner and inserts one +1 per row into
- * the events table (default entityMetricEvents_month) as that owner, mirroring the handler. Both halves are needed: once
- * addedById is set, a later delete emits -1 through CDC, so a row given an adder but no +1 would
- * push its counts below the truth. The UPDATE itself emits nothing (the handler only reads creates
- * and deletes). Image rows are out of scope and keep a null adder.
+ * Phase 1, per id range: set addedById to the collection owner on null-adder bookmark rows of the
+ * entity, one transaction per range. The handler ignores the UPDATE; from then on a delete of one
+ * of these rows emits its event as the owner. The jobs already count these rows as the owner, so
+ * this changes no count.
+ * Phase 2, once phase 1 has covered every id: insert a 0-valued event for every entity and
+ * collection the new rules can change. A 0 moves no ClickHouse sum; it only puts the entity in
+ * the jobs' next recount. A repeated insert is harmless, so this phase needs no exactly-once.
  *
- * Exactly-once, because a duplicate insert is not harmless here: entityMetricSum_v3 consumes each
- * insert before ReplacingMergeTree dedups it, so a retried insert counts twice. Per batch:
- *   UPDATE ... RETURNING (in a transaction) -> ledger `pending` line with the rows, events and
- *   stamp, fsynced -> COMMIT -> ledger `committed` -> ClickHouse insert -> ledger `inserted`.
- * On restart the one unfinished batch is checked, not retried. Whether it committed is
- * txid_status() of the transaction id in its pending line, so rows deleted since cannot make it
- * read as uncommitted. Whether it landed is a sequentially consistent read for its exact events at
- * its stamp, taken only once the stamp is LANDING_WAIT_MS old so an insert still in flight has
- * finished or failed. Not landed: it is re-stamped to now and inserted, because a stale stamp
- * would miss the daily views and the metric jobs. A partial match stops the run for a human.
- * An advisory lock keeps a second run (another ledger) from touching the same rows.
+ * Phase 1 is ledgered: `pending` (txid, ids) -> COMMIT -> `committed`, every line fsynced first.
+ * On restart txid_status() of the unfinished batch decides: rolled back is redone, committed is
+ * marked so. An advisory lock keeps a second run (another ledger) from touching the same rows.
  *
- * Rollback needs the ledger's `ids`, because a backfilled row looks like a bookmark made after the
- * fix. For the ids still present: set addedById back to NULL and insert a -1 per row, as the
- * handler would for a delete. Not the ledger's `events` negated: rows deleted since were already
- * uncounted by CDC.
+ * Rollback: set addedById back to NULL on the ledger's ids still present. The touch needs none.
  *
- * Events are one per (entityType, entityId, metricType, userId) per batch, valued at the row
- * count, and each batch has its own createdAt second, never in the past. A real event for the same
- * user and entity in the same second shares the raw table's key; the running sum still counts
- * both, and only the raw row is collapsed. Accepted.
- *
- * Run AFTER the release that sets addedById on new bookmarks is live, or rows created behind the
- * run stay uncounted.
+ * Run AFTER the release that counts from Postgres is live (it is what the touch triggers), and
+ * after the index migration it reads from.
  *
  * Usage:
- *   node scripts/backfill-collection-item-adder.mjs                     # dry run: counts per range
- *   node scripts/backfill-collection-item-adder.mjs --execute --ledger ./adder-ledger.jsonl
+ *   node scripts/backfill-collection-item-adder.mjs --entity Article            # dry run
+ *   node scripts/backfill-collection-item-adder.mjs --entity Article --execute --ledger ./adder-article.jsonl
  *
- * Env: DATABASE_URL / DATABASE_REPLICA_URL as below, and CLICKHOUSE_URL or CLICKHOUSE_HOST +
- * CLICKHOUSE_USERNAME + CLICKHOUSE_PASSWORD. Nothing is read from files; a missing one stops the run.
+ * Env: DATABASE_URL / DATABASE_REPLICA_URL as below, and for --execute CLICKHOUSE_URL or
+ * CLICKHOUSE_HOST + CLICKHOUSE_USERNAME + CLICKHOUSE_PASSWORD. Nothing is read from files; a
+ * missing one stops the run.
  *
  * Options:
  *   --execute          Write. Needs DATABASE_URL (the primary); the dry run reads
- *                      DATABASE_REPLICA_URL when set.
+ *                      DATABASE_REPLICA_URL when set, and writes nothing anywhere.
  *   --ledger <path>    Required with --execute. Reuse the same path to resume.
- *   --from <id>        First CollectionItem.id (default 0, or where the ledger left off).
- *   --to <id>          Stop before this id (default max(id) + 1).
+ *   --from <id>        Dry run only: first CollectionItem.id (default 0).
+ *   --to <id>          Dry run only: stop before this id (default max(id) + 1). A real run always
+ *                      covers every id from where the ledger left off.
  *   --range <n>        Ids per batch (default 20000).
  *   --pause-ms <n>     Pause between batches that wrote something (default 1000).
+ *   --touch-pause-ms <n> Pause between phase 2's chunks of 5000 (default 60000), so the jobs
+ *                      recount in waves rather than in one run that outlasts their lock.
  *   --entity <type>    Article (default), Model or Post: which bookmarked rows this run repairs.
  *                      A ledger belongs to one entity; the run refuses a ledger from another.
- *   --events-table <t> Raw events table (default entityMetricEvents_month). The run refuses a
- *                      table that does not feed entityMetricSum_v3.
  */
 
 import { createClient } from '@clickhouse/client';
 import pg from 'pg';
 import { readFileSync, existsSync } from 'fs';
 import {
-  METRIC_PAIRS,
-  buildEvents,
-  landedState,
+  EVENTS_TABLE,
   backfillSql,
   clickhouseConfig,
-  nextStampMs,
   openLedger,
   readLedger,
+  touchEvents,
 } from './lib/collection-item-adder.mjs';
 
 const args = process.argv.slice(2);
@@ -81,16 +70,15 @@ const EXECUTE = args.includes('--execute');
 const LEDGER = arg('--ledger');
 const RANGE = Number(arg('--range') ?? 20000);
 const PAUSE_MS = Number(arg('--pause-ms') ?? 1000);
+const TOUCH_PAUSE_MS = Number(arg('--touch-pause-ms') ?? 60000);
 const FROM = arg('--from') != null ? Number(arg('--from')) : null;
 const TO = arg('--to') != null ? Number(arg('--to')) : null;
 const ENTITY = arg('--entity') ?? 'Article';
 
 const SQL = backfillSql(ENTITY);
 
-// Longer than the client's request_timeout, so an insert from the crashed run is settled.
-const LANDING_WAIT_MS = 15 * 60 * 1000;
-const EVENTS_TABLE = arg('--events-table') ?? 'entityMetricEvents_month';
 const LOCK_KEY = 'backfill-collection-item-adder';
+const TOUCH_CHUNK = 5000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -103,6 +91,8 @@ async function main() {
   if (!Number.isInteger(RANGE) || RANGE <= 0) fail(`Error: --range must be a positive integer`);
   if (EXECUTE && !LEDGER)
     fail('Error: --execute needs --ledger <path>; it is what makes a rerun safe.');
+  if (EXECUTE && (FROM != null || TO != null))
+    fail('Error: --from and --to are for the dry run; a real run resumes from its ledger.');
 
   const pgUrl = EXECUTE
     ? process.env.DATABASE_URL
@@ -114,37 +104,13 @@ async function main() {
         : 'Error: set DATABASE_REPLICA_URL (or DATABASE_URL) for the dry run.'
     );
 
-  let chConfig;
-  try {
-    chConfig = clickhouseConfig(process.env);
-  } catch (err) {
-    fail(`Error: ${err.message}`);
-  }
-  const ch = createClient({ ...chConfig, request_timeout: 300000 });
-  const query = async (sql, params) =>
-    (await ch.query({ query: sql, query_params: params, format: 'JSONEachRow' })).json();
-
-  // An unregistered or non-additive pair is totalled as distinct users, not as a sum, and every
-  // row-count event written here would read as one.
-  const kinds = await query(`SELECT entityType, metricType, kind FROM default.entityMetricKind FINAL
-                             WHERE (entityType, metricType) IN (${METRIC_PAIRS.map(
-                               ([e, m]) => `('${e}','${m}')`
-                             ).join(',')})`);
-  for (const [entityType, metricType] of METRIC_PAIRS) {
-    const kind = kinds.find(
-      (k) => k.entityType === entityType && k.metricType === metricType
-    )?.kind;
-    if (kind !== 'additive')
-      fail(
-        `Error: entityMetricKind for ${entityType}/${metricType} is "${
-          kind ?? 'missing'
-        }", not "additive".`
-      );
-  }
-
   const pool = new pg.Pool({ connectionString: pgUrl, connectionTimeoutMillis: 30000, max: 3 });
   const { rows: maxRows } = await pool.query('SELECT max(id) AS max FROM "CollectionItem"');
   const to = TO ?? Number(maxRows[0].max ?? 0) + 1;
+  const touchIds = async () => ({
+    entities: (await pool.query(SQL.touchEntities)).rows.map((r) => Number(r.id)),
+    collections: (await pool.query(SQL.touchCollections)).rows.map((r) => Number(r.id)),
+  });
 
   if (!EXECUTE) {
     console.log('MODE: dry run, nothing is written.\n');
@@ -152,38 +118,33 @@ async function main() {
     const skipped = {};
     for (let lo = FROM ?? 0; lo < to; lo += RANGE) {
       const hi = Math.min(lo + RANGE, to);
-      const { rows } = await pool.query(SQL.breakdown, [lo, hi]);
-      for (const { mode, n } of rows) {
+      for (const { mode, n } of (await pool.query(SQL.candidates, [lo, hi])).rows) {
         if (mode === 'Bookmark') {
           total += n;
           console.log(`[${lo}, ${hi})  ${n} rows  running total ${total}`);
         } else skipped[mode ?? 'none'] = (skipped[mode ?? 'none'] ?? 0) + n;
       }
     }
-    console.log(`\nDry run complete: ${total} ${ENTITY} rows would get an adder and a +1.`);
+    console.log(`\nPhase 1 would give ${total} ${ENTITY} rows an adder.`);
     console.log(
       `Skipped, not in a Bookmark collection, by Collection.mode: ${JSON.stringify(skipped)}`
     );
+    const ids = await touchIds();
+    console.log(
+      `Phase 2 would mark ${ids.entities.length} ${ENTITY} and ${ids.collections.length} collections for a recount.`
+    );
     await pool.end();
-    await ch.close();
     return;
   }
 
-  if (!/^\w+$/.test(EVENTS_TABLE))
-    fail(`Error: --events-table "${EVENTS_TABLE}" is not a table name`);
-  // Events written to a table nothing sums would set adders with no +1, and every later delete
-  // would then push a count below the truth.
-  const feeds = await query(
-    `SELECT name FROM system.tables
-     WHERE database = 'default' AND engine = 'MaterializedView'
-       AND position(create_table_query, 'entityMetricSum_v3') > 0
-       AND match(create_table_query, {re:String})`,
-    { re: `FROM\\s+(default\\.)?\`?${EVENTS_TABLE}\`?(\\s|$)` }
-  );
-  if (!feeds.length)
-    fail(`Error: no materialized view feeds entityMetricSum_v3 from ${EVENTS_TABLE}. Wrong table?`);
-
-  // Fails now, loudly, if the credential cannot insert, rather than after the first PG commit.
+  let chConfig;
+  try {
+    chConfig = clickhouseConfig(process.env);
+  } catch (err) {
+    fail(`Error: ${err.message}`);
+  }
+  const ch = createClient({ ...chConfig, request_timeout: 300000 });
+  // Fails now, loudly, if the credential cannot insert, rather than after phase 1.
   await ch.command({
     query: `INSERT INTO default.${EVENTS_TABLE} SELECT * FROM default.${EVENTS_TABLE} WHERE 0`,
   });
@@ -199,82 +160,34 @@ async function main() {
 
   const ledgerState = existsSync(LEDGER)
     ? readLedger(readFileSync(LEDGER, 'utf-8').split('\n'), ENTITY)
-    : { open: null, resumeFrom: null, lastStampMs: null };
+    : { open: null, resumeFrom: null, touched: false };
+  if (ledgerState.touched)
+    fail('This ledger is finished: the touch already ran. Use a new ledger for a new run.');
   const ledger = openLedger(LEDGER);
-  let lastStampMs = ledgerState.lastStampMs;
-
-  const insertEvents = (events) =>
-    ch.insert({ table: EVENTS_TABLE, values: events, format: 'JSONEachRow' });
-
-  const findAtStamp = (stamp) =>
-    ch
-      .query({
-        query: `SELECT entityType, entityId, metricType, userId, metricValue
-                FROM default.${EVENTS_TABLE}
-                WHERE createdAt = toDateTime({stamp:UInt32}) AND (entityType, metricType) IN (${METRIC_PAIRS.map(
-                  ([e, m]) => `('${e}','${m}')`
-                ).join(',')})`,
-        query_params: { stamp },
-        format: 'JSONEachRow',
-        clickhouse_settings: { select_sequential_consistency: 1 },
-      })
-      .then((res) => res.json())
-      .then((rows) =>
-        rows.map((r) => ({
-          ...r,
-          entityId: Number(r.entityId),
-          userId: Number(r.userId),
-          metricValue: Number(r.metricValue),
-        }))
-      );
 
   const open = ledgerState.open;
+  let start = ledgerState.resumeFrom ?? 0;
   if (open) {
-    console.log(`Resuming unfinished batch [${open.lo}, ${open.hi}) at phase ${open.phase}`);
+    console.log(`Resuming unfinished batch [${open.lo}, ${open.hi})`);
     const { rows: xact } = await pool.query('SELECT txid_status($1::bigint) AS status', [open.xid]);
     const status = xact[0].status;
     if (status === 'aborted') {
       console.log('  its transaction rolled back; redoing the range');
       ledger.write({ lo: open.lo, phase: 'abandoned' });
-    } else if (status !== 'committed') {
-      fail(`Error: transaction ${open.xid} is "${status}". Stopping for a human.`);
-    } else {
-      const wait = open.stampMs + LANDING_WAIT_MS - Date.now();
-      if (wait > 0) {
-        console.log(
-          `  waiting ${Math.ceil(wait / 1000)}s for any insert from the crashed run to settle`
-        );
-        await sleep(wait);
-      }
-      const state = landedState(open.events, await findAtStamp(open.events[0].createdAt));
-      if (state === 'partial')
-        fail(
-          `Error: batch [${open.lo}, ${open.hi}) is partly in ClickHouse. Stopping for a human.`
-        );
-      if (state === 'none') {
-        const stampMs = nextStampMs(lastStampMs, Date.now());
-        const events = open.events.map((e) => ({ ...e, createdAt: stampMs / 1000 }));
-        ledger.write({ lo: open.lo, phase: 'restamped', stampMs, events });
-        lastStampMs = stampMs;
-        await insertEvents(events);
-      }
-      ledger.write({ lo: open.lo, phase: 'inserted' });
-      console.log(`  ${state === 'all' ? 'already in ClickHouse' : 'inserted'}`);
-    }
+      start = open.lo;
+    } else if (status === 'committed') {
+      ledger.write({ lo: open.lo, phase: 'committed' });
+      start = Math.max(open.hi, start);
+      console.log('  it committed');
+    } else fail(`Error: transaction ${open.xid} is "${status}". Stopping for a human.`);
   }
 
-  // The open batch's range is redone either way: the UPDATE only matches rows still without an adder.
-  const start = FROM ?? open?.lo ?? ledgerState.resumeFrom ?? 0;
-  console.log(`MODE: EXECUTE. ids [${start}, ${to}) in ranges of ${RANGE}\n`);
-
+  console.log(`MODE: EXECUTE. Phase 1, ids [${start}, ${to}) in ranges of ${RANGE}\n`);
   let totalRows = 0;
-  let totalEvents = 0;
   for (let lo = start; lo < to; lo += RANGE) {
     const hi = Math.min(lo + RANGE, to);
     const client = await pool.connect();
     let rows;
-    let events;
-    let stampMs;
     try {
       await client.query('BEGIN');
       ({ rows } = await client.query(SQL.update, [lo, hi]));
@@ -282,20 +195,14 @@ async function main() {
         await client.query('ROLLBACK');
         continue;
       }
-      stampMs = nextStampMs(lastStampMs, Date.now());
-      // Epoch seconds: a DateTime string would be read in the server's timezone.
-      events = buildEvents(rows, stampMs / 1000);
       const { rows: txid } = await client.query('SELECT txid_current()::text AS xid');
-      const ids = rows.map((r) => r.id);
       ledger.write({
         lo,
         hi,
         phase: 'pending',
         entity: ENTITY,
         xid: txid[0].xid,
-        stampMs,
-        ids,
-        events,
+        ids: rows.map((r) => r.id),
       });
       await client.query('COMMIT');
     } catch (err) {
@@ -304,24 +211,41 @@ async function main() {
     } finally {
       client.release();
     }
-    lastStampMs = stampMs;
     ledger.write({ lo, phase: 'committed' });
-    await insertEvents(events);
-    ledger.write({ lo, phase: 'inserted' });
-
     totalRows += rows.length;
-    totalEvents += events.length;
-    console.log(
-      `[${lo}, ${hi})  ${rows.length} rows  ${events.length} events  totals ${totalRows} / ${totalEvents}`
-    );
+    console.log(`[${lo}, ${hi})  ${rows.length} rows  total ${totalRows}`);
     await sleep(PAUSE_MS);
   }
+  console.log(`\nPhase 1 done: ${totalRows} rows given an adder this run.`);
 
-  console.log(`\nDone: ${totalRows} rows given an adder, ${totalEvents} events inserted.`);
+  const ids = await touchIds();
+  const batches = [
+    ...chunkIds(ids.entities).map((part) => [ENTITY, 'collectedCount', part]),
+    ...chunkIds(ids.collections).map((part) => ['Collection', 'itemCount', part]),
+  ];
+  console.log(
+    `\nPhase 2: marking ${ids.entities.length} ${ENTITY} and ${ids.collections.length} collections`
+  );
+  for (const [entityType, metricType, part] of batches) {
+    // Stamped at insert: the jobs only look back a few minutes for affected entities.
+    const events = touchEvents(entityType, metricType, part, Math.floor(Date.now() / 1000));
+    await ch.insert({ table: EVENTS_TABLE, values: events, format: 'JSONEachRow' });
+    console.log(`  ${entityType} ${metricType}: ${part.length}`);
+    await sleep(TOUCH_PAUSE_MS);
+  }
+  ledger.write({ phase: 'touched', entity: ENTITY });
+  console.log('\nDone.');
+
   ledger.close();
   lockClient.release();
   await pool.end();
   await ch.close();
+}
+
+function chunkIds(list) {
+  return Array.from({ length: Math.ceil(list.length / TOUCH_CHUNK) }, (_, i) =>
+    list.slice(i * TOUCH_CHUNK, (i + 1) * TOUCH_CHUNK)
+  );
 }
 
 main().catch((err) => {

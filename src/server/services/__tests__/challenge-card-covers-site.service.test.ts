@@ -90,7 +90,7 @@ const event = {
   _count: { challenges: 1 },
 };
 
-function images(nsfwLevel: number) {
+function images(nsfwLevel: number, image: Record<string, unknown> = {}) {
   dbMock.dbRead.image.findMany.mockImplementation((async ({ where }: any) =>
     (where.id.in as number[]).map((id) => ({
       id,
@@ -100,6 +100,9 @@ function images(nsfwLevel: number) {
       width: 512,
       height: 512,
       type: 'image',
+      ingestion: 'Scanned',
+      blockedFor: null,
+      ...image,
     }))) as never);
 }
 
@@ -211,5 +214,13 @@ describe.each(Object.keys(paths))('%s', (path) => {
 
   it('keeps an X cover on the mature site', async () => {
     expect((await cover(NsfwLevel.X, { isGreen: false, viewerId: VIEWER }))?.url).toBe(COVER_URL);
+  });
+
+  it.each([
+    ['a Blocked level', NsfwLevel.Blocked, {}],
+    ['a block reason', NsfwLevel.X, { blockedFor: 'tos' }],
+  ])('withholds a cover with %s on the mature site', async (_, nsfwLevel, image) => {
+    images(nsfwLevel, image);
+    expect(await paths[path]({ isGreen: false, viewerId: VIEWER })).toBeNull();
   });
 });

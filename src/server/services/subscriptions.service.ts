@@ -1,6 +1,8 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
+import { listUserSubscriptionRows } from '@civitai/db-queries/placement';
 import { dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { inStripeKeyMode, stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
   subscriptionProductMetadataSchema,
@@ -342,9 +344,28 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
  * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
  * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
  */
-export const getCapTier = async (userId: number): Promise<string | null> => {
-  const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
+export const getCapTier = async (
+  userId: number,
+  /**
+   * The placement read path's already-evaluated `kysely-placement-reads`. Only that chain passes
+   * it: every other caller reads through Prisma whatever the flag says.
+   */
+  { useKysely = false }: { useKysely?: boolean } = {}
+): Promise<string | null> => {
+  const subscriptions = (await getCapTierSubscriptions(userId, useKysely)).filter(
+    (s) => !s.isBadState
+  );
   return pickHighestTier(subscriptions)?.tier ?? null;
+};
+
+/** `getAllUserSubscriptions`, or its Kysely read. The primary on both paths: a cap decides a charge. */
+const getCapTierSubscriptions = async (userId: number, useKysely: boolean) => {
+  if (!useKysely) return getAllUserSubscriptions(userId);
+  const rows = (await listUserSubscriptionRows((await loadKyselyDb()).kyselyWrite, {
+    userId,
+    excludedStatuses: activeSubscriptionStatuses.notIn,
+  })) as UserSubscriptionRow[];
+  return rows.map(toUserSubscription).filter((sub) => sub !== null);
 };
 
 /**

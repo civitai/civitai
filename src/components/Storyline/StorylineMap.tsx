@@ -358,7 +358,7 @@ function StorylineMap({
         )}
       </div>
 
-      <div className="flex gap-2 border-t border-solid border-gray-3 p-2.5 px-3.5 dark:border-dark-4">
+      <div className="flex shrink-0 gap-2 border-t border-solid border-gray-3 p-2.5 px-3.5 dark:border-dark-4">
         {next && (
           <Button
             size="sm"
@@ -396,7 +396,7 @@ function StorylineMap({
         size="compact-sm"
         fullWidth
         radius={0}
-        className="mb-2"
+        className="mb-2 shrink-0"
         onClick={leave}
         data-testid="storyline-leave"
       >
