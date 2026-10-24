@@ -65,7 +65,7 @@ export function normalizeQuery(query: string) {
   return query.trim().replace(/\s+/g, ' ');
 }
 
-type EmbeddingOutput = ModelStamp & { data?: { embedding: number[] }[] };
+type EmbeddingOutput = ModelStamp & { embedding?: number[] };
 
 async function embedQuery(text: string) {
   const stamp = await getIndexStamp();
@@ -80,10 +80,10 @@ async function embedQuery(text: string) {
 
   const { data, error } = await internalOrchestratorClient.post<{ 200: EmbeddingOutput }>({
     url: '/v2/consumer/recipes/multimodalEmbedding',
-    body: { model: EMBED_MODEL, dimensions: EMBED_DIMENSIONS, inputs: [{ id: 'q', text }] },
+    body: { model: EMBED_MODEL, dimensions: EMBED_DIMENSIONS, precision: 'float32', text },
     headers: { 'Content-Type': 'application/json' },
   });
-  const vector = data?.data?.[0]?.embedding;
+  const vector = data?.embedding;
   if (error || !vector) throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Embedding failed' });
   // A query vector from another model or profile is meaningless against the index.
   if (data.modelRevision !== stamp.modelRevision || data.profile !== stamp.profile) {

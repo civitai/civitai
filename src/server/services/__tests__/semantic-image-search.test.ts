@@ -18,9 +18,13 @@ const h = vi.hoisted(() => {
   return {
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
+    embed: vi.fn(),
   };
 });
 
+vi.mock('~/server/services/orchestrator/client', () => ({
+  internalOrchestratorClient: { post: h.embed },
+}));
 vi.stubGlobal('fetch', async () =>
   Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
 );
@@ -244,6 +248,71 @@ describe('a stale index cannot surface a hidden image', () => {
       searchSemanticImages({ input: input({ imageId: 6 }), user: VIEWER, candidateSource: source })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(calls).toEqual([]);
+  });
+});
+
+describe('query embedding', () => {
+  const vector = Array.from({ length: 256 }, (_, i) => i / 256);
+
+  beforeEach(() => {
+    redisMock.redis.packed.get.mockResolvedValue(null);
+    redisMock.redis.packed.set.mockClear();
+    h.embed.mockReset();
+    h.fakeGetAllImages = visibleOnly(new Set([5]));
+  });
+
+  it('embeds the normalised text through the recipe and caches the vector', async () => {
+    h.embed.mockResolvedValue({
+      data: {
+        model: 'wemm-2b',
+        modelRevision: 'r1',
+        profile: 'p1',
+        dimensions: 256,
+        embedding: vector,
+      },
+    });
+    const { source, calls } = rankedSource([5]);
+    const { items } = await searchSemanticImages({
+      input: input({ imageId: undefined, query: '  a red   fox ' }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+
+    expect(h.embed.mock.calls[0][0].body).toEqual({
+      model: 'wemm-2b',
+      dimensions: 256,
+      precision: 'float32',
+      text: 'a red fox',
+    });
+    expect(calls[0].query).toEqual(vector);
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
+      expect.stringContaining(':wemm-2b:256:r1:p1:'),
+      vector,
+      expect.anything()
+    );
+    expect(items.map((x) => x.id)).toEqual([5]);
+  });
+
+  it('refuses a vector from a different profile than the index', async () => {
+    h.embed.mockResolvedValue({
+      data: {
+        model: 'wemm-2b',
+        modelRevision: 'r1',
+        profile: 'p2',
+        dimensions: 256,
+        embedding: vector,
+      },
+    });
+    const { source, calls } = rankedSource([5]);
+    await expect(
+      searchSemanticImages({
+        input: input({ imageId: undefined, query: 'fox' }),
+        user: VIEWER,
+        candidateSource: source,
+      })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(calls).toEqual([]);
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
   });
 });
 
