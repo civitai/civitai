@@ -58,8 +58,9 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` FIVE keys are ahead: `RUN_CONFIRMED_STEP`,
- * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD`. The
+ * As of the installed `@civitai/app-sdk@0.65.1` SIX keys are ahead: `RUN_CONFIRMED_STEP`,
+ * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` and
+ * `VIEWER_ACTIVITY` (sent by `@civitai/sdk`, which this package does not describe). The
  * published union's 50 types are all inventory keys.
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
@@ -240,6 +241,21 @@ export const INVENTORY = {
     // host props, never the payload.
     IframeHost: 'required',
     PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // `@civitai/sdk`'s throttled report (at most one a minute, no payload) that the viewer pressed,
+  // typed, scrolled or focused inside the frame, which the page cannot see. No host handles it: the
+  // App Assistant's preview pane reads it straight off the window (`previewKeepAlive.ts`), and
+  // fire-and-forget means an unhandled one is dropped with no NACK and nothing waiting on it.
+  VIEWER_ACTIVITY: {
+    request: false,
+    reply: '',
+    replyKeys: null,
+    errorKeys: null,
+    IframeHost:
+      'activity report for the App Assistant preview keep-alive, read off the window there; fire-and-forget, nothing to do on a model slot',
+    PageBlockHost:
+      'activity report read off the window by the App Assistant preview keep-alive (previewKeepAlive.ts), not by the host; fire-and-forget, no reply',
     InlineHost: INLINE_STUB,
   },
   REQUEST_SIGN_IN: {
