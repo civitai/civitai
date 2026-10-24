@@ -63,7 +63,7 @@ if (shard < 1 || shard > total) {
  *
  * BASE_TESTS is the whole suite's executed count, and it now sets only the FLOOR (the
  * ceiling counts files, see MAX_FILES). Re-measured 2026-10-24 from this job's own output on `main`:
- * 15889 + 14939 + 16688 + 16161 = 63,677 executed across 3,702 files (run 40108146824).
+ * 15969 + 14967 + 16674 + 16175 = 63,785 executed across 3,706 files (run 40113886304).
  * The previous figure, 37,857 (2026-09-04, run 33900980756), was 41% low. A stale-low
  * BASE_TESTS only loosens the floor rather than tripping anything, so it was re-pinned
  * alongside BASE_FILES rather than because it failed.
@@ -83,11 +83,11 @@ if (shard < 1 || shard > total) {
  * asserts the wrong one of the two is worse than no gate — it sends the next person hunting
  * a bug that is not there.
  */
-const BASE_TESTS = 63677;
+const BASE_TESTS = 63785;
 const expected = BASE_TESTS / total;
 
 /** Generous: catches a shard that collapsed, not one that is merely light. Observed
- *  imbalance 2026-10-24 was the LIGHTEST shard at 6% below the mean (14939 vs 15919
+ *  imbalance 2026-10-24 was the LIGHTEST shard at 6% below the mean (14967 vs 15946
  *  expected), so the floor's real headroom is ~3.1x. On 2026-09-04 the lightest shard was
  *  39% below the mean (5769 vs 9464), so this headroom moves with the shard split. */
 const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
@@ -97,20 +97,22 @@ const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
  * it separates that from a legitimate shard for every N >= 2.
  *
  * 🔴 COUNTED IN FILES, NOT TESTS. vitest shards by file count, so file shares are exact
- * (926/926/925/925 on 2026-10-24), while test shares are not: one parametrised table,
+ * (927/927/926/926 on 2026-10-24), while test shares are not: one parametrised table,
  * `image-parity.test.ts` at 8,620 cases (~19% of the suite), lands wholly on one shard and
  * grows with every generator model. A test-count ceiling tripped on that file alone
  * (shard 3 at 17,079 vs 17,036, 2026-09-25) with sharding working correctly, three weeks
  * after BASE_TESTS was last re-pinned for the same reason. Do not move this back to tests.
  *
- * BASE_FILES is the whole unit suite's file count: 926 + 926 + 925 + 925 = 3,702, the four
- * shards' "across N files" figures on `main`, 2026-10-24 (run 40108146824). A stale-low
+ * BASE_FILES is the whole unit suite's file count: 927 + 927 + 926 + 926 = 3,706, the four
+ * shards' "across N files" figures on `main`, 2026-10-24 (run 40113886304). A stale-low
  * figure trips the ceiling only once the suite grows 80% past it, and it did: the previous
- * figure, 2,057 (2026-09-25, run 36084791308), gave a ceiling of 926 files. Run 40108146824
- * had two shards exactly at 926, and the next added test file put shard 1 at 927 and failed
- * it with every test passing.
+ * figure, 2,057 (2026-09-25, run 36084791308), gave a ceiling of 926 files. Main's last
+ * green run (40108146824) had two shards exactly at 926; four test files later shards 1 and
+ * 2 ran 927 and failed with every test passing, red on `main` itself. That run is the one
+ * measured here: the counts are printed before the ceiling is applied, so a tripped ceiling
+ * does not corrupt the number it reports.
  */
-const BASE_FILES = 3702;
+const BASE_FILES = 3706;
 const BASE_FILES_MEASURED = '2026-10-24';
 const MAX_FILES = Math.round((BASE_FILES / total) * 1.8);
 
