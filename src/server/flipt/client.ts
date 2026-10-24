@@ -112,6 +112,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
+  // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
+  // no entity or context. See `responseWriteSerialize`.
+  TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
