@@ -378,6 +378,12 @@ async function reportCoverage(
   }
 }
 
+/**
+ * The hold lookup names the marker view: a database without it fails the lookup, which holds
+ * everyone.
+ */
+const NAME_MARKER_VIEW = true;
+
 type OwnerHolds = {
   /**
    * Has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
@@ -390,8 +396,7 @@ type OwnerHolds = {
 
 /**
  * The hold standing of these users. A failed lookup holds everyone and releases no one: a hold only
- * ever caps a retraction at a deny, so failing closed costs nothing that cannot be redone. The marker
- * leg names its view, so a database without it fails the lookup.
+ * ever caps a retraction at a deny, so failing closed costs nothing that cannot be redone.
  */
 async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
@@ -400,7 +405,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   try {
     const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; reported: boolean }[]>`
       SELECT u.id,
-        ${holdMarkerSql(Prisma.sql`u.id`, true)} OR EXISTS (
+        ${holdMarkerSql(Prisma.sql`u.id`, NAME_MARKER_VIEW)} OR EXISTS (
           SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
             AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
         ) AS held,
