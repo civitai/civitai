@@ -1,4 +1,5 @@
 import { showErrorNotification } from '~/utils/notifications';
+import { dealQueryError } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
@@ -18,7 +19,7 @@ export function useServiceDeal(id: number) {
   return {
     deal: data,
     isLoading,
-    error: error ? { code: error.data?.code } : null,
+    error: dealQueryError(error),
     refetch,
   };
 }

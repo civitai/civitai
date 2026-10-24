@@ -56,8 +56,15 @@ export type DealPageState =
   | { kind: 'error' }
   | { kind: 'deal' };
 
-/** How the server refuses a deal: as missing, so a non-party learns nothing about it. */
-const REFUSED = ['NOT_FOUND', 'FORBIDDEN'];
+/**
+ * How the server refuses a deal: as missing, so a non-party learns nothing about it. A session
+ * that ended mid-view is refused before any lookup, and trying again cannot help it.
+ */
+const REFUSED = ['NOT_FOUND', 'FORBIDDEN', 'UNAUTHORIZED'];
+
+/** The deal query's failure as `dealPageState` reads it: the tRPC code the server sent, if any. */
+export const dealQueryError = (error: { data?: { code?: string } | null } | null | undefined) =>
+  error ? { code: error.data?.code } : null;
 
 /**
  * The deal page renders for whoever the server returns the deal to (buyer, seller, moderator),
