@@ -72,6 +72,25 @@ describe('openLoginPopup completion', () => {
       'https://example.test/models/123#comments'
     );
     expect(loc.reload).toHaveBeenCalledTimes(1);
+    expect(hist.replaceState.mock.invocationCallOrder[0]).toBeLessThan(
+      loc.reload.mock.invocationCallOrder[0]
+    );
+    expect(loc.assign).not.toHaveBeenCalled();
+  });
+
+  it('drops the fragment, then reloads, when this page has one and the callback does not', () => {
+    setup('https://example.test/models/123?tab=a#node-3');
+    openLoginPopup('/models/123?tab=a');
+    completeLogin();
+    expect(hist.replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      'https://example.test/models/123?tab=a'
+    );
+    expect(loc.reload).toHaveBeenCalledTimes(1);
+    expect(hist.replaceState.mock.invocationCallOrder[0]).toBeLessThan(
+      loc.reload.mock.invocationCallOrder[0]
+    );
     expect(loc.assign).not.toHaveBeenCalled();
   });
 
