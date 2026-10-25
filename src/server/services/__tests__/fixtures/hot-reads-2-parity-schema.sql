@@ -38,7 +38,7 @@ CREATE TYPE "hot_reads_2_parity"."ReportStatus" AS ENUM ('Pending', 'Processing'
 -- The app's iif(), from programmability/IIF.sql, which the views below call.
 CREATE FUNCTION "hot_reads_2_parity".iif(condition boolean, true_result anyelement, false_result anyelement)
   RETURNS anyelement IMMUTABLE LANGUAGE sql AS
-$$ SELECT CASE WHEN condition THEN true_result ELSE false_result END $$
+$$ SELECT CASE WHEN condition THEN true_result ELSE false_result END $$;
 CREATE TYPE "hot_reads_2_parity"."TagType" AS ENUM ('UserGenerated', 'Label', 'Moderation', 'System');
 CREATE TYPE "hot_reads_2_parity"."TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'Hive', 'MinorDetection', 'HiveDemographics', 'Clavata', 'SpineRating', 'AiRecognition', 'AnimeRecognition');
 
