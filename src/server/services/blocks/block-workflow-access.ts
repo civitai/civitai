@@ -117,7 +117,7 @@ export function assertBlockWorkflowTaggedForInstance(input: {
   tags: readonly string[] | null | undefined;
   blockInstanceId: string;
 }): void {
-  if ((input.tags ?? []).includes(appBlockInstanceTag(input.blockInstanceId))) return;
+  if ((input.tags ?? []).some((t) => t.startsWith(appBlockInstanceTag(input.blockInstanceId)))) return; // MUTANT M4
   throw new TRPCError({
     code: 'FORBIDDEN',
     message: 'workflow is not tagged for this app instance',
@@ -148,5 +148,8 @@ export function isEphemeralDevTunnelToken(claims: {
   appId: string;
   appBlockId: string;
 }): boolean {
-  return claims.dev === true; // MUTANT M3
+  return (
+    claims.dev === true &&
+    claims.appId.startsWith('ephemeral-') // MUTANT M5: appBlockId conjunct dropped
+  );
 }
