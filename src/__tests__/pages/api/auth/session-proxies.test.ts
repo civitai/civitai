@@ -18,6 +18,7 @@ const h = vi.hoisted(() => {
   return {
     prod: { value: true },
     switch: vi.fn(async () => ({ token: 'switched' })),
+    remove: vi.fn(async () => true),
     impersonate: vi.fn(async () => ({ ok: true as const, token: 'imp' })),
     exit: vi.fn(async () => ({ ok: true as const, token: 'mod' })),
   };
@@ -35,7 +36,7 @@ vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
 }));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
-  createDeviceAccountClient: () => ({ switch: h.switch }),
+  createDeviceAccountClient: () => ({ switch: h.switch, remove: h.remove }),
   createImpersonationClient: () => ({ impersonate: h.impersonate, exit: h.exit }),
 }));
 vi.mock('~/server/auth/civ-cookie', async (importOriginal) => ({
@@ -50,6 +51,7 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 import switchHandler from '~/pages/api/auth/switch';
 import impersonateHandler from '~/pages/api/auth/impersonate';
 import oauthProxy from '~/pages/api/auth/oauth/[...path]';
+import accountsHandler from '~/pages/api/auth/accounts';
 
 const JSON_TYPE = { 'content-type': 'application/json' };
 const FORM_TYPE = { 'content-type': 'application/x-www-form-urlencoded' };
@@ -107,6 +109,7 @@ beforeEach(() => {
   h.switch.mockClear();
   h.impersonate.mockClear();
   h.exit.mockClear();
+  h.remove.mockClear();
 });
 
 describe('POST /api/auth/switch', () => {
@@ -184,6 +187,28 @@ describe('/api/auth/impersonate', () => {
       headers: { origin: 'https://civitai.com' },
     });
     expect([start.status, exit.status]).toEqual([200, 200]);
+  });
+});
+
+describe('DELETE /api/auth/accounts', () => {
+  it('refuses a removal from another origin', async () => {
+    const res = await call(accountsHandler, {
+      method: 'DELETE',
+      headers: { origin: 'https://evil.example' },
+      query: { userId: '2' },
+    });
+    expect(res.status).toBe(403);
+    expect(h.remove).not.toHaveBeenCalled();
+  });
+
+  it('removes for a same-origin call (positive control)', async () => {
+    const res = await call(accountsHandler, {
+      method: 'DELETE',
+      headers: { origin: 'https://civitai.com' },
+      query: { userId: '2' },
+    });
+    expect(res.status).toBe(200);
+    expect(h.remove).toHaveBeenCalledOnce();
   });
 });
 
