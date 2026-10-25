@@ -43,7 +43,12 @@ import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActionsV1 as ChatActions } from '~/components/Chat/ChatActionsV1';
 import { useChatStore } from '~/components/Chat/ChatProvider';
-import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
+import {
+  getLinkHref,
+  linkifyOptions,
+  loadMotion,
+  showsChatModeratorMark,
+} from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -429,7 +434,7 @@ export function ExistingChatV1() {
                       linkToProfile
                       badge={
                         <Group gap={6} ml={4} align="center">
-                          {cm.user.isModerator ? (
+                          {showsChatModeratorMark(cm.user) ? (
                             <Image
                               src="/images/civ-c.png"
                               title="Moderator"
