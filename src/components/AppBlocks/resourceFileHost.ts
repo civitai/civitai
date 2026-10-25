@@ -96,13 +96,10 @@ export async function fetchAndParseResourceFile({
  */
 export async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Array> {
   const tooLarge = () => resourceFileError('too-large', `response exceeds ${maxBytes} bytes`);
-  const declared = Number(res.headers?.get('content-length'));
+  const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
-  if (!res.body) {
-    const buf = new Uint8Array(await res.arrayBuffer());
-    if (buf.byteLength > maxBytes) throw tooLarge();
-    return buf;
-  }
+  // A null body is an empty one; never fall back to buffering it whole.
+  if (!res.body) return new Uint8Array(0);
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;

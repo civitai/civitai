@@ -519,8 +519,10 @@ read that file. As of this writing the families are:
     download gate: drafts are refused to everyone (owner included), and a version
     under any active paid-access gate (early access or permanent paid access) or
     with downloads disabled is refused to everyone but the owner (buyers and
-    moderators included), all as `not-found`. Non-owners, moderators included, see
-    only public files. `forbidden` is the viewer's maturity ceiling, checked after the
+    moderators included), all as `not-found`. A non-owner, moderators and
+    Private-access grant holders included, gets only public files of an
+    open-access (`Public` or `Unsearchable`), non-POI version. A transient storage
+    failure is `parse-failed`, so the block can retry. `forbidden` is the viewer's maturity ceiling, checked after the
     download gate. Logic: `src/server/services/resource-file.service.ts`,
     `src/components/AppBlocks/resourceFileParse.ts` and `resourceFileHost.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /

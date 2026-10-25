@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
+import { isOpenAvailability } from '~/server/services/common.service';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { Flags } from '~/shared/utils/flags';
@@ -90,12 +91,15 @@ export async function resolveResourceFileForUser({
       id: true,
       name: true,
       nsfwLevel: true,
+      availability: true,
       model: {
         select: {
           id: true,
           type: true,
           name: true,
           userId: true,
+          availability: true,
+          poi: true,
           user: { select: { username: true } },
         },
       },
@@ -105,8 +109,10 @@ export async function resolveResourceFileForUser({
 
   const isOwner = version.model.userId === user.id;
 
-  // The gate shows moderators non-public files; this bridge serves a moderator
-  // only what any other non-owner could read.
+  // Non-owners, moderators included, get only free public content: public files
+  // of an open-access, non-POI version. The gate is called without moderator
+  // rights and the availability and POI checks below are the bridge's own,
+  // because the gate also serves a viewer holding a Private-access grant.
   const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
   if (!isOwner) fileWhere.visibility = ModelFileVisibility.Public;
   const candidates = await dbRead.modelFile.findMany({
@@ -122,9 +128,13 @@ export async function resolveResourceFileForUser({
   const resolved = await getFileForModelVersion({
     modelVersionId,
     fileId: chosen.id,
-    user,
+    user: { ...user, isModerator: false },
     attribution: { caller: 'other', actor: resolveActorFor(user) },
   });
+  if (resolved.status === 'resolve-failed') {
+    // Transient storage failure: report it as retryable, not as missing.
+    throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Resource file unavailable' });
+  }
   if (resolved.status !== 'success') throw notFound();
 
   // Narrower than the download gate, which lets owners and moderators read
@@ -133,6 +143,14 @@ export async function resolveResourceFileForUser({
   if (!resolved.published) throw notFound();
   if (resolved.inEarlyAccess && !isOwner) throw notFound();
   if (resolved.isDownloadable === false && !isOwner) throw notFound();
+  if (
+    !isOwner &&
+    (version.model.poi ||
+      !isOpenAvailability(version.model.availability) ||
+      !isOpenAvailability(version.availability))
+  ) {
+    throw notFound();
+  }
 
   const browsingLevel = getServerBrowsingLevel({ canViewNsfw, user });
   if (!Flags.hasFlag(browsingLevel, version.nsfwLevel ?? 0)) {

@@ -103,7 +103,6 @@ const TRPC_CODE_TO_ERROR: Record<string, ResourceFileErrorCode> = {
   FORBIDDEN: 'forbidden',
   UNAUTHORIZED: 'unauthorized',
   TOO_MANY_REQUESTS: 'rate-limited',
-  PAYLOAD_TOO_LARGE: 'too-large',
 };
 
 /**
@@ -118,7 +117,9 @@ export function classifyResourceFileError(err: unknown): ResourceFileErrorCode {
       return tag as ResourceFileErrorCode;
     }
     const code = (err as { data?: { code?: unknown } }).data?.code;
-    if (typeof code === 'string' && code in TRPC_CODE_TO_ERROR) return TRPC_CODE_TO_ERROR[code];
+    if (typeof code === 'string' && Object.hasOwn(TRPC_CODE_TO_ERROR, code)) {
+      return TRPC_CODE_TO_ERROR[code];
+    }
   }
   return 'parse-failed';
 }
