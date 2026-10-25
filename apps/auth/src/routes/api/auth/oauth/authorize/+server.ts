@@ -14,6 +14,7 @@ import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { checkClientAccess } from '$lib/server/oauth/access';
 import { parseBody, toOAuthRequest, newOAuthResponse } from '$lib/server/oauth/http';
+import { isHubPageRequest } from '$lib/server/auth/same-origin';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -32,6 +33,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   const params: Record<string, string> =
     method === 'GET' ? Object.fromEntries(url.searchParams.entries()) : await parseBody(request);
+
+  // Only the hub's consent page may approve. A third-party POST without `approved` is handled like a GET.
+  if (method === 'POST' && params.approved === 'true' && !isHubPageRequest(request, url)) {
+    return oauthError(403, 'access_denied', 'Approval must come from the consent page');
+  }
 
   // Rebuild this endpoint's URL from the params so an unauthenticated user (or a consent redirect) is
   // sent somewhere that round-trips back here with the full request intact, regardless of GET vs POST.
