@@ -1044,6 +1044,61 @@ describe('blocks.publishGenerationOutputs — dev-token ownership proof', () => 
     expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
   });
 
+  it('🔴 a dev token OUTSIDE the ephemeral dev-tunnel class with no row is still refused at guard (a)', async () => {
+    // `dev: true` covers six mint paths. Only the ephemeral dev-tunnel one (both ids
+    // `ephemeral-…`) gets the stand-in. Each case below is otherwise perfectly tagged for its own
+    // instance, so the ONLY thing that can refuse it is the class check.
+    const cases: Array<Record<string, unknown>> = [
+      // A moderator's review run-for-real token for someone else's pending app.
+      {
+        appId: 'pending-01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        appBlockId: 'pubreq_01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        blockInstanceId: 'page_pubreq_01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        reviewRunForReal: true,
+      },
+      // An approved app's `dev:live` token (real ids).
+      {
+        appId: APP_ID,
+        appBlockId: 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+        blockInstanceId: 'page_apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+      },
+      // Half-ephemeral: only ONE of the two ids in the namespace.
+      {
+        appId: DEV_APP,
+        appBlockId: 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+        blockInstanceId: 'page_apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+      },
+      {
+        appId: APP_ID,
+        appBlockId: DEV_APP,
+        blockInstanceId: DEV_INSTANCE,
+      },
+    ];
+    for (const over of cases) {
+      const claims = devClaims(over);
+      mockVerifyBlockToken.mockResolvedValue(claims);
+      mockGetWorkflow.mockResolvedValue(
+        devWorkflow({
+          tags: [
+            'civitai',
+            'app-block',
+            `app-block:${claims.appId}`,
+            `app-block:instance:${claims.blockInstanceId}`,
+          ],
+        })
+      );
+
+      await expect(
+        caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'workflow is not in this app subqueue',
+      });
+    }
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
   it('a dev token WITH a row keeps the row path (no instance tag required)', async () => {
     // INVARIANT GUARD (passes at base too): approved-mode dev tokens sign the app's REAL ids and
     // can match rows the same viewer's ordinary submits wrote; those publishes must not regress.
