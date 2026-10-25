@@ -106,18 +106,29 @@ export type ImageScoreRaisePlan = {
   ownerId: number;
   stored: number | null;
   recomputed: number;
-  action: 'raise' | 'equal' | 'down';
+  action: 'raise' | 'equal' | 'down' | 'excluded';
 };
 
-/** Only a score that goes up is written; equal and lower ones are reported and left alone. */
+/**
+ * Only a score that goes up is written; equal and lower ones are reported and left alone. A
+ * metric-excluded owner is never raised: the totals can still hold their own reactions from before
+ * the exclusion, which the cron never credits and `imageScoresAsOf` does not subtract for them.
+ */
 export function planImageScoreRaise(
   stored: Map<number, number | null>,
-  recomputed: Map<number, number>
+  recomputed: Map<number, number>,
+  excluded: Set<number>
 ): ImageScoreRaisePlan[] {
   return [...recomputed].map(([ownerId, value]) => {
     const before = stored.get(ownerId) ?? null;
     const current = before ?? 0;
-    const action = value > current ? 'raise' : value === current ? 'equal' : 'down';
+    const action = excluded.has(ownerId)
+      ? 'excluded'
+      : value > current
+      ? 'raise'
+      : value === current
+      ? 'equal'
+      : 'down';
     return { ownerId, stored: before, recomputed: value, action };
   });
 }
