@@ -21,8 +21,9 @@ import { workflowOwnerId } from '~/server/services/orchestrator/assert-workflow-
  * this module's, called from all five sites, and the viewer half is not.
  *
  * The row is deliberately not part of the pair this module offers: `upsertBlockWorkflowOnSubmit` is
- * fire-and-forget behind its own swallowing try/catch, and the submit sites skip it entirely for
- * `claims.dev === true`, so its absence does not mean what a gate would need it to mean.
+ * fire-and-forget behind its own swallowing try/catch, and most submit sites skip it for
+ * `claims.dev === true` (the post-paid customComfy arm does not), so its absence does not mean
+ * what a gate would need it to mean.
  *
  * ONE PLACE COMBINES THEM: `publishGenerationOutputs`, for an ephemeral dev-tunnel token
  * (`isEphemeralDevTunnelToken`) with no row only,

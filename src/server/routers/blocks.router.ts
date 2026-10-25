@@ -5309,10 +5309,10 @@ export const blocksRouter = router({
    * (userId-from-token, appBlockId-from-token, workflowId) binding the
    * orchestrator lacks; (b) the orchestrator's own record must carry the
    * `app-block:<appId>` tag. Either fails → FORBIDDEN, nothing is published.
-   * A `dev: true` token never gets a row (submits skip it), so when the row is
-   * absent an EPHEMERAL dev-tunnel token (only that class) proves (a) instead from
-   * the viewer-minted workflow id plus the server-stamped per-instance tag — see
-   * the comment at guard (a).
+   * An ephemeral dev-tunnel token never gets a row (the FK rejects its synthetic
+   * app id), so when the row is absent that token class (only that class) proves
+   * (a) instead from the viewer-minted workflow id plus the server-stamped
+   * per-instance tag — see the comment at guard (a).
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
@@ -5365,12 +5365,13 @@ export const blocksRouter = router({
         appBlockId: claims.appBlockId,
         workflowId: input.workflowId,
       });
-      // EPHEMERAL DEV-TUNNEL STAND-IN for the row. Every submit site skips the `block_workflows`
-      // write for `claims.dev === true` (and the row's `app_block_id` FK cannot hold a synthetic
-      // `ephemeral-<slug>` id), so for an unsubmitted dev-tunnel / App Assistant preview app the
-      // row can never exist and guard (a) refused every publish — after the viewer had accepted
-      // the consent dialog. For THAT token class only (`isEphemeralDevTunnelToken` — not every
-      // dev token; see its docblock for the moderator review token it excludes) and only with NO
+      // EPHEMERAL DEV-TUNNEL STAND-IN for the row. The row's `app_block_id` FK to `app_blocks`
+      // cannot hold a synthetic `ephemeral-<slug>` id (and most submit sites also skip the write
+      // for `claims.dev === true` — not all: the post-paid customComfy arm does not), so for a
+      // dev-tunnel / App Assistant preview app on an ephemeral id the row can never exist, and
+      // guard (a) refused every publish — after the viewer had accepted the consent dialog.
+      // For THAT token class only (`isEphemeralDevTunnelToken` — not every dev token; see its
+      // docblock for the moderator review token it excludes) and only with NO
       // row, the same (viewer, app block, workflow) binding is proven from facts no block can
       // write: the orchestrator-minted id names the viewer (checked HERE, before any upstream
       // read), and the orchestrator record carries the server-stamped app tag (guard b) AND the
