@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   getModelWithDetailsRow,
+  listModelGenerationCoverage,
   listModelWithDetailsFiles,
   listModelWithDetailsVersions,
 } from '@civitai/db-queries/hot-reads';
@@ -12,22 +13,44 @@ export type ModelWithDetails = Prisma.ModelGetPayload<{ select: typeof modelWith
 
 /**
  * The model page's `modelWithDetailsSelect` read through Kysely, in the exact shape the Prisma
- * `model.findFirst({ where: { id }, select: modelWithDetailsSelect })` returns: three statements in
- * one round trip instead of one query per relation. Behind `kysely-hot-reads-2`; the caller picks
- * the client (`getKyselyWithoutLag('model', id)`), as it picked the Prisma one.
+ * `model.findFirst({ where: { id }, select: modelWithDetailsSelect })` returns: at most four
+ * statements instead of one query per relation, run ONE AFTER ANOTHER on ONE pooled connection
+ * (`db.connection()`), so a model page holds a single connection, as the Prisma read did. A missing
+ * model stops after the first statement; a model with no versions after the second. Behind
+ * `kysely-hot-reads-2`; the caller picks the client (`getKyselyWithoutLag('model', id)`), as it
+ * picked the Prisma one.
  *
- * Parity with the Prisma read is pinned in __tests__/hot-reads-2.kysely-parity.test.ts.
+ * Every VIEW is read by its key as a parameter ("ModelReportStat" and "GenerationCoverage" by the
+ * model id), never through a join: see hot-reads.db.ts. Parity with the Prisma read, and the plans
+ * of the view reads, are pinned in __tests__/hot-reads-2.kysely-parity.test.ts.
  */
 export async function readModelWithDetailsViaKysely(
   db: Kysely<DB>,
   id: number
 ): Promise<ModelWithDetails | null> {
-  const [row, versions, files] = await Promise.all([
-    getModelWithDetailsRow(db, id),
-    listModelWithDetailsVersions(db, id),
-    listModelWithDetailsFiles(db, id),
-  ]);
-  if (!row) return null;
+  return db.connection().execute(async (conn) => {
+    const row = await getModelWithDetailsRow(conn, id);
+    if (!row) return null;
+    const versions = await listModelWithDetailsVersions(conn, id);
+    const versionIds = versions.map((version) => version.id);
+    const coverage = versionIds.length ? await listModelGenerationCoverage(conn, id) : [];
+    const files = await listModelWithDetailsFiles(conn, versionIds);
+    return toModelWithDetails(row, versions, coverage, files);
+  });
+}
+
+function toModelWithDetails(
+  row: NonNullable<Awaited<ReturnType<typeof getModelWithDetailsRow>>>,
+  versions: Awaited<ReturnType<typeof listModelWithDetailsVersions>>,
+  coverage: Awaited<ReturnType<typeof listModelGenerationCoverage>>,
+  files: Awaited<ReturnType<typeof listModelWithDetailsFiles>>
+): ModelWithDetails {
+  const coverageByVersion = new Map(
+    coverage.map(({ modelVersionId, covered, coveredNext }) => [
+      modelVersionId,
+      { covered, coveredNext },
+    ])
+  );
 
   // Grouped in row order, as Prisma attaches a relation's rows to their parent.
   const filesByVersion = new Map<number, typeof files>();
@@ -38,8 +61,7 @@ export async function readModelWithDetailsViaKysely(
   }
 
   const {
-    reportStatsModelId,
-    reportStatsOwnershipProcessing,
+    reportStats,
     userId,
     userImage,
     userUsername,
@@ -54,10 +76,7 @@ export async function readModelWithDetailsViaKysely(
   return {
     ...model,
     licenses,
-    reportStats:
-      reportStatsModelId !== null
-        ? { ownershipProcessing: reportStatsOwnershipProcessing as number }
-        : null,
+    reportStats: reportStats ?? null,
     user: {
       id: userId,
       image: userImage,
@@ -69,6 +88,7 @@ export async function readModelWithDetailsViaKysely(
       ...version,
       licensingFee: licensingFee === null ? null : new Prisma.Decimal(licensingFee),
       files: filesByVersion.get(version.id) ?? [],
+      generationCoverage: coverageByVersion.get(version.id) ?? null,
       recommendedResources: recommendedResources.map(({ id, resourceId, settings }) => ({
         id,
         resource: { id: resourceId },

@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { Kysely, PostgresDialect, type CompiledQuery } from 'kysely';
+import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
@@ -113,6 +115,8 @@ const COSMETIC_B = 7102;
 const COSMETIC_UNEQUIPPED = 7103;
 const COSMETIC_ON_ENTITY = 7104;
 const IMAGE_TWO = 2102;
+const ALICE_VOTER = 1201;
+const BOB_VOTER = 1202;
 const IMAGE_UNTAGGED = 2103;
 const THREAD_LOCKED = 9301;
 const THREAD_OPEN = 9302;
@@ -144,9 +148,12 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       INSERT INTO ${t('UserRank')} VALUES (${CREATOR}, 9, 'overall', 'Top creator', 'gold-frame')
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('UserStat')} ("userId", "uploadCountAllTime", "downloadCountAllTime",
-        "generationCountAllTime", "followerCountAllTime", "thumbsUpCountAllTime",
-        "reactionCountAllTime") VALUES (${CREATOR}, 31, 32, 33, 34, 35, 36)
+      INSERT INTO ${t('UserMetric')} ("userId", timeframe, "followingCount", "followerCount",
+        "reactionCount", "hiddenCount", "uploadCount", "reviewCount", "answerCount",
+        "answerAcceptCount") VALUES
+        (${CREATOR}, 'AllTime', 1, 34, 36, 2, 31, 3, 4, 5),
+        (${CREATOR}, 'Day', 901, 902, 903, 904, 905, 906, 907, 908),
+        (${NAMELESS}, 'AllTime', 0, 7, 0, 0, 0, 0, 0, 0)
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('UserLink')} VALUES
@@ -184,23 +191,37 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (${MODEL}, 'Full model', '<p>about</p>', 'Checkpoint', '2026-04-05 06:07:08.912', true,
           false, false, ${CREATOR}, 'Published', '2026-04-01 01:02:03.456',
           '{"commentsLocked": false, "imageModeration": true}', NULL, NULL, 'Merge', 'Trained',
-          true, 'Archived', 'EarlyAccess', 28, '{name,description}', true, true, 'Safe name',
-          'safe about', 9101, 9102, false, '{Image,Sell}', false, true),
+          true, NULL, 'EarlyAccess', 28, '{name,description}', true, true, 'Safe name',
+          'safe about', 9101, 9102, false, '{Image,RentCivit,Sell}', false, true),
         (${MODEL_BARE}, 'Bare model', NULL, 'LORA', '2026-04-06 06:07:08.912', false, false, false,
           ${BARE}, 'Draft', NULL, '{}', '2026-04-07 00:00:00.000', ${BARE}, NULL, 'Created',
           false, NULL, 'Public', 0, '{}', false, false, NULL, NULL, NULL, NULL, true, '{}', true,
           false),
         (${MODEL_OF_DELETED}, 'Deleted user model', NULL, 'VAE', '2026-04-08 06:07:08.912', false,
           false, false, ${DELETED}, 'Published', NULL, '{}', NULL, NULL, NULL, 'Created', false,
-          NULL, 'Public', 1, '{}', false, false, NULL, NULL, NULL, NULL, true, '{None}', true, true),
+          'TakenDown', 'Public', 1, '{}', false, false, NULL, NULL, NULL, NULL, true, '{None}', true,
+          true),
         (${DRAFT_MODEL}, 'Draft by creator', NULL, 'LORA', '2026-04-09 06:07:08.912', false, false,
           false, ${CREATOR}, 'Draft', NULL, '{}', NULL, NULL, NULL, 'Created', false, NULL,
           'Public', 0, '{}', false, false, NULL, NULL, NULL, NULL, true, '{}', true, true)
     `);
-    await prisma.$executeRawUnsafe(`INSERT INTO ${t('ModelReportStat')} VALUES (${MODEL}, 4)`);
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO ${t('ModelMetric')} VALUES (${MODEL}, 41, 42, 43, 44, 45, 46, 47, 48)`
-    );
+    // "ModelReportStat" is a view over these: two ownership reports in processing, one NSFW.
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('Report')} (id, reason, status) VALUES
+        (9601, 'Ownership', 'Processing'), (9602, 'Ownership', 'Processing'), (9603, 'NSFW', 'Pending')
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('ModelReport')} ("modelId", "reportId") VALUES
+        (${MODEL}, 9601), (${MODEL}, 9602), (${MODEL}, 9603)
+    `);
+    // Also the base of "UserStat": the published model counts, the draft does not.
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('ModelMetric')} ("modelId", "userId", status, availability, "downloadCount",
+        "commentCount", "collectedCount", "imageCount", "tippedAmountCount", "generationCount",
+        "thumbsUpCount", "thumbsDownCount") VALUES
+        (${MODEL}, ${CREATOR}, 'Published', 'EarlyAccess', 41, 42, 43, 44, 45, 46, 47, 48),
+        (${DRAFT_MODEL}, ${CREATOR}, 'Draft', 'Public', 500, 0, 0, 0, 0, 500, 500, 0)
+    `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('License')} VALUES
         (${LICENSE_A}, 'License A', 'https://example.com/license-a'),
@@ -249,7 +270,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (${FILE_PURGED}, 'purged.ckpt', NULL, 'https://files/p', 3, 'Model', ${V_FULL},
           'Success', NULL, 'Success', NULL, NULL, NULL, 'Public', true, NULL),
         (${FILE_REPLACED}, 'old.ckpt', NULL, 'https://files/o', 4, 'Model', ${V_TRAINED},
-          'Success', NULL, 'Success', NULL, NULL, NULL, 'Public', false, '2026-04-11 00:00:00.000'),
+          'Success', NULL, 'Success', NULL, '2026-04-11 01:00:00.000', '{"format": "PickleTensor"}',
+          'Public', false, '2026-04-11 00:00:00.000'),
         (${FILE_OTHER_MODEL}, 'other.ckpt', NULL, 'https://files/x', 5, 'Model', ${V_OTHER_MODEL},
           'Success', NULL, 'Success', NULL, NULL, NULL, 'Private', false, NULL)
     `);
@@ -259,8 +281,16 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (${FILE_PURGED}, 'SHA256', 'PURGED'), (${FILE_OTHER_MODEL}, 'BLAKE3', 'OTHER')
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('GenerationCoverage')} VALUES
-        (${MODEL}, ${V_FULL}, true, false), (${MODEL}, ${V_TRAINED}, false, true)
+      INSERT INTO ${t('EcosystemCheckpoints')} VALUES (${V_FULL}, 'ecosystem')
+    `);
+    // "GenerationCoverage" is a view over these: V_FULL is covered as an ecosystem checkpoint,
+    // V_TRAINED by the auction rule with a live non-safetensor file (covered, not coveredNext),
+    // V_EMPTY's base model is not generatable (no row), and MODEL_OF_DELETED is taken down.
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('GenerationBaseModel')} VALUES ('SD 1.5'), ('SDXL 1.0')
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('CoveredCheckpoint')} VALUES (${MODEL}, ${V_TRAINED})
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('RecommendedResource')} VALUES
@@ -269,15 +299,32 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (9203, ${V_FULL}, ${V_OTHER_MODEL}, '{}')
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('ImageTag')} ("imageId", "tagId", "tagName", "tagType", "tagNsfwLevel",
-        automated, score, "upVotes", "downVotes", "needsReview", concrete, "lastUpvote", source)
-        VALUES
-        (${PICTURE}, 9813, 'low', 'Label', 1, true, 5, 6, 1, false, true, NULL, 'WD14'),
-        (${PICTURE}, 9812, 'tie-b', 'UserGenerated', 4, false, 9, 10, 2, true, false,
-          '2026-05-06 07:08:09.101', 'User'),
-        (${PICTURE}, 9811, 'tie-a', 'Moderation', 16, false, 9, 11, 3, false, false,
-          '2026-05-07 07:08:09.202', 'Hive'),
-        (${IMAGE_TWO}, 9814, 'only', 'System', 2, true, 7, 0, 0, false, true, NULL, 'Computed')
+      INSERT INTO ${t('Tag')} (id, name, type, "nsfwLevel", unlisted) VALUES
+        (9811, 'tie-a', 'Moderation', 16, false), (9812, 'tie-b', 'UserGenerated', 4, false),
+        (9813, 'low', 'Label', 1, false), (9814, 'only', 'System', 2, false),
+        (9815, 'unlisted', 'Label', 1, true), (9816, 'disabled', 'Label', 1, false),
+        (9817, 'vote-only', 'Label', 1, false)
+    `);
+    // "ImageTag" is a view over these. score = confidence / 10 + the vote sum, so 9811 (7 + 2)
+    // and 9812 (9 + 0) tie at 9 above 9814 (7) and 9813 (5); 9815's tag is unlisted, 9816 is
+    // disabled, and 9817 has votes but no details row: none of the three is a row.
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('TagsOnImageDetails')} ("imageId", "tagId", source, automated, disabled,
+        "needsReview", confidence) VALUES
+        (${PICTURE}, 9813, 'WD14', true, false, false, 50),
+        (${PICTURE}, 9812, 'User', false, false, true, 90),
+        (${PICTURE}, 9811, 'Hive', false, false, false, 70),
+        (${IMAGE_TWO}, 9814, 'Computed', true, false, false, 75),
+        (${PICTURE}, 9815, 'WD14', true, false, false, 99),
+        (${PICTURE}, 9816, 'WD14', true, true, false, 99)
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('TagsOnImageVote')} ("tagId", "imageId", "userId", vote, "createdAt") VALUES
+        (9812, ${PICTURE}, ${ALICE_VOTER}, 1, '2026-05-06 07:08:09.101'),
+        (9812, ${PICTURE}, ${BOB_VOTER}, -1, '2026-05-06 08:00:00.000'),
+        (9811, ${PICTURE}, ${ALICE_VOTER}, 1, '2026-05-07 07:08:09.202'),
+        (9811, ${PICTURE}, ${BOB_VOTER}, 1, '2026-05-01 00:00:00.000'),
+        (9817, ${IMAGE_TWO}, ${ALICE_VOTER}, 1, '2026-05-02 00:00:00.000')
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('Thread')} (id, locked, "imageId", "modelId") VALUES
@@ -310,7 +357,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     it('control: the full model exercises every relation, so its equality is not vacuous', async () => {
       const model = await prismaModel(MODEL);
       expect(model?.licenses).toHaveLength(2);
-      expect(model?.reportStats).toEqual({ ownershipProcessing: 4 });
+      expect(model?.reportStats).toEqual({ ownershipProcessing: 2 });
       expect(model?.user.rank).toEqual({ leaderboardRank: 9 });
       expect(model?.metrics).toHaveLength(1);
       expect(model?.modelVersions.map((v) => v.id)).toEqual([V_EMPTY, V_TRAINED, V_FULL]);
@@ -320,7 +367,11 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(full?.files.find((f) => f.id === FILE_B)?.hashes).toHaveLength(2);
       expect(full?.files.find((f) => f.id === FILE_B)?.scannedAt).toBeInstanceOf(Date);
       expect(full?.recommendedResources).toHaveLength(2);
-      expect(full?.generationCoverage).toEqual({ covered: true, coveredNext: false });
+      expect(full?.generationCoverage).toEqual({ covered: true, coveredNext: true });
+      const trained = model?.modelVersions.find((v) => v.id === V_TRAINED);
+      expect(trained?.generationCoverage).toEqual({ covered: true, coveredNext: false });
+      const empty = model?.modelVersions.find((v) => v.id === V_EMPTY);
+      expect(empty?.generationCoverage).toBeNull();
       expect(full?.metrics).toHaveLength(1);
       const bare = await prismaModel(MODEL_BARE);
       expect(bare?.user.rank).toBeNull();
@@ -356,7 +407,15 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         COSMETIC_A,
         COSMETIC_B,
       ]);
-      expect(read?.user.stats).not.toBeNull();
+      // From the "UserStat" view: the AllTime row only, the published model only.
+      expect(read?.user.stats).toEqual({
+        downloadCountAllTime: 41,
+        thumbsUpCountAllTime: 47,
+        followerCountAllTime: 34,
+        reactionCountAllTime: 36,
+        uploadCountAllTime: 31,
+        generationCountAllTime: 46,
+      });
       expect(read?.user.rank).not.toBeNull();
       expect(read?.user.profilePicture?.id).toBe(PICTURE);
       expect(read?.user.bannedAt).toBeInstanceOf(Date);
@@ -403,6 +462,102 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     });
   });
 });
+
+/** One scan node of an EXPLAIN (FORMAT JSON) plan, with the conditions it filters by. */
+type PlanNode = Record<string, unknown> & { Plans?: PlanNode[] };
+const CONDITION_KEYS = ['Index Cond', 'Filter', 'Recheck Cond', 'TID Cond'];
+function scansOf(node: PlanNode, relation: string, alias: string): string[] {
+  const own =
+    node['Relation Name'] === relation && node['Alias'] === alias
+      ? [CONDITION_KEYS.map((key) => String(node[key] ?? '')).join(' ')]
+      : [];
+  return [...own, ...(node.Plans ?? []).flatMap((child) => scansOf(child, relation, alias))];
+}
+
+/**
+ * The base-table scan inside each VIEW that must carry the lookup key when the view is filtered by
+ * it as a parameter, and does NOT when the view is reached through a join (Postgres cannot push a
+ * join key through the view's GROUP BY / UNION, so it computes the view for every key).
+ */
+const VIEW_KEY_SCANS: Record<string, { relation: string; alias: string }> = {
+  UserStat: { relation: 'UserMetric', alias: 'um' },
+  ModelReportStat: { relation: 'Model', alias: 'm' },
+  GenerationCoverage: { relation: 'ModelVersion', alias: 'mv' },
+  ImageTag: { relation: 'TagsOnImageDetails', alias: 'toi_1' },
+};
+
+describe.skipIf(!parityUrl)(
+  'hot reads 2: every view is read by its key, not through a join',
+  () => {
+    const pool = new Pool({ connectionString: parityUrl });
+    const statements: CompiledQuery[] = [];
+    const logged = new Kysely<DB>({
+      dialect: new PostgresDialect({ pool }),
+      log: (event) => {
+        if (event.level === 'query') statements.push(event.query);
+      },
+    }).withSchema(SCHEMA);
+
+    afterAll(async () => {
+      await logged.destroy();
+    });
+
+    /** Runs one flag-ON read, then EXPLAINs every statement it issued that reads a view. */
+    async function viewScans(read: () => Promise<unknown>) {
+      statements.length = 0;
+      await read();
+      const scans: { view: string; conditions: string[] }[] = [];
+      for (const statement of statements) {
+        for (const view of Object.keys(VIEW_KEY_SCANS)) {
+          if (!statement.sql.includes(`"${view}"`)) continue;
+          const { rows } = await pool.query(`EXPLAIN (FORMAT JSON) ${statement.sql}`, [
+            ...statement.parameters,
+          ]);
+          const plan = (rows[0]['QUERY PLAN'] as { Plan: PlanNode }[])[0].Plan;
+          const { relation, alias } = VIEW_KEY_SCANS[view];
+          scans.push({ view, conditions: scansOf(plan, relation, alias) });
+        }
+      }
+      return scans;
+    }
+
+    it.each<[string, () => Promise<unknown>, Record<string, string>]>([
+      [
+        'the creator card by USERNAME (the stats view by the resolved id)',
+        () => readUserCreatorViaKysely(logged, { username: 'creator' }),
+        { UserStat: String(CREATOR) },
+      ],
+      [
+        'the creator card by id',
+        () => readUserCreatorViaKysely(logged, { id: CREATOR }),
+        { UserStat: String(CREATOR) },
+      ],
+      [
+        'the model page (report stats and generation coverage by the model id)',
+        () => readModelWithDetailsViaKysely(logged, MODEL),
+        { ModelReportStat: String(MODEL), GenerationCoverage: String(MODEL) },
+      ],
+      [
+        'the image tags (by the image ids)',
+        () => readImageTagsViaKysely(logged, [PICTURE, IMAGE_TWO]),
+        { ImageTag: String(PICTURE) },
+      ],
+    ])('%s', async (_, read, keys) => {
+      const scans = await viewScans(read);
+      // Positive control: each expected view was read, and its key scan is in the plan, so the key
+      // assertion below cannot pass on an empty set.
+      expect([...new Set(scans.map((scan) => scan.view))].sort()).toEqual(Object.keys(keys).sort());
+      for (const { view, conditions } of scans) {
+        expect(
+          conditions.length,
+          `${view}: no ${VIEW_KEY_SCANS[view].alias} scan in the plan`
+        ).toBeGreaterThan(0);
+        for (const condition of conditions)
+          expect(condition, `${view} scan does not filter by the key`).toContain(keys[view]);
+      }
+    });
+  }
+);
 
 // GitHub Actions only: the `unit` job there is the one wired with the database.
 it.runIf(process.env.GITHUB_ACTIONS === 'true')('runs in CI: the parity database is wired', () => {

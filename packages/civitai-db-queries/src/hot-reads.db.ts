@@ -20,11 +20,23 @@ import { jsonArrayFrom, jsonObjectFrom } from './infra/helpers';
 //
 // Unordered relations stay unordered, as Prisma left them: no Prisma relation read here has an
 // `orderBy` except `modelVersions` (`index asc`), which is ordered the same way below.
+//
+// 🔴 VIEWS ARE ONLY EVER FILTERED BY A PARAMETER, NEVER REACHED THROUGH A JOIN. "UserStat",
+// "ModelReportStat", "GenerationCoverage" and "ImageTag" are Postgres VIEWS that aggregate (GROUP BY)
+// or UNION over large tables. A `WHERE key = $n` on the view is pushed down into it; a join
+// condition to another table is not, so the view is computed in full and then joined. Each one below
+// is read by its own key as a parameter, as Prisma read it: `getUserStatRow` by the resolved user id
+// (a second statement), "ModelReportStat" by the model id, "GenerationCoverage" by the model id,
+// "ImageTag" by the image ids. The parity suite EXPLAINs every statement that reads a view and fails
+// if a view's base-table scan does not carry the key.
 
 /**
  * The model row behind `modelWithDetailsSelect`: the model's own columns, its creator (inner join —
- * the relation is required) with their rank, its report stats, its licenses and its metrics. One
- * statement; `undefined` when there is no such model.
+ * the relation is required) with their rank (a table), its report stats, its licenses and its
+ * metrics. One statement; `undefined` when there is no such model.
+ *
+ * `reportStats` reads the "ModelReportStat" VIEW filtered by the model id PARAMETER (an uncorrelated
+ * subquery), never joined to "Model": see the note at the top of this file.
  *
  * `allowCommercialUse` is an enum ARRAY, read as `text[]` so it parses to `string[]` without
  * depending on `registerEnumArrayTypeParsers`.
@@ -34,7 +46,6 @@ export function getModelWithDetailsRow(db: Kysely<DB>, modelId: number) {
     .selectFrom('Model')
     .innerJoin('User', 'User.id', 'Model.userId')
     .leftJoin('UserRank', 'UserRank.userId', 'User.id')
-    .leftJoin('ModelReportStat', 'ModelReportStat.modelId', 'Model.id')
     .select((eb) => [
       'Model.id',
       'Model.name',
@@ -66,8 +77,12 @@ export function getModelWithDetailsRow(db: Kysely<DB>, modelId: number) {
       'Model.mode',
       'Model.availability',
       'Model.lockedProperties',
-      'ModelReportStat.modelId as reportStatsModelId',
-      'ModelReportStat.ownershipProcessing as reportStatsOwnershipProcessing',
+      jsonObjectFrom(
+        eb
+          .selectFrom('ModelReportStat')
+          .select('ModelReportStat.ownershipProcessing')
+          .where('ModelReportStat.modelId', '=', modelId)
+      ).as('reportStats'),
       'User.id as userId',
       'User.image as userImage',
       'User.username as userUsername',
@@ -103,9 +118,10 @@ export function getModelWithDetailsRow(db: Kysely<DB>, modelId: number) {
 }
 
 /**
- * The model's versions, `index asc` like the Prisma read, each with its metrics, generation coverage
- * and recommended resources (all JSON-safe). Files are read by `listModelWithDetailsFiles`, because
- * `scannedAt` is a timestamp.
+ * The model's versions, `index asc` like the Prisma read, each with its metrics and recommended
+ * resources (tables, JSON-safe). Generation coverage is a VIEW and is read by
+ * `listModelGenerationCoverage`; files by `listModelWithDetailsFiles`, because `scannedAt` is a
+ * timestamp.
  *
  * `licensingFee` is NUMERIC, read as text so the caller can rebuild the exact `Prisma.Decimal`
  * (the pg NUMERIC parser would turn it into a float).
@@ -153,13 +169,6 @@ export function listModelWithDetailsVersions(db: Kysely<DB>, modelId: number) {
           ])
           .whereRef('ModelVersionMetric.modelVersionId', '=', 'ModelVersion.id')
       ).as('metrics'),
-      jsonObjectFrom(
-        eb
-          .selectFrom('GenerationCoverage')
-          .select(['GenerationCoverage.covered', 'GenerationCoverage.coveredNext'])
-          .whereRef('GenerationCoverage.modelVersionId', '=', 'ModelVersion.id')
-          .limit(1)
-      ).as('generationCoverage'),
       jsonArrayFrom(
         eb
           .selectFrom('RecommendedResource')
@@ -177,10 +186,29 @@ export function listModelWithDetailsVersions(db: Kysely<DB>, modelId: number) {
 }
 
 /**
- * The live files (`dataPurged = false`, `replacedAt IS NULL`, as the Prisma relation filter) of
- * every version of one model, each with its hashes. The caller groups them by `modelVersionId`.
+ * The generation coverage of a model's versions: the "GenerationCoverage" VIEW filtered by its own
+ * `modelId` column as a PARAMETER (pushed down into the view to the model and its versions), never
+ * joined to "ModelVersion". A version with no row has no coverage (`null`), as Prisma reads it.
  */
-export function listModelWithDetailsFiles(db: Kysely<DB>, modelId: number) {
+export function listModelGenerationCoverage(db: Kysely<DB>, modelId: number) {
+  return db
+    .selectFrom('GenerationCoverage')
+    .select([
+      'GenerationCoverage.modelVersionId',
+      'GenerationCoverage.covered',
+      'GenerationCoverage.coveredNext',
+    ])
+    .where('GenerationCoverage.modelId', '=', modelId)
+    .execute();
+}
+
+/**
+ * The live files (`dataPurged = false`, `replacedAt IS NULL`, as the Prisma relation filter) of
+ * these versions, each with its hashes; the same `modelVersionId IN (...)` filter the Prisma
+ * relation read uses. The caller groups them by `modelVersionId`. Empty `versionIds` short-circuits.
+ */
+export async function listModelWithDetailsFiles(db: Kysely<DB>, versionIds: number[]) {
+  if (!versionIds.length) return [];
   return db
     .selectFrom('ModelFile')
     .select((eb) => [
@@ -205,20 +233,17 @@ export function listModelWithDetailsFiles(db: Kysely<DB>, modelId: number) {
           .whereRef('ModelFileHash.fileId', '=', 'ModelFile.id')
       ).as('hashes'),
     ])
-    .where('ModelFile.modelVersionId', 'in', (eb) =>
-      eb
-        .selectFrom('ModelVersion')
-        .select('ModelVersion.id')
-        .where('ModelVersion.modelId', '=', modelId)
-    )
+    .where('ModelFile.modelVersionId', 'in', versionIds)
     .where('ModelFile.dataPurged', '=', false)
     .where('ModelFile.replacedAt', 'is', null)
     .execute();
 }
 
 /**
- * The creator card in ONE statement: the user's own columns, stats, rank and profile picture (1:1,
- * left joins), links and equipped cosmetics (JSON-safe arrays), and the published-model count.
+ * The creator card's user in one statement: the user's own columns, rank and profile picture (1:1
+ * tables, left joins), links and equipped cosmetics (JSON-safe arrays), and the published-model
+ * count. The stats are a VIEW and are NOT joined here: the caller reads them with `getUserStatRow`
+ * once it has the user id (see the note at the top of this file).
  *
  * The where clause is the Prisma one: the optional `id` / `username` equalities (an `undefined` one
  * is skipped, as Prisma skips it), `deletedAt IS NULL`, and `id <> systemId AND username <>
@@ -235,7 +260,6 @@ export function getUserCreatorRow(
 ) {
   let query = db
     .selectFrom('User')
-    .leftJoin('UserStat', 'UserStat.userId', 'User.id')
     .leftJoin('UserRank', 'UserRank.userId', 'User.id')
     .leftJoin('Image as ProfilePicture', 'ProfilePicture.id', 'User.profilePictureId')
     .select((eb) => [
@@ -249,13 +273,6 @@ export function getUserCreatorRow(
       'User.publicSettings',
       'User.settings',
       'User.excludeFromLeaderboards',
-      'UserStat.userId as statsUserId',
-      'UserStat.downloadCountAllTime',
-      'UserStat.thumbsUpCountAllTime',
-      'UserStat.followerCountAllTime',
-      'UserStat.reactionCountAllTime',
-      'UserStat.uploadCountAllTime',
-      'UserStat.generationCountAllTime',
       'UserRank.userId as rankUserId',
       'UserRank.leaderboardRank',
       'UserRank.leaderboardId',
@@ -346,6 +363,27 @@ export function getImageThread(db: Kysely<DB>, imageId: number) {
     .selectFrom('Thread')
     .select(['Thread.id', 'Thread.locked'])
     .where('Thread.imageId', '=', imageId)
+    .limit(1)
+    .executeTakeFirst();
+}
+
+/**
+ * A user's stats: the "UserStat" VIEW filtered by the user id PARAMETER, which Postgres pushes into
+ * the view's per-user aggregates. Its columns are sums (bigint), read as JS numbers by the INT8
+ * parser @civitai/db/kysely registers. `undefined` when the user has no stats row.
+ */
+export function getUserStatRow(db: Kysely<DB>, userId: number) {
+  return db
+    .selectFrom('UserStat')
+    .select([
+      'UserStat.downloadCountAllTime',
+      'UserStat.thumbsUpCountAllTime',
+      'UserStat.followerCountAllTime',
+      'UserStat.reactionCountAllTime',
+      'UserStat.uploadCountAllTime',
+      'UserStat.generationCountAllTime',
+    ])
+    .where('UserStat.userId', '=', userId)
     .limit(1)
     .executeTakeFirst();
 }

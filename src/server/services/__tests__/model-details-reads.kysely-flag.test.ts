@@ -106,8 +106,7 @@ function givenBothPaths() {
     updatedAt: UPDATED,
     meta: { a: 1 },
     licenses: [{ id: 3, name: 'MIT', url: 'https://example.com/mit' }],
-    reportStatsModelId: MODEL,
-    reportStatsOwnershipProcessing: 2,
+    reportStats: { ownershipProcessing: 2 },
     userId: OWNER,
     userImage: null,
     userUsername: 'creator',
@@ -130,11 +129,13 @@ function givenBothPaths() {
           earnedAmount: 15,
         },
       ],
-      generationCoverage: { covered: true, coveredNext: false },
       recommendedResources: [
         { id: RECOMMENDATION, resourceId: RESOURCE, settings: { strength: 1 } },
       ],
     },
+  ] as never);
+  q.listModelGenerationCoverage.mockResolvedValue([
+    { modelVersionId: VERSION, covered: true, coveredNext: false },
   ] as never);
   q.listModelWithDetailsFiles.mockResolvedValue([
     {
@@ -148,12 +149,28 @@ function givenBothPaths() {
 
 const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn));
 
+// The ONE connection each client hands out (`db.connection().execute(cb)`), as a distinct object
+// per client, so "every statement ran on that client's single connection" is checkable.
+const pinnedRead = { pinned: 'read' };
+const pinnedWrite = { pinned: 'write' };
+const readConnection = vi.spyOn(kyselyRead, 'connection');
+const writeConnection = vi.spyOn(kyselyWrite, 'connection');
+const pin = (conn: object) => ({ execute: (cb: (c: unknown) => unknown) => cb(conn) } as never);
+const STATEMENTS = () => [
+  q.getModelWithDetailsRow,
+  q.listModelWithDetailsVersions,
+  q.listModelGenerationCoverage,
+  q.listModelWithDetailsFiles,
+];
+
 beforeEach(() => {
   resetSharedMocks();
   for (const fn of kyselyReads()) fn.mockReset();
   flag.mockReset().mockResolvedValue(false);
   getDbWithoutLag.mockReset().mockResolvedValue(dbMock.dbRead);
   getKyselyWithoutLag.mockReset().mockResolvedValue(kyselyRead);
+  readConnection.mockReset().mockImplementation(() => pin(pinnedRead));
+  writeConnection.mockReset().mockImplementation(() => pin(pinnedWrite));
 });
 
 const modelPage = () => getModel({ id: MODEL, select: modelWithDetailsSelect });
@@ -188,12 +205,15 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     expect(model).toEqual(prismaModel);
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    for (const read of [
-      q.getModelWithDetailsRow,
-      q.listModelWithDetailsVersions,
-      q.listModelWithDetailsFiles,
-    ])
-      expect(read.mock.calls).toEqual([[kyselyRead, MODEL]]);
+    // Every statement on the read client's ONE connection, taken once per model page.
+    expect(readConnection).toHaveBeenCalledTimes(1);
+    expect(writeConnection).not.toHaveBeenCalled();
+    expect(q.getModelWithDetailsRow.mock.calls).toEqual([[pinnedRead, MODEL]]);
+    expect(q.listModelWithDetailsVersions.mock.calls).toEqual([[pinnedRead, MODEL]]);
+    expect(q.listModelGenerationCoverage.mock.calls).toEqual([[pinnedRead, MODEL]]);
+    // Files by the version ids the versions statement returned, as the Prisma relation read does.
+    expect(q.listModelWithDetailsFiles.mock.calls).toEqual([[pinnedRead, [VERSION]]]);
+    for (const read of STATEMENTS()) expect(read.mock.calls[0][0]).toBe(pinnedRead);
     // A Decimal, as Prisma returns it, not the text the query reads it as.
     expect(model?.modelVersions[0].licensingFee).toBeInstanceOf(Prisma.Decimal);
   });
@@ -204,9 +224,9 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     await modelPage();
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
-    expect(q.getModelWithDetailsRow.mock.calls[0][0]).toBe(kyselyWrite);
-    expect(q.listModelWithDetailsVersions.mock.calls[0][0]).toBe(kyselyWrite);
-    expect(q.listModelWithDetailsFiles.mock.calls[0][0]).toBe(kyselyWrite);
+    expect(writeConnection).toHaveBeenCalledTimes(1);
+    expect(readConnection).not.toHaveBeenCalled();
+    for (const read of STATEMENTS()) expect(read.mock.calls[0][0]).toBe(pinnedWrite);
   });
 
   it('ON: a missing model is null, as findFirst returns', async () => {
@@ -214,6 +234,9 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     flag.mockResolvedValue(true);
     q.getModelWithDetailsRow.mockResolvedValue(undefined);
     await expect(modelPage()).resolves.toBeNull();
+    // Nothing after the first statement.
+    expect(q.listModelWithDetailsVersions).not.toHaveBeenCalled();
+    expect(q.listModelWithDetailsFiles).not.toHaveBeenCalled();
   });
 });
 

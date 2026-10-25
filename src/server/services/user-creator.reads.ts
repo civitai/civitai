@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getUserCreatorRow } from '@civitai/db-queries/hot-reads';
+import { getUserCreatorRow, getUserStatRow } from '@civitai/db-queries/hot-reads';
 import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
@@ -103,20 +103,33 @@ export async function readUserCreatorViaPrisma(
   return { user, modelCount };
 }
 
-/** The same answer in one Kysely statement (`getUserCreatorRow`), mapped to the Prisma shape. */
+/**
+ * The same answer in two Kysely statements, one after the other on ONE pooled connection, mapped to
+ * the Prisma shape: the user (`getUserCreatorRow`, with links, rank, cosmetics, profile picture and
+ * the model count), then, once its id is known, its stats (`getUserStatRow`). The stats are the
+ * "UserStat" VIEW, so they are read by that id as a parameter rather than joined to "User": a join
+ * cannot reach into the view's per-user aggregates, and a username lookup would compute them for
+ * every user (see hot-reads.db.ts).
+ */
 export async function readUserCreatorViaKysely(
   db: Kysely<DB>,
   where: UserCreatorWhere
 ): Promise<UserCreatorRead> {
-  const row = await withSpan('user:getCreator:findUser', () =>
-    getUserCreatorRow(db, {
-      id: where.id,
-      username: where.username,
-      systemUserId: constants.system.user.id,
-      systemUsername: constants.system.user.username,
-    })
-  );
-  if (!row) return null;
+  const found = await db.connection().execute(async (conn) => {
+    const row = await withSpan('user:getCreator:findUser', () =>
+      getUserCreatorRow(conn, {
+        id: where.id,
+        username: where.username,
+        systemUserId: constants.system.user.id,
+        systemUsername: constants.system.user.username,
+      })
+    );
+    if (!row) return null;
+    const stats = await withSpan('user:getCreator:userStats', () => getUserStatRow(conn, row.id));
+    return { row, stats };
+  });
+  if (!found) return null;
+  const { row, stats } = found;
 
   const user = {
     id: row.id,
@@ -130,17 +143,7 @@ export async function readUserCreatorViaKysely(
     settings: row.settings,
     excludeFromLeaderboards: row.excludeFromLeaderboards,
     links: row.links,
-    stats:
-      row.statsUserId !== null
-        ? {
-            downloadCountAllTime: row.downloadCountAllTime,
-            thumbsUpCountAllTime: row.thumbsUpCountAllTime,
-            followerCountAllTime: row.followerCountAllTime,
-            reactionCountAllTime: row.reactionCountAllTime,
-            uploadCountAllTime: row.uploadCountAllTime,
-            generationCountAllTime: row.generationCountAllTime,
-          }
-        : null,
+    stats: stats ?? null,
     rank:
       row.rankUserId !== null
         ? {

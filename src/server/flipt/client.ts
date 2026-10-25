@@ -79,6 +79,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the image tags read the
   // primary on a write-triggered refresh and the replica otherwise, as before; the creator card and
   // the thread lookup read `kyselyRead`, as they read `dbRead`.
+  // Each read runs its statements one after another on ONE pooled connection (the model page up to
+  // four, the creator card two), and every VIEW ("UserStat", "ModelReportStat", "GenerationCoverage",
+  // "ImageTag") is filtered by its key as a parameter, never reached through a join.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
   // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and

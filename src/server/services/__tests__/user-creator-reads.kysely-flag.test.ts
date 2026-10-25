@@ -101,13 +101,6 @@ function givenBothPaths() {
     settings: { creatorShop: { enabled: true } },
     excludeFromLeaderboards: true,
     links: [{ url: 'https://example.com', type: 'Social' }],
-    statsUserId: USER,
-    downloadCountAllTime: 31,
-    thumbsUpCountAllTime: 32,
-    followerCountAllTime: 33,
-    reactionCountAllTime: 34,
-    uploadCountAllTime: 35,
-    generationCountAllTime: 36,
     rankUserId: USER,
     leaderboardRank: 4,
     leaderboardId: 'lb',
@@ -137,14 +130,24 @@ function givenBothPaths() {
     profilePictureMetadata: { size: 1 },
     modelCount: MODELS,
   } as never);
+  q.getUserStatRow.mockResolvedValue({ ...prismaUser.stats } as never);
 }
 
 const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn));
+
+// The ONE connection each client hands out (`db.connection().execute(cb)`), distinct per client.
+const pinnedRead = { pinned: 'read' };
+const pinnedWrite = { pinned: 'write' };
+const readConnection = vi.spyOn(kyselyRead, 'connection');
+const writeConnection = vi.spyOn(kyselyWrite, 'connection');
+const pin = (conn: object) => ({ execute: (cb: (c: unknown) => unknown) => cb(conn) } as never);
 
 beforeEach(() => {
   resetSharedMocks();
   for (const fn of kyselyReads()) fn.mockReset();
   flag.mockReset().mockResolvedValue(false);
+  readConnection.mockReset().mockImplementation(() => pin(pinnedRead));
+  writeConnection.mockReset().mockImplementation(() => pin(pinnedWrite));
 });
 
 describe('fetchUserCreator (the creator card)', () => {
@@ -179,7 +182,11 @@ describe('fetchUserCreator (the creator card)', () => {
     expect(dbMock.dbRead.user.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.count).not.toHaveBeenCalled();
     expect(q.getUserCreatorRow).toHaveBeenCalledTimes(1);
-    expect(q.getUserCreatorRow.mock.calls[0][0]).toBe(kyselyRead);
+    // Both statements on the replica client's ONE connection; the stats by the resolved user id.
+    expect(readConnection).toHaveBeenCalledTimes(1);
+    expect(writeConnection).not.toHaveBeenCalled();
+    expect(q.getUserCreatorRow.mock.calls[0][0]).toBe(pinnedRead);
+    expect(q.getUserStatRow.mock.calls).toEqual([[pinnedRead, USER]]);
     expect(q.getUserCreatorRow.mock.calls[0][1]).toEqual({
       id: USER,
       username: undefined,
@@ -192,5 +199,6 @@ describe('fetchUserCreator (the creator card)', () => {
     flag.mockResolvedValue(true);
     q.getUserCreatorRow.mockResolvedValue(undefined);
     await expect(fetchUserCreator({ username: 'nobody' })).resolves.toBeNull();
+    expect(q.getUserStatRow).not.toHaveBeenCalled();
   });
 });
