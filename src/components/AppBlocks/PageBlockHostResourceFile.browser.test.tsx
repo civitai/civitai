@@ -4,7 +4,6 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import {
   RESOURCE_FILE_CAPS,
-  RESOURCE_FILE_ERROR_CODES,
   RESOURCE_FILE_MAX_CONCURRENT,
 } from '~/components/AppBlocks/resourceFileParse';
 import type * as TrpcMod from '~/utils/trpc';
@@ -254,6 +253,36 @@ describe('PageBlockHost GET_RESOURCE_FILE bridge', () => {
     replies.stop();
   });
 
+  test('an under-declared body is cut off once it passes 32 MB, not buffered whole', async () => {
+    // The advertised size comes from the uploader. This body never ends, so a host
+    // that buffers it before checking never replies.
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+    });
+    mocks.resolve.mockResolvedValue({
+      signedUrl: SIGNED_URL,
+      sizeBytes: 1024,
+      meta: meta('w.zip'),
+    });
+    mocks.fetch.mockImplementation(async (url: unknown) =>
+      String(url) === SIGNED_URL
+        ? new Response(body)
+        : ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response)
+    );
+    const replies = await mountReady();
+
+    const reply = await request(replies, { requestId: 'rq_stream', modelVersionId: 100 });
+
+    expect(reply).toEqual({ requestId: 'rq_stream', error: 'too-large' });
+    expect(pulled).toBeLessThan(40);
+    replies.stop();
+  });
+
   test('a file that is not JSON is parse-failed', async () => {
     resolvesTo('graph.json', utf8('{ not json'));
     const replies = await mountReady();
@@ -276,13 +305,15 @@ describe('PageBlockHost GET_RESOURCE_FILE bridge', () => {
     const reply = await request(replies, { requestId: `rq_${code}`, modelVersionId: 100 });
 
     expect(reply).toEqual({ requestId: `rq_${code}`, error: expected });
-    expect(RESOURCE_FILE_ERROR_CODES).toContain(reply.error);
     expect(fetchedSignedUrl()).toBe(false);
     replies.stop();
   });
 
-  test(`the request past ${RESOURCE_FILE_MAX_CONCURRENT} in flight gets busy`, async () => {
-    mocks.resolve.mockReturnValue(new Promise(() => {}));
+  test(`the request past ${RESOURCE_FILE_MAX_CONCURRENT} in flight gets busy, and slots free up`, async () => {
+    const pending: Array<{ resolve: (v: unknown) => void; reject: (e: unknown) => void }> = [];
+    mocks.resolve.mockImplementation(
+      () => new Promise((resolve, reject) => pending.push({ resolve, reject }))
+    );
     const replies = await mountReady();
 
     for (let i = 0; i < RESOURCE_FILE_MAX_CONCURRENT; i++) {
@@ -292,6 +323,17 @@ describe('PageBlockHost GET_RESOURCE_FILE bridge', () => {
 
     expect(reply).toEqual({ requestId: 'overflow', error: 'busy' });
     expect(mocks.resolve).toHaveBeenCalledTimes(RESOURCE_FILE_MAX_CONCURRENT);
+
+    // Settle every held request, failures included; each must give its slot back.
+    resolvesTo('graph.json', utf8(JSON.stringify(UI_GRAPH)));
+    for (const p of pending) p.reject({ data: { code: 'NOT_FOUND' } });
+    await vi.waitFor(() => {
+      const last = replies.last('RESOURCE_FILE_RESULT')?.payload as Reply | undefined;
+      expect(last?.requestId).toBe(`c${RESOURCE_FILE_MAX_CONCURRENT - 1}`);
+    });
+
+    const after = await request(replies, { requestId: 'after', modelVersionId: 100 });
+    expect(after.file?.entries).toHaveLength(1);
     replies.stop();
   });
 

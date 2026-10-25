@@ -212,9 +212,9 @@ export const generationRouter = router({
         canViewNsfw: ctx.features.canViewNsfw,
       })
     ),
-  // App Blocks GET_RESOURCE_FILE (workflow files), the sibling of
-  // resolveWildcardPack above: session-authed, a mutation for the same signed-URL
-  // reason, and its own 30/min bucket (the limiter keys on the procedure path).
+  // App Blocks GET_RESOURCE_FILE. A mutation for the same signed-URL reason as
+  // resolveWildcardPack; the limiter keys on the procedure path, so this is its
+  // own 30/min bucket.
   resolveResourceFile: protectedProcedure
     .use(
       rateLimit({

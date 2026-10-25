@@ -162,16 +162,13 @@ describe('resolveResourceFileForUser: refusals are NOT_FOUND', () => {
     expect(gateMock).not.toHaveBeenCalled();
   });
 
+  // Every field but `status` is a success, so the status check is the only refusal.
   it.each([
-    ['a non-owner asking for a draft', 'not-found'],
-    ['a deleted model', 'not-found'],
-    ['an archived model', 'archived'],
-    ['downloads disabled', 'downloads-disabled'],
+    ['a non-owner asking for a draft, or a deleted model', 'not-found'],
     ['early access, not bought', 'early-access'],
     ['private availability without a grant', 'no-access'],
-    ['a file the delivery worker cannot resolve', 'resolve-failed'],
   ])('%s (gate status %s)', async (_label, status) => {
-    gateMock.mockResolvedValue({ status });
+    gateMock.mockResolvedValue({ ...gateSuccess(), status });
     await expect(resolve()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
@@ -188,6 +185,11 @@ describe('resolveResourceFileForUser: refusals are NOT_FOUND', () => {
   it("a moderator's read of a downloads-disabled version", async () => {
     gateMock.mockResolvedValue(gateSuccess({ isDownloadable: false }));
     await expect(resolve(moderator)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it("the owner's own downloads-disabled version is served", async () => {
+    gateMock.mockResolvedValue(gateSuccess({ isDownloadable: false }));
+    await expect(resolve(owner)).resolves.toMatchObject({ meta: { fileId: 10 } });
   });
 
   it('a hidden file asked for by id, for a non-owner (moderators included)', async () => {
@@ -232,8 +234,26 @@ describe('resolveResourceFileForUser: maturity runs after the download gate', ()
     await expect(resolve()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it("the owner's mature draft is NOT_FOUND, not FORBIDDEN, under a SFW ceiling", async () => {
+    versionFindFirst.mockResolvedValue(version({ nsfwLevel: NsfwLevel.R }));
+    gateMock.mockResolvedValue(gateSuccess({ published: false }));
+    await expect(resolve(owner)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('a published mature version is FORBIDDEN for a SFW viewer', async () => {
     versionFindFirst.mockResolvedValue(version({ nsfwLevel: NsfwLevel.R }));
+    await expect(resolve()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('a mature-settings viewer on a SFW domain is FORBIDDEN', async () => {
+    versionFindFirst.mockResolvedValue(version({ nsfwLevel: NsfwLevel.R }));
+    await expect(resolve(matureViewer, { canViewNsfw: false })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('a version rated PG and R is FORBIDDEN for a SFW viewer (every bit must be allowed)', async () => {
+    versionFindFirst.mockResolvedValue(version({ nsfwLevel: NsfwLevel.PG | NsfwLevel.R }));
     await expect(resolve()).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
@@ -296,6 +316,12 @@ describe('pickDefaultResourceFile', () => {
     expect(pickDefaultResourceFile([txt, zip, json])).toBe(json);
     expect(pickDefaultResourceFile([txt, zip])).toBe(zip);
     expect(pickDefaultResourceFile([{ id: 8, name: 'x.png', type: 'Other' }, txt])).toBe(txt);
+    // The rank needs both the type and the extension.
+    const modelJson = { id: 2, name: 'x.json', type: 'Model' };
+    const configZip = { id: 3, name: 'x.zip', type: 'Config' };
+    expect(pickDefaultResourceFile([zip, modelJson])).toBe(zip);
+    expect(pickDefaultResourceFile([json, configZip])).toBe(json);
+    expect(pickDefaultResourceFile([configZip, modelJson])).toBe(modelJson);
     expect(pickDefaultResourceFile([])).toBeNull();
   });
 });

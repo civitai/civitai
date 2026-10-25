@@ -88,9 +88,41 @@ export async function fetchAndParseResourceFile({
     referrerPolicy: 'no-referrer',
   });
   if (!res.ok) throw resourceFileError('parse-failed', `fetch failed: ${res.status}`);
-  const buf = new Uint8Array(await res.arrayBuffer());
-  if (buf.byteLength > PRE_DOWNLOAD_MAX_BYTES) {
-    throw resourceFileError('too-large', `downloaded ${buf.byteLength} bytes exceeds the cap`);
+  return parseResourceFile(await readBodyBounded(res, PRE_DOWNLOAD_MAX_BYTES), fileName, caps);
+}
+
+/**
+ * Read a response body, refusing it as `too-large` once it passes `maxBytes`.
+ * The advertised size comes from the uploader, so the body is counted as it
+ * streams rather than buffered whole and checked afterwards.
+ */
+export async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Array> {
+  const tooLarge = () => resourceFileError('too-large', `response exceeds ${maxBytes} bytes`);
+  const declared = Number(res.headers?.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
+  if (!res.body) {
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > maxBytes) throw tooLarge();
+    return buf;
   }
-  return parseResourceFile(buf, fileName, caps);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
 }

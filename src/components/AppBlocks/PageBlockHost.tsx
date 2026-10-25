@@ -383,7 +383,7 @@ type NavigateMessage = { path?: unknown; scope?: unknown; target?: unknown } | u
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
-// 🔴 The ONE reviewMode NACK that must NOT use REVIEW_NACK_MESSAGE.
+// 🔴 reviewMode NACKs whose reply carries a closed error set must NOT use REVIEW_NACK_MESSAGE.
 // WILDCARD_PACK_RESULT's `error` is a DISCRIMINATED ENUM, not free text: the
 // block-side `isValidWildcardPackResult` rejects any value outside
 // not-found | forbidden | too-large | parse-failed | busy, and a rejected reply
@@ -4693,8 +4693,8 @@ export function PageBlockHost({
   //
   // The GET_WILDCARD_PACK pattern for workflow files: resolve as the viewer,
   // fetch and parse in this tab, post back only the parsed graphs and meta. The
-  // signed URL never reaches the iframe. Refused in review preview for the same
-  // reason as wildcard packs: it would act with the moderator's download rights.
+  // signed URL never reaches the iframe. Refused in review preview: an untrusted
+  // pending app would run this on the reviewing moderator's session.
   useEffect(() => {
     const off = onMessage<unknown>('GET_RESOURCE_FILE', async (raw) => {
       const req = resolveGetResourceFileRequest(raw);

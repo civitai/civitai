@@ -73,6 +73,8 @@ describe('classifyResourceFileError', () => {
   });
   it('a host-tagged error wins', () => {
     expect(classifyResourceFileError(resourceFileError('too-large'))).toBe('too-large');
+    const both = Object.assign(resourceFileError('too-large'), { data: { code: 'NOT_FOUND' } });
+    expect(classifyResourceFileError(both)).toBe('too-large');
   });
   it('anything else is parse-failed', () => {
     expect(classifyResourceFileError({ data: { code: 'INTERNAL_SERVER_ERROR' } })).toBe(
@@ -120,6 +122,10 @@ describe('processResourceEntries', () => {
     const at = `"${'a'.repeat(998)}"`; // 1000 bytes
     const over = `"${'a'.repeat(999)}"`; // 1001 bytes
     expect((await processResourceEntries([entry('at.json', at)], caps())).truncated).toBe(false);
+    // The same boundary through the header check: a .json file always declares its size.
+    expect((await processResourceEntries([entry('at.json', at, 1000)], caps())).truncated).toBe(
+      false
+    );
     const res = await processResourceEntries(
       [entry('over.json', over), entry('at.json', at)],
       caps()
@@ -154,6 +160,16 @@ describe('processResourceEntries', () => {
     await expect(
       processResourceEntries([entry('big.json', '{}', 99_999)], caps())
     ).rejects.toMatchObject({ resourceFileError: 'too-large' });
+    // No header size (or a lying one): the bounded read is what catches it.
+    await expect(
+      processResourceEntries([entry('big.json', `"${'a'.repeat(2000)}"`)], caps())
+    ).rejects.toMatchObject({ resourceFileError: 'too-large' });
+    await expect(
+      processResourceEntries(
+        [entry('a.json', `"${'a'.repeat(898)}"`), entry('b.json', `"${'a'.repeat(898)}"`)],
+        caps({ totalBytes: 1000 })
+      )
+    ).resolves.toMatchObject({ truncated: true });
     await expect(
       processResourceEntries([entry('a.txt', '{}'), entry('b.json', 'nope')], caps())
     ).rejects.toMatchObject({ resourceFileError: 'parse-failed' });

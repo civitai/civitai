@@ -511,11 +511,14 @@ read that file. As of this writing the families are:
     inside it, at most 20 (`truncated` is then true, and also when an entry was too
     large or not valid JSON). `format` is `api` when every top-level value has
     `class_type` and `inputs`, `ui` when there is a `nodes` array, else `unknown`.
-    Caps: 32 MB before download, 4 MB per JSON entry, 16 MB inflated in total; 30
-    requests a minute per user and 3 at once per tab (`busy`). Only published
-    versions are served: early access is refused to everyone but the owner (buyers
-    included), and drafts are refused to everyone (owner included), both as
-    `not-found`. `forbidden` is the viewer's maturity ceiling, checked after the
+    Caps: 32 MB before download (counted as the body streams), 4 MB per JSON entry,
+    16 MB inflated in total; 30 requests a minute per user (moderators are not
+    limited) and 3 at once per tab (`busy`). The bridge is narrower than the
+    download gate: drafts are refused to everyone (owner included), and a version
+    under any active paid-access gate (early access or permanent paid access) or
+    with downloads disabled is refused to everyone but the owner (buyers and
+    moderators included), all as `not-found`. Non-owners, moderators included, see
+    only public files. `forbidden` is the viewer's maturity ceiling, checked after the
     download gate. Logic: `src/server/services/resource-file.service.ts`,
     `src/components/AppBlocks/resourceFileParse.ts` and `resourceFileHost.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
