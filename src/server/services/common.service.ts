@@ -26,7 +26,7 @@ type UserEntityAccessStatus = EntityAccessRaw & {
 };
 
 const OPEN_ACCESS_AVAILABILITY = [Availability.Public, Availability.Unsearchable] as const;
-const isOpenAvailability = (availability: Availability) =>
+export const isOpenAvailability = (availability: Availability) =>
   OPEN_ACCESS_AVAILABILITY.some((a) => a === availability);
 
 export type EntityAccessDataType = {

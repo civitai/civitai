@@ -6,6 +6,11 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
+  getDealPartiesWithTitle,
+  notifyServiceDeal,
+  notifyServiceDealTransition,
+} from '~/server/services/creator-service-deal-notify';
+import {
   claimHold,
   claimRefund,
   dealFinalsClear,
@@ -150,7 +155,7 @@ async function storedReason(tx: Prisma.TransactionClient, actorId: number, reaso
 
 /** Returns whether this call moved the deal. */
 export async function transitionDeal(t: Transition) {
-  const moved = await dbWrite.$transaction(async (tx) => {
+  const eventId = await dbWrite.$transaction(async (tx) => {
     if (t.lock)
       await tx.$queryRaw`SELECT 1 FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int FOR UPDATE`;
     const reason = t.reason ? await storedReason(tx, t.actorId, t.reason) : null;
@@ -166,19 +171,21 @@ export async function transitionDeal(t: Transition) {
         }
       WHERE "id" = ${t.dealId}::int AND "status" IN (${statusList(t.from)})
         ${t.where ? Prisma.sql`AND ${t.where}` : Prisma.empty}`;
-    if (updated === 0) return false;
+    if (updated === 0) return null;
 
-    await tx.$executeRaw`
+    const [event] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "round", "comment", "reasonCode")
       SELECT ${t.dealId}::int, ${t.actorId}::int, ${t.event}::"ServiceDealEventType",
              "revisionsUsed", ${reason ? reason.text : t.comment ?? null}::text,
              ${reason?.code ?? null}::text
-      FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int`;
+      FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int
+      RETURNING "id"`;
 
     // A deal still confirming payment claims nothing here; reconcile claims it if the hold lands.
     if (t.refund) await claimRefund(tx, t.dealId);
-    return true;
+    return event.id;
   });
+  const moved = eventId !== null;
 
   if (moved && t.refund)
     await refundDeal(t.dealId).catch((error) =>
@@ -192,6 +199,14 @@ export async function transitionDeal(t: Transition) {
       }).catch(() => null)
     );
 
+  if (moved)
+    await notifyServiceDealTransition({
+      dealId: t.dealId,
+      event: t.event,
+      eventId,
+      actorId: t.actorId,
+    });
+
   return moved;
 }
 
@@ -200,6 +215,14 @@ const movedOn = () =>
   new TRPCError({
     code: 'CONFLICT',
     message: 'This deal has moved on. Refresh to see where it is.',
+  });
+
+/** CONFLICT, as `movedOn`; the request modal adds "Nothing was charged." to any conflict. */
+const requestAlreadyWaiting = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message:
+      'You already have a request waiting on this service. You can send another once the seller answers it.',
   });
 
 async function requireTransition(t: Transition) {
@@ -324,6 +347,12 @@ export async function requestServiceDeal({
     offering.deliveryDays !== expectedDeliveryDays
   )
     throw termsChanged();
+  const [waiting] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "ServiceDeal"
+    WHERE "offeringId" = ${offeringId}::int AND "buyerId" = ${buyerId}::int
+      AND "status" = 'Requested'::"ServiceDealStatus"
+    LIMIT 1`;
+  if (waiting) throw requestAlreadyWaiting();
 
   // The checks above are for the message; this statement repeats them as its own preconditions.
   const dealId = await dbWrite.$transaction(async (tx) => {
@@ -385,6 +414,8 @@ export async function requestServiceDeal({
     });
     throw throwInsufficientFundsError();
   }
+  // An unconfirmed hold is announced by reconcile once it lands; the seller cannot accept before.
+  if (outcome === 'held') await notifyServiceDeal({ dealId, notice: 'requested', to: 'seller' });
 
   return { id: dealId, status: 'Requested' as const, held: outcome === 'held' };
 }
@@ -471,10 +502,7 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
 }
 
 async function openDealChat(dealId: number) {
-  const [deal] = await dbWrite.$queryRaw<{ buyerId: number; sellerId: number; title: string }[]>`
-    SELECT d."buyerId", d."sellerId", o."title"
-    FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
-    WHERE d."id" = ${dealId}::int`;
+  const deal = await getDealPartiesWithTitle(dealId);
   if (!deal) return;
 
   const chat = await upsertDealChat({ sellerId: deal.sellerId, buyerId: deal.buyerId });

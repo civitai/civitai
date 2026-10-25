@@ -48,7 +48,7 @@ export async function sendEmail({ to, from, text, ...data }: SendEmailInput): Pr
     text: text ?? removeTags(data.html),
     ...data,
   });
-  const failed = info.rejected.filter(Boolean);
+  const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) {
     throw new Error(`Email(s) (${failed.join(', ')}) could not be sent`);
   }

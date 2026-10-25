@@ -58,8 +58,9 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` FIVE keys are ahead: `RUN_CONFIRMED_STEP`,
- * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD`. The
+ * As of the installed `@civitai/app-sdk@0.65.1` SIX keys are ahead: `RUN_CONFIRMED_STEP`,
+ * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` and
+ * `GET_RESOURCE_FILE`. The
  * published union's 50 types are all inventory keys.
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
@@ -767,6 +768,18 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Workflow-file read (civitai-app-starters#664): the GET_WILDCARD_PACK pattern
+  // for Workflows / ComfyWorkflows versions. Page-only by decision on that issue.
+  GET_RESOURCE_FILE: {
+    request: true,
+    reply: 'RESOURCE_FILE_RESULT',
+    replyKeys: ['file'],
+    errorKeys: ['error'],
+    IframeHost:
+      'model slot has no resource-file surface; page-only by decision (civitai-app-starters#664)',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // ── Collection follow/unfollow (host bridge) ───────────────────────────────
   // A block asks the HOST to follow/unfollow a collection as the logged-in
   // viewer. Replaces the block's own `POST /api/v1/blocks/collections/[id]/follow`
@@ -981,8 +994,8 @@ type SdkBlockToParentType = BlockToParentMessageType;
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
 // INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP`,
-// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` as of
-// app-sdk 0.65.1).
+// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD`,
+// `GET_RESOURCE_FILE` as of app-sdk 0.65.1).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //

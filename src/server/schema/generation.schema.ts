@@ -377,6 +377,13 @@ export const resolveWildcardPackSchema = z.object({
   modelVersionId: z.number().int().positive(),
 });
 
+export type ResolveResourceFileInput = z.infer<typeof resolveResourceFileSchema>;
+export const resolveResourceFileSchema = z.object({
+  modelVersionId: z.number().int().positive(),
+  /** Omitted: the resolver picks the version's default workflow file. */
+  fileId: z.number().int().positive().optional(),
+});
+
 export const setEvictableSchema = getByIdSchema.extend({ evictable: z.boolean() });
 export type SetEvictableInput = z.infer<typeof setEvictableSchema>;
 
