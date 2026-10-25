@@ -234,7 +234,20 @@ export const processScheduledPublishing = createJob(
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
-          await tx.$queryRaw<{ id: number }[]>`
+          // Lock the posts' versions, then the posts, in the order a moderator's version takedown
+          // takes them before unpublishing its owner's live posts, which these are not yet: unlocked,
+          // a takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
+          // Only the (post, version) pairs locked here are published: a post moved to another
+          // version while this waited has that version unlocked, so it waits for the next run.
+          const locked = await tx.$queryRaw<{ postId: number; versionId: number }[]>`
+            SELECT p.id AS "postId", mv.id AS "versionId" FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+            FOR NO KEY UPDATE OF mv, p
+          `;
+
+          if (locked.length)
+            await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
           -- Respect prevPublishedAt metadata to preserve original date on republish
           UPDATE "Post" p
@@ -247,7 +260,9 @@ export const processScheduledPublishing = createJob(
             "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
-          WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+          WHERE (p.id, p."modelVersionId") IN (${Prisma.join(
+            locked.map(({ postId, versionId }) => Prisma.sql`(${postId}, ${versionId})`)
+          )})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
@@ -263,7 +278,7 @@ export const processScheduledPublishing = createJob(
             .filter((item) => !!item.extras?.hasEarlyAccess)
             .map(({ id }) => id);
 
-          await tx.$executeRaw`
+          const published = await tx.$queryRaw<{ id: number }[]>`
             -- Update scheduled versions published
             UPDATE "ModelVersion" mv 
             SET status = 'Published', availability = 'Public'
@@ -272,14 +287,20 @@ export const processScheduledPublishing = createJob(
               AND mv."modelId" = m.id
               AND mv.status = 'Scheduled'
               AND mv."publishedAt" <= ${now}
-              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+            RETURNING mv.id;
           `;
+          // Only what that statement published: it re-checks the status, so a version a moderator
+          // took down after the select above drops out here, and the early-access publish, which
+          // writes by id, never sees it.
+          const publishedIds = new Set(published.map(({ id }) => id));
+          const earlyAccessPublished = earlyAccess.filter((id) => publishedIds.has(id));
 
-          if (earlyAccess.length) {
+          if (earlyAccessPublished.length) {
             // The only downside to this failing is that the model version will be published with no early access.
             // Initially, I think this will be OK.
             await publishModelVersionsWithEarlyAccess({
-              modelVersionIds: earlyAccess,
+              modelVersionIds: earlyAccessPublished,
               continueOnError: true,
               tx,
             });

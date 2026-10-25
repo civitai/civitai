@@ -15,6 +15,7 @@ import {
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import {
   useAddOwnerStorylineChapter,
+  useInsertStorylineChapter,
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
@@ -34,6 +35,11 @@ export type StorylineContinueModalProps = {
    * the storyline, who adds the chapter directly instead of submitting it for review.
    */
   parentChapterId?: number;
+  /**
+   * Set by the map's "Insert here": the owner's post goes between `parentChapterId` and this
+   * chapter instead of after the parent.
+   */
+  insertBeforeChapterId?: number;
   /** Which way the owner's picker opens; they can switch. */
   mode?: 'post' | 'join';
 };
@@ -42,6 +48,7 @@ export default function StorylineContinueModal({
   parentPostId,
   postId: initialPostId,
   parentChapterId,
+  insertBeforeChapterId,
   mode: initialMode = 'post',
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
@@ -83,6 +90,7 @@ export default function StorylineContinueModal({
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
   const addOwn = useAddOwnerStorylineChapter({ onSuccess: () => setOutcome('added') });
+  const insert = useInsertStorylineChapter({ onSuccess: () => setOutcome('added') });
   const ownerAdd =
     !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
 
@@ -123,10 +131,20 @@ export default function StorylineContinueModal({
         })
       : null;
 
+  const inserting = insertBeforeChapterId !== undefined;
+  const ownerPending = inserting ? insert.isPending : addOwn.isPending;
+  const ownerError = inserting ? insert.error : addOwn.error;
+
   const loading = membershipLoading || storylineLoading || terms.isLoading;
 
   return (
-    <Modal {...dialog} title={ownerAdd ? 'Add the next chapter' : 'Continue the story'} size="md">
+    <Modal
+      {...dialog}
+      title={
+        inserting ? 'Insert a chapter' : ownerAdd ? 'Add the next chapter' : 'Continue the story'
+      }
+      size="md"
+    >
       {!currentUser ? (
         <Alert color="gray">Sign in to continue a storyline.</Alert>
       ) : !features.storylines ? (
@@ -143,7 +161,7 @@ export default function StorylineContinueModal({
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <>
-          {ownerAdd && parentChapterId && (
+          {ownerAdd && parentChapterId && !inserting && (
             <SegmentedControl
               fullWidth
               mb="md"
@@ -171,6 +189,7 @@ export default function StorylineContinueModal({
               closedReason={terms.data?.closedReason ?? null}
               price={terms.data?.price ?? 0}
               ownerAdd={ownerAdd}
+              inserting={inserting}
               isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
               posts={posts}
               postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
@@ -180,13 +199,22 @@ export default function StorylineContinueModal({
               morePosts={!!firstPage?.nextCursor}
               postId={postId}
               onPostChange={setPostId}
-              submitting={ownerAdd ? addOwn.isPending : submit.isPending}
-              error={ownerAdd ? addOwn.error : submit.error}
+              submitting={ownerAdd ? ownerPending : submit.isPending}
+              error={ownerAdd ? ownerError : submit.error}
               outcome={outcome}
+              onLeave={dialog.onClose}
               onSubmit={() => {
                 const post = posts.find((candidate) => candidate.id === postId);
                 if (ownerAdd && parentChapterId) {
-                  if (post) addOwn.mutate({ parentChapterId, postId: post.id });
+                  if (!post) return;
+                  if (insertBeforeChapterId !== undefined)
+                    insert.mutate({
+                      storylineId: storyline.id,
+                      parentChapterId,
+                      childChapterId: insertBeforeChapterId,
+                      postId: post.id,
+                    });
+                  else addOwn.mutate({ parentChapterId, postId: post.id });
                   return;
                 }
                 if (!post || !terms.data) return;

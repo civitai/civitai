@@ -209,8 +209,11 @@ import type { ResolveCanGenerateVersion } from '~/server/services/generation/gen
 import {
   assertBlockWorkflowMintedForViewer,
   assertBlockWorkflowTaggedForApp,
+  assertBlockWorkflowTaggedForInstance,
+  isEphemeralDevTunnelToken,
 } from '~/server/services/blocks/block-workflow-access';
 import {
+  appBlockInstanceTag,
   appBlockTag,
   BLOCK_STEP_NAME,
   buildCustomComfyWorkflowInput,
@@ -4511,7 +4514,10 @@ export const blocksRouter = router({
    * it as interchangeable is the trap worth naming. They share the app-tag half; their viewer half
    * is the `block_workflows` read-model row, which binds per-APP-BLOCK rather than per-user. The
    * row is deliberately not used here — it is written best-effort and never written at all for
-   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there.
+   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there. (The
+   * one exception, `publishGenerationOutputs` for an ephemeral dev-tunnel token with no row,
+   * adds the per-INSTANCE tag to the id-prefix check precisely so it is not a widening; see
+   * that procedure.)
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
    * open until the workflow reaches a terminal status instead of answering with
@@ -5303,6 +5309,10 @@ export const blocksRouter = router({
    * (userId-from-token, appBlockId-from-token, workflowId) binding the
    * orchestrator lacks; (b) the orchestrator's own record must carry the
    * `app-block:<appId>` tag. Either fails → FORBIDDEN, nothing is published.
+   * An ephemeral dev-tunnel token never gets a row (the FK rejects its synthetic
+   * app id), so when the row is absent that token class (only that class) proves
+   * (a) instead from the viewer-minted workflow id plus the server-stamped
+   * per-instance tag — see the comment at guard (a).
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
@@ -5355,13 +5365,35 @@ export const blocksRouter = router({
         appBlockId: claims.appBlockId,
         workflowId: input.workflowId,
       });
-      if (!owned) {
+      // EPHEMERAL DEV-TUNNEL STAND-IN for the row. The row's `app_block_id` FK to `app_blocks`
+      // cannot hold a synthetic `ephemeral-<slug>` id (and most submit sites also skip the write
+      // for `claims.dev === true` — not all: the post-paid customComfy arm does not), so for a
+      // dev-tunnel / App Assistant preview app on an ephemeral id the row can never exist, and
+      // guard (a) refused every publish — after the viewer had accepted the consent dialog.
+      // For THAT token class only (`isEphemeralDevTunnelToken` — not every dev token; see its
+      // docblock for the moderator review token it excludes) and only with NO
+      // row, the same (viewer, app block, workflow) binding is proven from facts no block can
+      // write: the orchestrator-minted id names the viewer (checked HERE, before any upstream
+      // read), and the orchestrator record carries the server-stamped app tag (guard b) AND the
+      // calling token's per-instance tag (below). Every other token keeps the row as its only
+      // proof, exactly as before.
+      const devTokenProof = !owned && isEphemeralDevTunnelToken(claims);
+      if (!owned && !devTokenProof) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not in this app subqueue' });
+      }
+      if (devTokenProof) {
+        assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       }
       const token = await getOrchestratorToken(userId, ctx);
       // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
+      if (devTokenProof) {
+        assertBlockWorkflowTaggedForInstance({
+          tags: workflow.tags,
+          blockInstanceId: claims.blockInstanceId,
+        });
+      }
 
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
@@ -14641,7 +14673,9 @@ function buildWorkflowTags(
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
     `app-block:block:${claims.blockId}`,
-    `app-block:instance:${claims.blockInstanceId}`,
+    // Per-instance tag — the SAME helper the dev-token publish proof reads
+    // (`assertBlockWorkflowTaggedForInstance`).
+    appBlockInstanceTag(claims.blockInstanceId),
   ];
 }
 

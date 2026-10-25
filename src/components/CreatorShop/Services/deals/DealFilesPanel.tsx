@@ -5,6 +5,7 @@ import {
   FileButton,
   Group,
   Image,
+  Loader,
   Paper,
   SimpleGrid,
   Stack,
@@ -15,6 +16,7 @@ import { useRef, useState } from 'react';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   buyerRoundFinalsState,
+  deliverWait,
   filesByRound,
   filesPollMs,
   finalsCopy,
@@ -148,6 +150,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
   const previewSlots = uploadSlotsLeft('Preview', deal.previewKind, files, round);
   const finalSlots = uploadSlotsLeft('Final', deal.previewKind, files, round);
   const takesPreview = deal.previewKind !== 'None';
+  const waiting = deliverWait(files, round);
 
   return (
     <Stack gap="sm">
@@ -191,12 +194,20 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         <Button
           color="yellow"
           loading={deliver.isPending}
-          disabled={busy.length > 0}
+          disabled={busy.length > 0 || !!waiting}
           onClick={() => deliver.mutate({ dealId: deal.id })}
         >
           Deliver
         </Button>
       </Group>
+      {waiting && busy.length === 0 && (
+        <Group gap="xs">
+          <Loader size="xs" />
+          <Text size="sm" c="dimmed">
+            {waiting} Deliver unlocks when they pass.
+          </Text>
+        </Group>
+      )}
       {busy.length > 0 && (
         <Text size="sm" c="dimmed">
           Uploading {busy.map((item) => item.name).join(', ')}…

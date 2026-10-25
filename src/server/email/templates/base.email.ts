@@ -5,6 +5,7 @@ export function createEmail<T, T2>(email: {
     from?: string;
     to: string | string[] | null;
     cc?: string | string[] | null;
+    headers?: Record<string, string>;
   };
   html: (data: T) => string;
   text?: (data: T) => string;

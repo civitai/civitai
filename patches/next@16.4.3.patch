@@ -1,12 +1,12 @@
 diff --git a/dist/server/api-utils/get-cookie-parser.js b/dist/server/api-utils/get-cookie-parser.js
-index 9997837..b0cd759 100644
+index 9997837bfa9877383c9310a9e150129e3192635c..17715f23bf5545c63ce5015d82602b31a917421c 100644
 --- a/dist/server/api-utils/get-cookie-parser.js
 +++ b/dist/server/api-utils/get-cookie-parser.js
 @@ -8,13 +8,17 @@ Object.defineProperty(exports, "getCookieParser", {
          return getCookieParser;
      }
  });
-+// civitai patch (patches/next@16.3.1.patch): resolve the cookie module once per process
++// civitai patch (patches/next@16.4.3.patch): resolve the cookie module once per process
 +// instead of on every parse. The require cache already returns the same exports object, so
 +// the result is identical; this only skips the require hook chain on each call.
 +let cookieModule;
@@ -22,57 +22,55 @@ index 9997837..b0cd759 100644
      };
  }
 diff --git a/dist/server/lib/router-server.js b/dist/server/lib/router-server.js
-index 53b7745..c705851 100644
+index 70ff146165fe3cc0960d2d0f2ebd6c743ebd7b60..90870e4bacecf497eb2035cdf4bb3d29e1ab5e39 100644
 --- a/dist/server/lib/router-server.js
 +++ b/dist/server/lib/router-server.js
-@@ -54,6 +54,8 @@ const _routerservercontext = require("./router-utils/router-server-context");
- const _chromedevtoolsworkspace = require("./chrome-devtools-workspace");
+@@ -55,6 +55,8 @@ const _chromedevtoolsworkspace = require("./chrome-devtools-workspace");
  const _configshared = require("../config-shared");
+ const _ciinfo = require("../ci-info");
  const _requestinsights = require("./trace/request-insights");
-+// civitai patch (patches/next@16.3.1.patch): memo for the per-request locale-redirect require below.
++// civitai patch (patches/next@16.4.3.patch): memo for the per-request locale-redirect require below.
 +let getLocaleRedirectModule;
  function _interop_require_default(obj) {
      return obj && obj.__esModule ? obj : {
          default: obj
-@@ -234,7 +236,8 @@ async function initialize(opts) {
+@@ -295,7 +297,8 @@ async function initialize(opts) {
                  hostname: urlNoQuery
              }, req.headers));
              const defaultLocale = (domainLocale == null ? void 0 : domainLocale.defaultLocale) || config.i18n.defaultLocale;
 -            const { getLocaleRedirect } = require('../../shared/lib/i18n/get-locale-redirect');
-+            // civitai patch (patches/next@16.3.1.patch): resolve once per process, not per request.
++            // civitai patch (patches/next@16.4.3.patch): resolve once per process, not per request.
 +            const { getLocaleRedirect } = getLocaleRedirectModule ??= require('../../shared/lib/i18n/get-locale-redirect');
              const parsedUrl = (0, _parseurl.parseUrl)((_this = req.url || '') == null ? void 0 : _this.replace(/^\/+/, '/'));
              const redirect = getLocaleRedirect({
                  defaultLocale,
 diff --git a/dist/server/next-server.js b/dist/server/next-server.js
-index f7e7ff0..ecaf314 100644
+index e7573580391cc859dfb411d85f71666e2e47ccde..81a5fe092b1c14824c7579c399cc62f41a5bfcd5 100644
 --- a/dist/server/next-server.js
 +++ b/dist/server/next-server.js
-@@ -693,8 +693,17 @@ class NextNodeServer extends _baseserver.default {
-         // Restore original URL as the handler handles it's own parsing
-         const parsedInitUrl = (0, _parseurl.parseUrl)((0, _requestmeta.getRequestMeta)(req, 'initURL') || req.url);
-         req.url = `${parsedInitUrl.pathname}${parsedInitUrl.search || ''}`;
--        const loader = new _nodemoduleloader.NodeModuleLoader();
--        const module = await loader.load(match.definition.filename);
-+        // civitai patch (patches/next@16.3.1.patch): outside dev the require cache is never
+@@ -696,7 +696,16 @@ class NextNodeServer extends _baseserver.default {
+         // Dev definitions retain source filenames for watcher bookkeeping. API
+         // execution still needs to load the compiled server bundle.
+         const modulePath = this.isDev ? (0, _path.join)(this.distDir, 'server', `${match.definition.bundlePath}.js`) : match.definition.filename;
+-        const module = await loader.load(modulePath);
++        // civitai patch (patches/next@16.4.3.patch): outside dev the require cache is never
 +        // cleared, so loading the same route file always yields the same module; remember it so
 +        // each API request skips the require hook chain.
-+        let module = this.dev || !this._civitaiApiModules ? undefined : this._civitaiApiModules.get(match.definition.filename);
++        let module = this.dev || !this._civitaiApiModules ? undefined : this._civitaiApiModules.get(modulePath);
 +        if (module === undefined) {
-+            const loader = new _nodemoduleloader.NodeModuleLoader();
-+            module = await loader.load(match.definition.filename);
++            module = await loader.load(modulePath);
 +            if (!this.dev) {
-+                (this._civitaiApiModules ??= new Map()).set(match.definition.filename, module);
++                (this._civitaiApiModules ??= new Map()).set(modulePath, module);
 +            }
 +        }
          (0, _requestmeta.addRequestMeta)(req.originalRequest, 'relativeProjectDir', (0, _path.relative)(process.cwd(), this.dir));
          (0, _requestmeta.addRequestMeta)(req.originalRequest, 'distDir', this.distDir);
          await module.handler(req.originalRequest, res.originalResponse, {
-@@ -998,7 +1007,14 @@ class NextNodeServer extends _baseserver.default {
+@@ -1021,7 +1030,14 @@ class NextNodeServer extends _baseserver.default {
          if (this.minimalMode) {
              return null;
          } else {
-+            // civitai patch (patches/next@16.3.1.patch): this runs several times per request.
++            // civitai patch (patches/next@16.4.3.patch): this runs several times per request.
 +            // Outside dev the require cache is never cleared, so require() always returns the
 +            // same object; remember it so later calls skip the require hook chain.
 +            if (!this.dev && this._civitaiMiddlewareManifest !== undefined) {
@@ -83,11 +81,11 @@ index f7e7ff0..ecaf314 100644
              return manifest;
          }
      }
-@@ -1072,7 +1088,20 @@ class NextNodeServer extends _baseserver.default {
+@@ -1095,7 +1111,20 @@ class NextNodeServer extends _baseserver.default {
              env: pageInfo.env
          };
      }
-+    // civitai patch (patches/next@16.3.1.patch): runs several times per request, two require()s
++    // civitai patch (patches/next@16.4.3.patch): runs several times per request, two require()s
 +    // each. Outside dev the require cache is never cleared, so the outcome (the middleware module,
 +    // or undefined when there is none) never changes; remember it. A throw is not remembered.
      async loadNodeMiddleware() {
@@ -105,7 +103,7 @@ index f7e7ff0..ecaf314 100644
              try {
                  var _functionsConfig_functions;
 diff --git a/dist/server/require.js b/dist/server/require.js
-index 6f4904a..37bec1f 100644
+index 6f4904abc77c9166514259483015c6fd25dd5046..dec4f2a90b4069ab9db4d52eb850d0c0ba932003 100644
 --- a/dist/server/require.js
 +++ b/dist/server/require.js
 @@ -40,6 +40,7 @@ function _interop_require_default(obj) {
@@ -120,7 +118,7 @@ index 6f4904a..37bec1f 100644
              throw new _utils.MissingStaticPage(page, err.message);
          });
      }
-+    // civitai patch (patches/next@16.3.1.patch): outside dev the require cache is never cleared,
++    // civitai patch (patches/next@16.4.3.patch): outside dev the require cache is never cleared,
 +    // so require(pagePath) always returns the same exports; remember them (same gate as
 +    // pagePathCache above) so later calls skip the require hook chain.
 +    const memoized = requirePageCache == null ? void 0 : requirePageCache.get(pagePath);

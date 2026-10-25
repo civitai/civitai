@@ -31,6 +31,7 @@ import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/de
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { pluralize } from '~/shared/utils/pluralize';
 import { formatDate } from '~/utils/date-helpers';
 
 const DATE = 'MMM D, YYYY h:mm A';
@@ -178,8 +179,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
             <Anchor component={NextLink} href={`/user/${counterparty.username}`} inherit>
               {counterparty.username}
             </Anchor>{' '}
-            · requested {formatDate(deal.requestedAt, DATE)} · ~{deal.deliveryDays} days ·{' '}
-            {deal.revisionsUsed}/{deal.revisionsIncluded} revisions used
+            · requested {formatDate(deal.requestedAt, DATE)} · ~
+            {pluralize(deal.deliveryDays, 'day')} · {deal.revisionsUsed}/{deal.revisionsIncluded}{' '}
+            revisions used
           </Text>
         </Stack>
 

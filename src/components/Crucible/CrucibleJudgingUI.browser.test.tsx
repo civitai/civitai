@@ -1226,11 +1226,10 @@ describe('CrucibleJudgingUI — reactions', () => {
     await pastFeedbackDelay();
 
     expect(reactionToggle).toHaveBeenCalledTimes(1);
-    expect(reactionToggle).toHaveBeenCalledWith({
-      entityId: rightImageId,
-      entityType: 'image',
-      reaction: 'Heart',
-    });
+    expect(reactionToggle).toHaveBeenCalledWith(
+      { entityId: rightImageId, entityType: 'image', reaction: 'Heart' },
+      expect.anything()
+    );
     expect(onVote).not.toHaveBeenCalled();
     expect(onSkip).not.toHaveBeenCalled();
   });

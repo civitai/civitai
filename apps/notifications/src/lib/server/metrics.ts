@@ -103,6 +103,13 @@ export const pushDeliveryTotal = new Counter({
   registers: [register],
 });
 
+export const emailDispatchTotal = new Counter({
+  name: 'notifications_email_dispatch_total',
+  help: 'Notification-email hand-offs to the main app, labeled by outcome (dispatched/failure).',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});
+
 // Baseline series at load so they export a 0 before the first event (see the cardinality note above).
 for (const outcome of ['success', 'failure'] as const) signalsDeliveryTotal.inc({ outcome }, 0);
 for (const outcome of [
@@ -114,5 +121,6 @@ for (const outcome of [
   'capped',
 ] as const)
   pushDeliveryTotal.inc({ outcome }, 0);
+for (const outcome of ['dispatched', 'failure'] as const) emailDispatchTotal.inc({ outcome }, 0);
 for (const operation of ['get', 'set', 'increment', 'has', 'clearCategory', 'bustUser'] as const)
   redisErrorsTotal.inc({ operation }, 0);
