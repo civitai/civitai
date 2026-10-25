@@ -19,6 +19,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
@@ -261,6 +262,7 @@ export async function requestServiceDeal({
   expectedDeliveryDays,
   buyerId,
   requestText,
+  disclosureVersion,
   buzzType,
   servableLevels,
   consentLevels,
@@ -272,6 +274,8 @@ export async function requestServiceDeal({
   expectedDeliveryDays: number;
   buyerId: number;
   requestText: string;
+  /** The buyer-disclosure version shown before the hold. */
+  disclosureVersion: string;
   buzzType: string;
   /** What the request's domain may be served (`domainServableLevels`). */
   servableLevels: number;
@@ -280,6 +284,8 @@ export async function requestServiceDeal({
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
+  if (disclosureVersion !== SERVICES_TERMS_VERSION)
+    throw throwBadRequestError('Review the request terms before sending. Nothing was charged.');
 
   await throwOnBlockedUserContent(requestText, { surface: 'creator-service-request' });
 

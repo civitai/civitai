@@ -6663,6 +6663,7 @@ export interface ServiceOffering {
   removedDetails: string | null;
   removedAt: Date | null;
   removedById: number | null;
+  sellerAffirmation: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
