@@ -208,7 +208,6 @@ export class PreviewRestarter implements PreviewRestarts {
         if (!(error instanceof DevServerNotRunningError)) throw error;
         // Not running (as after every resume): start it as the assistant would, then the same
         // reopen. Still no run, no model call and no Buzz.
-        await preview.startDevServer();
         shown = await preview.reopen();
       }
       return { ok: true, blockId: shown.blockId, host: shown.host };
