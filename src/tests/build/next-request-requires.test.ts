@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * Pins `patches/next@16.3.1.patch`: Next.js resolves the same modules with `require()` on every
+ * Pins `patches/next@16.4.3.patch`: Next.js resolves the same modules with `require()` on every
  * request (the middleware manifest and node middleware several times per request, the API
  * route module, page modules, the cookie parser, the locale-redirect helper). The module cache
  * makes each of those return the same object, but every call still runs the whole require hook
