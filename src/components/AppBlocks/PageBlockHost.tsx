@@ -144,8 +144,10 @@ import {
 import {
   classifyResourceFileError,
   resolveGetResourceFileRequest,
+  RESOURCE_FILE_DEADLINE_MS,
   RESOURCE_FILE_MAX_CONCURRENT,
   type ResourceFileErrorCode,
+  withDeadline,
 } from './resourceFileParse';
 import {
   resolveAdvertisedScopes,
@@ -4710,22 +4712,20 @@ export function PageBlockHost({
       }
       resourceFileInFlightRef.current += 1;
       try {
-        const resolved = await resolveResourceFileMutation.mutateAsync(
-          fileId === undefined ? { modelVersionId } : { modelVersionId, fileId }
-        );
-        const { fetchAndParseResourceFile, RESOURCE_FILE_FETCH_TIMEOUT_MS } = await import(
-          './resourceFileHost'
-        );
-        const { entries, truncated } = await fetchAndParseResourceFile({
-          signedUrl: resolved.signedUrl,
-          sizeBytes: resolved.sizeBytes,
-          fileName: resolved.meta.fileName,
-          signal: AbortSignal.timeout(RESOURCE_FILE_FETCH_TIMEOUT_MS),
-        });
-        send('RESOURCE_FILE_RESULT', {
-          requestId,
-          file: { meta: resolved.meta, entries, truncated },
-        });
+        const file = await withDeadline(async (signal) => {
+          const resolved = await resolveResourceFileMutation.mutateAsync(
+            fileId === undefined ? { modelVersionId } : { modelVersionId, fileId }
+          );
+          const { fetchAndParseResourceFile } = await import('./resourceFileHost');
+          const { entries, truncated } = await fetchAndParseResourceFile({
+            signedUrl: resolved.signedUrl,
+            sizeBytes: resolved.sizeBytes,
+            fileName: resolved.meta.fileName,
+            signal,
+          });
+          return { meta: resolved.meta, entries, truncated };
+        }, RESOURCE_FILE_DEADLINE_MS);
+        send('RESOURCE_FILE_RESULT', { requestId, file });
       } catch (err) {
         send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
       } finally {

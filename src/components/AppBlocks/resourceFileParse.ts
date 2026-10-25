@@ -22,6 +22,31 @@ export const RESOURCE_FILE_CAPS: ResourceFileCaps = {
 /** Per tab, like WILDCARD_MAX_CONCURRENT; its own counter. */
 export const RESOURCE_FILE_MAX_CONCURRENT = 3;
 
+/**
+ * The whole request (resolve, fetch, parse) must answer inside the SDK's 120 s
+ * GET_RESOURCE_FILE timeout, or the block gives up and retries into `busy`.
+ */
+export const RESOURCE_FILE_DEADLINE_MS = 110_000;
+
+/**
+ * Run `work` against a deadline. At the deadline its signal aborts and the
+ * returned promise rejects `parse-failed`, whether or not `work` has stopped, so
+ * the caller can reply and free its slot. A later result from `work` is dropped.
+ */
+export function withDeadline<T>(work: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(resourceFileError('parse-failed', `no answer within ${ms} ms`));
+    }, ms);
+  });
+  const running = work(controller.signal);
+  running.catch(() => undefined);
+  return Promise.race([running, deadline]).finally(() => clearTimeout(timer));
+}
+
 // ── Request contract ─────────────────────────────────────────────────────────
 
 export interface GetResourceFileRequest {

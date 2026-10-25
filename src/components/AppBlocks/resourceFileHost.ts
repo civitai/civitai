@@ -13,8 +13,6 @@ import { exceedsPreDownloadCap, PRE_DOWNLOAD_MAX_BYTES } from './wildcardPackPar
 // The fetch + unzip shell for GET_RESOURCE_FILE. A separate module so jszip only
 // loads when a block asks for a file. Runs in the viewer's tab, never on a server.
 
-export const RESOURCE_FILE_FETCH_TIMEOUT_MS = 30_000;
-
 function extensionOf(name: string): string {
   const dot = name.lastIndexOf('.');
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';

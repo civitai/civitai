@@ -7,6 +7,7 @@ import {
   RESOURCE_FILE_MAX_CONCURRENT,
 } from '~/components/AppBlocks/resourceFileParse';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as ResourceFileParseMod from '~/components/AppBlocks/resourceFileParse';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { expectReplyKeys } from '../../../test/expectReplyKeys';
@@ -20,6 +21,13 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({ resolve: vi.fn(), fetch: vi.fn() }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// Short enough for a test to wait out, far longer than any other case here takes.
+const { TEST_DEADLINE_MS } = vi.hoisted(() => ({ TEST_DEADLINE_MS: 3000 }));
+vi.mock('~/components/AppBlocks/resourceFileParse', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceFileParseMod>()),
+  RESOURCE_FILE_DEADLINE_MS: TEST_DEADLINE_MS,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -142,7 +150,8 @@ type Reply = {
 
 async function request(
   replies: ReturnType<typeof listenForReply>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  timeout = 5000
 ): Promise<Reply> {
   postFromBlock('GET_RESOURCE_FILE', payload);
   let reply: Reply | undefined;
@@ -153,7 +162,7 @@ async function request(
       if (!p || p.requestId !== payload.requestId) throw new Error('no reply yet');
       reply = p;
     },
-    { timeout: 5000 }
+    { timeout }
   );
   return reply!;
 }
@@ -334,6 +343,47 @@ describe('PageBlockHost GET_RESOURCE_FILE bridge', () => {
 
     const after = await request(replies, { requestId: 'after', modelVersionId: 100 });
     expect(after.file?.entries).toHaveLength(1);
+    replies.stop();
+  });
+
+  test('requests that outlive the deadline reply parse-failed and free their slots', async () => {
+    mocks.resolve.mockReturnValue(new Promise(() => undefined));
+    const replies = await mountReady();
+
+    for (let i = 0; i < RESOURCE_FILE_MAX_CONCURRENT - 1; i++) {
+      postFromBlock('GET_RESOURCE_FILE', { requestId: `h${i}`, modelVersionId: 100 });
+    }
+    const started = Date.now();
+    const timedOut = await request(
+      replies,
+      { requestId: `h${RESOURCE_FILE_MAX_CONCURRENT - 1}`, modelVersionId: 100 },
+      TEST_DEADLINE_MS + 3000
+    );
+    expect(timedOut).toEqual({
+      requestId: `h${RESOURCE_FILE_MAX_CONCURRENT - 1}`,
+      error: 'parse-failed',
+    });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(TEST_DEADLINE_MS - 100);
+
+    // Every abandoned request gave its slot back, so a retry is served, not `busy`.
+    resolvesTo('graph.json', utf8(JSON.stringify(UI_GRAPH)));
+    const retry = await request(replies, { requestId: 'retry', modelVersionId: 100 });
+    expect(retry.file?.entries).toHaveLength(1);
+    replies.stop();
+  });
+
+  test('fileId sent as undefined is treated as no fileId', async () => {
+    resolvesTo('graph.json', utf8(JSON.stringify(UI_GRAPH)));
+    const replies = await mountReady();
+
+    const reply = await request(replies, {
+      requestId: 'rq_undef',
+      modelVersionId: 100,
+      fileId: undefined,
+    });
+
+    expect(mocks.resolve).toHaveBeenCalledWith({ modelVersionId: 100 });
+    expect(reply.file?.entries).toHaveLength(1);
     replies.stop();
   });
 

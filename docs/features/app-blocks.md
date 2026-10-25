@@ -513,7 +513,9 @@ read that file. As of this writing the families are:
     `class_type` and `inputs`, `ui` when there is a `nodes` array, else `unknown`.
     Caps: 32 MB before download (counted as the body streams), 4 MB per JSON entry,
     16 MB inflated in total; 30 requests a minute per user (moderators are not
-    limited) and 3 at once per tab (`busy`). The bridge is narrower than the
+    limited) and 3 at once per tab (`busy`). The whole request (resolve, fetch,
+    parse) answers within 110 s, inside the SDK's 120 s timeout; past that it
+    replies `parse-failed` and frees its slot. The bridge is narrower than the
     download gate: drafts are refused to everyone (owner included), and a version
     under any active paid-access gate (early access or permanent paid access) or
     with downloads disabled is refused to everyone but the owner (buyers and

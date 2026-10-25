@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   classifyResourceFileError,
   detectGraphFormat,
   processResourceEntries,
   resolveGetResourceFileRequest,
   resourceFileError,
+  withDeadline,
   type RawResourceEntry,
   type ResourceFileCaps,
 } from './resourceFileParse';
@@ -91,6 +92,10 @@ describe('resolveGetResourceFileRequest', () => {
       requestId: 'r',
       modelVersionId: 9,
     });
+    // `@civitai/sdk` callers can send the key with an undefined value: that is no fileId.
+    expect(
+      resolveGetResourceFileRequest({ requestId: 'r', modelVersionId: 9, fileId: undefined })
+    ).toEqual({ requestId: 'r', modelVersionId: 9 });
     expect(resolveGetResourceFileRequest({ requestId: 'r', modelVersionId: 9, fileId: 4 })).toEqual(
       { requestId: 'r', modelVersionId: 9, fileId: 4 }
     );
@@ -173,5 +178,42 @@ describe('processResourceEntries', () => {
     await expect(
       processResourceEntries([entry('a.txt', '{}'), entry('b.json', 'nope')], caps())
     ).rejects.toMatchObject({ resourceFileError: 'parse-failed' });
+  });
+});
+
+describe('withDeadline', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('rejects parse-failed at the deadline, aborts the work, and drops its late result', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    let finish: (v: string) => void = () => undefined;
+    const p = withDeadline((s) => {
+      signal = s;
+      return new Promise<string>((r) => (finish = r));
+    }, 1000);
+    const outcome = p.then(
+      (v) => ({ v }),
+      (e) => ({ e })
+    );
+    await vi.advanceTimersByTimeAsync(999);
+    expect(signal!.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal!.aborted).toBe(true);
+    finish('late');
+    expect(await outcome).toMatchObject({ e: { resourceFileError: 'parse-failed' } });
+  });
+
+  it('passes through work that finishes first', async () => {
+    vi.useFakeTimers();
+    await expect(withDeadline(async () => 'ok', 1000)).resolves.toBe('ok');
+    await expect(
+      withDeadline(async () => {
+        throw resourceFileError('too-large');
+      }, 1000)
+    ).rejects.toMatchObject({ resourceFileError: 'too-large' });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
