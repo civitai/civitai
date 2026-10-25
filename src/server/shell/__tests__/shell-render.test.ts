@@ -279,6 +279,15 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
     ['an X-Forwarded-Host', { ...BASE, headers: { 'x-forwarded-host': 'elsewhere.example' } }],
     ['another image id', { url: '/images/987654321' }],
     ['another image id with a query', { url: '/images/987654321?postId=5&collectionId=9' }],
+    // The canonical path the edge rewrites every eligible request to: the SAME object.
+    [
+      'the canonical path, for this image',
+      { url: '/images/shell', headers: { 'x-civ-shell-orig': '/images/1' } },
+    ],
+    [
+      'the canonical path, for another image with a query',
+      { url: '/images/shell', headers: { 'x-civ-shell-orig': '/images/987654321?postId=5' } },
+    ],
   ];
 
   let base: Awaited<ReturnType<typeof render>>;
@@ -410,5 +419,30 @@ describe('a shell render that throws', () => {
     expect(headers['cache-control']).toBe(
       'private, no-cache, no-store, max-age=0, must-revalidate'
     );
+  });
+});
+
+describe('a declined request on the canonical path', () => {
+  it('is a 307 back to its original URL with civ-shell=0, rendered by nothing', async () => {
+    const req = makeReq({
+      url: '/images/shell',
+      headers: { 'x-civ-shell-orig': '/images/987654321?postId=5' },
+      cookies: '__Secure-civ-token=token-user-a',
+    });
+    const res = makeRes();
+    const body = await renderPage(req, res, '/images/shell');
+    // What Next's pages handler turns into the 307 and its Location.
+    expect(JSON.parse(body).pageProps).toEqual({
+      __N_REDIRECT: '/images/987654321?postId=5&civ-shell=0',
+      __N_REDIRECT_STATUS: 307,
+    });
+    const headers = res.getHeaders();
+    for (const name of ['cloudflare-cdn-cache-control', 'cache-tag', 'x-civ-render']) {
+      expect(headers, name).not.toHaveProperty(name);
+    }
+    expect(headers['cache-control']).toBe('private, no-store');
+    expect(headers).not.toHaveProperty('set-cookie');
+    expect(h.bootstrap).not.toHaveBeenCalled();
+    expect(h.authSession).not.toHaveBeenCalled();
   });
 });

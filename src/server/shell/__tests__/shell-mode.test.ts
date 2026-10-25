@@ -22,7 +22,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   }),
 }));
 
-import { resolveShellMode, shellRefusal } from '~/server/shell/shell-mode';
+import { isCanonicalShellRequest, resolveShellMode, shellRefusal } from '~/server/shell/shell-mode';
 
 const ROUTE = '/images/[imageId]';
 
@@ -102,5 +102,70 @@ describe('shellRefusal', () => {
   it('a civ-shell value other than 0 is not the bypass', async () => {
     flipt.on = new Set(['shell-master']);
     expect(await refusal(eligible({ url: '/images/123?civ-shell=1' }))).toBeNull();
+  });
+});
+
+/**
+ * The canonical path (`~/server/shell/shell-canonical`): the edge rewrites every eligible
+ * `/images/<id>` there and passes the original URL in a header. The same refusals hold, judged on
+ * the ORIGINAL URL as well as the canonical one, and a missing or invalid original refuses.
+ */
+describe('shellRefusal on the canonical path', () => {
+  const canonical = (orig: string | undefined, headers: Record<string, string> = {}) =>
+    eligible(
+      { url: '/images/shell' },
+      { ...(orig === undefined ? {} : { 'x-civ-shell-orig': orig }), ...headers }
+    );
+
+  it('serves the shell for a valid original URL', async () => {
+    flipt.on = new Set(['shell-master']);
+    expect(await refusal(canonical('/images/123?postId=5'))).toBeNull();
+    expect(await resolveShellMode(canonical('/images/123') as never, ROUTE)).toBe('images');
+  });
+
+  it.each<[string, Req]>([
+    ['original-url', canonical(undefined)],
+    ['original-url', canonical('')],
+    ['original-url', canonical('https://evil.example/images/1')],
+    ['original-url', canonical('//evil.example/images/1')],
+    ['original-url', canonical('/models/1')],
+    ['original-url', canonical('/images/shell')],
+    ['method', { ...canonical('/images/123'), method: 'HEAD' }],
+    ['data-request', canonical('/images/123', { 'x-nextjs-data': '1' })],
+    // Judged on the original URL: the canonical URL itself carries no query.
+    ['bypass', canonical('/images/123?postId=5&civ-shell=0')],
+    ['query-token', canonical('/images/123?token=abc')],
+    ['verified-bot', canonical('/images/123', { 'x-civitai-verified-bot': 'googlebot' })],
+    ['authorization', canonical('/images/123', { authorization: 'Bearer key' })],
+    ['no-session-cookie', canonical('/images/123', { cookie: 'civ-shell-images=1' })],
+    ['no-route-cookie', canonical('/images/123', { cookie: '__Secure-civ-token=a.b.c' })],
+    ['region', canonical('/images/123', { 'cf-ipcountry': 'GB' })],
+  ])('refuses with %s', async (reason, req) => {
+    flipt.on = new Set(['shell-master']);
+    expect(await refusal(req)).toBe(reason);
+    expect(await resolveShellMode(req as never, ROUTE)).toBeNull();
+  });
+
+  it('refuses with kill-switch while shell-master is off', async () => {
+    flipt.on = new Set(['shell-images']);
+    expect(await refusal(canonical('/images/123'))).toBe('kill-switch');
+  });
+
+  it('a real image URL ignores the header entirely', async () => {
+    flipt.on = new Set(['shell-master']);
+    const req = eligible({}, { 'x-civ-shell-orig': '/images/1?civ-shell=0&token=abc' });
+    expect(await refusal(req)).toBeNull();
+  });
+});
+
+describe('isCanonicalShellRequest', () => {
+  it.each<[string, string, boolean]>([
+    ['/images/shell', ROUTE, true],
+    ['/images/shell?postId=5', ROUTE, true],
+    ['/images/123', ROUTE, false],
+    // `/_error` re-runs `_app` on the same request: it must render, not wait for a bounce.
+    ['/images/shell', '/_error', false],
+  ])('%s as %s → %s', (url, pathname, expected) => {
+    expect(isCanonicalShellRequest(eligible({ url }) as never, pathname)).toBe(expected);
   });
 });

@@ -59,6 +59,16 @@ export function applyShellEdgeHeaders(res: ServerResponse, route: ShellRouteName
   res.setHeader(SHELL_RENDER_HEADER, 'shell');
 }
 
+/**
+ * A bounce off a shell route's canonical path (`~/server/shell/shell-canonical`): private, no
+ * cookie, and none of the edge-cache headers — the edge must never store it, and a cookie on it
+ * would be applied for a URL the browser never asked for.
+ */
+export function applyShellBounceHeaders(res: ServerResponse) {
+  applyShellPrivateHeaders(res);
+  for (const name of SHELL_EDGE_HEADERS) res.removeHeader(name);
+}
+
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
 
 function appendSetCookie(res: ServerResponse, cookie: string) {
