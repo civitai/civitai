@@ -70,13 +70,15 @@ export enum FLIPT_FEATURE_FLAGS {
   KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
   // Reads two hot nested Prisma reads (packages/civitai-db-queries/src/hot-reads.db.ts) through
   // Kysely-over-pg instead of the Prisma query engine, which fans each out into one query per
-  // relation: the model page's `modelWithDetailsSelect` read (`getModelWithDetails`) and the creator
-  // card (`fetchUserCreator`). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above: boolean
-  // only, evaluated with no entityId.
+  // relation: the model page's `modelWithDetailsSelect` read (`getModel`) and the creator card
+  // (`fetchUserCreator`); plus the image tags behind `imageTagsCache` and an image's comment-thread
+  // lookup (commentsv2.service). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above:
+  // boolean only, evaluated with no entityId.
   //
   // 🔴 Each read keeps its database: the model read takes `getKyselyWithoutLag('model', id)`, the
-  // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the creator card reads
-  // `kyselyRead`, as it read `dbRead`.
+  // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the image tags read the
+  // primary on a write-triggered refresh and the replica otherwise, as before; the creator card and
+  // the thread lookup read `kyselyRead`, as they read `dbRead`.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
   // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and

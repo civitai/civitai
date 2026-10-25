@@ -16,10 +16,12 @@ import {
   type UserCreatorRead,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
+import { getImageThread } from '@civitai/db-queries/hot-reads';
+import { readImageTagsViaKysely, readImageTagsViaPrisma } from '~/server/redis/image-tags.reads';
 
 /**
  * Parity gate for the reads behind `kysely-hot-reads-2`: the model page's `modelWithDetailsSelect`
- * read and the creator card. Both paths run against the same rows in the same database and must
+ * read, the creator card, the image tags behind `imageTagsCache` and an image's comment thread. Both paths run against the same rows in the same database and must
  * return the same value, `toStrictEqual`: timestamps as UTC Dates, `licensingFee` as a
  * `Prisma.Decimal`, enums as strings, JSON decoded, a missing to-one relation as `null`, an empty
  * to-many as `[]`.
@@ -110,6 +112,11 @@ const COSMETIC_A = 7101;
 const COSMETIC_B = 7102;
 const COSMETIC_UNEQUIPPED = 7103;
 const COSMETIC_ON_ENTITY = 7104;
+const IMAGE_TWO = 2102;
+const IMAGE_UNTAGGED = 2103;
+const THREAD_LOCKED = 9301;
+const THREAD_OPEN = 9302;
+const THREAD_OF_MODEL = 9303;
 
 describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl && withSchema(parityUrl) });
@@ -261,6 +268,23 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (9202, ${V_TRAINED}, ${V_FULL}, NULL),
         (9203, ${V_FULL}, ${V_OTHER_MODEL}, '{}')
     `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('ImageTag')} ("imageId", "tagId", "tagName", "tagType", "tagNsfwLevel",
+        automated, score, "upVotes", "downVotes", "needsReview", concrete, "lastUpvote", source)
+        VALUES
+        (${PICTURE}, 9813, 'low', 'Label', 1, true, 5, 6, 1, false, true, NULL, 'WD14'),
+        (${PICTURE}, 9812, 'tie-b', 'UserGenerated', 4, false, 9, 10, 2, true, false,
+          '2026-05-06 07:08:09.101', 'User'),
+        (${PICTURE}, 9811, 'tie-a', 'Moderation', 16, false, 9, 11, 3, false, false,
+          '2026-05-07 07:08:09.202', 'Hive'),
+        (${IMAGE_TWO}, 9814, 'only', 'System', 2, true, 7, 0, 0, false, true, NULL, 'Computed')
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO ${t('Thread')} (id, locked, "imageId", "modelId") VALUES
+        (${THREAD_LOCKED}, true, ${PICTURE}, NULL),
+        (${THREAD_OPEN}, false, ${IMAGE_TWO}, NULL),
+        (${THREAD_OF_MODEL}, false, NULL, ${MODEL})
+    `);
   });
 
   afterAll(async () => {
@@ -339,6 +363,43 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       const bare = await readUserCreatorViaPrisma(prisma, { id: BARE });
       expect(bare).toMatchObject({ modelCount: 0 });
       expect(bare?.user).toMatchObject({ stats: null, rank: null, profilePicture: null });
+    });
+  });
+
+  describe('the image tags (imageTagsCache)', () => {
+    it.each([
+      ['several images, one untagged', [PICTURE, IMAGE_TWO, IMAGE_UNTAGGED]],
+      ['an untagged image', [IMAGE_UNTAGGED]],
+      ['no images', []],
+    ])('%s, in the same order', async (_, ids) => {
+      const viaPrisma = await readImageTagsViaPrisma(prisma, ids);
+      const viaKysely = await readImageTagsViaKysely(kysely, ids);
+      expect(viaKysely).toStrictEqual(viaPrisma);
+    });
+
+    it('control: the order is score desc, then tagId asc, and the rows carry Dates', async () => {
+      const rows = await readImageTagsViaPrisma(prisma, [PICTURE, IMAGE_TWO]);
+      expect(rows.map((row) => row.tagId)).toEqual([9811, 9812, 9814, 9813]);
+      expect(rows[0].lastUpvote).toBeInstanceOf(Date);
+    });
+  });
+
+  describe("an image's comment thread", () => {
+    it.each([
+      ['a locked thread', PICTURE],
+      ['an open thread', IMAGE_TWO],
+      ['no thread', IMAGE_UNTAGGED],
+    ])('%s', async (_, imageId) => {
+      const viaPrisma = await prisma.thread.findUnique({
+        where: { imageId },
+        select: { id: true, locked: true },
+      });
+      const viaKysely = (await getImageThread(kysely, imageId)) ?? null;
+      expect(viaKysely).toStrictEqual(viaPrisma);
+    });
+
+    it('control: the fixture threads are found', async () => {
+      expect(await getImageThread(kysely, PICTURE)).toEqual({ id: THREAD_LOCKED, locked: true });
     });
   });
 });

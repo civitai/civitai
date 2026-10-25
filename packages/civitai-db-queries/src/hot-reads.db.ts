@@ -4,8 +4,10 @@ import { jsonArrayFrom, jsonObjectFrom } from './infra/helpers';
 
 // Kysely ports of two hot Prisma reads, each a nested `select` that Prisma fans out into one query
 // per relation:
-//   - the model page's `modelWithDetailsSelect` read (`getModelWithDetails`, model.service.ts),
-//   - the creator card (`readUserCreatorRow`, user-creator.reads.ts).
+//   - the model page's `modelWithDetailsSelect` read (`getModel`, model.service.ts),
+//   - the creator card (`readUserCreatorViaKysely`, user-creator.reads.ts),
+// plus two hot single-table reads: the image tags behind `imageTagsCache` and an image's comment
+// thread.
 // They are served behind the default-off server Flipt flag `kysely-hot-reads-2`; off, the Prisma
 // reads run unchanged. The app-side wrappers map these rows to the exact Prisma payload, and
 // <civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts compares the two
@@ -306,4 +308,44 @@ export function getUserCreatorRow(
   if (input.id !== undefined) query = query.where('User.id', '=', input.id);
   if (input.username !== undefined) query = query.where('User.username', '=', input.username);
   return query.limit(1).executeTakeFirst();
+}
+
+/**
+ * The image tags behind `imageTagsCache`: `imageTagCompositeSelect` plus `imageId`, for a batch of
+ * images, ordered `score desc, tagId asc` as the Prisma read was (the cache groups them by image in
+ * row order). Empty `imageIds` short-circuits: Kysely would compile `IN ()`, Prisma returned `[]`.
+ */
+export async function listImageTagsForImages(db: Kysely<DB>, imageIds: number[]) {
+  if (!imageIds.length) return [];
+  return db
+    .selectFrom('ImageTag')
+    .select([
+      'ImageTag.imageId',
+      'ImageTag.tagId',
+      'ImageTag.tagName',
+      'ImageTag.tagType',
+      'ImageTag.score',
+      'ImageTag.upVotes',
+      'ImageTag.downVotes',
+      'ImageTag.tagNsfwLevel',
+      'ImageTag.automated',
+      'ImageTag.needsReview',
+      'ImageTag.concrete',
+      'ImageTag.lastUpvote',
+      'ImageTag.source',
+    ])
+    .where('ImageTag.imageId', 'in', imageIds)
+    .orderBy('ImageTag.score', 'desc')
+    .orderBy('ImageTag.tagId', 'asc')
+    .execute();
+}
+
+/** An image's comment thread (`Thread.imageId` is unique): its id, and `locked`. `undefined` if none. */
+export function getImageThread(db: Kysely<DB>, imageId: number) {
+  return db
+    .selectFrom('Thread')
+    .select(['Thread.id', 'Thread.locked'])
+    .where('Thread.imageId', '=', imageId)
+    .limit(1)
+    .executeTakeFirst();
 }

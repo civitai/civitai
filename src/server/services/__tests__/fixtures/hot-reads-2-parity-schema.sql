@@ -1,9 +1,9 @@
 -- Minimal schema for hot-reads-2.kysely-parity.test.ts.
 --
--- Only the tables the model-page and creator-card reads touch, and only the columns those reads
--- select or filter on. Types, nullability and primary keys follow schema.full.prisma. Everything
--- lives in its own schema, hot_reads_2_parity, because other parity suites share the throwaway
--- database. CITEXT columns ("User"."username", "Model"."name", "ModelFileHash"."hash") are TEXT
+-- Only the tables the model-page, creator-card, image-tag and image-thread reads touch, and only
+-- the columns those reads select or filter on. Types, nullability and primary keys follow
+-- schema.full.prisma. Everything lives in its own schema, hot_reads_2_parity, because other parity
+-- suites share the throwaway database. CITEXT columns ("User"."username", "Model"."name", "ModelFileHash"."hash") are TEXT
 -- here, so the suite needs no extension. Both paths read them back as plain strings.
 --
 -- No semicolons in comments: the suite splits this file on them.
@@ -30,6 +30,8 @@ CREATE TYPE "hot_reads_2_parity"."CosmeticType" AS ENUM ('Badge', 'NamePlate', '
 CREATE TYPE "hot_reads_2_parity"."CosmeticSource" AS ENUM ('Trophy', 'Purchase', 'Event', 'Membership', 'Claim');
 CREATE TYPE "hot_reads_2_parity"."ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
 CREATE TYPE "hot_reads_2_parity"."MediaType" AS ENUM ('image', 'video', 'audio');
+CREATE TYPE "hot_reads_2_parity"."TagType" AS ENUM ('UserGenerated', 'Label', 'Moderation', 'System');
+CREATE TYPE "hot_reads_2_parity"."TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'Hive', 'MinorDetection', 'HiveDemographics', 'Clavata', 'SpineRating', 'AiRecognition', 'AnimeRecognition');
 
 CREATE TABLE "hot_reads_2_parity"."User" (
   "id"                      INTEGER      NOT NULL PRIMARY KEY,
@@ -245,4 +247,28 @@ CREATE TABLE "hot_reads_2_parity"."RecommendedResource" (
   "resourceId" INTEGER NOT NULL,
   "sourceId"   INTEGER,
   "settings"   JSONB
+);
+
+CREATE TABLE "hot_reads_2_parity"."ImageTag" (
+  "imageId"      INTEGER                           NOT NULL,
+  "tagId"        INTEGER                           NOT NULL,
+  "tagName"      TEXT                              NOT NULL,
+  "tagType"      "hot_reads_2_parity"."TagType"    NOT NULL,
+  "tagNsfwLevel" INTEGER                           NOT NULL,
+  "automated"    BOOLEAN                           NOT NULL,
+  "score"        INTEGER                           NOT NULL,
+  "upVotes"      INTEGER                           NOT NULL,
+  "downVotes"    INTEGER                           NOT NULL,
+  "needsReview"  BOOLEAN                           NOT NULL,
+  "concrete"     BOOLEAN                           NOT NULL,
+  "lastUpvote"   TIMESTAMP(3),
+  "source"       "hot_reads_2_parity"."TagSource"  NOT NULL,
+  PRIMARY KEY ("imageId", "tagId")
+);
+
+CREATE TABLE "hot_reads_2_parity"."Thread" (
+  "id"      INTEGER NOT NULL PRIMARY KEY,
+  "locked"  BOOLEAN NOT NULL DEFAULT false,
+  "imageId" INTEGER UNIQUE,
+  "modelId" INTEGER UNIQUE
 );
