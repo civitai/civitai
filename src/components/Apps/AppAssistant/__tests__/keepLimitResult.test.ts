@@ -153,6 +153,10 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
         isError: false,
       })
     ).toBe(false);
+    // Not reported as failed: not the limit, whatever its output says.
+    expect(
+      isKeepLimitResult({ name: 'create_app', input: {}, output: { error: words }, isError: false })
+    ).toBe(false);
     // The control: the same words as create_app's error are the limit.
     expect(
       isKeepLimitResult({ name: 'create_app', input: {}, output: { error: words }, isError: true })
