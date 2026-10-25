@@ -149,7 +149,7 @@
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/orchestration-client": "0.2.0-beta.125",
-    "@civitai/sdk": "^0.11.0",
+    "@civitai/sdk": "^0.21.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^1.23.1",
