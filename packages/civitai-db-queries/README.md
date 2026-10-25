@@ -37,6 +37,15 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   (`KYSELY_PARITY_DATABASE_URL`) and does **not** run in CI. The free-slot and allowance counts take
   the same where-object builders as their Prisma originals (`countPlacements`).
 
+  `hot-reads.db.ts` holds two nested reads that Prisma fans out into one query per relation: the model
+  page's `modelWithDetailsSelect` read (three statements in one round trip) and the creator card (one
+  statement). They are served behind the default-off server Flipt flag `kysely-hot-reads-2`; off, the
+  original Prisma reads run. Each keeps its database (the model read follows `getKyselyWithoutLag`, the
+  creator card reads `kyselyRead`). Nested relations use `jsonArrayFrom`/`jsonObjectFrom` only where
+  every nested column survives JSON unchanged. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts`, which **does** run in CI
+  (the `unit` job wires it to its Postgres service).
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
