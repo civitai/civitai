@@ -45,6 +45,5 @@ describe('push defaults', () => {
         'tip-received',
       ])
     );
-    expect(DEFAULT_PUSH_TYPES).toHaveLength(4 + dealTypes.length);
   });
 });

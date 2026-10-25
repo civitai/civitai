@@ -119,6 +119,7 @@ tRPC routes in `src/server/routers/notification.router.ts` — all scope-gated:
 - `updateUserSettings` — notification preferences
 - `getPushSettings` / `updatePushSettings` — per-type web-push rows
 - `subscribePush` / `unsubscribePush` — browser push subscription lifecycle
+- `getEmailSettings` / `updateEmailSettings` — per-type email opt-outs
 
 **Counts do not come from this router.** The unread count is `trpc.user.checkNotifications`.
 
@@ -147,6 +148,24 @@ column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out tabl
   and the dispatcher no-ops.
 - Stale subscriptions (no successful delivery in 180 days) are reaped weekly by
   `push-subscription-cleanup`.
+
+## Email
+
+Only types whose processor sets `defaultEmail` send email (today: the nine `service-deal-*`
+Creator Services notifications), and for those email is ON unless the user opts out.
+`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. The settings control
+shows an Email checkbox for those types only, unavailable while the type itself is Off.
+
+- The fan-out worker (`apps/notifications/src/worker/email.ts`) runs beside push, on the users a
+  notification was newly delivered to, so a repeated key sends nothing. It gates on
+  `emailNotificationTypes` in `@civitai/notifications`, which
+  `notification-email-types.test.ts` pins to the processors with `defaultEmail`. Change both together.
+- The monolith's `POST /api/internal/notifications/send-email` (`notification-email.service.ts`)
+  renders, filters recipients, caps (20 per user per day, 500 per type per hour, nothing sent if
+  Redis is down) and sends with a one-click `List-Unsubscribe` link
+  (`/api/notifications/email-unsubscribe`; GET only shows a confirm button).
+- **Off until switched on:** the `KeyValue` row `notification-email-enabled` must hold JSON `true`.
+  Delete it (or set `false`) to stop all notification email within a minute, no deploy needed.
 
 ## Debugging
 

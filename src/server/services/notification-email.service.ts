@@ -33,11 +33,17 @@ export async function isNotificationEmailEnabled() {
 }
 export const clearNotificationEmailEnabledCache = () => enabledMemo.clear();
 
-const signature = (userId: number, type: string) =>
-  createHmac('sha256', env.NEXTAUTH_SECRET)
+// With an empty or short key anyone could compute the links, so no key means no links: every send
+// fails closed and every unsubscribe link is refused.
+const MIN_KEY_LENGTH = 8;
+const signature = (userId: number, type: string) => {
+  if ((env.NEXTAUTH_SECRET?.length ?? 0) < MIN_KEY_LENGTH)
+    throw new Error('No server secret to sign unsubscribe links with');
+  return createHmac('sha256', env.NEXTAUTH_SECRET)
     .update(`notification-email-unsubscribe:${userId}:${type}`)
     .digest('hex')
     .slice(0, 32);
+};
 
 export function getEmailUnsubscribeUrl(userId: number, type: string) {
   const params = new URLSearchParams({ u: String(userId), t: type, s: signature(userId, type) });
@@ -45,9 +51,13 @@ export function getEmailUnsubscribeUrl(userId: number, type: string) {
 }
 
 export function verifyEmailUnsubscribe(userId: number, type: string, sig: string) {
-  const expected = Buffer.from(signature(userId, type));
-  const given = Buffer.from(sig);
-  return expected.length === given.length && timingSafeEqual(expected, given);
+  try {
+    const expected = Buffer.from(signature(userId, type));
+    const given = Buffer.from(sig);
+    return expected.length === given.length && timingSafeEqual(expected, given);
+  } catch {
+    return false;
+  }
 }
 
 export async function optOutOfNotificationEmail(userId: number, type: string) {
@@ -58,10 +68,14 @@ export async function optOutOfNotificationEmail(userId: number, type: string) {
     ON CONFLICT DO NOTHING`;
 }
 
-/** INCR with a first-hit expiry. Throws on a Redis error: callers fail closed. */
+/**
+ * INCR with a first-hit expiry. Throws on a Redis error: callers fail closed. Re-arms a key that
+ * lost its expiry, which would otherwise hold a user at the cap for good.
+ */
 async function bump(key: `${string}:${string}`, ttlSeconds: number) {
   const count = await sysRedis.incrBy(key as never, 1);
-  if (count === 1) await sysRedis.expire(key as never, ttlSeconds);
+  if (count === 1 || (await sysRedis.ttl(key as never)) < 0)
+    await sysRedis.expire(key as never, ttlSeconds);
   return count;
 }
 
@@ -126,7 +140,8 @@ export async function sendNotificationEmails({
   if (!prepared?.message) return { ...outcome, skipped: 'unrenderable' };
   const typeName = notificationProcessors[type]?.displayName ?? 'Civitai';
 
-  const recipients = await dbRead.$queryRaw<Recipient[]>`
+  // Primary, not replica: an opt-out written a moment ago must already hold.
+  const recipients = await dbWrite.$queryRaw<Recipient[]>`
     SELECT u.id, u.email
     FROM "User" u
     WHERE u.id = ANY(${userIds}::int[])
@@ -158,7 +173,9 @@ export async function sendNotificationEmails({
         type: 'error',
         message: 'notification email could not be sent',
         notificationType: type,
-        error: (error as Error)?.message,
+        // Never the error message: a rejected send names the recipient's address.
+        userId: recipient.id,
+        error: (error as Error)?.name,
       }).catch(() => null);
     }
   }
