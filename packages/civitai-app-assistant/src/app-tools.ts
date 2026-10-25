@@ -12,6 +12,17 @@ export const NO_APP_REFUSAL =
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
   'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
+/**
+ * Every wording of KEEP_LIMIT a released server runner sends. The runner bundles this package when it
+ * is released, and the page ships on its own schedule, so the page reads what a deployed runner says,
+ * not only the wording it was built with. When KEEP_LIMIT changes, add its old wording here; remove
+ * one only once no deployed runner is at or below the last release that sends it.
+ */
+const KEEP_LIMIT_WORDINGS: ReadonlySet<string> = new Set([
+  KEEP_LIMIT,
+  // assistant-runner v0.0.2 to v0.0.9.
+  'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
+]);
 // openApp pauses the others and retries once, so this is that retry refused.
 export const RUNNING_LIMIT =
   'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
@@ -29,8 +40,8 @@ export function appOpenFailure(error: unknown): string {
 /**
  * Whether a finished tool call, as the page is told of it (the browser's `tool-result`, or the server
  * runner's `tool-reported`), is `create_app` refused at the cap on apps kept: thrown by the tool, or
- * refused by the gate for the rest of that reply. Never the running-app cap, which `openApp` handles by
- * pausing. The one place the page tells it.
+ * refused by the gate for the rest of that reply, in any released runner's wording (`KEEP_LIMIT_WORDINGS`).
+ * Never the running-app cap, which `openApp` handles by pausing. The one place the page tells it.
  */
 export function isKeepLimitResult(result: {
   name: string;
@@ -39,11 +50,9 @@ export function isKeepLimitResult(result: {
 }): boolean {
   if (result.name !== CREATE_APP || !result.isError) return false;
   const output = result.output;
-  return (
-    output !== null &&
-    typeof output === 'object' &&
-    (output as { error?: unknown }).error === KEEP_LIMIT
-  );
+  if (output === null || typeof output !== 'object') return false;
+  const error = (output as { error?: unknown }).error;
+  return typeof error === 'string' && KEEP_LIMIT_WORDINGS.has(error);
 }
 
 export interface AppToolsOptions {
