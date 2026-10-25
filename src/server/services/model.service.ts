@@ -45,12 +45,13 @@ import {
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   isTransientMeiliError,
@@ -113,7 +114,11 @@ import {
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import {
+  associatedResourceSelect,
+  modelWithDetailsSelect,
+} from '~/server/selectors/model.selector';
+import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
@@ -300,6 +305,20 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
+  // The model page's read (`getModelHandler`, the only caller passing this select). With
+  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
+  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
+  if (
+    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
+  ) {
+    const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
+    return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
+  }
+  return findModel(id, select);
+};
+
+async function findModel<TSelect extends Prisma.ModelSelect>(id: number, select: TSelect) {
   const db = await getDbWithoutLag('model', id);
   const result = await db.model.findFirst({
     where: {
@@ -309,7 +328,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   });
 
   return result;
-};
+}
 
 type ModelRaw = {
   id: number;

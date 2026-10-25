@@ -56,6 +56,7 @@ const packageJson = JSON.parse(readFileSync(resolve(PACKAGE_DIR, 'package.json')
 // here, and again in the reachability test at the bottom, which reads the map off disk.
 const PACKAGE_EXPORTS = {
   '.': './src/index.ts',
+  './hot-reads': './src/hot-reads.db.ts',
   './image': './src/image.db.ts',
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',
