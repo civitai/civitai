@@ -58,8 +58,8 @@ const REQUIRED_LOADER = 'VipsForeignLoadSvg';
 
 // Relative to the installed `next` package root. Order is reporting order only.
 const COPIES = [
-  { label: 'cjs', path: 'dist/server/image-optimizer.js' },
-  { label: 'esm', path: 'dist/esm/server/image-optimizer.js' },
+  { label: 'cjs', path: 'dist/server/image-optimizer/transform.js' },
+  { label: 'esm', path: 'dist/esm/server/image-optimizer/transform.js' },
 ];
 
 // The `sharp.unblock({ operation: [...] })` call in `getSharp()`. If Next ever restructures
@@ -117,7 +117,7 @@ function formatReport(report) {
       lines.push(`   FAIL  ${label}  ${shown} has no sharp.unblock({ operation: [...] }) call`);
     else lines.push(`   FAIL  ${label}  ${shown} does NOT unblock ${REQUIRED_LOADER}`);
   }
-  lines.push(`copies of image-optimizer.js read: ${report.checked}`);
+  lines.push(`copies of image-optimizer/transform.js read: ${report.checked}`);
   if (report.error) lines.push(`FAIL: ${report.error}`);
   return lines;
 }
@@ -131,12 +131,12 @@ const FAILURE_EXPLANATION =
   'stale. Re-run `pnpm install` and re-check; if the installed Next genuinely lacks the entry,\n' +
   'pin Next back to a release that unblocks the loader, or re-introduce a pnpm patch adding\n' +
   `'${REQUIRED_LOADER}' to the sharp.unblock({ operation: [...] }) list in BOTH\n` +
-  'dist/server/image-optimizer.js and dist/esm/server/image-optimizer.js. This reads\n' +
+  'dist/server/image-optimizer/transform.js and its dist/esm copy. This reads\n' +
   'node_modules, not patches/, so it judges the artifact you actually installed however the\n' +
   'entry got there. See src/tests/api/og.image-optimizer-sharp.test.ts for the outage.';
 
 const NO_COPIES_EXPLANATION =
-  'FAIL: found no copy of next/dist/**/server/image-optimizer.js to read, so this check ' +
+  'FAIL: found no copy of next/dist/**/server/image-optimizer/transform.js to read, so this check ' +
   'proved nothing. Either dependencies are not installed or Next moved the module.';
 
 // Nothing imports this — the unit test spawns it as a subprocess so that it exercises the

@@ -291,7 +291,7 @@
     "meilisearch": "0.33.0",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
-    "next": "^16.3.1",
+    "next": "16.4.3",
     "nodemailer": "^6.8.0",
     "obscenity": "^0.4.5",
     "openai": "^4.73.0",
@@ -469,7 +469,7 @@
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
       "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch",
-      "next@16.3.1": "patches/next@16.3.1.patch"
+      "next@16.4.3": "patches/next@16.4.3.patch"
     }
   }
 }
