@@ -15,8 +15,8 @@ export const KEEP_LIMIT =
 /**
  * Every wording of KEEP_LIMIT a released server runner sends. The runner bundles this package when it
  * is released, and the page ships on its own schedule, so the page reads what a deployed runner says,
- * not only the wording it was built with. When KEEP_LIMIT changes, add its old wording here; never
- * remove one while a runner that sends it may still be deployed.
+ * not only the wording it was built with. When KEEP_LIMIT changes, add its old wording here; remove
+ * one only once no deployed runner is at or below the last release that sends it.
  */
 const KEEP_LIMIT_WORDINGS: ReadonlySet<string> = new Set([
   KEEP_LIMIT,
