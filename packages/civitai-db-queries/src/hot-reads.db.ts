@@ -46,6 +46,7 @@ export function getModelWithDetailsRow(db: Kysely<DB>, modelId: number) {
       'Model.poi',
       'Model.minor',
       'Model.sfwOnly',
+      'Model.isOfficial',
       'Model.nsfwLevel',
       'Model.nsfw',
       'Model.type',
@@ -292,6 +293,7 @@ export function getUserCreatorRow(
           ])
           .whereRef('UserCosmetic.userId', '=', 'User.id')
           .where('UserCosmetic.equippedAt', 'is not', null)
+          .where('UserCosmetic.equippedToId', 'is', null)
       ).as('cosmetics'),
       eb
         .selectFrom('Model')
@@ -334,7 +336,7 @@ export async function listImageTagsForImages(db: Kysely<DB>, imageIds: number[])
     ])
     .where('ImageTag.imageId', 'in', imageIds)
     .orderBy('ImageTag.score', 'desc')
-    .orderBy('ImageTag.tagId', 'desc')
+    .orderBy('ImageTag.tagId', 'asc')
     .execute();
 }
 
