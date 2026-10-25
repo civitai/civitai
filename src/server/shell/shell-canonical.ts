@@ -77,6 +77,5 @@ export function shellBounceLocation(route: ShellCanonicalRouteName, req: Incomin
   const path = queryAt === -1 ? original : original.slice(0, queryAt);
   // Re-serialised, so the Location carries only percent-encoded query text.
   const params = new URLSearchParams(queryAt === -1 ? '' : original.slice(queryAt + 1));
-  params.set(SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE);
   return `${path}?${params.toString()}`;
 }
