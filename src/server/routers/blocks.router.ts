@@ -209,8 +209,10 @@ import type { ResolveCanGenerateVersion } from '~/server/services/generation/gen
 import {
   assertBlockWorkflowMintedForViewer,
   assertBlockWorkflowTaggedForApp,
+  assertBlockWorkflowTaggedForInstance,
 } from '~/server/services/blocks/block-workflow-access';
 import {
+  appBlockInstanceTag,
   appBlockTag,
   BLOCK_STEP_NAME,
   buildCustomComfyWorkflowInput,
@@ -4511,7 +4513,9 @@ export const blocksRouter = router({
    * it as interchangeable is the trap worth naming. They share the app-tag half; their viewer half
    * is the `block_workflows` read-model row, which binds per-APP-BLOCK rather than per-user. The
    * row is deliberately not used here — it is written best-effort and never written at all for
-   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there.
+   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there. (The
+   * one exception, `publishGenerationOutputs` for a dev token with no row, adds the per-INSTANCE
+   * tag to the id-prefix check precisely so it is not a widening; see that procedure.)
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
    * open until the workflow reaches a terminal status instead of answering with
@@ -5303,6 +5307,9 @@ export const blocksRouter = router({
    * (userId-from-token, appBlockId-from-token, workflowId) binding the
    * orchestrator lacks; (b) the orchestrator's own record must carry the
    * `app-block:<appId>` tag. Either fails → FORBIDDEN, nothing is published.
+   * A `dev: true` token never gets a row (submits skip it), so when the row is
+   * absent a dev token proves (a) instead from the viewer-minted workflow id plus
+   * the server-stamped per-instance tag — see the comment at guard (a).
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
@@ -5355,13 +5362,33 @@ export const blocksRouter = router({
         appBlockId: claims.appBlockId,
         workflowId: input.workflowId,
       });
-      if (!owned) {
+      // DEV-TOKEN STAND-IN for the row. Every submit site skips the `block_workflows` write for
+      // `claims.dev === true` (and the row's `app_block_id` FK cannot hold a synthetic
+      // `ephemeral-<slug>` id), so for a dev-tunnel / App Assistant preview app the row can never
+      // exist and guard (a) refused every publish — after the viewer had accepted the consent
+      // dialog. For a dev token with NO row, the same (viewer, app block, workflow) binding is
+      // proven from facts no block can write: the orchestrator-minted id names the viewer
+      // (checked HERE, before any upstream read), and the orchestrator record carries the
+      // server-stamped app tag (guard b) AND the calling token's per-instance tag (below).
+      // A non-dev token keeps the row as its only proof: its submit writes the row, so absence
+      // still means "not this app block's workflow". A dev token that HAS a row keeps the row path.
+      const devTokenProof = !owned && claims.dev === true;
+      if (!owned && !devTokenProof) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not in this app subqueue' });
+      }
+      if (devTokenProof) {
+        assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       }
       const token = await getOrchestratorToken(userId, ctx);
       // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
+      if (devTokenProof) {
+        assertBlockWorkflowTaggedForInstance({
+          tags: workflow.tags,
+          blockInstanceId: claims.blockInstanceId,
+        });
+      }
 
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
@@ -14641,7 +14668,9 @@ function buildWorkflowTags(
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
     `app-block:block:${claims.blockId}`,
-    `app-block:instance:${claims.blockInstanceId}`,
+    // Per-instance tag — the SAME helper the dev-token publish proof reads
+    // (`assertBlockWorkflowTaggedForInstance`).
+    appBlockInstanceTag(claims.blockInstanceId),
   ];
 }
 

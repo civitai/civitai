@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
-import { appBlockTag } from '~/server/services/blocks/workflow.service';
+import { appBlockInstanceTag, appBlockTag } from '~/server/services/blocks/workflow.service';
 import { workflowOwnerId } from '~/server/services/orchestrator/assert-workflow-owner';
 
 /**
@@ -23,6 +23,12 @@ import { workflowOwnerId } from '~/server/services/orchestrator/assert-workflow-
  * The row is deliberately not part of the pair this module offers: `upsertBlockWorkflowOnSubmit` is
  * fire-and-forget behind its own swallowing try/catch, and the submit sites skip it entirely for
  * `claims.dev === true`, so its absence does not mean what a gate would need it to mean.
+ *
+ * ONE PLACE COMBINES THEM: `publishGenerationOutputs`, for a `dev: true` token with no row only,
+ * replaces the row with viewer + app tag + INSTANCE tag (`assertBlockWorkflowTaggedForInstance`).
+ * The instance tag is what keeps that per-app-block rather than per-app; dropping it would be the
+ * widening described above. `cancelAppWorkflow` and `resolveOwnedWorkflowOutputs` still require the
+ * row, so they still refuse dev-token workflows.
  */
 
 /**
@@ -93,5 +99,26 @@ export function assertBlockWorkflowTaggedForApp(input: {
   throw new TRPCError({
     code: 'FORBIDDEN',
     message: 'workflow is not tagged for this app',
+  });
+}
+
+/**
+ * INSTANCE SCOPE. The orchestrator's own record must carry the calling token's per-instance tag,
+ * which `buildWorkflowTags` stamps from the VERIFIED `blockInstanceId` on every block submit.
+ *
+ * Used ONLY as part of the dev-token stand-in for the `block_workflows` row on
+ * `publishGenerationOutputs` (see that procedure). The row binds (viewer, app BLOCK); the app tag
+ * alone binds only (viewer, app), and an app can have several blocks. The instance id is minted
+ * for exactly one app block (a page token's is `page_<appBlockId>`), so this keeps the stand-in
+ * at least as narrow as the row it replaces. Exact tag equality, fail-closed on absent tags.
+ */
+export function assertBlockWorkflowTaggedForInstance(input: {
+  tags: readonly string[] | null | undefined;
+  blockInstanceId: string;
+}): void {
+  if ((input.tags ?? []).includes(appBlockInstanceTag(input.blockInstanceId))) return;
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'workflow is not tagged for this app instance',
   });
 }
