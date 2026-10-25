@@ -573,6 +573,7 @@ export interface User {
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
+  emailOptOuts?: UserEmailNotificationOptOut[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -2928,6 +2929,13 @@ export interface PushSubscription {
 }
 
 export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
+}
+
+export interface UserEmailNotificationOptOut {
   userId: number;
   user?: User;
   type: string;

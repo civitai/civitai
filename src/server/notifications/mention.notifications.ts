@@ -26,6 +26,7 @@ const liveCommentCreatedOrEditedSince = (lastSent: string) =>
 
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
+    defaultPush: true,
     displayName: 'New @mentions',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.Mention,

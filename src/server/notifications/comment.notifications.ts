@@ -252,6 +252,7 @@ export const commentNotifications = createNotificationProcessor({
     `,
   },
   'new-comment-response': {
+    defaultPush: true,
     displayName: 'New comment responses (Models)',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
@@ -335,6 +336,7 @@ export const commentNotifications = createNotificationProcessor({
     `,
   },
   'new-comment-reply': {
+    defaultPush: true,
     displayName: 'New comment replies',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
