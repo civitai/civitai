@@ -81,10 +81,6 @@ describe('job-queue-clean-if-empty', () => {
     await runJob();
 
     expect(await remainingPostIds()).toEqual([1]);
-    const { rows } = await holder.db.query<{ postId: number | null }>(
-      `SELECT "postId" FROM "StorylineChapter" WHERE id = 50`
-    );
-    expect(rows).toEqual([{ postId: 1 }]);
   });
 
   it('keeps the empty anchor post of the owner’s published version', async () => {

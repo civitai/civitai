@@ -223,16 +223,22 @@ describe('moveImagesToPost', () => {
     }
   );
 
-  it('leaves the resources alone when the target has the same version', async () => {
-    mockPosts(
-      postRow({ modelVersionId: 55 }),
-      postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: 55 })
-    );
+  it.each([
+    ['the same version as the target', 55, 55],
+    ['no version', null, 66],
+  ])(
+    'leaves the resources alone when the source has %s',
+    async (_, sourceVersionId, targetVersionId) => {
+      mockPosts(
+        postRow({ modelVersionId: sourceVersionId }),
+        postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: targetVersionId })
+      );
 
-    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+      await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
 
-    expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
-  });
+      expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing when the move is refused', async () => {
     mockPosts(postRow(), postRow({ id: 2, publishedAt: new Date('2026-05-01') }));
