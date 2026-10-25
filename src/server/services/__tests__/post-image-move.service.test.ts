@@ -173,7 +173,12 @@ describe('moveImagesToPost', () => {
     expect(result).toEqual({ postId: 9 });
     expect(db.post.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { userId: USER, availability: Availability.Private, unlisted: true },
+        data: {
+          userId: USER,
+          availability: Availability.Private,
+          unlisted: true,
+          modelVersionId: null,
+        },
       })
     );
     expect(db.post.update).toHaveBeenCalledWith({
@@ -186,6 +191,54 @@ describe('moveImagesToPost', () => {
     });
     expect(mocks.createImageResources).not.toHaveBeenCalled();
   });
+
+  it('gives a new post the source post’s model version and keeps the images’ resources', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }));
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    expect(db.post.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ modelVersionId: 55 }) })
+    );
+    expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another version', 66],
+    ['no version', null],
+  ])(
+    'drops only the source version’s undetected resource when the target has %s',
+    async (_, targetVersionId) => {
+      mockPosts(
+        postRow({ modelVersionId: 55 }),
+        postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: targetVersionId })
+      );
+
+      await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+
+      expect(db.imageResourceNew.deleteMany).toHaveBeenCalledTimes(1);
+      expect(db.imageResourceNew.deleteMany).toHaveBeenCalledWith({
+        where: { imageId: { in: [100, 101] }, modelVersionId: 55, detected: false },
+      });
+    }
+  );
+
+  it.each([
+    ['the same version as the target', 55, 55],
+    ['no version', null, 66],
+  ])(
+    'leaves the resources alone when the source has %s',
+    async (_, sourceVersionId, targetVersionId) => {
+      mockPosts(
+        postRow({ modelVersionId: sourceVersionId }),
+        postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: targetVersionId })
+      );
+
+      await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+
+      expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing when the move is refused', async () => {
     mockPosts(postRow(), postRow({ id: 2, publishedAt: new Date('2026-05-01') }));
