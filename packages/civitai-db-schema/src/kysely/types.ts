@@ -5825,6 +5825,11 @@ export type UserCreatorMilestone = {
   achievedAt: Generated<Timestamp>;
   seenAt: Timestamp | null;
 };
+export type UserEmailNotificationOptOut = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -6547,6 +6552,7 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserCreatorMilestone: UserCreatorMilestone;
+  UserEmailNotificationOptOut: UserEmailNotificationOptOut;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;

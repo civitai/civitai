@@ -4,6 +4,7 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 
 export const buzzNotifications = createNotificationProcessor({
   'tip-received': {
+    defaultPush: true,
     displayName: 'Tip Received',
     category: NotificationCategory.Buzz,
     prepareMessage: ({ details }) => {

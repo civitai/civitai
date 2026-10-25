@@ -107,3 +107,30 @@ export const useTogglePushSetting = () => {
     },
   });
 };
+
+/** The email-capable types this user gets email for (all of them unless opted out). */
+export const useEmailNotificationSettings = (enabled = true) => {
+  const { data: emailTypes = [], isLoading } = trpc.notification.getEmailSettings.useQuery(
+    undefined,
+    { enabled }
+  );
+  return { emailTypes, isLoading };
+};
+
+export const useToggleEmailSetting = () => {
+  const queryUtils = trpc.useUtils();
+
+  return trpc.notification.updateEmailSettings.useMutation({
+    async onMutate({ type, enabled }) {
+      await queryUtils.notification.getEmailSettings.cancel();
+      const prevEmailTypes = queryUtils.notification.getEmailSettings.getData() ?? [];
+      queryUtils.notification.getEmailSettings.setData(undefined, (old = []) =>
+        enabled ? [...new Set([...old, ...type])] : old.filter((t) => !type.includes(t))
+      );
+      return { prevEmailTypes };
+    },
+    onError(_error, _variables, context) {
+      queryUtils.notification.getEmailSettings.setData(undefined, context?.prevEmailTypes);
+    },
+  });
+};

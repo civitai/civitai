@@ -461,6 +461,7 @@ model User {
   notificationSettings UserNotificationSettings[]
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
+  emailOptOuts         UserEmailNotificationOptOut[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -4926,6 +4927,18 @@ model PushSubscription {
 // Row = push ON for this notification type; absence = no push. Single polarity for every type —
 // never add an `enabled` column (see the UserNotificationSettings polarity history).
 model UserPushSetting {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
+}
+
+// Row = email OFF for this notification type. Only types whose processor sets `defaultEmail` send
+// email at all, so absence means ON for those and is meaningless for every other type. Single
+// polarity, like UserPushSetting (the opposite one) — never add an `enabled` column.
+model UserEmailNotificationOptOut {
   userId    Int
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String

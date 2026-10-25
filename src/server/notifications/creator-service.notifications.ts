@@ -30,6 +30,8 @@ const dealNotification = (
 ): NotificationProcessor => ({
   displayName,
   category: NotificationCategory.System,
+  defaultPush: true,
+  defaultEmail: true,
   prepareMessage: ({ details }) => {
     if (!details?.dealId) return undefined;
     return {

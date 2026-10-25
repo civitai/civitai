@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { sendEmail } from '~/server/email/client';
+import {
+  clearNotificationEmailEnabledCache,
+  getEmailUnsubscribeUrl,
+  NOTIFICATION_EMAIL_ENABLED_KEY,
+  NOTIFICATION_EMAIL_USER_DAILY_CAP,
+  sendNotificationEmails,
+  verifyEmailUnsubscribe,
+} from '~/server/services/notification-email.service';
+import { toggleEmailSetting } from '~/server/services/notification.service';
+
+vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
+
+const DEAL = 'service-deal-requested';
+const deal = { type: DEAL, details: { dealId: 7, offeringTitle: 'Portrait' } };
+
+const counters = new Map<string, number>();
+let redisDown = false;
+
+beforeEach(() => {
+  vi.mocked(sendEmail).mockReset();
+  clearNotificationEmailEnabledCache();
+  counters.clear();
+  redisDown = false;
+  dbMock.dbRead.keyValue.findUnique.mockImplementation((async ({ where }: any) =>
+    where.key === NOTIFICATION_EMAIL_ENABLED_KEY
+      ? { key: where.key, value: true }
+      : null) as never);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 1, email: 'a@example.com' }] as never);
+  redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) => {
+    if (redisDown) throw new Error('redis down');
+    const next = (counters.get(key) ?? 0) + by;
+    counters.set(key, next);
+    return next;
+  }) as never);
+});
+
+describe('sendNotificationEmails', () => {
+  it('emails a deal notification with a one-click unsubscribe header', async () => {
+    const outcome = await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.to).toBe('a@example.com');
+    expect(mail.html).toContain('Portrait');
+    expect(mail.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(mail.headers?.['List-Unsubscribe']).toContain('email-unsubscribe');
+  });
+
+  it('sends nothing while the KeyValue switch is absent', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+    const outcome = await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(outcome.skipped).toBe('disabled');
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing for a type without defaultEmail, even with the switch on', async () => {
+    const outcome = await sendNotificationEmails({
+      type: 'new-mention',
+      details: {},
+      userIds: [1],
+    });
+    expect(outcome.skipped).toBe('not-email-type');
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('stops a user at the daily cap', async () => {
+    for (let i = 0; i < NOTIFICATION_EMAIL_USER_DAILY_CAP + 5; i++)
+      await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(sendEmail).toHaveBeenCalledTimes(NOTIFICATION_EMAIL_USER_DAILY_CAP);
+  });
+
+  it('sends nothing when Redis is down', async () => {
+    redisDown = true;
+    const outcome = await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(outcome.failed).toBe(1);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('escapes user content in the email body', async () => {
+    await sendNotificationEmails({
+      type: DEAL,
+      details: { dealId: 7, offeringTitle: '<script>x</script>' },
+      userIds: [1],
+    });
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.html).not.toContain('<script>');
+  });
+});
+
+describe('unsubscribe signature', () => {
+  const sigOf = (url: string) => new URL(url).searchParams.get('s')!;
+
+  it('accepts its own link and rejects it for another user or type', () => {
+    const sig = sigOf(getEmailUnsubscribeUrl(1, DEAL));
+    expect(verifyEmailUnsubscribe(1, DEAL, sig)).toBe(true);
+    expect(verifyEmailUnsubscribe(2, DEAL, sig)).toBe(false);
+    expect(verifyEmailUnsubscribe(1, 'service-deal-paid-out', sig)).toBe(false);
+    expect(verifyEmailUnsubscribe(1, DEAL, 'short')).toBe(false);
+  });
+});
+
+describe('toggleEmailSetting', () => {
+  it('turning email off writes the opt-out row', async () => {
+    await toggleEmailSetting({ userId: 1, type: [DEAL], enabled: false });
+    expect(dbMock.dbWrite.userEmailNotificationOptOut.createMany).toHaveBeenCalledWith({
+      data: [{ userId: 1, type: DEAL }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('refuses to record an opt-out for a type that never emails', async () => {
+    await expect(
+      toggleEmailSetting({ userId: 1, type: ['new-mention'], enabled: false })
+    ).rejects.toThrow();
+  });
+
+  it('turning email on removes the opt-out row', async () => {
+    await toggleEmailSetting({ userId: 1, type: [DEAL], enabled: true });
+    expect(dbMock.dbWrite.userEmailNotificationOptOut.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 1, type: { in: [DEAL] } },
+    });
+  });
+});

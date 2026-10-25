@@ -29,3 +29,20 @@ export const NotificationCategory = Object.fromEntries(
  * this to bump its unread badge without a poll.
  */
 export const newNotificationSignal = 'notification:new';
+
+/**
+ * The notification types that send email: exactly the processors with `defaultEmail` in the main
+ * app's registry (a main-app test pins the two together). The fan-out worker has no registry, so
+ * it reads this list to skip every other type without a call.
+ */
+export const emailNotificationTypes: readonly string[] = [
+  'service-deal-requested',
+  'service-deal-accepted',
+  'service-deal-declined',
+  'service-deal-expired',
+  'service-deal-delivered',
+  'service-deal-revision-requested',
+  'service-deal-cancellation-requested',
+  'service-deal-completed',
+  'service-deal-paid-out',
+];
