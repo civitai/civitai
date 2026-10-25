@@ -49,6 +49,9 @@ export const VIEWER_BRIDGE_TYPES: ReadonlySet<string> = new Set([
   'RUN_TRAINING',
   'RUN_CONFIRMED_STEP',
   'PREPARE_TRAINING_DATASET',
+  // The SDK's own report of input inside the frame (pointer, key, wheel, focus), at most one a
+  // minute: the one signal for work in the app that makes no request.
+  'VIEWER_ACTIVITY',
 ]);
 
 /** Whether a bridge message from the app is a request made for its viewer. */
