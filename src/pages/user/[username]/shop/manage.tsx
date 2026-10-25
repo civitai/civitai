@@ -129,7 +129,17 @@ function ManageShopPage() {
           </Tabs.List>
           <Tabs.Panel value="cosmetics">{cosmetics}</Tabs.Panel>
           <Tabs.Panel value="services">
-            <ManageServicesPanel />
+            <ManageServicesPanel
+              unpublishedShop={
+                settings && settings.enabled !== true
+                  ? {
+                      onPublish: () =>
+                        updateSettings.mutate({ enabled: true, userId: manageUserId }),
+                      publishing: updateSettings.isPending,
+                    }
+                  : undefined
+              }
+            />
           </Tabs.Panel>
         </Tabs>
       ) : (
