@@ -710,6 +710,7 @@ function ChatInputBox({
           thisChat.messages = [
             {
               content: data.content,
+              userId: data.userId,
               contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },
