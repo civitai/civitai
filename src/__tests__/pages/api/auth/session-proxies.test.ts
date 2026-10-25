@@ -128,6 +128,22 @@ describe('POST /api/auth/switch', () => {
     expect(h.switch).not.toHaveBeenCalled();
   });
 
+  it('accepts its own page as Referer when Origin is absent', async () => {
+    const res = await call(switchHandler, {
+      headers: { referer: 'https://civitai.com/user/account', ...JSON_TYPE },
+      body: { userId: 2 },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  // Decision: like tRPC's createContext, the origin check runs in production only, so local dev hosts and
+  // tests that send no Origin keep working. The JSON requirement applies everywhere.
+  it('skips the origin check outside production', async () => {
+    h.prod.value = false;
+    const res = await call(switchHandler, { headers: JSON_TYPE, body: { userId: 2 } });
+    expect(res.status).toBe(200);
+  });
+
   it('refuses a form-encoded body from its own origin', async () => {
     const res = await call(switchHandler, {
       headers: { origin: 'https://civitai.com', ...FORM_TYPE },
