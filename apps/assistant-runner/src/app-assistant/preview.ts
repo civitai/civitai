@@ -1,4 +1,6 @@
 import {
+  DEV_SERVER_COMMAND,
+  DEV_SERVER_PORT,
   START_PREVIEW,
   STOP_PREVIEW,
   isAppBlockId,
@@ -22,6 +24,26 @@ export const PREVIEW_KEEPALIVE_MS = 5 * 60_000;
 /** The most of a sandbox tool's own words the assistant is told when the tunnel would not open. */
 const DETAIL_CHARS = 500;
 
+/**
+ * How long `startDevServer` waits for the dev server it started to listen. Vite on a scaffolded App
+ * Block listens within seconds; kept well inside the ~2 minutes a preview grant lives, which the
+ * tunnel's start still needs after it.
+ */
+export const DEV_SERVER_WAIT_MS = 30_000;
+const DEV_SERVER_POLL_MS = 1_000;
+/** One probe's own bound: the sandbox kills it (and all it started) past this. */
+const PROBE_TIMEOUT_MS = 10_000;
+/**
+ * Exits 0 when something listens on the dev server's port, on IPv4 or IPv6 (Vite may listen on `::1`
+ * only), else 3. Each connect gives up after 1 s.
+ */
+const LISTEN_PROBE =
+  `node -e 'const net=require("net");` +
+  `const p=(h)=>new Promise((r)=>{const s=net.connect(${DEV_SERVER_PORT},h);` +
+  `const d=(v)=>{s.destroy();r(v)};s.setTimeout(1000,()=>d(false));` +
+  `s.once("connect",()=>d(true));s.once("error",()=>d(false))});` +
+  `Promise.all([p("127.0.0.1"),p("::1")]).then((a)=>process.exit(a.includes(true)?0:3))'`;
+
 export interface RunnerPreviewDeps {
   /** The reply's sandbox: the app open now, and the runner's own calls to its tools. */
   sandbox: {
@@ -37,6 +59,9 @@ export interface RunnerPreviewDeps {
   log: Logger;
   runId: string;
   keepaliveMs?: number;
+  /** `startDevServer`'s wait for the dev server to listen (`DEV_SERVER_WAIT_MS`), and its step. */
+  devServerWaitMs?: number;
+  devServerPollMs?: number;
 }
 
 /** The tunnel this run opened: kept in this process's memory only, never in a result. */
@@ -187,6 +212,102 @@ export class RunnerPreview {
       const manifest = await this.#manifest(projectDirOf(parsed) ?? app.app, signal);
       return this.#start(manifest, signal);
     });
+  }
+
+  /**
+   * Starts the open app's dev server when it is not running (the page's Restart preview, as after
+   * every resume: a resumed sandbox runs none), as the assistant is told to, with
+   * `sandbox__dev_server_start` and `cd <project> && DEV_SERVER_COMMAND`, then waits, bounded, for it
+   * to listen. Never a second one: one already running (or started meanwhile by another start, which
+   * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
+   * ran it in, else the app key's own when it holds a `block.manifest.json`, else the only top-level
+   * directory that does. Throws `DevServerStartError`, saying what failed, when it does not run.
+   */
+  startDevServer(signal?: AbortSignal): Promise<void> {
+    return this.#serial(async () => {
+      const app = this.#deps.sandbox.active;
+      if (this.#closed || !app || app.state !== 'running') throw new DevServerNotRunningError();
+      const status = await this.#devServerStatus(signal);
+      if (status?.running !== true) {
+        const dir = await this.#projectDir(app.app, status, signal);
+        if (!dir) throw new DevServerStartError('no-project');
+        const started = await this.#deps.sandbox.call(
+          'dev_server_start',
+          { command: `cd ${dir} && ${DEV_SERVER_COMMAND}` },
+          signal
+        );
+        const answer = started.isError ? null : asStatus(parseJson(started.text));
+        // Refused: another start may have won (the sandbox runs one at a time); else it failed.
+        if (started.isError && (await this.#devServerStatus(signal))?.running !== true)
+          throw new DevServerStartError('refused');
+        if (answer && answer.running === false) throw new DevServerStartError('exited', answer);
+      }
+      await this.#listening(signal);
+    });
+  }
+
+  async #devServerStatus(signal?: AbortSignal): Promise<DevServerStatus | null> {
+    const status = await this.#deps.sandbox.call('dev_server_status', {}, signal);
+    return status.isError ? null : asStatus(parseJson(status.text));
+  }
+
+  /** Where to start the dev server: see `startDevServer`; `null` when none is clear. */
+  async #projectDir(
+    appKey: string,
+    status: DevServerStatus | null,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const remembered = projectDirOf(status);
+    if (remembered && isProjectDir(remembered)) return remembered;
+    if (isProjectDir(appKey) && (await this.#hasManifest(appKey, signal))) return appKey;
+    const listed = await this.#deps.sandbox.call(
+      'run_command',
+      {
+        command:
+          'for f in */block.manifest.json; do [ -f "$f" ] && printf "%s\\n" "${f%/block.manifest.json}"; done; exit 0',
+        timeout_ms: PROBE_TIMEOUT_MS,
+      },
+      signal
+    );
+    if (listed.isError || exitCodeOf(listed.text) !== 0) return null;
+    const dirs = outputOf(listed.text)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return dirs.length === 1 && isProjectDir(dirs[0]!) ? dirs[0]! : null;
+  }
+
+  async #hasManifest(dir: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const read = await this.#deps.sandbox.call(
+        'read_file',
+        { path: `${dir}/block.manifest.json` },
+        signal
+      );
+      return !read.isError && manifestOf(read.text) !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Waits up to `devServerWaitMs` for something to listen on the dev server's port, looking at the
+   * dev server between probes: one that stopped is not waited for.
+   */
+  async #listening(signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.#deps.devServerWaitMs ?? DEV_SERVER_WAIT_MS);
+    for (;;) {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: LISTEN_PROBE, timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      if (!probe.isError && exitCodeOf(probe.text) === 0) return;
+      const status = await this.#devServerStatus(signal);
+      if (status && status.running === false) throw new DevServerStartError('exited', status);
+      if (Date.now() >= deadline) throw new DevServerStartError('timeout');
+      await sleep(this.#deps.devServerPollMs ?? DEV_SERVER_POLL_MS, signal);
+    }
   }
 
   /** What the start needs from the project's manifest; `{}` (the app's own key) when unreadable. */
@@ -397,6 +518,69 @@ export class DevServerNotRunningError extends Error {
   constructor() {
     super('The dev server is not running.');
   }
+}
+
+/**
+ * Starting the dev server failed: `no-project` (which project to start was not clear), `refused` (the
+ * sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode` is its code),
+ * or `timeout` (it never listened in time).
+ */
+export class DevServerStartError extends Error {
+  override name = 'DevServerStartError';
+  readonly exitCode: number | null;
+  constructor(
+    readonly reason: 'no-project' | 'refused' | 'exited' | 'timeout',
+    status?: DevServerStatus
+  ) {
+    super(`The dev server did not start (${reason}).`);
+    const code = status?.lastExit?.code;
+    this.exitCode = typeof code === 'number' ? code : null;
+  }
+}
+
+/** What `sandbox__dev_server_status` (and a start) answers, as far as it is read here. */
+interface DevServerStatus {
+  running?: unknown;
+  command?: unknown;
+  lastExit?: { code?: unknown } | null;
+}
+
+function asStatus(value: unknown): DevServerStatus | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as DevServerStatus)
+    : null;
+}
+
+/**
+ * A project directory safe to put in a shell command unquoted: one top-level name (as `projectDirOf`
+ * reads it), not starting with a dash or a dot.
+ */
+function isProjectDir(dir: string): boolean {
+  return /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/.test(dir);
+}
+
+/** `sandbox__run_command`'s exit code (its first line, `exit_code: N`), else `null`. */
+function exitCodeOf(text: string): number | null {
+  const match = /^exit_code: (-?\d+)/.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
+/** `sandbox__run_command`'s output: what follows its header's `---` line. */
+function outputOf(text: string): string {
+  const at = text.indexOf('\n---\n');
+  return at < 0 ? '' : text.slice(at + 5);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 function parseJson(text: string): unknown {
