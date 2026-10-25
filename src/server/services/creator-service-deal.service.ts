@@ -217,6 +217,14 @@ const movedOn = () =>
     message: 'This deal has moved on. Refresh to see where it is.',
   });
 
+/** CONFLICT, as `movedOn`; the request modal adds "Nothing was charged." to any conflict. */
+const requestAlreadyWaiting = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message:
+      'You already have a request waiting on this service. You can send another once the seller answers it.',
+  });
+
 async function requireTransition(t: Transition) {
   if (!(await transitionDeal(t))) throw movedOn();
 }
@@ -339,6 +347,12 @@ export async function requestServiceDeal({
     offering.deliveryDays !== expectedDeliveryDays
   )
     throw termsChanged();
+  const [waiting] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "ServiceDeal"
+    WHERE "offeringId" = ${offeringId}::int AND "buyerId" = ${buyerId}::int
+      AND "status" = 'Requested'::"ServiceDealStatus"
+    LIMIT 1`;
+  if (waiting) throw requestAlreadyWaiting();
 
   // The checks above are for the message; this statement repeats them as its own preconditions.
   const dealId = await dbWrite.$transaction(async (tx) => {

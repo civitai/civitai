@@ -386,7 +386,12 @@ describe('request', () => {
 
   it('refuses a second unanswered request from the same buyer, so a doubled submit holds once', async () => {
     await request();
-    await expect(request()).rejects.toEqual(conflict);
+    await expect(request()).rejects.toEqual(
+      expect.objectContaining({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/already have a request waiting/),
+      })
+    );
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     // Another buyer, or the same buyer once the first is answered, is unaffected.
     await request({ buyerId: STRANGER });

@@ -25,7 +25,10 @@ export function ServiceRequestModal({
   offering,
   sellerUsername,
 }: {
-  offering: Pick<ServiceOffering, 'id' | 'title' | 'price' | 'deliveryDays' | 'revisionsIncluded'>;
+  offering: Pick<
+    ServiceOffering,
+    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded'
+  >;
   sellerUsername: string;
 }) {
   const dialog = useDialogContext();
@@ -79,6 +82,9 @@ export function ServiceRequestModal({
       <Stack gap="md">
         <Text size="sm" c="dimmed">
           From {sellerUsername} · {serviceTermsLine(offering)}
+        </Text>
+        <Text size="sm" className="whitespace-pre-line">
+          {offering.description}
         </Text>
         <Textarea
           label="What do you want?"

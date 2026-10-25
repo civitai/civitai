@@ -1,4 +1,4 @@
-import { Group, Paper, Stack, Text } from '@mantine/core';
+import { Group, Paper, Spoiler, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -30,9 +30,11 @@ export function ServiceOfferingCard({
         <Text size="sm" c="dimmed">
           {serviceTermsLine(offering)}
         </Text>
-        <Text size="sm" lineClamp={4} className="whitespace-pre-line">
-          {offering.description}
-        </Text>
+        <Spoiler maxHeight={88} showLabel="Show more" hideLabel="Show less">
+          <Text size="sm" className="whitespace-pre-line">
+            {offering.description}
+          </Text>
+        </Spoiler>
         <Group justify="space-between" mt="auto" pt="xs" wrap="nowrap">
           <CurrencyBadge
             currency={Currency.BUZZ}
