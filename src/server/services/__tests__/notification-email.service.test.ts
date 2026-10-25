@@ -14,6 +14,7 @@ import {
   verifyEmailUnsubscribe,
 } from '~/server/services/notification-email.service';
 import { getUserEmailSettings, toggleEmailSetting } from '~/server/services/notification.service';
+import { emailNotificationTypeList } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
@@ -99,16 +100,26 @@ describe('sendNotificationEmails', () => {
     expect(mail.html).toContain('&lt;script&gt;');
   });
 
-  it('stops every user once the type has sent its hourly ceiling', async () => {
+  it('sends the type its hourly ceiling and stops at the next one', async () => {
     const typeKeyPrefix = `${REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${DEAL}:`;
+    counters.set('type-count', NOTIFICATION_EMAIL_TYPE_HOURLY_CAP - 1);
     const real = redisMock.sysRedis.incrBy.getMockImplementation()!;
     redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) =>
-      key.startsWith(typeKeyPrefix)
-        ? NOTIFICATION_EMAIL_TYPE_HOURLY_CAP + 1
-        : real(key, by)) as never);
-    const outcome = await sendNotificationEmails({ ...deal, userIds: [1] });
+      key.startsWith(typeKeyPrefix) ? real('type-count', by) : real(key, by)) as never);
+    await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const outcome = await sendNotificationEmails({ ...deal, userIds: [2] });
     expect(outcome.capped).toBe(1);
-    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-arms a cap key that lost its expiry', async () => {
+    redisMock.sysRedis.expire.mockClear();
+    redisMock.sysRedis.ttl.mockResolvedValue(-1 as never);
+    redisMock.sysRedis.incrBy.mockResolvedValue(5 as never);
+    await sendNotificationEmails({ ...deal, userIds: [1] });
+    // Both keys (type and user) are past their first hit and report no TTL.
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(2);
   });
 
   it('sends nothing when only the per-user cap cannot be read', async () => {
@@ -131,7 +142,7 @@ describe('unsubscribe signature', () => {
 
   it('without a usable server secret, mails nothing and refuses every link', async () => {
     const sig = sigOf(getEmailUnsubscribeUrl(1, DEAL));
-    setEnv({ NEXTAUTH_SECRET: '' });
+    setEnv({ NEXTAUTH_SECRET: '7-chars' });
     try {
       await sendNotificationEmails({ ...deal, userIds: [1] });
       expect(sendEmail).not.toHaveBeenCalled();
@@ -155,7 +166,7 @@ describe('getUserEmailSettings', () => {
     dbMock.dbWrite.userEmailNotificationOptOut.findMany.mockResolvedValue([] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).toContain(DEAL);
-    expect(types).toHaveLength(9);
+    expect(types).toHaveLength(emailNotificationTypeList.length);
   });
 
   it('an opt-out row turns that one type off', async () => {
@@ -164,7 +175,7 @@ describe('getUserEmailSettings', () => {
     ] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).not.toContain(DEAL);
-    expect(types).toHaveLength(8);
+    expect(types).toHaveLength(emailNotificationTypeList.length - 1);
   });
 });
 

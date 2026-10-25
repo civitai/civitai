@@ -25,8 +25,8 @@ ${body}
 <p><a href="${notificationSettingsUrl()}">Manage all notification emails</a></p>
 </body></html>`;
 
-// GET only shows a confirm button: link scanners and prefetchers follow GETs, and must not
-// unsubscribe anyone. POST is the RFC 8058 one-click request a mail client sends, and the button.
+// GET only shows a confirm button: link scanners and prefetchers follow GETs and must not
+// unsubscribe anyone.
 export default PublicEndpoint(
   async (req: NextApiRequest, res: NextApiResponse) => {
     res.setHeader('Cache-Control', 'no-store');

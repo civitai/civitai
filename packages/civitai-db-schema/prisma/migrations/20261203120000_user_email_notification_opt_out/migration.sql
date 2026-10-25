@@ -1,7 +1,4 @@
 -- Idempotent: applied by hand, possibly more than once. Apply BEFORE deploying the code that reads it.
---
--- Per-type notification email opt-outs. Row = email OFF for that type. Only types whose processor
--- sets `defaultEmail` send email, so no row means ON for those and nothing for any other type.
 
 CREATE TABLE IF NOT EXISTS "UserEmailNotificationOptOut" (
   "userId"    INTEGER      NOT NULL,

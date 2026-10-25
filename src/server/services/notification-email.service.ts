@@ -69,8 +69,8 @@ export async function optOutOfNotificationEmail(userId: number, type: string) {
 }
 
 /**
- * INCR with a first-hit expiry. Throws on a Redis error: callers fail closed. Re-arms a key that
- * lost its expiry, which would otherwise hold a user at the cap for good.
+ * INCR with a first-hit expiry; re-arms a key that lost its TTL, which would otherwise hold a user
+ * at the cap for good. Throws on a Redis error.
  */
 async function bump(key: `${string}:${string}`, ttlSeconds: number) {
   const count = await sysRedis.incrBy(key as never, 1);
@@ -79,7 +79,7 @@ async function bump(key: `${string}:${string}`, ttlSeconds: number) {
   return count;
 }
 
-/** False once the type has sent its hourly ceiling; logs the trip once per hour. */
+/** False once the type has sent its hourly ceiling. */
 async function underTypeCap(type: string) {
   const hour = new Date().toISOString().slice(0, 13);
   const count = await bump(
@@ -114,12 +114,7 @@ export type NotificationEmailOutcome = {
   failed: number;
 };
 
-/**
- * Emails one fanned-out notification to the recipients who get email for its type. Called by the
- * fan-out worker with the users the notification was newly delivered to, so a repeated key has
- * already been reduced to nobody. Redis down → nothing is sent: a flood is worse than a gap, and
- * the bell still carries the notification.
- */
+/** Redis down → nothing is sent: a flood is worse than a gap, and the bell still carries it. */
 export async function sendNotificationEmails({
   type,
   details,
@@ -173,8 +168,8 @@ export async function sendNotificationEmails({
         type: 'error',
         message: 'notification email could not be sent',
         notificationType: type,
-        // Never the error message: a rejected send names the recipient's address.
         userId: recipient.id,
+        // Never the error message: a rejected send names the recipient's address.
         error: (error as Error)?.name,
       }).catch(() => null);
     }

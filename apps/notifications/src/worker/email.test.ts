@@ -54,6 +54,13 @@ describe('dispatchEmail', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('splits a large fan-out into requests the endpoint accepts', async () => {
+    const users = Array.from({ length: 2500 }, (_, i) => i + 1);
+    await dispatchEmail('service-deal-requested', {}, users);
+    expect(calls.map((c) => c.body.userIds.length)).toEqual([1000, 1000, 500]);
+    expect(calls.flatMap((c) => c.body.userIds)).toEqual(users);
+  });
+
   it('never throws into the fan-out loop', async () => {
     fetchImpl = async () => {
       throw new Error('main app down');

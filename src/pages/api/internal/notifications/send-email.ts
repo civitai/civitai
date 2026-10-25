@@ -3,8 +3,6 @@ import * as z from 'zod';
 import { sendNotificationEmails } from '~/server/services/notification-email.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-// Called by the apps/notifications fan-out worker, once per fanned-out notification of an email
-// type, with the users it was newly delivered to.
 const schema = z.object({
   type: z.string(),
   details: z.record(z.string(), z.any()),

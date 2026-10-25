@@ -5,11 +5,9 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export type NotificationEmailData = {
   to: string;
-  /** The notification type's display name, as the settings page lists it. */
   typeName: string;
   message: string;
   url?: string;
-  /** One-click unsubscribe from this type (RFC 8058). */
   unsubscribeUrl: string;
 };
 

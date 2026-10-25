@@ -108,7 +108,6 @@ export const useTogglePushSetting = () => {
   });
 };
 
-/** The email-capable types this user gets email for (all of them unless opted out). */
 export const useEmailNotificationSettings = (enabled = true) => {
   const { data: emailTypes = [], isLoading } = trpc.notification.getEmailSettings.useQuery(
     undefined,

@@ -53,7 +53,7 @@ export function NotificationTypeControl({
   );
 }
 
-/** Email rides the in-app delivery, so it is unavailable while the type itself is Off. */
+/** Bell-off users are never fanned out to, so email is unavailable while the type is Off. */
 function EmailToggle({ type, disabled }: { type: string; disabled?: boolean }) {
   const { emailTypes, isLoading } = useEmailNotificationSettings();
   const emailMutation = useToggleEmailSetting();

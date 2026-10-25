@@ -80,7 +80,7 @@ export type NotificationProcessor = {
    */
   optIn?: boolean;
   showCategory?: boolean;
-  /** Push on for a user who never chose: materialized as a `UserPushSetting` row at first grant. */
+  /** Push on for a user who never chose; see DEFAULT_PUSH_TYPES. */
   defaultPush?: boolean;
   /**
    * The type sends email, on unless the user opts out. Must match `emailNotificationTypes` in

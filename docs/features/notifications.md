@@ -134,9 +134,11 @@ means push ON and absence means no push — for every type, always**. Do not add
 column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out table's 40+ bare
 `NOT EXISTS` clauses would read such a row as a mute.
 
-- A short curated list (`src/server/notifications/push.constants.ts`) is **materialized** into
-  `UserPushSetting` rows on a user's first subscription. Editing that list only reaches new
-  subscribers — existing subscribers keep the rows they were granted with, deliberately.
+- The processors that set `defaultPush: true` (`DEFAULT_PUSH_TYPES` in
+  `src/server/notifications/push.constants.ts` is derived from them) are **materialized** into
+  `UserPushSetting` rows on a user's first subscription. Changing a flag only reaches new
+  subscribers — existing subscribers keep the rows they were granted with, deliberately (a new
+  default for them needs a hand-run backfill, see web-push.md).
 - The dispatcher is `apps/notifications/src/worker/push.ts`, called from the fan-out poll loop
   after the opt-out filter, so a type set Off never pushes. It renders title/body/url via the
   monolith's `POST /api/internal/notifications/render-push` (the processor registry lives there),

@@ -31,9 +31,8 @@ export const NotificationCategory = Object.fromEntries(
 export const newNotificationSignal = 'notification:new';
 
 /**
- * The notification types that send email: exactly the processors with `defaultEmail` in the main
- * app's registry (a main-app test pins the two together). The fan-out worker has no registry, so
- * it reads this list to skip every other type without a call.
+ * Types that send email: the processors with `defaultEmail` (a main-app test pins the two). The
+ * fan-out worker has no registry, so it gates on this list.
  */
 export const emailNotificationTypes: readonly string[] = [
   'service-deal-requested',
