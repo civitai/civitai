@@ -148,9 +148,5 @@ export function isEphemeralDevTunnelToken(claims: {
   appId: string;
   appBlockId: string;
 }): boolean {
-  return (
-    claims.dev === true &&
-    claims.appId.startsWith('ephemeral-') &&
-    claims.appBlockId.startsWith('ephemeral-')
-  );
+  return claims.dev === true; // MUTANT M3
 }

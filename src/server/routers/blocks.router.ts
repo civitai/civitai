@@ -5380,19 +5380,12 @@ export const blocksRouter = router({
       if (!owned && !devTokenProof) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not in this app subqueue' });
       }
-      if (devTokenProof) {
-        assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
-      }
+      // MUTANT M1: viewer check removed
       const token = await getOrchestratorToken(userId, ctx);
       // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
-      if (devTokenProof) {
-        assertBlockWorkflowTaggedForInstance({
-          tags: workflow.tags,
-          blockInstanceId: claims.blockInstanceId,
-        });
-      }
+      // MUTANT M2: instance check removed
 
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
