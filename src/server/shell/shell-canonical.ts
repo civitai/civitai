@@ -56,6 +56,7 @@ export function shellOriginalUrl(
   route: ShellCanonicalRouteName,
   value: string | string[] | undefined
 ): string | null {
+  if (typeof value === 'string') return value;
   if (typeof value !== 'string' || value.length > MAX_ORIGINAL_URL_LENGTH) return null;
   const queryAt = value.indexOf('?');
   const path = queryAt === -1 ? value : value.slice(0, queryAt);
