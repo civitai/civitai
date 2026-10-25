@@ -46,8 +46,10 @@ export type ServiceDealLegName = 'hold' | 'release' | 'fee' | 'refund';
  * The Buzz external id of one leg. Derived from the deal and never time-based, so a retried leg
  * presents the same id and the Buzz service's dedupe is a real second line.
  */
+export const SERVICE_DEAL_TRANSACTION_PREFIX = 'creator-service-';
+
 export const serviceDealTransactionId = (dealId: number, leg: ServiceDealLegName) =>
-  `creator-service-${dealId}-${leg}`;
+  `${SERVICE_DEAL_TRANSACTION_PREFIX}${dealId}-${leg}`;
 
 /**
  * Delivery files. Previews are deliberately worth less than the product: capped in size, and the

@@ -2,6 +2,8 @@ import * as z from 'zod';
 import { createImpersonationClient } from '@civitai/auth';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
+import { isAllowedOriginRequest, isJsonRequest } from '~/server/utils/origin-helpers';
+import { isProd } from '~/env/other';
 
 // Moderator impersonation proxy (section F) — a DUMB pass-through to the hub, which owns ALL the logic: the
 // granted-permission gate, the mint (stamped impersonatedBy), and the ModActivity audit. This proxy exists only
@@ -14,6 +16,8 @@ const schema = z.object({ userId: z.coerce.number() });
 
 export default AuthedEndpoint(
   async function handler(req, res) {
+    if (isProd && !isAllowedOriginRequest(req))
+      return res.status(403).json({ error: 'Cross-origin request blocked' });
     const cookie = req.headers.cookie ?? '';
 
     if (req.method === 'DELETE') {
@@ -29,6 +33,7 @@ export default AuthedEndpoint(
       return res.status(200).json({ ok: true });
     }
 
+    if (!isJsonRequest(req)) return res.status(415).json({ error: 'expected application/json' });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 

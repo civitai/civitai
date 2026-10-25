@@ -1,3 +1,4 @@
+import Router from 'next/router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -15,6 +16,7 @@ import {
   parseIdParam,
   resolvePendingContinue,
   routeVia,
+  storylineChapterLink,
   STORYLINE_CHAPTER_PARAM,
   STORYLINE_VIA_PARAM,
 } from '~/components/Storyline/storyline-mode.utils';
@@ -172,12 +174,21 @@ export function StorylineModeProvider({
   const jumpToChapter = useCallback(
     (id: number) => {
       const imageId = walk.firstImageIdByChapterId.get(id);
-      if (!imageId) return;
+      if (!imageId) {
+        // Not in the walk (its images still paging in, or past the cap): a click must still land,
+        // so open the chapter from its own link.
+        const chapters = path?.chapters ?? [];
+        const at = chapters.findIndex((chapter) => chapter.chapterId === id);
+        const link =
+          at >= 0 && storylineChapterLink(chapters[at], routeVia(chapters.slice(0, at + 1)));
+        if (link) Router.push(link.href);
+        return;
+      }
       setEndOpenFor(undefined);
       setDrawerOpen(false);
       go({ imageId, chapterId, via });
     },
-    [walk, go, chapterId, via]
+    [walk, go, chapterId, via, path?.chapters]
   );
 
   const continueTo = useCallback(

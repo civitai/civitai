@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createDeviceAccountClient, deviceCookieName } from '@civitai/auth';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
+import { isAllowedOriginRequest, isJsonRequest } from '~/server/utils/origin-helpers';
+import { isProd } from '~/env/other';
 
 // Same-origin proxy for a device-level account switch (section E). The browser hits this so its .civitai.com
 // cookies (civ-token + civ-device) ride along; the @civitai/auth device client forwards them to the hub, which
@@ -10,6 +12,9 @@ const deviceAccounts = createDeviceAccountClient();
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
+  if (isProd && !isAllowedOriginRequest(req))
+    return res.status(403).json({ error: 'Cross-origin request blocked' });
+  if (!isJsonRequest(req)) return res.status(415).json({ error: 'expected application/json' });
 
   const userId = Number(req.body?.userId);
   if (!Number.isFinite(userId)) return res.status(400).json({ error: 'bad userId' });

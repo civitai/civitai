@@ -26,11 +26,21 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
+import {
+  AppExportError,
+  EXPORT_FAILED,
+  EXPORT_NOTE,
+  exportAppZip,
+  exportFileName,
+  saveBlob,
+} from '~/components/Apps/AppAssistant/appExport';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
   CREATE_APP,
   NO_APP_REFUSAL,
   createAppTools,
+  isKeepLimitResult,
 } from '~/components/Apps/AppAssistant/appTools';
 import {
   BUILD_IT_MESSAGE,
@@ -45,6 +55,8 @@ import {
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
+import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
+import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import {
   createPreviewTools,
@@ -60,7 +72,9 @@ import {
 } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
+  SandboxApiError,
   createSandboxClient,
+  isRunningLimit,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
@@ -68,6 +82,8 @@ import {
   APP_STATUS,
   AppError,
   appsError,
+  confirmDeleteApp,
+  runningOtherApp,
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
 import {
@@ -76,6 +92,7 @@ import {
   useAppFork,
 } from '~/components/Apps/AppAssistant/AppAssistantFork';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { FORK_SETUP_MESSAGE } from '~/shared/constants/app-fork.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -136,13 +153,23 @@ function EnableCard({
  */
 export const RESUME_ASK_TIMEOUT_MS = 3 * 60_000;
 
+/**
+ * While the open app starts, the page asks for its apps this often itself, whatever the list's own
+ * polling does (a stalled poll once left the page on "Starting…" long after the app ran).
+ */
+export const APP_START_POLL_MS = 3_000;
+/** How long the page keeps asking before it says the start is taking long and offers Check again. */
+export const APP_START_TIMEOUT_MS = 5 * 60_000;
+
 /** How long the page waits for its app list when the chat asks for a failed reply by itself. */
 export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
  * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
- * copy is taken back out, so the caller can give the message back instead.
+ * copy is taken back out, so the caller can give the message back instead. components-chat 0.30.0
+ * no longer keeps such a copy while the user dictates, so there it takes nothing out; kept for a
+ * chat that does.
  */
 export async function sendNotJoined(
   chat: Pick<CivitaiChat, 'send' | 'compose'>,
@@ -193,12 +220,6 @@ export async function retryWhenReady(
     chat.removeEventListener('can-send-change', wake);
     signal.removeEventListener('abort', wake);
   }
-}
-
-/** The app the user worked on last, to open on a visit with none open; none when no app says when. */
-export function mostRecentApp(apps: Sandbox[]): Sandbox | null {
-  const at = (s: Sandbox) => Date.parse(s.lastActivityAt ?? s.createdAt ?? '') || 0;
-  return apps.reduce<Sandbox | null>((best, s) => (at(s) > (best ? at(best) : 0) ? s : best), null);
 }
 
 export function AppAssistantWorkspace({
@@ -276,6 +297,20 @@ export function AppAssistantWorkspace({
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
   const pickedOnLoad = useRef(false);
+  // The message the user sent last in this chat: the one a kept-apps refusal answered.
+  const lastSent = useRef<string | null>(null);
+  type Slot = { message: string | null; deleting: boolean; error: unknown };
+  const [slot, setSlot] = useState<Slot | null>(null);
+  const slotRef = useRef(slot);
+  slotRef.current = slot;
+  // The app being started from the paused notice or a menu (its key), and why its last start failed.
+  const [startingApp, setStartingApp] = useState<string | null>(null);
+  const [startError, setStartError] = useState<{ app: string; error: unknown } | null>(null);
+  // The sandbox being exported (its name); one export at a time.
+  const [exporting, setExporting] = useState<string | null>(null);
+  const exportingRef = useRef(exporting);
+  // The open app was seen paused: its notice stays while it starts.
+  const [pausedSeen, setPausedSeen] = useState<string | null>(null);
 
   // FORKABLE APPS — `?fork=<slug>`: the fork's app is created with its files (or, if it exists,
   // opened), and a fresh one gets a new chat once the chat has started. See `AppAssistantFork`.
@@ -422,6 +457,9 @@ export function AppAssistantWorkspace({
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
+      // In the browser and from the runner alike: the card offering to free a slot.
+      if (isKeepLimitResult(result))
+        setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
       if (!remoteRunner || result.isError) return;
       const preview = runnerPreviewAction(result);
       if (preview && 'show' in preview)
@@ -858,6 +896,9 @@ export function AppAssistantWorkspace({
     (text: string, queue: BeforeSendDetail['queue']) => {
       // Before the message may be kept back: a resume ask and a waiting message never both act.
       endResumeAsk();
+      lastSent.current = text;
+      // A message the user sends takes the free-a-slot card away (its own re-send goes after it went).
+      setSlot(null);
       // A message of the user's (or Set up itself) answers the fork's Set up card.
       dismissForkSetup();
       // A new turn: the chat's own asks for a reply after it start afresh.
@@ -871,30 +912,166 @@ export function AppAssistantWorkspace({
   const onChatReady = useCallback(() => setChatReady(true), []);
   const onChatOpened = useCallback(
     (id: string | null) => {
-      if (id !== chatIdRef.current) endResumeAsk();
+      if (id !== chatIdRef.current) {
+        endResumeAsk();
+        setSlot(null);
+        // The card re-sends a message of the chat it was sent in, never of another.
+        lastSent.current = null;
+      }
       onChatChange(id);
     },
     [endResumeAsk, onChatChange]
   );
 
-  const starting = held || (sandboxes.open.isPending && sandboxes.open.variables === active?.app);
+  const starting =
+    !!held ||
+    (sandboxes.open.isPending && sandboxes.open.variables === active?.app) ||
+    (!!active && startingApp === active.app);
   const status = active && (starting ? APP_STATUS.starting : APP_STATUS[active.state]);
+  /**
+   * Starts a paused app (the paused notice, the app menu's Start, a switcher pick, an export): finds,
+   * creates or resumes it, pausing the one that runs. The one start a user asks for by hand.
+   */
+  const startApp = useCallback(async (target: Sandbox) => {
+    setStartingApp(target.app);
+    setStartError(null);
+    try {
+      const result = await openRef.current(target.app);
+      const opened = result.sandbox;
+      // Unless the user moved on meanwhile; a deleted app comes back under a new name.
+      if (live.current.active?.app === opened.app) setActiveName(opened.name);
+      return result;
+    } catch (error) {
+      setStartError({ app: target.app, error });
+      throw error;
+    } finally {
+      setStartingApp((current) => (current === target.app ? null : current));
+    }
+  }, []);
+  const startByHand = useCallback(
+    (target: Sandbox) => void startApp(target).catch(() => undefined),
+    [startApp]
+  );
   // Picking a paused app starts it, which pauses the one that runs.
   const selectApp = (sandbox: Sandbox) => {
     setActiveName(sandbox.name);
     setSwitcherOpen(false);
-    if (sandbox.state === 'suspended')
-      sandboxes.open.mutate(sandbox.app, {
-        // Unless the user moved on meanwhile; a deleted app comes back under a new name.
-        onSuccess: ({ sandbox: opened }: { sandbox: Sandbox }) => {
-          if (live.current.active?.app === opened.app) setActiveName(opened.name);
-        },
-      });
+    if (sandbox.state === 'suspended') startByHand(sandbox);
   };
+  const exportApp = useCallback(
+    async (target: Sandbox) => {
+      if (!sandboxClient || exportingRef.current) return;
+      exportingRef.current = target.name;
+      setExporting(target.name);
+      try {
+        const blob = await exportAppZip({
+          client: sandboxClient,
+          sandbox: target,
+          start: startApp,
+          discard: (name) => removeRef.current(name).then(() => onRemovedRef.current(name)),
+        });
+        const filename = exportFileName(target.app);
+        saveBlob(blob, filename);
+        showSuccessNotification({
+          title: `Downloaded ${filename}`,
+          message: EXPORT_NOTE,
+          autoClose: 8000,
+        });
+      } catch (error) {
+        showErrorNotification({
+          error: new Error(error instanceof AppExportError ? error.message : EXPORT_FAILED),
+        });
+      } finally {
+        exportingRef.current = null;
+        setExporting(null);
+      }
+    },
+    [sandboxClient, startApp]
+  );
   const onRemoved = (name: string) => {
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
+  const removeRef = useRef(sandboxes.remove.mutateAsync);
+  removeRef.current = sandboxes.remove.mutateAsync;
+  const onRemovedRef = useRef(onRemoved);
+  onRemovedRef.current = onRemoved;
+  /** The free-a-slot card's delete, once confirmed: then the message that hit the limit goes again. */
+  const freeSlot = (target: Sandbox) =>
+    confirmDeleteApp(target.app, async () => {
+      setSlot((shown) => shown && { ...shown, deleting: true, error: null });
+      try {
+        await sandboxes.remove.mutateAsync(target.name);
+      } catch (error) {
+        setSlot((shown) => shown && { ...shown, deleting: false, error });
+        return;
+      }
+      onRemoved(target.name);
+      // Unless the card went meanwhile (the user sent something else).
+      const message = slotRef.current?.message ?? null;
+      const chat = chatRef.current;
+      setSlot(null);
+      if (!message || !chat) return;
+      // Sent as the user's, once; a chat that cannot send now gives it back to them instead.
+      if (chat.canSend) await chat.send(message);
+      else chat.giveBack(message);
+    });
+  // A failed start is told on its app's notice, until another app is opened.
+  useEffect(() => setStartError(null), [activeName]);
+  // The paused notice stays with an app it showed paused while that app starts.
+  useEffect(() => {
+    if (active?.state === 'suspended') setPausedSeen(active.name);
+    else if (active?.state !== 'starting') setPausedSeen(null);
+  }, [active?.name, active?.state]);
+  // The open app is starting (by any path): the page asks for its apps itself until it runs, a
+  // stop at APP_START_TIMEOUT_MS saying so. Check again asks afresh.
+  const waitingToRun = !!sandboxClient && !!active && (active.state === 'starting' || starting);
+  const [startSlow, setStartSlow] = useState<string | null>(null);
+  const [checks, setChecks] = useState(0);
+  useEffect(() => {
+    if (!waitingToRun || !active) {
+      setStartSlow(null);
+      return;
+    }
+    const name = active.name;
+    // Never cancelling a list request already on its way.
+    const poll = setInterval(
+      () => void refetchRef.current({ cancelRefetch: false }),
+      APP_START_POLL_MS
+    );
+    const timeout = setTimeout(() => {
+      clearInterval(poll);
+      setStartSlow(name);
+    }, APP_START_TIMEOUT_MS);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restarts per app and per Check again
+  }, [waitingToRun, active?.name, checks]);
+  const checkAgain = () => {
+    setStartSlow(null);
+    setChecks((n) => n + 1);
+    void refetchRef.current();
+  };
+  const slow = !!active && waitingToRun && startSlow === active.name;
+  const showNotice =
+    slow ||
+    (!!active &&
+      (active.state === 'suspended' ||
+        (active.state === 'starting' && pausedSeen === active.name)));
+  const noticeError = active && startError?.app === active.app ? startError.error : null;
+  // An error the notice or the card already shows is not shown twice, and while the card offers to
+  // free a slot the kept-apps refusal is not also told above.
+  const pageError = appsError(sandboxes);
+  const shownBelow =
+    !!pageError &&
+    (pageError === noticeError ||
+      pageError === slot?.error ||
+      (!!slot &&
+        pageError instanceof SandboxApiError &&
+        pageError.kind === 'limit' &&
+        !isRunningLimit(pageError)));
   const startNewApp = () => {
     setActiveName(null);
     chatRef.current?.newChat();
@@ -984,11 +1161,15 @@ export function AppAssistantWorkspace({
               onOpen={selectApp}
               onRemoved={onRemoved}
               onNewApp={startNewApp}
+              onStart={startByHand}
+              onExport={(sandbox) => void exportApp(sandbox)}
+              starting={startingApp}
+              exporting={exporting}
             />
           </Popover.Dropdown>
         </Popover>
       )}
-      {!switcherOpen && <AppError error={appsError(sandboxes)} />}
+      {!switcherOpen && !shownBelow && <AppError error={pageError} />}
       <ForkStatus
         creating={fork.creating}
         problem={fork.problem}
@@ -1042,6 +1223,36 @@ export function AppAssistantWorkspace({
             onChatChange={onChatOpened}
             subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
             remoteRunner={runner}
+            composerTop={
+              showNotice && active ? (
+                <PausedAppNotice
+                  app={active.app}
+                  starting={starting || active.state === 'starting'}
+                  canStart={
+                    active.state === 'suspended' && (!starting || startingApp === active.app)
+                  }
+                  pending={startingApp === active.app}
+                  pauses={runningOtherApp(apps, active)?.app ?? null}
+                  error={noticeError}
+                  slow={slow}
+                  onCheckAgain={checkAgain}
+                  onStart={() => startByHand(active)}
+                />
+              ) : null
+            }
+            threadEnd={
+              slot ? (
+                <FreeUpSlotCard
+                  apps={apps}
+                  openName={activeName}
+                  deleting={slot.deleting}
+                  error={slot.error}
+                  exporting={exporting}
+                  onExport={(sandbox) => void exportApp(sandbox)}
+                  onDelete={freeSlot}
+                />
+              ) : null
+            }
             onReady={onChatReady}
           />
         </Paper>

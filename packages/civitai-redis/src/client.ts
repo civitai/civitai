@@ -3196,6 +3196,14 @@ const REDIS_KEYS_UNPREFIXED = {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
   },
+  REACTION: {
+    /*
+      Use: marks a reaction toggle arriving, so a reverse toggle on the same user, entity and
+      reaction inside the window is ignored as a client double-fire.
+      Structure: string '1' set NX PX, key = `reaction:toggle-guard:${userId}:${entityType}:${entityId}:${reaction}`.
+     */
+    TOGGLE_GUARD: 'reaction:toggle-guard',
+  },
   RATING_REVIEW: {
     /*
       Use: per-user count of rating disputes filed in the current 24h window, across every entity type.

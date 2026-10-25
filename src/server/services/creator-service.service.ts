@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
+import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { createNotification } from '~/server/services/notification.service';
 import {
   SERVICE_OFFERING_TAKEN_DOWN,
@@ -27,7 +28,6 @@ import {
   SERVICE_MAX_ACTIVE_OFFERINGS,
   SERVICE_OFFERING_DEFAULT_RATING,
   SERVICE_OFFERING_RATINGS,
-  SERVICES_MIN_CREATOR_SCORE,
   servableServiceRatings,
   visibleMatureServiceRatings,
 } from '~/shared/constants/creator-service.constants';
@@ -76,7 +76,7 @@ export type ServiceSellEligibility = {
 };
 
 export async function getServiceSellEligibility(userId: number): Promise<ServiceSellEligibility> {
-  const [user, strikes] = await Promise.all([
+  const [user, strikes, minScore] = await Promise.all([
     dbRead.user.findUnique({
       where: { id: userId },
       select: { meta: true, bannedAt: true, muted: true, deletedAt: true },
@@ -85,6 +85,7 @@ export async function getServiceSellEligibility(userId: number): Promise<Service
       where: { userId, status: StrikeStatus.Active, expiresAt: { gt: new Date() } },
       _sum: { points: true },
     }),
+    getServicesMinCreatorScore(),
   ]);
   if (!user) throw throwNotFoundError('User not found');
 
@@ -97,8 +98,8 @@ export async function getServiceSellEligibility(userId: number): Promise<Service
     standingIssue = 'Your account has active strikes and cannot sell services right now.';
 
   return {
-    canSell: !standingIssue && current >= SERVICES_MIN_CREATOR_SCORE,
-    score: { current, min: SERVICES_MIN_CREATOR_SCORE },
+    canSell: !standingIssue && current >= minScore,
+    score: { current, min: minScore },
     standingIssue,
   };
 }
@@ -120,7 +121,7 @@ export async function assertCanSellServices(userId: number) {
   if (eligibility.standingIssue) throw throwAuthorizationError(eligibility.standingIssue);
   if (!eligibility.canSell)
     throw throwAuthorizationError(
-      `Selling services unlocks at a Creator Score of ${SERVICES_MIN_CREATOR_SCORE.toLocaleString()}.`
+      `Selling services unlocks at a Creator Score of ${eligibility.score.min.toLocaleString()}.`
     );
 }
 
