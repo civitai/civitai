@@ -68,19 +68,23 @@ describe('planImageScoreRaise', () => {
         [2, 500],
         [3, 70],
         [4, null],
+        [5, 100],
       ]),
       new Map([
         [1, 400],
         [2, 300],
         [3, 70],
         [4, 20],
-      ])
+        [5, 400],
+      ]),
+      new Set([5])
     );
     expect(plan.map((p) => [p.ownerId, p.action])).toEqual([
       [1, 'raise'],
       [2, 'down'],
       [3, 'equal'],
       [4, 'raise'],
+      [5, 'excluded'],
     ]);
   });
 });

@@ -102,13 +102,14 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     pgLong: pgDbReadLong,
     ch: clickhouse,
   });
-  const plan = planImageScoreRaise(stored, recomputed);
+  const plan = planImageScoreRaise(stored, recomputed, excluded);
   const raises = plan.filter((p) => p.action === 'raise');
   const counts = {
     considered: plan.length,
     raise: raises.length,
     equal: plan.filter((p) => p.action === 'equal').length,
     down: plan.filter((p) => p.action === 'down').length,
+    excluded: plan.filter((p) => p.action === 'excluded').length,
   };
   if (dryRun)
     return res.status(200).json({ dryRun, checkpoint: checkpoint.value, ...counts, plan });

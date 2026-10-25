@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   imageScoresAsOf: vi.fn(),
   raiseImagesScores: vi.fn(),
   subtractImagesScores: vi.fn(),
+  excluded: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -34,7 +35,7 @@ vi.mock('~/server/services/image-score-raise.service', async (importOriginal) =>
 }));
 vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricExcludedUsers>()),
-  getMetricExcludedUserIdsOrThrow: async () => [],
+  getMetricExcludedUserIdsOrThrow: mocks.excluded,
 }));
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -70,6 +71,7 @@ const CHECKPOINT = 1_792_886_169_000;
 // Owner 1 goes up, owner 2 would go down, owner 3 is already right, owner 4 has no User row.
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.excluded.mockResolvedValue([]);
   dbMock.dbWrite.keyValue.findUnique.mockResolvedValue({
     key: 'update-user-score:images',
     value: CHECKPOINT,
@@ -110,6 +112,13 @@ describe('raise-image-scores', () => {
       written: [{ ownerId: 1, beforeImages: 100, afterImages: 400 }],
       skippedRace: [],
     });
+  });
+
+  it('never raises a metric-excluded owner, even when the score would go up', async () => {
+    mocks.excluded.mockResolvedValue([1]);
+    const { body } = await call({ mode: 'raise', ownerIds: [1, 2, 3] }, { dryRun: 'false' });
+    expect(body).toMatchObject({ raise: 0, excluded: 1 });
+    expect(mocks.raiseImagesScores).toHaveBeenCalledWith(expect.anything(), [], expect.anything());
   });
 
   it('reports a raise the guard refused, so the driver can retry it', async () => {
