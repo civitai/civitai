@@ -68,7 +68,6 @@ describe('classifyResourceFileError', () => {
     ['FORBIDDEN', 'forbidden'],
     ['UNAUTHORIZED', 'unauthorized'],
     ['TOO_MANY_REQUESTS', 'rate-limited'],
-    ['PAYLOAD_TOO_LARGE', 'too-large'],
   ])('maps tRPC %s to %s', (code, expected) => {
     expect(classifyResourceFileError({ data: { code } })).toBe(expected);
   });

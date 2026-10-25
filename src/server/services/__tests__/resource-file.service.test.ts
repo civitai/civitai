@@ -52,16 +52,27 @@ type FileRow = {
 
 let files: FileRow[];
 
-function version(overrides: { type?: string; nsfwLevel?: number } = {}) {
+function version(
+  overrides: {
+    type?: string;
+    nsfwLevel?: number;
+    availability?: string;
+    modelAvailability?: string;
+    poi?: boolean;
+  } = {}
+) {
   return {
     id: 100,
     name: 'v1.0',
     nsfwLevel: overrides.nsfwLevel ?? NsfwLevel.PG,
+    availability: overrides.availability ?? 'Public',
     model: {
       id: 55,
       type: overrides.type ?? 'Workflows',
       name: 'Cool Workflow',
       userId: OWNER_ID,
+      availability: overrides.modelAvailability ?? 'Public',
+      poi: overrides.poi ?? false,
       user: { username: 'creator' },
     },
   };
@@ -133,7 +144,7 @@ describe('resolveResourceFileForUser: served', () => {
     expect(gateMock).toHaveBeenCalledWith({
       modelVersionId: 100,
       fileId: 10,
-      user: sfwViewer,
+      user: { ...sfwViewer, isModerator: false },
       attribution: { caller: 'other', actor: 'user' },
     });
   });
@@ -170,6 +181,11 @@ describe('resolveResourceFileForUser: refusals are NOT_FOUND', () => {
   ])('%s (gate status %s)', async (_label, status) => {
     gateMock.mockResolvedValue({ ...gateSuccess(), status });
     await expect(resolve()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('a transient storage failure is INTERNAL_SERVER_ERROR (retryable), not NOT_FOUND', async () => {
+    gateMock.mockResolvedValue({ ...gateSuccess(), status: 'resolve-failed' });
+    await expect(resolve()).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
   });
 
   it('early access a non-owner has BOUGHT (the gate serves it; this bridge does not)', async () => {
@@ -323,5 +339,43 @@ describe('pickDefaultResourceFile', () => {
     expect(pickDefaultResourceFile([json, configZip])).toBe(json);
     expect(pickDefaultResourceFile([configZip, modelJson])).toBe(modelJson);
     expect(pickDefaultResourceFile([])).toBeNull();
+  });
+});
+
+// The gate grants moderators everything (hasEntityAccess grantAll, canViewPoiModel) and
+// grants Private access to a viewer holding a grant. This bridge serves non-owners only
+// what is free and public, so it must neither hand the gate moderator rights nor rely on
+// the gate alone for availability and POI. The gate is mocked to SERVE in each case, as
+// it would for that viewer, so only the bridge's own check can refuse.
+describe('resolveResourceFileForUser: only open-access, non-POI versions for non-owners', () => {
+  it('calls the gate without moderator rights', async () => {
+    await resolve(moderator);
+    expect(gateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.objectContaining({ id: 31, isModerator: false }) })
+    );
+  });
+
+  it.each([
+    ['a Private model', { modelAvailability: 'Private' }],
+    ['a Private version', { availability: 'Private' }],
+    ['a POI model', { poi: true }],
+  ])('a moderator asking for %s is NOT_FOUND', async (_label, overrides) => {
+    versionFindFirst.mockResolvedValue(version(overrides));
+    await expect(resolve(moderator)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('a non-moderator holding a Private-access grant is NOT_FOUND', async () => {
+    versionFindFirst.mockResolvedValue(version({ modelAvailability: 'Private' }));
+    await expect(resolve(sfwViewer)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('an Unsearchable version is open access and is served', async () => {
+    versionFindFirst.mockResolvedValue(version({ availability: 'Unsearchable' }));
+    await expect(resolve(sfwViewer)).resolves.toMatchObject({ meta: { fileId: 10 } });
+  });
+
+  it('the owner of a Private (or POI) version is served their own published file', async () => {
+    versionFindFirst.mockResolvedValue(version({ modelAvailability: 'Private', poi: true }));
+    await expect(resolve(owner)).resolves.toMatchObject({ meta: { fileId: 10 } });
   });
 });

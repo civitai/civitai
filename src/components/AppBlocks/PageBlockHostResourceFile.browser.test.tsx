@@ -66,7 +66,7 @@ function resolvesTo(fileName: string, bytes: Uint8Array, sizeBytes = bytes.byteL
   mocks.resolve.mockResolvedValue({ signedUrl: SIGNED_URL, sizeBytes, meta: meta(fileName) });
   mocks.fetch.mockImplementation(async (url: unknown) =>
     String(url) === SIGNED_URL
-      ? ({ ok: true, arrayBuffer: async () => bytes.slice().buffer } as unknown as Response)
+      ? new Response(bytes.slice())
       : ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response)
   );
 }
