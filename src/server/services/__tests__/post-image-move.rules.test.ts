@@ -3,7 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import type { MoveImageRow, MovePostRow } from '~/server/services/post-image-move.rules';
-import { getImageMoveRefusal } from '~/server/services/post-image-move.rules';
+import { getImageMoveRefusal, IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const USER = 7;
@@ -16,6 +16,7 @@ const post = (over: Partial<MovePostRow> = {}): MovePostRow => ({
   publishedAt: day(10),
   tosViolation: false,
   isContest: false,
+  isChapter: false,
   ...over,
 });
 const image = (over: Partial<MoveImageRow> = {}): MoveImageRow => ({
@@ -24,6 +25,7 @@ const image = (over: Partial<MoveImageRow> = {}): MoveImageRow => ({
   postId: 1,
   tosViolation: false,
   ingestion: ImageIngestionStatus.Scanned,
+  needsReview: null,
   ...over,
 });
 
@@ -35,6 +37,7 @@ function refusal(over: Partial<Parameters<typeof getImageMoveRefusal>[0]> = {}) 
     source: post(),
     target: post({ id: 2, publishedAt: day(20) }),
     images,
+    sourceImageCount: 5,
     targetImageCount: 0,
     now: NOW,
     ...over,
@@ -72,6 +75,17 @@ describe('getImageMoveRefusal', () => {
       'bad-request',
     ],
     ['a ToS-violating image', { images: [image({ tosViolation: true })] }, 'bad-request'],
+    ['an image under review', { images: [image({ needsReview: 'poi' })] }, 'bad-request'],
+    [
+      'an image still being scanned',
+      { images: [image({ ingestion: ImageIngestionStatus.Pending })] },
+      'bad-request',
+    ],
+    [
+      'an image whose scan failed',
+      { images: [image({ ingestion: ImageIngestionStatus.Error })] },
+      'bad-request',
+    ],
     ['a draft source', { source: post({ publishedAt: null }) }, 'bad-request'],
     ['a scheduled source', { source: post({ publishedAt: day(-1) }) }, 'bad-request'],
     ['a draft target', { target: post({ id: 2, publishedAt: null }) }, 'bad-request'],
@@ -80,6 +94,22 @@ describe('getImageMoveRefusal', () => {
     ['a full target', { targetImageCount: POST_IMAGE_LIMIT }, 'bad-request'],
   ] as const)('refuses %s', (_, over, kind) => {
     expect(refusal(over as Partial<Parameters<typeof getImageMoveRefusal>[0]>)?.kind).toBe(kind);
+  });
+
+  it.each([
+    ['a blocked image', { ingestion: ImageIngestionStatus.Blocked }],
+    ['a ToS-violating image', { tosViolation: true }],
+    ['an image under review', { needsReview: 'poi' }],
+    ['an image still scanning', { ingestion: ImageIngestionStatus.Pending }],
+  ] as const)('refuses %s with the same text as any other unmovable image', (_, over) => {
+    expect(refusal({ images: [image(over)] })?.message).toBe(IMAGES_NOT_MOVABLE);
+  });
+
+  it('allows moving some, but not all, of a storyline chapter’s images', () => {
+    const images = [image({ id: 100 }), image({ id: 101 })];
+    const source = post({ isChapter: true });
+    expect(refusal({ source, images, sourceImageCount: 3 })).toBeNull();
+    expect(refusal({ source, images, sourceImageCount: 2 })?.kind).toBe('bad-request');
   });
 
   it('counts the moved images against the target cap', () => {
