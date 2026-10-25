@@ -12,7 +12,6 @@ import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
 import {
   isCanonicalShellPath,
   requestPath,
-  SHELL_CANONICAL_ROUTES,
   SHELL_ORIGINAL_URL_HEADER,
   shellOriginalUrl,
 } from '~/server/shell/shell-canonical';
@@ -84,21 +83,9 @@ function queryParam(url: string, name: string): string | null {
  */
 function judgedUrls(req: ShellRequest, route: ShellRoute): string[] | null {
   const own = req.url ?? '';
-  if (!(route.name in SHELL_CANONICAL_ROUTES) || !isCanonicalShellPath(route.name, own)) {
-    return [own];
-  }
+  if (!isCanonicalShellPath(route.name, own)) return [own];
   const original = shellOriginalUrl(route.name, req.headers[SHELL_ORIGINAL_URL_HEADER]);
   return original ? [own, original] : null;
-}
-
-/**
- * A request on a shell route's canonical path. One that is not answered with the shell is
- * bounced by the page's getServerSideProps, so `_app` need not prepare a full render for it.
- */
-export function isCanonicalShellRequest(req: ShellRequest, pathname: string): boolean {
-  if (!(pathname in SHELL_ROUTES)) return false;
-  const route = SHELL_ROUTES[pathname as ShellRoutePattern];
-  return route.name in SHELL_CANONICAL_ROUTES && isCanonicalShellPath(route.name, req.url);
 }
 
 /**

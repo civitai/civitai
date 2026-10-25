@@ -442,7 +442,7 @@ describe('a declined request on the canonical path', () => {
     }
     expect(headers['cache-control']).toBe('private, no-store');
     expect(headers).not.toHaveProperty('set-cookie');
-    expect(h.bootstrap).not.toHaveBeenCalled();
+    // The page bounced before reading a session.
     expect(h.authSession).not.toHaveBeenCalled();
   });
 });

@@ -513,13 +513,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // route. This branch may read no session, no region, no URL and no viewer cookie but the colour
   // scheme, which is part of the edge cache key. `typeof window` block: see the bootstrap below.
   let shellRender: ShellRender | null = null;
-  let shellBounce = false;
   if (typeof window === 'undefined') {
-    const { resolveShellRender, isCanonicalShellRequest } = await import(
-      '~/server/shell/shell-render'
-    );
+    const { resolveShellRender } = await import('~/server/shell/shell-render');
     shellRender = await resolveShellRender(request, appContext.ctx.pathname);
-    shellBounce = !shellRender && isCanonicalShellRequest(request, appContext.ctx.pathname);
   }
   const renderRequest = request as typeof request & {
     [SHELL_REQ_KEY]?: string;
@@ -536,9 +532,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       if (res?.getHeader?.(name) !== undefined) res?.removeHeader(name);
     }
   }
-  // A shell route's canonical path that is not shelled is never rendered: the page's
-  // getServerSideProps (which Next runs next) bounces it, so no per-viewer bootstrap is read for it.
-  if (shellBounce) return { pageProps, ...appProps };
   if (shellRender) {
     // 🔴 The shell must not carry its URL. Next 16.3.1 writes this very query object into
     // `__NEXT_DATA__.query` and renders with this router (`render.js`), so both are emptied here,

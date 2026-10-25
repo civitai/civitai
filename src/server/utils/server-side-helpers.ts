@@ -134,7 +134,8 @@ export function createServerSideProps<P>({
     }
     // 🔴 The route's canonical path (`~/server/shell/shell-canonical`) is never rendered: whatever
     // reached it without the shell — refused, no valid original URL, a data request — is sent back
-    // to the URL it came from with `?civ-shell=0`, before anything per viewer is read or written.
+    // to the URL it came from with `?civ-shell=0`, before this reads a session or prefetches. `_app`
+    // ran its full path first; the bounce headers drop any cookie or edge header it left.
     if (shell && isCanonicalShellPath(shell, context.resolvedUrl)) {
       applyShellBounceHeaders(context.res);
       return {

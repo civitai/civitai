@@ -4,9 +4,6 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { resolveShellMode } from '~/server/shell/shell-mode';
 
-// For `_app`, which reaches the shell modules through this one server-only import.
-export { isCanonicalShellRequest } from '~/server/shell/shell-mode';
-
 export type ShellRender = {
   route: ShellRouteName;
   flags: Awaited<ReturnType<typeof getFeatureFlagsAsync>>;

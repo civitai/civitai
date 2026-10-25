@@ -22,7 +22,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   }),
 }));
 
-import { isCanonicalShellRequest, resolveShellMode, shellRefusal } from '~/server/shell/shell-mode';
+import { resolveShellMode, shellRefusal } from '~/server/shell/shell-mode';
 
 const ROUTE = '/images/[imageId]';
 
@@ -155,17 +155,5 @@ describe('shellRefusal on the canonical path', () => {
     flipt.on = new Set(['shell-master']);
     const req = eligible({}, { 'x-civ-shell-orig': '/images/1?civ-shell=0&token=abc' });
     expect(await refusal(req)).toBeNull();
-  });
-});
-
-describe('isCanonicalShellRequest', () => {
-  it.each<[string, string, boolean]>([
-    ['/images/shell', ROUTE, true],
-    ['/images/shell?postId=5', ROUTE, true],
-    ['/images/123', ROUTE, false],
-    // `/_error` re-runs `_app` on the same request: it must render, not wait for a bounce.
-    ['/images/shell', '/_error', false],
-  ])('%s as %s → %s', (url, pathname, expected) => {
-    expect(isCanonicalShellRequest(eligible({ url }) as never, pathname)).toBe(expected);
   });
 });

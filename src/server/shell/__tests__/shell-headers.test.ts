@@ -275,8 +275,7 @@ describe('the canonical shell path', () => {
     expect(headers['cache-control']).toBe('private, no-store');
     expect(headers).not.toHaveProperty('set-cookie');
     expectFullRender(headers);
-    // A bounce reads nothing per viewer: no bootstrap in `_app`, no session in the page.
-    expect(h.bootstrap).not.toHaveBeenCalled();
+    // The page bounces before it reads a session (`_app`'s bootstrap is its own and is discarded).
     expect(h.authSession).not.toHaveBeenCalled();
   }
 
@@ -322,9 +321,31 @@ describe('the canonical shell path', () => {
     ['a ?token= credential', '/images/123?token=abc', '/images/123?token=abc&civ-shell=0'],
   ])('declined for %s in the ORIGINAL URL', async (_, orig, destination) => {
     expectBounce(
-      await request({ url: CANONICAL, headers: { 'x-civ-shell-orig': orig } }),
+      await request({
+        url: CANONICAL,
+        headers: { 'x-civ-shell-orig': orig },
+        preset: { 'Set-Cookie': ['ref=1; Path=/'] },
+      }),
       destination
     );
+  });
+
+  it('runs after _app’s full path and still leaves no cookie or edge header on the 307', async () => {
+    // Refused (no route cookie), so `_app` takes its full path; a full render would also set the
+    // route cookie here, which the bounce must not.
+    const out = await request({
+      url: CANONICAL,
+      headers: { ...ORIG, cookie: '__Secure-civ-token=a.b.c' },
+      preset: {
+        'Set-Cookie': ['ref=1; Path=/'],
+        'Cloudflare-CDN-Cache-Control': 'public, max-age=60',
+        'Cache-Tag': 'shell',
+        'X-Civ-Render': 'shell',
+      },
+    });
+    expectBounce(out, BOUNCE);
+    // CONTROL: `_app` did take its full path (the bootstrap ran).
+    expect(h.bootstrap).toHaveBeenCalled();
   });
 
   it.each<[string, Record<string, string>]>([
@@ -334,7 +355,10 @@ describe('the canonical shell path', () => {
     ['another path', { 'x-civ-shell-orig': '/user/account' }],
     ['the canonical path', { 'x-civ-shell-orig': CANONICAL }],
   ])('declined for %s: 307 to /images', async (_, headers) => {
-    expectBounce(await request({ url: CANONICAL, headers }), '/images');
+    expectBounce(
+      await request({ url: CANONICAL, headers, preset: { 'Set-Cookie': ['ref=1; Path=/'] } }),
+      '/images'
+    );
   });
 
   it('a data request for the canonical path is bounced too, never resolved', async () => {
