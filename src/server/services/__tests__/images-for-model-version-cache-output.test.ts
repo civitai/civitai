@@ -43,6 +43,8 @@ const cached = () => ({
 
 describe('getImagesForModelVersionCache output (flag off)', () => {
   beforeEach(() => {
+    // restoreAllMocks keeps a vi.fn's call history; clear it so each test sees only its own calls.
+    flag.mockClear();
     flag.mockResolvedValue(false);
   });
   afterEach(() => {
@@ -87,6 +89,8 @@ describe('getImagesForModelVersionCache output (flag off)', () => {
 
 describe('getImagesForModelVersionCache output (model-version-images-skip-tags on)', () => {
   beforeEach(() => {
+    // restoreAllMocks keeps a vi.fn's call history; clear it so each test sees only its own calls.
+    flag.mockClear();
     flag.mockResolvedValue(true);
   });
   afterEach(() => {
@@ -106,7 +110,7 @@ describe('getImagesForModelVersionCache output (model-version-images-skip-tags o
     expect(tagFetch).not.toHaveBeenCalled();
     expect(result).toStrictEqual(cached());
     for (const entry of Object.values(result)) expect('tags' in entry).toBe(false);
-    // Fresh entry objects, so a caller mutating one cannot reach the cached record.
+    // Fresh top-level entry objects (a shallow copy: each entry's `images` array is still shared).
     expect(result[101]).not.toBe(fromCache['101']);
     expect(fromCache).toStrictEqual(cached());
   });
