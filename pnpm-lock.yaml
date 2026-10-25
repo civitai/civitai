@@ -416,8 +416,8 @@ importers:
         specifier: ^4.4.0
         version: 4.4.0
       exifreader:
-        specifier: ^4.39.0
-        version: 4.41.3
+        specifier: ^4.52.0
+        version: 4.52.0
       fastest-levenshtein:
         specifier: ^1.0.16
         version: 1.0.16
@@ -6314,10 +6314,9 @@ packages:
   '@webgpu/types@0.1.70':
     resolution: {integrity: sha512-LFiNHHKMvmAEvwVew3JLJmTdShhbdwRFSImUshGhE2mGE8ybQzIo63l5uRp+YKnNx+8Qno8Kf6gN+DKMreIJCA==}
 
-  '@xmldom/xmldom@0.9.10':
-    resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
     engines: {node: '>=14.6'}
-    deprecated: this version has critical issues, please update to the latest version
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -7978,8 +7977,8 @@ packages:
     resolution: {integrity: sha512-XctvKaEMaj1Ii9oDOqbW/6e1gXknSY4g/aLCDicOXqBE4M0nRWkUu0PTp++UPNzoFY12BNHMfs/VadKIS6llvg==}
     engines: {node: '>=8.3.0'}
 
-  exifreader@4.41.3:
-    resolution: {integrity: sha512-bjc9UGw2OOj5Z0FQec5HRzH8A/gzGpWJLj74+Hffp0ri6JnjmXKtPXa3Ok9qwSaBa3zFsqAdXo8cjAwtj0bD+Q==}
+  exifreader@4.52.0:
+    resolution: {integrity: sha512-p0mIIqbxM8Y4nfDxM/+v11la9RmgEeTuQI9pLD1GI8h8bXSNIR5LI8zfoB/Oj8MnQ7BrwDaIAYxrBxqXrj1r5g==}
     hasBin: true
 
   exit@0.1.2:
@@ -14078,7 +14077,7 @@ snapshots:
 
   '@civitai/generation-metadata@0.4.0':
     dependencies:
-      exifreader: 4.41.3
+      exifreader: 4.52.0
       zod: 4.4.3
 
   '@civitai/next-axiom@0.17.0(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
@@ -18538,7 +18537,7 @@ snapshots:
 
   '@webgpu/types@0.1.70': {}
 
-  '@xmldom/xmldom@0.9.10':
+  '@xmldom/xmldom@0.9.12':
     optional: true
 
   '@xtuc/ieee754@1.2.0': {}
@@ -20506,9 +20505,9 @@ snapshots:
       unzipper: 0.10.14
       uuid: 8.3.2
 
-  exifreader@4.41.3:
+  exifreader@4.52.0:
     optionalDependencies:
-      '@xmldom/xmldom': 0.9.10
+      '@xmldom/xmldom': 0.9.12
 
   exit@0.1.2: {}
 
