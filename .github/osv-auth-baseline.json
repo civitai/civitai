@@ -1,4 +1,0 @@
-{
-  "description": "Advisory ids already known in the auth packages production dependencies. The Auth dependency scan fails only on high or critical advisories not listed here.",
-  "ids": []
-}
