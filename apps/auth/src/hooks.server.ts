@@ -20,6 +20,9 @@ const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
   '/api/auth/switch': isTrustedSessionCaller,
   '/api/auth/impersonate': isTrustedSessionCaller,
   '/api/auth/impersonate/exit': isTrustedSessionCaller,
+  '/api/auth/accounts': isTrustedSessionCaller,
+  // The main app's logout revokes the hub session server-to-server with no Origin.
+  '/logout': isTrustedSessionCaller,
 };
 
 // One body for every rejection, so the response says nothing about which admin routes exist.
