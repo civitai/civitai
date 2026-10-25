@@ -7,6 +7,7 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  resolveResourceFileSchema,
   setEvictableSchema,
   setAdditionalResourceFeeWaivedSchema,
   // sendFeedbackSchema,
@@ -36,6 +37,7 @@ import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
+import { resolveResourceFileForUser } from '~/server/services/resource-file.service';
 import { CacheTTL } from '~/server/common/constants';
 import {
   getWorkflowDefinitions,
@@ -206,6 +208,26 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       resolveWildcardPackForUser({
         modelVersionId: input.modelVersionId,
+        user: ctx.user,
+        canViewNsfw: ctx.features.canViewNsfw,
+      })
+    ),
+  // App Blocks GET_RESOURCE_FILE (workflow files), the sibling of
+  // resolveWildcardPack above: session-authed, a mutation for the same signed-URL
+  // reason, and its own 30/min bucket (the limiter keys on the procedure path).
+  resolveResourceFile: protectedProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many resource-file requests — slow down.',
+      })
+    )
+    .input(resolveResourceFileSchema)
+    .mutation(({ input, ctx }) =>
+      resolveResourceFileForUser({
+        modelVersionId: input.modelVersionId,
+        fileId: input.fileId,
         user: ctx.user,
         canViewNsfw: ctx.features.canViewNsfw,
       })

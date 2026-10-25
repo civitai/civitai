@@ -235,6 +235,7 @@ describe('storage-resolver attribution call-site ledger', () => {
       'pages/api/v1/model-files/[id]/tensor-metadata.ts': ['other|derived'],
       'server/services/csam.service-new.ts': ['other|internal'],
       'server/services/csam.service.ts': ['other|internal'],
+      'server/services/resource-file.service.ts': ['other|derived'],
       'server/services/wildcard-pack.service.ts': ['wildcard|derived'],
     });
   });

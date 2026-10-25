@@ -135,6 +135,9 @@ export const BRIDGE_NACK_EXEMPT: Record<string, string> = {
   // false here, where the host simply has no handler.
   GET_WILDCARD_PACK:
     'WILDCARD_PACK_RESULT validates `error` against a closed code set; none of them means "unsupported on this host", and a non-conforming code is dropped by the SDK validator',
+  // Same shape: RESOURCE_FILE_RESULT's closed set has no "unsupported" code either.
+  GET_RESOURCE_FILE:
+    'RESOURCE_FILE_RESULT validates `error` against a closed code set; none of them means "unsupported on this host", and a non-conforming code is dropped by the SDK validator',
   // `isValidTokenRefreshResponse` requires a valid `WrappedToken`, so an
   // error-only TOKEN_REFRESH_RESPONSE is dropped at the block's trust boundary.
   // The protocol has no failure variant for a token refresh at all. Needs an SDK
