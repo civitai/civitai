@@ -183,6 +183,10 @@ export default defineNextConfig(
     generateEtags: false,
     compress: false,
     images: {
+      // Every next/image source is a static file under /public, so serve it directly instead of
+      // through /_next/image. remotePatterns below is unused while this is on; it is kept as the
+      // allow-list to restore if the optimizer is ever turned back on.
+      unoptimized: true,
       remotePatterns: [
         { hostname: 's3.us-west-1.wasabisys.com' },
         { hostname: 'model-share.s3.us-west-1.wasabisys.com' },

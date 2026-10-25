@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createDeviceAccountClient } from '@civitai/auth';
+import { isProd } from '~/env/other';
+import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 
 // Same-origin proxy for the device's linked-account set — the browser hits this so its `.civitai.com` cookies
 // (civ-token + civ-device) ride along; we forward them to the hub via the @civitai/auth device client (the hub
@@ -13,6 +15,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const cookie = req.headers.cookie ?? '';
 
   if (req.method === 'DELETE') {
+    if (isProd && !isAllowedOriginRequest(req))
+      return res.status(403).json({ error: 'Cross-origin request blocked' });
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ error: 'bad userId' });
     const ok = await deviceAccounts.remove(cookie, userId);
