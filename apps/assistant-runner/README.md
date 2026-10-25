@@ -351,7 +351,9 @@ Known gaps:
 - The page learns of a runner's preview only from the live `tool-reported` event, which a reload
   or another device does not replay: the pane then shows nothing until a later reply starts or
   restarts the dev server, or the user asks to reopen it and the assistant calls `start_preview`
-  (the instructions keep it for that). Asking civitai's
+  (the instructions keep it for that), or the user clicks the pane's Restart preview
+  (`POST apps/:app/preview`, no reply and no Buzz; `src/app-assistant/preview-restart.ts`), which
+  first starts the dev server when it is not running, as after every pause. Asking civitai's
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.
