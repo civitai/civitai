@@ -1,0 +1,89 @@
+name: Auth dependency scan
+
+# Fails a pull request that touches the auth app or the auth package when the PRODUCTION dependencies
+# those two install carry a high (CVSS >= 7.0) or critical advisory that is not listed in
+# .github/osv-auth-baseline.json. Every run writes all high/critical findings, baselined or new, to
+# the job summary. The baseline is the set already known when the check was added, so the check is
+# green today and goes red on anything new; delete an id from the baseline when its fix lands.
+# Baseline matching is by advisory id only, not by package or version.
+#
+# osv-scanner reads pnpm-lock.yaml, which is ONE file for the whole workspace, so scanning it
+# directly would report every package in the repo. scripts/ci/slice-pnpm-lockfile.mjs first cuts the
+# lockfile down to what apps/auth and packages/civitai-auth (and the workspace packages they link)
+# transitively install, leaving out devDependencies (--prod), and the scanner runs on that slice.
+#
+# The scanner binary is pinned by version and sha256 rather than using google/osv-scanner-action,
+# because the action cannot filter by severity: it would fail on every advisory, low included.
+# Advisories with no CVSS score are not counted.
+#
+# "Fails", not "blocks": `main` has no required status checks. Make this one required to turn it
+# into an interlock. It reads the live advisory database, so a PR that touches nothing in the
+# dependency graph can still go red when a new advisory is published.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/auth/**'
+      - 'packages/civitai-auth/**'
+      - 'pnpm-lock.yaml'
+      - '.github/osv-auth-baseline.json'
+      - 'scripts/ci/slice-pnpm-lockfile.mjs'
+      - '.github/workflows/auth-dependency-scan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Auth dependency scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OSV_SCANNER_VERSION: v2.7.0
+      OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Slice lockfile to the auth packages
+        run: |
+          npm install --prefix "$RUNNER_TEMP/yaml" yaml@2.8.1 --ignore-scripts --no-audit --no-fund
+          mkdir "$RUNNER_TEMP/slice"
+          NODE_PATH="$RUNNER_TEMP/yaml/node_modules" node scripts/ci/slice-pnpm-lockfile.mjs --prod \
+            "$RUNNER_TEMP/slice/pnpm-lock.yaml" apps/auth packages/civitai-auth
+
+      - name: Install osv-scanner
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+
+      - name: Scan
+        run: |
+          # exit 0 = clean, 1 = advisories found (judged below); anything else is a scanner failure
+          code=0
+          "$RUNNER_TEMP/osv-scanner" scan source -L "$RUNNER_TEMP/slice/pnpm-lock.yaml" \
+            --format json > "$RUNNER_TEMP/osv.json" || code=$?
+          if [ "$code" -gt 1 ]; then echo "osv-scanner failed with exit $code"; exit "$code"; fi
+          node - "$RUNNER_TEMP/osv.json" .github/osv-auth-baseline.json <<'JS'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const baseline = new Set(JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).ids);
+          const known = [];
+          const fresh = [];
+          for (const res of r.results ?? []) {
+            for (const p of res.packages ?? []) {
+              for (const g of p.groups ?? []) {
+                if (!(parseFloat(g.max_severity) >= 7)) continue;
+                const row = `${g.max_severity}  ${p.package.name}@${p.package.version}  ${g.ids[0]}`;
+                (g.ids.some((id) => baseline.has(id)) ? known : fresh).push(row);
+              }
+            }
+          }
+          const section = (title, rows) =>
+            `### ${title} (${rows.length})\n` + (rows.length ? '```\n' + rows.sort().reverse().join('\n') + '\n```\n' : '');
+          const report = section('New high or critical advisories', fresh) + section('In baseline', known);
+          console.log(report);
+          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
+          if (fresh.length) process.exit(1);
+          JS
