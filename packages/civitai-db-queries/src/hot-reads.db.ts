@@ -261,6 +261,7 @@ export function getUserCreatorRow(
   let query = db
     .selectFrom('User')
     .leftJoin('UserRank', 'UserRank.userId', 'User.id')
+    .leftJoin('UserStat', 'UserStat.userId', 'User.id')
     .leftJoin('Image as ProfilePicture', 'ProfilePicture.id', 'User.profilePictureId')
     .select((eb) => [
       'User.id',
@@ -274,6 +275,7 @@ export function getUserCreatorRow(
       'User.settings',
       'User.excludeFromLeaderboards',
       'UserRank.userId as rankUserId',
+      'UserStat.downloadCountAllTime as joinedThroughView',
       'UserRank.leaderboardRank',
       'UserRank.leaderboardId',
       'UserRank.leaderboardTitle',
