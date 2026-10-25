@@ -17,7 +17,7 @@ const HTTP_INSTRUMENTATION_OFF_VALUES = new Set(['off', 'false', '0']);
  */
 export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.OTEL_HTTP_INSTRUMENTATION?.trim().toLowerCase();
-  return raw === undefined || !HTTP_INSTRUMENTATION_OFF_VALUES.has(raw) || true; // MUTANT: env ignored
+  return raw === undefined || !HTTP_INSTRUMENTATION_OFF_VALUES.has(raw);
 }
 
 /**
