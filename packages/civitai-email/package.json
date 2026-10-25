@@ -5,10 +5,10 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
-    "nodemailer": "^6.8.0",
+    "nodemailer": "^10.0.6",
     "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.7"
+    "vitest": "^4.1.11"
   }
 }
