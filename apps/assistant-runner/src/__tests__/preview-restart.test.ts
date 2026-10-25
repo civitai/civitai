@@ -83,7 +83,9 @@ afterEach(async () => {
   await fake.stop();
 });
 
-function restarter(options: { waitMs?: number; now?: () => number } = {}) {
+function restarter(
+  options: { waitMs?: number; now?: () => number; devServerWaitMs?: number } = {}
+) {
   return new PreviewRestarter({
     sandboxUrl: fake.url,
     forGrant: (grant) => {
@@ -128,6 +130,9 @@ describe('PreviewRestarter', () => {
     expect(grantsSeen).toEqual(['test-preview-grant']);
     expect(tunnels.kept).toEqual([]);
     expect(tunnels.stopped).toEqual([]);
+    // Its dev server already runs: nothing starts a second one.
+    expect(fake.callsTo('dev_server_start')).toBe(0);
+    expect(fake.callsTo('dev_server_restart')).toBe(0);
   });
 
   it('never wakes a paused app, which would pause the one that runs', async () => {
@@ -162,18 +167,188 @@ describe('PreviewRestarter', () => {
     expect(tunnels.started).toEqual([]);
   });
 
-  it('says so when the dev server is not running, and asks civitai for nothing', async () => {
-    fake.add(APP);
-    fake.tools.set('dev_server_status', () => JSON.stringify({ running: false, lastExit: 1 }));
-    const outcome = await restarter().restart('u-1', APP, 'g');
-    expect(outcome).toEqual({
-      ok: false,
-      error: 'not-running',
-      message:
-        'Your app’s dev server is not running. Ask the assistant to start it, and the preview opens by itself.',
+  describe('when the dev server is not running (as after every resume)', () => {
+    /** The exact command the assistant is told to start it with, in the project's directory. */
+    const devCommand = (dir: string) =>
+      `cd ${dir} && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173`;
+    const runResult = (exitCode: number, output = '') =>
+      `exit_code: ${exitCode}\ntimed_out: false\nduration_ms: 3\noutput_bytes: ${output.length}\n---\n${output}`;
+
+    /** The sandbox as a resumed one answers: a fresh sandbox-mcp that remembers no dev server. */
+    function resumed(
+      options: {
+        /** The top-level projects (directories with a block.manifest.json). */
+        projects?: string[];
+        /** What dev_server_start answers; by default it starts and runs. */
+        start?: (args: Record<string, unknown>) => string;
+        /** Port probes that find nothing listening before one does (Infinity: never). */
+        quietProbes?: number;
+      } = {}
+    ) {
+      const state = {
+        running: false,
+        command: null as string | null,
+        probes: 0,
+        lastExit: null as unknown,
+      };
+      const status = () =>
+        JSON.stringify({
+          running: state.running,
+          pid: state.running ? 77 : null,
+          command: state.command,
+          lastExit: state.lastExit,
+        });
+      fake.tools.set('dev_server_status', status);
+      fake.tools.set(
+        'dev_server_start',
+        options.start ??
+          ((args) => {
+            if (state.running) throw new Error('a dev server is already running (pid 77)');
+            state.running = true;
+            state.command = String(args.command);
+            return status();
+          })
+      );
+      fake.tools.set('run_command', (args) => {
+        const command = String(args.command);
+        if (command.includes('block.manifest.json'))
+          return runResult(0, (options.projects ?? ['web']).map((p) => `${p}\n`).join(''));
+        state.probes++;
+        return state.probes > (options.quietProbes ?? 0) ? runResult(0) : runResult(3);
+      });
+      return state;
+    }
+    const starts = () => fake.calls.filter((c) => c.tool === 'dev_server_start').map((c) => c.args);
+
+    it('starts the dev server itself, then opens the preview, with no run', async () => {
+      fake.add(APP);
+      resumed();
+      const outcome = await restarter().restart('u-1', APP, 'g');
+
+      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
+      // Started once, in the project that holds the manifest, with the assistant's own command.
+      expect(starts()).toEqual([{ command: devCommand('web') }]);
+      expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+      // Started before the tunnel was asked for.
+      const order = fake.calls.map((c) => c.tool);
+      expect(order.indexOf('dev_server_start')).toBeLessThan(order.indexOf('tunnel_key'));
     });
-    expect(tunnels.started).toEqual([]);
-    expect(tunnelCalls()).toEqual([]);
+
+    it('starts it in the app key’s own project when that holds the manifest', async () => {
+      fake.add(APP);
+      resumed({ projects: ['other', APP] });
+      fake.tools.set('read_file', (args) =>
+        args.path === `${APP}/block.manifest.json`
+          ? JSON.stringify({ path: args.path, content: JSON.stringify({ blockId: APP }) })
+          : 'no such file'
+      );
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: true,
+        blockId: APP,
+        host: HOST,
+      });
+      expect(starts()).toEqual([{ command: devCommand(APP) }]);
+    });
+
+    it('starts it in the directory the sandbox last ran it in, when it remembers one', async () => {
+      fake.add(APP);
+      const state = resumed({ projects: ['other', 'web'] });
+      state.command = 'cd web && npm run dev';
+      state.lastExit = { code: 1, signal: null, at: '2026-10-25T03:29:00.000Z' };
+      expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+      expect(starts()).toEqual([{ command: devCommand('web') }]);
+    });
+
+    it('waits, bounded, for the dev server it started to listen before opening the tunnel', async () => {
+      fake.add(APP);
+      const state = resumed({ quietProbes: 2 });
+      expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+      expect(state.probes).toBe(3);
+      expect(tunnels.started).toHaveLength(1);
+    });
+
+    it('gives up when the dev server never listens, and asks civitai for nothing', async () => {
+      fake.add(APP);
+      resumed({ quietProbes: Infinity });
+      const outcome = await restarter({ devServerWaitMs: 40 }).restart('u-1', APP, 'g');
+      expect(outcome).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server was started but did not answer in time. Ask the assistant to look at it, and the preview opens by itself.',
+      });
+      expect(tunnelCalls()).toEqual([]);
+      expect(tunnels.started).toEqual([]);
+    });
+
+    it('says what failed when the dev server stops right after it starts', async () => {
+      fake.add(APP);
+      resumed({
+        start: (args) =>
+          JSON.stringify({
+            running: false,
+            pid: null,
+            command: args.command,
+            lastExit: { code: 1, signal: null, at: '2026-10-25T03:29:00.000Z' },
+          }),
+      });
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server stopped as soon as it started (exit code 1). Ask the assistant to fix and start it, and the preview opens by itself.',
+      });
+      expect(tunnels.started).toEqual([]);
+    });
+
+    it('says so when it cannot tell which project to start, and starts nothing', async () => {
+      fake.add(APP);
+      resumed({ projects: ['one', 'two'] });
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server is not running, and the preview could not tell which project to start. Ask the assistant to start it, and the preview opens by itself.',
+      });
+      expect(starts()).toEqual([]);
+      expect(tunnels.started).toEqual([]);
+    });
+
+    it('never starts a second dev server when another start won the race', async () => {
+      fake.add(APP);
+      const state = resumed({
+        // Another start (the assistant's, in a reply) got there first.
+        start: () => {
+          state.running = true;
+          state.command = devCommand('web');
+          throw new Error('a dev server is already running (pid 77)');
+        },
+      });
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: true,
+        blockId: MANIFEST_BLOCK,
+        host: HOST,
+      });
+      expect(starts()).toHaveLength(1);
+      expect(fake.callsTo('dev_server_restart')).toBe(0);
+      expect(fake.callsTo('dev_server_stop')).toBe(0);
+    });
+
+    it('two clicks at once start it once', async () => {
+      fake.add(APP);
+      resumed();
+      const restarts = restarter();
+      const [a, b] = await Promise.all([
+        restarts.restart('u-1', APP, 'g-1'),
+        restarts.restart('u-1', APP, 'g-2'),
+      ]);
+      expect(a).toMatchObject({ ok: true });
+      expect(b).toEqual(a);
+      expect(starts()).toHaveLength(1);
+      // Control: the next click finds it running, and starts nothing more.
+      expect(await restarts.restart('u-1', APP, 'g-3')).toMatchObject({ ok: true });
+      expect(starts()).toHaveLength(1);
+    });
   });
 
   it('answers not-found for an app the user has no sandbox for', async () => {
