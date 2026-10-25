@@ -41,6 +41,7 @@ describe('isViewerBridgeMessage', () => {
       'SHARED_VOTE',
       'SHARED_WITHDRAW',
       'SUBMIT_WORKFLOW',
+      'VIEWER_ACTIVITY',
     ]);
     for (const type of VIEWER_BRIDGE_TYPES)
       expect(isViewerBridgeMessage({ type, requestId: 'r1' })).toBe(true);

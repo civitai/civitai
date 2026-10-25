@@ -6253,6 +6253,14 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
 
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
+  // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
+  // image's own `tags` come from the cache's appendFn and are unaffected.
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_VERSION_IMAGES_SKIP_TAGS)) {
+    const result: typeof images = {};
+    for (const versionId of Object.keys(images)) result[versionId] = { ...images[versionId] };
+    return result;
+  }
   const tagsForImages = await tagIdsForImagesCache.fetch(Object.keys(images).map(Number));
   const result: typeof images = {};
   for (const imageId of Object.keys(images)) {

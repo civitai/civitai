@@ -68,6 +68,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // timeout to TIMEOUT. The ON window also changes contention on both pg pools, the writer's
   // included, not only query-engine CPU.
   KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
+  // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
+  // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
+  // result no consumer reads. Evaluated without a user id on every call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  MODEL_VERSION_IMAGES_SKIP_TAGS = 'model-version-images-skip-tags',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
