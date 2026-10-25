@@ -403,6 +403,20 @@ describe('request', () => {
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(3);
   });
 
+  // The pre-check answers with a message; the INSERT's NOT EXISTS is what holds when two submits
+  // both pass it. Here the pre-check is blinded (the offering read passes through) to stand in
+  // for that race.
+  it('still creates one deal and one hold when a second submit passes the pre-check', async () => {
+    await request();
+    dbMock.dbWrite.$queryRaw
+      .mockImplementationOnce(((...a: Parameters<Raw['queryRaw']>) =>
+        pgliteRaw(holder.db).queryRaw(...a)) as never)
+      .mockImplementationOnce((async () => []) as never);
+    await expect(request()).rejects.toEqual(conflict);
+    expect(await q(`SELECT id FROM "ServiceDeal" WHERE "buyerId" = $1`, [BUYER])).toHaveLength(1);
+    expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
   it('holds the price the offering has when requested, not one changed afterwards', async () => {
     const { id } = await request();
     await q(`UPDATE "ServiceOffering" SET price = 9999`);
