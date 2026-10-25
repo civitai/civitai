@@ -44,6 +44,12 @@ export function dealButtons(
   return ordered.map((action) => ({ action, primary: action === primary }));
 }
 
+/** Whether the deal is waiting on the viewer: it has a primary button they can see. */
+export const awaitsViewer = (
+  deal: { actions: DealAction[]; primaryAction: DealAction | null },
+  { servicesEnabled }: { servicesEnabled: boolean }
+) => dealButtons(deal, { servicesEnabled }).some((button) => button.primary);
+
 /** The request toast. Only a confirmed hold may be called held. */
 export const requestSentMessage = (held: boolean) =>
   held

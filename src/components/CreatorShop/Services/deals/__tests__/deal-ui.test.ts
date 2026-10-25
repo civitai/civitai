@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  awaitsViewer,
   dealButtons,
   dealEscrowState,
   dealPageState,
@@ -108,6 +109,39 @@ describe('delivery actions', () => {
       action: 'acceptDelivery',
       primary: true,
     });
+  });
+});
+
+describe('awaits-you badge', () => {
+  const awaits = (d: DealTimingFields, viewer: number, servicesEnabled = true) =>
+    awaitsViewer(dealActions(d, viewer), { servicesEnabled });
+  const cancelAsked = deal({
+    status: 'CancellationRequested',
+    cancellationRequestedAt: new Date('2026-10-02T00:00:00Z'),
+    cancellationRequestedById: BUYER,
+  });
+
+  it('fires for the party the deal is waiting on', () => {
+    expect(awaits(deal({ status: 'Requested' }), SELLER)).toBe(true);
+    expect(awaits(deal({ status: 'Delivered', deliveredAt: new Date() }), BUYER)).toBe(true);
+    expect(awaits(cancelAsked, SELLER)).toBe(true);
+  });
+
+  it('does not fire on an optional action alone', () => {
+    // The buyer can withdraw a waiting request, but the seller is the one it waits on.
+    expect(awaits(deal({ status: 'Requested' }), BUYER)).toBe(false);
+    const inWindow = deal({
+      status: 'Completed',
+      deliveredAt: new Date('2026-10-03T00:00:00Z'),
+      releaseAt: new Date(Date.now() + 3_600_000),
+    });
+    expect(dealActions(inWindow, BUYER).actions).toContain('openDispute');
+    expect(awaits(inWindow, BUYER)).toBe(false);
+    expect(awaits(cancelAsked, BUYER)).toBe(false);
+  });
+
+  it('does not fire when the flag hides the primary action', () => {
+    expect(awaits(deal({ status: 'Requested' }), SELLER, false)).toBe(false);
   });
 });
 

@@ -209,5 +209,25 @@ export function sellerFileStatus(file: DealFileFacts): { label: string; color: s
   return { label: 'Being checked', color: 'blue' };
 }
 
+/**
+ * Why Deliver must wait on the round in progress, or null: a final still awaiting its scan or a
+ * preview still being built. A file that failed or is mid-upload does not wait; the server still
+ * decides when Deliver is accepted.
+ */
+export function deliverWait(files: DealFileFacts[], round: number) {
+  const current = files.filter(
+    (file) => file.round === round && file.status !== 'Uploading' && file.status !== 'Failed'
+  );
+  if (
+    current.some(
+      (file) => file.kind === 'Final' && (!file.scanStatus || file.scanStatus === 'Pending')
+    )
+  )
+    return 'Checking files…';
+  if (current.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
+    return 'Building preview…';
+  return null;
+}
+
 export const serviceDealDownloadHref = (fileId: number) =>
   `/api/service-deals/files/${fileId}/download`;

@@ -7,11 +7,13 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
+import type * as NotificationService from '~/server/services/notification.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -46,6 +48,12 @@ const shop = vi.hoisted(() => ({ assertCreatorShopVisible: vi.fn() }));
 vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShop>()),
   ...shop,
+}));
+
+const notifications = vi.hoisted(() => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  ...notifications,
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -83,6 +91,9 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 
 const deals = await import('~/server/services/creator-service-deal.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
+const { creatorServiceNotifications } = await import(
+  '~/server/notifications/creator-service.notifications'
+);
 const { MAX_LEG_ATTEMPTS } = await import('~/server/services/placement-escrow.service');
 const { TransactionType } = await import('~/shared/constants/buzz.constants');
 
@@ -181,6 +192,7 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please draw my cat',
+    disclosureVersion: SERVICES_TERMS_VERSION,
     buzzType: 'yellow',
     // A buyer on the mature-capable domain who browses at PG only, as most do.
     servableLevels: ALL_LEVELS,
@@ -253,6 +265,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
   for (const fn of Object.values(buzz)) fn.mockReset();
+  notifications.createNotification.mockReset();
   shop.assertCreatorShopVisible.mockReset();
   locks.available = true;
   locks.held.clear();
@@ -320,6 +333,18 @@ describe('request', () => {
     expect(await events(id)).toEqual(['Requested', 'Held']);
   });
 
+  it.each([
+    ['an empty version', ''],
+    ['a superseded version', 'services-terms-1999-01-01'],
+  ])(
+    'refuses a request sent with %s of the buyer disclosure, before any charge',
+    async (_, disclosureVersion) => {
+      await expect(request({ disclosureVersion })).rejects.toThrow(/Review the request terms/);
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
+
   it('refuses a request at a price other than the one the buyer was shown', async () => {
     await q(`UPDATE "ServiceOffering" SET price = 50000`);
     await expect(request()).rejects.toEqual(conflict);
@@ -361,7 +386,12 @@ describe('request', () => {
 
   it('refuses a second unanswered request from the same buyer, so a doubled submit holds once', async () => {
     await request();
-    await expect(request()).rejects.toEqual(conflict);
+    await expect(request()).rejects.toEqual(
+      expect.objectContaining({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/already have a request waiting/),
+      })
+    );
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     // Another buyer, or the same buyer once the first is answered, is unaffected.
     await request({ buyerId: STRANGER });
@@ -371,6 +401,20 @@ describe('request', () => {
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
     await request();
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  // The pre-check answers with a message; the INSERT's NOT EXISTS is what holds when two submits
+  // both pass it. Here the pre-check is blinded (the offering read passes through) to stand in
+  // for that race.
+  it('still creates one deal and one hold when a second submit passes the pre-check', async () => {
+    await request();
+    dbMock.dbWrite.$queryRaw
+      .mockImplementationOnce(((...a: Parameters<Raw['queryRaw']>) =>
+        pgliteRaw(holder.db).queryRaw(...a)) as never)
+      .mockImplementationOnce((async () => []) as never);
+    await expect(request()).rejects.toEqual(conflict);
+    expect(await q(`SELECT id FROM "ServiceDeal" WHERE "buyerId" = $1`, [BUYER])).toHaveLength(1);
+    expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('holds the price the offering has when requested, not one changed afterwards', async () => {
@@ -2420,5 +2464,248 @@ describe('an offering taken down mid-deal', () => {
       await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
       expect((await deal(id)).status).toBe('Accepted');
     });
+  });
+});
+
+describe('site notifications', () => {
+  /** What the deal notifications sent since the last `reset()`, as [recipient, type, link]. */
+  const sent = () =>
+    notifications.createNotification.mock.calls.map(([n]) => [
+      n.userId,
+      n.type,
+      creatorServiceNotifications[n.type]?.prepareMessage(n)?.url,
+    ]);
+  const reset = () => notifications.createNotification.mockClear();
+  const accepted = async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    reset();
+    return id;
+  };
+  const delivered = async () => {
+    const id = await accepted();
+    await deliver(id);
+    reset();
+    return id;
+  };
+
+  it('tells the seller once about a request whose hold is confirmed', async () => {
+    const { id } = await request();
+    expect(sent()).toEqual([[SELLER, 'service-deal-requested', `/services/deals/${id}`]]);
+  });
+
+  it('tells nobody about a request whose hold was refused', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValue(buzzError(400));
+    await expect(request()).rejects.toThrow();
+    expect(sent()).toEqual([]);
+  });
+
+  it('tells the seller about an unconfirmed request only once reconcile finds the charge', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
+    const { id } = await request();
+    expect(sent()).toEqual([]);
+
+    await ageHoldLeg(id, 11);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+    ]);
+    await escrow.reconcileUnconfirmedHolds();
+    await escrow.reconcileUnconfirmedHolds();
+    expect(sent()).toEqual([[SELLER, 'service-deal-requested', `/services/deals/${id}`]]);
+  });
+
+  it('tells nobody when reconcile finds a hold that was already marked held', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
+    const { id } = await request();
+    await q(`UPDATE "ServiceDeal" SET "heldAt" = now() WHERE id = $1`, [id]);
+    await ageHoldLeg(id, 11);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+    ]);
+    expect(await escrow.reconcileUnconfirmedHolds()).toMatchObject({ held: 1 });
+    expect(sent()).toEqual([]);
+  });
+
+  it('tells nobody when reconcile finds nothing was charged', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
+    const { id } = await request();
+    await ageHoldLeg(id, 11);
+    await escrow.reconcileUnconfirmedHolds();
+    expect((await deal(id)).status).toBe('Cancelled');
+    expect(sent()).toEqual([]);
+  });
+
+  it('tells the buyer once when the seller accepts, and nobody on a refused accept', async () => {
+    const { id } = await request();
+    reset();
+    await expect(deals.acceptServiceDeal({ dealId: id, userId: STRANGER })).rejects.toEqual(
+      conflict
+    );
+    expect(sent()).toEqual([]);
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(conflict);
+    expect(sent()).toEqual([[BUYER, 'service-deal-accepted', `/services/deals/${id}`]]);
+  });
+
+  it('tells the buyer once when the seller declines, and nobody when the buyer tries to', async () => {
+    const { id } = await request();
+    reset();
+    await expect(deals.declineServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(conflict);
+    expect(sent()).toEqual([]);
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+    expect(sent()).toEqual([[BUYER, 'service-deal-declined', `/services/deals/${id}`]]);
+  });
+
+  it('tells the buyer once when the request expires, and nobody before it does', async () => {
+    const { id } = await request();
+    reset();
+    await age(id, 'requestedAt', 47);
+    await deals.expireServiceDeals();
+    expect(sent()).toEqual([]);
+    await age(id, 'requestedAt', 49);
+    await deals.expireServiceDeals();
+    await deals.expireServiceDeals();
+    expect(sent()).toEqual([[BUYER, 'service-deal-expired', `/services/deals/${id}`]]);
+  });
+
+  it('tells the buyer about each delivery once, and nobody when delivery is refused', async () => {
+    const { id } = await request();
+    reset();
+    expect(await markDelivered(id)).toBe(false);
+    expect(sent()).toEqual([]);
+
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    reset();
+    await deliver(id);
+    await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+    await deliver(id);
+    const link = `/services/deals/${id}`;
+    expect(sent()).toEqual([
+      [BUYER, 'service-deal-delivered', link],
+      [SELLER, 'service-deal-revision-requested', link],
+      [BUYER, 'service-deal-delivered', link],
+    ]);
+    // Keyed per round: one key for both would let the second replace the first.
+    const keys = notifications.createNotification.mock.calls.map(([n]) => n.key);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it('tells the seller once about a revision request, and nobody past the included revisions', async () => {
+    const id = await delivered();
+    await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+    expect(sent()).toEqual([[SELLER, 'service-deal-revision-requested', `/services/deals/${id}`]]);
+
+    await deliver(id);
+    reset();
+    await expect(
+      deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'again' })
+    ).rejects.toEqual(conflict);
+    expect(sent()).toEqual([]);
+  });
+
+  it.each([
+    ['buyer', BUYER, SELLER],
+    ['seller', SELLER, BUYER],
+  ])('tells the other party once when the %s asks to cancel', async (requestedBy, asker, other) => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: asker, reason: 'r' });
+    expect(sent()).toEqual([
+      [other, 'service-deal-cancellation-requested', `/services/deals/${id}`],
+    ]);
+    expect(notifications.createNotification.mock.calls[0][0].details.requestedBy).toBe(requestedBy);
+  });
+
+  it('tells nobody about a cancellation request from a stranger or a repeat', async () => {
+    const id = await accepted();
+    await expect(
+      deals.requestServiceDealCancellation({ dealId: id, userId: STRANGER, reason: 'r' })
+    ).rejects.toEqual(conflict);
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    reset();
+    await expect(
+      deals.requestServiceDealCancellation({ dealId: id, userId: SELLER, reason: 'r' })
+    ).rejects.toEqual(conflict);
+    expect(sent()).toEqual([]);
+  });
+
+  it('tells the seller once when the buyer accepts delivery, and nobody while finals are pending', async () => {
+    const id = await accepted();
+    await finals(id, 'Pending');
+    await markDelivered(id);
+    reset();
+    await expect(deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER })).rejects.toEqual(
+      conflict
+    );
+    expect(sent()).toEqual([]);
+
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE "dealId" = $1`, [id]);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    expect(sent()).toEqual([[SELLER, 'service-deal-completed', `/services/deals/${id}`]]);
+  });
+
+  it('tells the seller once when a deal auto-completes', async () => {
+    const id = await delivered();
+    await age(id, 'deliveredAt', 73);
+    await deals.autoCompleteServiceDeals();
+    await deals.autoCompleteServiceDeals();
+    expect(sent()).toEqual([[SELLER, 'service-deal-completed', `/services/deals/${id}`]]);
+  });
+
+  it('tells the seller once when they are paid, and nobody while the payment fails', async () => {
+    const id = await delivered();
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
+      id,
+    ]);
+    reset();
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await escrow.sweepServiceDealReleases();
+    expect(sent()).toEqual([]);
+
+    await q(`UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = NULL WHERE "dealId" = $1`, [id]);
+    await escrow.sweepServiceDealReleases();
+    await escrow.releaseDeal(id);
+    expect((await deal(id)).settledAt).not.toBeNull();
+    expect(sent()).toEqual([[SELLER, 'service-deal-paid-out', `/services/deals/${id}`]]);
+  });
+
+  it('stays silent on withdrawals, cancellation answers and dispute resolution', async () => {
+    const agreed = await accepted();
+    const disputed = await accepted();
+    const withdrawn = (await request()).id;
+    for (const id of [agreed, disputed])
+      await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    reset();
+
+    await deals.withdrawServiceDeal({ dealId: withdrawn, userId: BUYER });
+    await deals.respondServiceDealCancellation({ dealId: agreed, userId: SELLER, agree: true });
+    await deals.respondServiceDealCancellation({ dealId: disputed, userId: SELLER, agree: false });
+    await deals.resolveServiceDealDispute({
+      dealId: disputed,
+      moderatorId: STRANGER,
+      resolution: 'Refund',
+      note: 'n',
+    });
+    expect((await deal(disputed)).status).toBe('Cancelled');
+    expect(sent()).toEqual([]);
+  });
+
+  it('keeps a committed move when the notification cannot be sent', async () => {
+    const { id } = await request();
+    notifications.createNotification.mockRejectedValueOnce(new Error('down'));
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    expect((await deal(id)).status).toBe('Accepted');
   });
 });

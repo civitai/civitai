@@ -1,4 +1,4 @@
-import { Anchor, Button, Group, Modal, Paper, Stack, Text, Textarea } from '@mantine/core';
+import { Anchor, Button, Group, List, Modal, Paper, Stack, Text, Textarea } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -9,6 +9,12 @@ import { requestSentMessage } from '~/components/CreatorShop/Services/deals/deal
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import {
+  BUYER_DISCLOSURE_INTRO,
+  SERVICES_TERMS_VERSION,
+  buyerDisclosureItems,
+  buyerHoldButtonLabel,
+} from '~/shared/constants/creator-service-terms.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -19,7 +25,10 @@ export function ServiceRequestModal({
   offering,
   sellerUsername,
 }: {
-  offering: Pick<ServiceOffering, 'id' | 'title' | 'price' | 'deliveryDays' | 'revisionsIncluded'>;
+  offering: Pick<
+    ServiceOffering,
+    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded'
+  >;
   sellerUsername: string;
 }) {
   const dialog = useDialogContext();
@@ -74,6 +83,9 @@ export function ServiceRequestModal({
         <Text size="sm" c="dimmed">
           From {sellerUsername} · {serviceTermsLine(offering)}
         </Text>
+        <Text size="sm" className="whitespace-pre-line">
+          {offering.description}
+        </Text>
         <Textarea
           label="What do you want?"
           value={text}
@@ -84,9 +96,9 @@ export function ServiceRequestModal({
           withAsterisk
         />
         <Paper withBorder radius="md" p="md">
-          <Stack gap={4}>
+          <Stack gap="xs">
             <Group justify="space-between">
-              <Text fw={600}>Escrow</Text>
+              <Text fw={600}>{BUYER_DISCLOSURE_INTRO}</Text>
               <CurrencyBadge
                 currency={Currency.BUZZ}
                 type={domain === 'green' ? 'green' : 'yellow'}
@@ -94,10 +106,11 @@ export function ServiceRequestModal({
                 variant="transparent"
               />
             </Group>
-            <Text size="sm" c="dimmed">
-              Held now, not paid. {sellerUsername} is paid only when the deal completes. If they
-              decline, or don&apos;t answer in time, it comes back to you.
-            </Text>
+            <List size="sm" spacing={4}>
+              {buyerDisclosureItems(offering).map((item) => (
+                <List.Item key={item}>{item}</List.Item>
+              ))}
+            </List>
           </Stack>
         </Paper>
         <Group justify="flex-end">
@@ -117,10 +130,11 @@ export function ServiceRequestModal({
                 expectedRevisionsIncluded: offering.revisionsIncluded,
                 expectedDeliveryDays: offering.deliveryDays,
                 requestText: trimmed,
+                disclosureVersion: SERVICES_TERMS_VERSION,
               });
             }}
           >
-            Send request · hold {offering.price.toLocaleString()} Buzz
+            {buyerHoldButtonLabel(offering.price)}
           </Button>
         </Group>
       </Stack>

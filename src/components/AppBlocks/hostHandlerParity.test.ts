@@ -312,8 +312,8 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
           problems: [],
         });
       }
-      // Two types are NACK-exempt (BRIDGE_NACK_EXEMPT); every other request type is NACKable.
-      expect(nacked).toBe(requestTypes.length - 2);
+      // Three types are NACK-exempt (BRIDGE_NACK_EXEMPT); every other request type is NACKable.
+      expect(nacked).toBe(requestTypes.length - 3);
     });
 
     it('every REQUEST type outside the forward matrix has its replies pinned in a host test', () => {
@@ -327,7 +327,7 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       //     NACK_ONLY_ERRORS. Those get no error reply except the dispatcher's NACK, which the
       //     sweep above pins.
       const unforwarded = requestTypes.filter((t) => !forwarded.has(t)).sort();
-      expect(unforwarded).toHaveLength(19);
+      expect(unforwarded).toHaveLength(20);
       const pins = pinsFromTestSources();
       expect(pins.length).toBeGreaterThanOrEqual(30);
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);
