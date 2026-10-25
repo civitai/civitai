@@ -30,6 +30,11 @@ export interface GetResourceFileRequest {
   fileId?: number;
 }
 
+function positiveInt(raw: unknown): number | null {
+  const n =
+    typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 
 /**
  * Validate a raw GET_RESOURCE_FILE payload from the untrusted iframe. `null` means
@@ -38,8 +43,17 @@ export interface GetResourceFileRequest {
  * back to the default file.
  */
 export function resolveGetResourceFileRequest(raw: unknown): GetResourceFileRequest | null {
-  void raw;
-  return null; // STUB (red commit)
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const modelVersionId = positiveInt(obj.modelVersionId);
+  if (modelVersionId === null) return null;
+  if (obj.fileId === undefined || obj.fileId === null) {
+    return { requestId: obj.requestId, modelVersionId };
+  }
+  const fileId = positiveInt(obj.fileId);
+  if (fileId === null) return null;
+  return { requestId: obj.requestId, modelVersionId, fileId };
 }
 
 // ── Error discriminants ──────────────────────────────────────────────────────
@@ -59,6 +73,13 @@ export const RESOURCE_FILE_ERROR_CODES = [
 ] as const;
 export type ResourceFileErrorCode = (typeof RESOURCE_FILE_ERROR_CODES)[number];
 
+const TRPC_CODE_TO_ERROR: Record<string, ResourceFileErrorCode> = {
+  NOT_FOUND: 'not-found',
+  FORBIDDEN: 'forbidden',
+  UNAUTHORIZED: 'unauthorized',
+  TOO_MANY_REQUESTS: 'rate-limited',
+  PAYLOAD_TOO_LARGE: 'too-large',
+};
 
 /**
  * Map a thrown error to the RESOURCE_FILE_RESULT error. A host-tagged error wins,
@@ -66,8 +87,15 @@ export type ResourceFileErrorCode = (typeof RESOURCE_FILE_ERROR_CODES)[number];
  * corrupt file) is `parse-failed`.
  */
 export function classifyResourceFileError(err: unknown): ResourceFileErrorCode {
-  void err;
-  return 'parse-failed'; // STUB (red commit)
+  if (err && typeof err === 'object') {
+    const tag = (err as { resourceFileError?: unknown }).resourceFileError;
+    if ((RESOURCE_FILE_ERROR_CODES as readonly unknown[]).includes(tag)) {
+      return tag as ResourceFileErrorCode;
+    }
+    const code = (err as { data?: { code?: unknown } }).data?.code;
+    if (typeof code === 'string' && code in TRPC_CODE_TO_ERROR) return TRPC_CODE_TO_ERROR[code];
+  }
+  return 'parse-failed';
 }
 
 export function resourceFileError(code: ResourceFileErrorCode, message?: string): Error {
@@ -86,8 +114,13 @@ export type ResourceGraphFormat = 'api' | 'ui' | 'unknown';
  * saved workflow); otherwise `unknown`.
  */
 export function detectGraphFormat(graph: unknown): ResourceGraphFormat {
-  void graph;
-  return 'unknown'; // STUB (red commit)
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return 'unknown';
+  const values = Object.values(graph as Record<string, unknown>);
+  const isApiNode = (v: unknown) =>
+    !!v && typeof v === 'object' && 'class_type' in v && 'inputs' in v;
+  if (values.length > 0 && values.every(isApiNode)) return 'api';
+  if (Array.isArray((graph as { nodes?: unknown }).nodes)) return 'ui';
+  return 'unknown';
 }
 
 // ── Entries ──────────────────────────────────────────────────────────────────
@@ -111,6 +144,13 @@ export interface RawResourceEntry {
   read: (limitBytes: number) => Promise<{ text: string; bytes: number; hitLimit: boolean }>;
 }
 
+function isJsonEntryPath(path: string): boolean {
+  const norm = path.replace(/\\/g, '/');
+  if (norm.startsWith('__MACOSX/') || norm.includes('/__MACOSX/')) return false;
+  const base = norm.slice(norm.lastIndexOf('/') + 1);
+  if (base.startsWith('.')) return false;
+  return base.toLowerCase().endsWith('.json');
+}
 
 /**
  * Parse the JSON entries of a file, enforcing every cap. Non-JSON entries are
@@ -124,7 +164,62 @@ export async function processResourceEntries(
   raw: RawResourceEntry[],
   caps: ResourceFileCaps = RESOURCE_FILE_CAPS
 ): Promise<ResourceFileEntries> {
-  void raw;
-  void caps;
-  throw resourceFileError('parse-failed', 'not implemented'); // STUB (red commit)
+  const entries: ResourceFileEntry[] = [];
+  let truncated = false;
+  let skippedForSize = false;
+  let totalBytes = 0;
+
+  for (const entry of raw) {
+    if (!isJsonEntryPath(entry.path)) continue;
+    if (entries.length >= caps.maxEntries) {
+      truncated = true;
+      break;
+    }
+    if (
+      typeof entry.declaredSize === 'number' &&
+      Number.isFinite(entry.declaredSize) &&
+      entry.declaredSize > caps.perEntryBytes
+    ) {
+      truncated = true;
+      skippedForSize = true;
+      continue;
+    }
+    const remaining = caps.totalBytes - totalBytes;
+    if (remaining <= 0) {
+      truncated = true;
+      skippedForSize = true;
+      break;
+    }
+    // One byte past the limit is enough to tell "exactly at the cap" from "over it".
+    const limit = Math.min(caps.perEntryBytes, remaining) + 1;
+    let read: { text: string; bytes: number; hitLimit: boolean };
+    try {
+      read = await entry.read(limit);
+    } catch {
+      truncated = true;
+      continue;
+    }
+    totalBytes += read.bytes;
+    if (read.hitLimit || read.bytes >= limit) {
+      truncated = true;
+      skippedForSize = true;
+      continue;
+    }
+    let graph: unknown;
+    try {
+      graph = JSON.parse(read.text);
+    } catch {
+      truncated = true;
+      continue;
+    }
+    entries.push({ path: entry.path, format: detectGraphFormat(graph), graph });
+  }
+
+  if (entries.length === 0) {
+    throw resourceFileError(
+      skippedForSize ? 'too-large' : 'parse-failed',
+      'no readable JSON entry in the file'
+    );
+  }
+  return { entries, truncated };
 }

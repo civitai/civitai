@@ -1,5 +1,12 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { dbRead } from '~/server/db/client';
+import { getFileForModelVersion } from '~/server/services/file.service';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { Flags } from '~/shared/utils/flags';
+import { ModelFileVisibility, ModelType } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 
 /**
  * Session-authed resolve step for the App Blocks GET_RESOURCE_FILE bridge
@@ -23,6 +30,10 @@ export interface ResourceFileCandidate {
   type: string;
 }
 
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
 
 /**
  * The default file when the caller names none: a `.json` Config file, then a
@@ -31,8 +42,17 @@ export interface ResourceFileCandidate {
  * Deliberately separate from `getPrimaryFile`, which ranks for site downloads.
  */
 export function pickDefaultResourceFile<T extends ResourceFileCandidate>(files: T[]): T | null {
-  void files;
-  return null; // STUB (red commit)
+  const rank = (f: T) => {
+    const ext = extensionOf(f.name);
+    if (f.type === 'Config' && ext === 'json') return 0;
+    if (f.type === 'Archive' && ext === 'zip') return 1;
+    return 2;
+  };
+  let best: T | null = null;
+  for (const f of files) {
+    if (!best || rank(f) < rank(best) || (rank(f) === rank(best) && f.id < best.id)) best = f;
+  }
+  return best;
 }
 
 export interface ResolveResourceFileResult {
@@ -50,13 +70,89 @@ export interface ResolveResourceFileResult {
   };
 }
 
+const notFound = () => new TRPCError({ code: 'NOT_FOUND', message: 'Resource file not found' });
 
-export async function resolveResourceFileForUser(args: {
+export async function resolveResourceFileForUser({
+  modelVersionId,
+  fileId,
+  user,
+  canViewNsfw,
+}: {
   modelVersionId: number;
   fileId?: number;
   user: SessionUser;
+  /** The per-request domain nsfw feature flag. */
   canViewNsfw: boolean;
 }): Promise<ResolveResourceFileResult> {
-  void args;
-  throw new Error('not implemented'); // STUB (red commit)
+  const version = await dbRead.modelVersion.findFirst({
+    where: { id: modelVersionId, model: { is: {} } },
+    select: {
+      id: true,
+      name: true,
+      nsfwLevel: true,
+      model: {
+        select: {
+          id: true,
+          type: true,
+          name: true,
+          userId: true,
+          user: { select: { username: true } },
+        },
+      },
+    },
+  });
+  if (!version || !RESOURCE_FILE_MODEL_TYPES.includes(version.model.type)) throw notFound();
+
+  const isOwner = version.model.userId === user.id;
+
+  // The gate shows moderators non-public files; this bridge serves a moderator
+  // only what any other non-owner could read.
+  const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
+  if (!isOwner) fileWhere.visibility = ModelFileVisibility.Public;
+  const candidates = await dbRead.modelFile.findMany({
+    where: fileWhere,
+    select: { id: true, name: true, type: true },
+  });
+  const chosen =
+    fileId !== undefined
+      ? candidates.find((f) => f.id === fileId) ?? null
+      : pickDefaultResourceFile(candidates);
+  if (!chosen) throw notFound();
+
+  const resolved = await getFileForModelVersion({
+    modelVersionId,
+    fileId: chosen.id,
+    user,
+    attribution: { caller: 'other', actor: resolveActorFor(user) },
+  });
+  if (resolved.status !== 'success') throw notFound();
+
+  // Narrower than the download gate, which lets owners and moderators read
+  // drafts, buyers read early access, and moderators bypass downloads-disabled.
+  // The bridge has no consent step, so v1 serves none of those (#664 decisions 1-2).
+  if (!resolved.published) throw notFound();
+  if (resolved.inEarlyAccess && !isOwner) throw notFound();
+  if (resolved.isDownloadable === false && !isOwner) throw notFound();
+
+  const browsingLevel = getServerBrowsingLevel({ canViewNsfw, user });
+  if (!Flags.hasFlag(browsingLevel, version.nsfwLevel ?? 0)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This resource exceeds your content maturity setting',
+    });
+  }
+
+  return {
+    signedUrl: resolved.url,
+    sizeBytes: Math.max(0, Math.round((resolved.sizeKB ?? 0) * 1024)),
+    meta: {
+      modelId: version.model.id,
+      modelVersionId: version.id,
+      fileId: chosen.id,
+      fileName: chosen.name,
+      modelName: version.model.name,
+      versionName: version.name,
+      creatorUsername: version.model.user?.username ?? null,
+    },
+  };
 }

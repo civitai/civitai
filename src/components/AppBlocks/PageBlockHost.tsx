@@ -142,6 +142,12 @@ import {
   type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import {
+  classifyResourceFileError,
+  resolveGetResourceFileRequest,
+  RESOURCE_FILE_MAX_CONCURRENT,
+  type ResourceFileErrorCode,
+} from './resourceFileParse';
+import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
@@ -391,6 +397,8 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
 // `BlockWildcardPackErrorCode` (aliased in wildcardPackParse.ts), so tsc rejects
 // any future edit that swaps in a non-member string.
 const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
+// Same reasoning for RESOURCE_FILE_RESULT, whose `error` is also a closed set.
+const RESOURCE_FILE_REVIEW_NACK_CODE: ResourceFileErrorCode = 'forbidden';
 
 /**
  * The floor a `fit="fill"` host will not shrink below, in px.
@@ -2354,6 +2362,8 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // GET_RESOURCE_FILE: session-authed and a mutation, for the same reasons.
+  const resolveResourceFileMutation = trpc.generation.resolveResourceFile.useMutation();
   // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
   // (protectedProcedure), like resolveWildcardPack above and for the same reason:
   // these are the SAME procedures the site's own follow button calls, so the
@@ -2375,6 +2385,7 @@ export function PageBlockHost({
   // synchronously in the message handler (JS is single-threaded, so the
   // check→increment before the first await is atomic per message).
   const wildcardInFlightRef = useRef<number>(0);
+  const resourceFileInFlightRef = useRef<number>(0);
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -4677,6 +4688,52 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
+
+  // ── GET_RESOURCE_FILE → RESOURCE_FILE_RESULT (civitai-app-starters#664) ──────
+  //
+  // The GET_WILDCARD_PACK pattern for workflow files: resolve as the viewer,
+  // fetch and parse in this tab, post back only the parsed graphs and meta. The
+  // signed URL never reaches the iframe. Refused in review preview for the same
+  // reason as wildcard packs: it would act with the moderator's download rights.
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_RESOURCE_FILE', async (raw) => {
+      const req = resolveGetResourceFileRequest(raw);
+      if (!req) return;
+      const { requestId, modelVersionId, fileId } = req;
+      if (reviewMode) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: RESOURCE_FILE_REVIEW_NACK_CODE });
+        return;
+      }
+      if (resourceFileInFlightRef.current >= RESOURCE_FILE_MAX_CONCURRENT) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: 'busy' });
+        return;
+      }
+      resourceFileInFlightRef.current += 1;
+      try {
+        const resolved = await resolveResourceFileMutation.mutateAsync(
+          fileId === undefined ? { modelVersionId } : { modelVersionId, fileId }
+        );
+        const { fetchAndParseResourceFile, RESOURCE_FILE_FETCH_TIMEOUT_MS } = await import(
+          './resourceFileHost'
+        );
+        const { entries, truncated } = await fetchAndParseResourceFile({
+          signedUrl: resolved.signedUrl,
+          sizeBytes: resolved.sizeBytes,
+          fileName: resolved.meta.fileName,
+          signal: AbortSignal.timeout(RESOURCE_FILE_FETCH_TIMEOUT_MS),
+        });
+        send('RESOURCE_FILE_RESULT', {
+          requestId,
+          file: { meta: resolved.meta, entries, truncated },
+        });
+      } catch (err) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
+      } finally {
+        resourceFileInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, resolveResourceFileMutation, reviewMode]);
 
   // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
   //
