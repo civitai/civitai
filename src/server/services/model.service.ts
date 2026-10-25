@@ -310,7 +310,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
   if (
     (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
-    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
+    !(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
   ) {
     const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
     return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;

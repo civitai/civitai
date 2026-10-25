@@ -901,7 +901,6 @@ async function readImageThreadViaKysely(
   entityType: string,
   entityId: number
 ): Promise<{ id: number; locked: boolean } | null | undefined> {
-  if (entityType !== 'image') return undefined;
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))) return undefined;
   return (await getImageThread((await loadKyselyDb()).kyselyRead, entityId)) ?? null;
 }

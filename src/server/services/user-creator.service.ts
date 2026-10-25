@@ -20,7 +20,7 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
 export async function fetchUserCreator(where: UserCreatorWhere) {
   // `kysely-hot-reads-2` on: the same two reads in one Kysely statement, on the replica as before.
   const found = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-    ? await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where)
+    ? await readUserCreatorViaKysely((await loadKyselyDb()).kyselyWrite, where)
     : await readUserCreatorViaPrisma(dbRead, where);
   if (!found) return null;
   const { user, modelCount } = found;
