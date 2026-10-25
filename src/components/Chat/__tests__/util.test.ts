@@ -1,6 +1,13 @@
 import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
-import { getLinkHref, renderLink, validateLink } from '~/components/Chat/util';
+import {
+  chatPreviewText,
+  getLinkHref,
+  MODERATOR_BADGE_COSMETIC_ID,
+  renderLink,
+  showsChatModeratorMark,
+  validateLink,
+} from '~/components/Chat/util';
 
 // linkify only turns a URL into a link when validateLink.url passes; this is the
 // gate the fix actually flips, so a revert (dropping `civitai.red` from
@@ -51,5 +58,68 @@ describe('getLinkHref', () => {
 
   it('returns undefined for an empty href', () => {
     expect(getLinkHref(undefined)).toBeUndefined();
+  });
+});
+
+describe('chatPreviewText', () => {
+  const me = 1;
+  const ann = { userId: 2, user: { username: 'ann' } };
+  const bob = { userId: 3, user: { username: 'bob' } };
+  const say = (userId: number, others: (typeof ann)[]) =>
+    chatPreviewText({
+      message: { content: 'hi', userId },
+      viewerId: me,
+      otherMembers: others,
+    });
+
+  it('prefixes your own message with "You: "', () => {
+    expect(say(me, [ann])).toBe('You: hi');
+    expect(say(me, [ann, bob])).toBe('You: hi');
+  });
+
+  it('names the sender in a group', () => {
+    expect(say(3, [ann, bob])).toBe('bob: hi');
+  });
+
+  it('leaves the other person in a 1:1 unprefixed', () => {
+    expect(say(2, [ann])).toBe('hi');
+  });
+
+  it('does not invent a sender for a system row', () => {
+    expect(say(-1, [ann, bob])).toBe('hi');
+  });
+});
+
+describe('showsChatModeratorMark', () => {
+  const badge = (id: number, type = 'Badge') => ({ cosmetic: { id, type } });
+
+  it('adds the mark for a moderator with no badge, or another badge', () => {
+    expect(showsChatModeratorMark({ isModerator: true, cosmetics: [] })).toBe(true);
+    expect(showsChatModeratorMark({ isModerator: true, cosmetics: [badge(7)] })).toBe(true);
+  });
+
+  it('skips it when the equipped Moderator badge already shows one', () => {
+    expect(
+      showsChatModeratorMark({ isModerator: true, cosmetics: [badge(MODERATOR_BADGE_COSMETIC_ID)] })
+    ).toBe(false);
+  });
+
+  it('is not tripped by a non-badge cosmetic that shares the id', () => {
+    expect(
+      showsChatModeratorMark({
+        isModerator: true,
+        cosmetics: [badge(MODERATOR_BADGE_COSMETIC_ID, 'NamePlate')],
+      })
+    ).toBe(true);
+  });
+
+  it('never adds a mark for a non-moderator', () => {
+    expect(showsChatModeratorMark({ isModerator: false, cosmetics: [] })).toBe(false);
+    expect(
+      showsChatModeratorMark({
+        isModerator: false,
+        cosmetics: [badge(MODERATOR_BADGE_COSMETIC_ID)],
+      })
+    ).toBe(false);
   });
 });
