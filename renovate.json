@@ -8,8 +8,16 @@
     "dependencyDashboardApproval": true
   },
   "vulnerabilityAlerts": {
-    "description": "Off because the npm manager is enabled for ONE package only (see packageRules). Vulnerability-fix PRs override `enabled: false` in packageRules and ignore `schedule`, so leaving this on would open a fix PR for every npm package with an open GitHub alert. Before the npm manager was enabled, alerts had no manager to act through, so this keeps that behaviour.",
-    "enabled": false
+    "description": "On, so a dependency with an open GitHub advisory gets a fix PR. Alert PRs override `enabled: false` in packageRules and ignore `schedule`, and cannot be scoped by path, so the blast radius is set by the npm manager's file list below: the root package.json (app-sdk lives there) plus the auth app and auth package. The other apps' package.json files are not read, so they get no alert PRs. Everything else in the auth packages stays on the disabled rule: no routine bump PRs, only fixes for an advisory.",
+    "enabled": true
+  },
+  "npm": {
+    "description": "Only these package.json files are read by the npm manager; see vulnerabilityAlerts.",
+    "managerFilePatterns": [
+      "/^package\\.json$/",
+      "/^apps/auth/package\\.json$/",
+      "/^packages/civitai-auth/package\\.json$/"
+    ]
   },
   "packageRules": [
     {
@@ -19,7 +27,7 @@
       "groupName": "node runtime pin"
     },
     {
-      "description": "The npm manager exists here for @civitai/app-sdk ONLY; every other npm dependency (including packageManager and engines entries) stays unmanaged. src/components/AppBlocks/hostHandlerParity.ts typechecks the INSTALLED SDK's message union against the hosts' INVENTORY, and a caret on a 0.x version admits patch releases only, so without a bump PR each SDK minor is invisible to that gate.",
+      "description": "The npm manager exists here for @civitai/app-sdk ONLY; every other npm dependency (including packageManager and engines entries) gets no routine update PR. A vulnerability-fix PR is the exception (see vulnerabilityAlerts). src/components/AppBlocks/hostHandlerParity.ts typechecks the INSTALLED SDK's message union against the hosts' INVENTORY, and a caret on a 0.x version admits patch releases only, so without a bump PR each SDK minor is invisible to that gate.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["!@civitai/app-sdk"],
       "enabled": false
