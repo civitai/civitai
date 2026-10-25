@@ -97,6 +97,7 @@ export async function moveImagesToPost({
           userId,
           availability: sourcePost.availability,
           unlisted: sourcePost.unlisted,
+          modelVersionId: sourcePost.modelVersionId,
         },
         select: { id: true },
       });
@@ -134,6 +135,17 @@ export async function moveImagesToPost({
       });
       if (count !== 1) throw throwBadRequestError('An image changed while moving; try again');
     }
+
+    // The source post's version is an undetected resource on its images only because they sat
+    // in that post. Detected rows came from the image itself and stay.
+    if (sourcePost.modelVersionId && destination.modelVersionId !== sourcePost.modelVersionId)
+      await tx.imageResourceNew.deleteMany({
+        where: {
+          imageId: { in: imageIds },
+          modelVersionId: sourcePost.modelVersionId,
+          detected: false,
+        },
+      });
 
     // A postId change fires no nsfw trigger, and `update-nsfw-levels` is the only writer of
     // Post.nsfwLevel (and walks on to the model version and model).
