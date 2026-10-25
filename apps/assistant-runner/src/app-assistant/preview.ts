@@ -25,11 +25,12 @@ export const PREVIEW_KEEPALIVE_MS = 5 * 60_000;
 const DETAIL_CHARS = 500;
 
 /**
- * How long `startDevServer` waits for the dev server it started to listen. Vite on a scaffolded App
- * Block listens within seconds; kept well inside the ~2 minutes a preview grant lives, which the
- * tunnel's start still needs after it.
+ * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
+ * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
+ * Restart is one request whose grant lives about 2 minutes and must still open the tunnel after
+ * this, behind up to `RESTART_WAIT_MS` of waiting for a starting app, so this is kept short.
  */
-export const DEV_SERVER_WAIT_MS = 30_000;
+export const DEV_SERVER_WAIT_MS = 20_000;
 const DEV_SERVER_POLL_MS = 1_000;
 /** One probe's own bound: the sandbox kills it (and all it started) past this. */
 const PROBE_TIMEOUT_MS = 10_000;
@@ -220,8 +221,8 @@ export class RunnerPreview {
    * `sandbox__dev_server_start` and `cd <project> && DEV_SERVER_COMMAND`, then waits, bounded, for it
    * to listen. Never a second one: one already running (or started meanwhile by another start, which
    * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
-   * ran it in, else the app key's own when it holds a `block.manifest.json`, else the only top-level
-   * directory that does. Throws `DevServerStartError`, saying what failed, when it does not run.
+   * ran it in, else the app key's own, else the only top-level directory, that holds a
+   * `block.manifest.json`. Throws `DevServerStartError`, saying what failed, when it does not run.
    */
   startDevServer(signal?: AbortSignal): Promise<void> {
     return this.#serial(async () => {
@@ -258,7 +259,9 @@ export class RunnerPreview {
     signal?: AbortSignal
   ): Promise<string | null> {
     const remembered = projectDirOf(status);
-    if (remembered && isProjectDir(remembered)) return remembered;
+    // Still a project: a directory renamed or removed since then is passed over.
+    if (remembered && isProjectDir(remembered) && (await this.#hasManifest(remembered, signal)))
+      return remembered;
     if (isProjectDir(appKey) && (await this.#hasManifest(appKey, signal))) return appKey;
     const listed = await this.#deps.sandbox.call(
       'run_command',

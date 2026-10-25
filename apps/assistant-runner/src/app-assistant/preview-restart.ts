@@ -207,9 +207,18 @@ export class PreviewRestarter implements PreviewRestarts {
       } catch (error) {
         if (!(error instanceof DevServerNotRunningError)) throw error;
         // Not running (as after every resume): start it as the assistant would, then the same
-        // reopen. Still no run, no model call and no Buzz.
+        // reopen. Still no run, no model call and no Buzz. Assumed: no reply is working in this
+        // sandbox meanwhile (one mid-`npm install` would see its dev server started early); the
+        // runner cannot see the page's replies from here.
         await preview.startDevServer();
-        shown = await preview.reopen();
+        try {
+          shown = await preview.reopen();
+        } catch (reopenError) {
+          // It listened a moment ago and is gone now: it stopped by itself.
+          if (reopenError instanceof DevServerNotRunningError)
+            throw new DevServerStartError('exited');
+          throw reopenError;
+        }
       }
       return { ok: true, blockId: shown.blockId, host: shown.host };
     } catch (error) {
@@ -258,9 +267,9 @@ export class PreviewRestarter implements PreviewRestarts {
           ? devServerExitedMessage(error.exitCode)
           : RESTART_MESSAGES[DEV_SERVER_FAILED[error.reason]]
       );
-    // It ran when started and was waited for until it listened, yet the reopen found it stopped.
+    // Only `startDevServer`'s own first look: the app stopped running (or closed) before it began.
     if (error instanceof DevServerNotRunningError)
-      return fail('not-running', devServerExitedMessage(null));
+      return fail('not-running', RESTART_MESSAGES['app-not-running']);
     // civitai refused the user (a gate, their consent) at the sandbox token's mint. A grant that ran
     // out (it lives about 2 minutes) is not a refusal: the next click brings a fresh one.
     if (error instanceof MintRefusedError)

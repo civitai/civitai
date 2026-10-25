@@ -259,6 +259,65 @@ describe('PreviewRestarter', () => {
       expect(starts()).toEqual([{ command: devCommand('web') }]);
     });
 
+    it('passes over a remembered directory that is no longer a project', async () => {
+      fake.add(APP);
+      const state = resumed({ projects: ['web'] });
+      state.command = 'cd gone && npm run dev';
+      expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+      expect(starts()).toEqual([{ command: devCommand('web') }]);
+    });
+
+    it('never puts a project name that is not a plain name into the command', async () => {
+      fake.add(APP);
+      resumed({ projects: ['$(touch x)'] });
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server is not running, and the preview could not tell which project to start. Ask the assistant to start it, and the preview opens by itself.',
+      });
+      expect(starts()).toEqual([]);
+    });
+
+    it('says the app would not start it when the sandbox refuses and nothing runs', async () => {
+      fake.add(APP);
+      resumed({
+        start: () => {
+          throw new Error('spawn failed');
+        },
+      });
+      expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server is not running, and your app would not start it. Ask the assistant to start it, and the preview opens by itself.',
+      });
+      expect(starts()).toHaveLength(1);
+      expect(tunnels.started).toEqual([]);
+    });
+
+    it('stops waiting, and says so, when the dev server exits before it listens', async () => {
+      fake.add(APP);
+      const state = resumed({ quietProbes: Infinity });
+      // It crashes after its start answered running (vite failing to load its config, say).
+      fake.tools.set('run_command', (args) => {
+        if (String(args.command).includes('block.manifest.json')) return runResult(0, 'web\n');
+        state.probes++;
+        state.running = false;
+        state.lastExit = { code: 2, signal: null, at: '2026-10-25T03:29:00.000Z' };
+        return runResult(3);
+      });
+      expect(await restarter({ devServerWaitMs: 60_000 }).restart('u-1', APP, 'g')).toEqual({
+        ok: false,
+        error: 'not-running',
+        message:
+          'Your app’s dev server stopped as soon as it started (exit code 2). Ask the assistant to fix and start it, and the preview opens by itself.',
+      });
+      // Not waited out: one probe, then the look that found it stopped.
+      expect(state.probes).toBe(1);
+      expect(tunnels.started).toEqual([]);
+    });
+
     it('waits, bounded, for the dev server it started to listen before opening the tunnel', async () => {
       fake.add(APP);
       const state = resumed({ quietProbes: 2 });
