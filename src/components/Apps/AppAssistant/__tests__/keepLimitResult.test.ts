@@ -87,6 +87,53 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
     expect([isKeepLimitResult(conflict), isKeepLimitResult(down)]).toEqual([false, false]);
   });
 
+  // The server runner bundles this package when it is released and the page ships on its own schedule,
+  // so the page reads what a DEPLOYED runner says. Each wording below is pinned byte for byte from a
+  // released runner (`git show assistant-runner-v0.0.<n>:packages/civitai-app-assistant/src/app-tools.ts`);
+  // the result's shape is what the runner reports (`tool-reported`), as the runner's own test
+  // `the kept-apps limit, as the page is told of it` shows: thrown, and refused by the gate after.
+  // When KEEP_LIMIT changes, its old wording is added here: never removed while a runner may send it.
+  const RELEASED_KEEP_LIMITS: Array<[runners: string, words: string]> = [
+    [
+      'assistant-runner v0.0.2 to v0.0.9',
+      'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
+    ],
+    [
+      'this page’s own create_app (assistant-runner after v0.0.9)',
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.',
+    ],
+  ];
+  it.each(RELEASED_KEEP_LIMITS)(
+    'is true for the limit as %s reports it, thrown and refused by the gate',
+    (_runners, words) => {
+      const thrown = {
+        name: 'create_app',
+        input: { name: 'A tiny click counter app' },
+        output: { error: words },
+        isError: true,
+      };
+      const refused = { ...thrown, refused: words };
+      expect([isKeepLimitResult(thrown), isKeepLimitResult(refused)]).toEqual([true, true]);
+    }
+  );
+
+  it('NEGATIVE CONTROL: is false for the running limit and other errors in a released runner’s words', () => {
+    const create = (error: string) => ({
+      name: 'create_app',
+      input: { name: 'A tiny click counter app' },
+      output: { error },
+      isError: true,
+    });
+    expect(
+      [
+        'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.',
+        'Your apps were changing at the same moment. Try again.',
+        'Your apps could not be reached right now. Try again in a moment.',
+        'You already have as many apps as you can keep.',
+      ].map((words) => isKeepLimitResult(create(words)))
+    ).toEqual([false, false, false, false]);
+  });
+
   it('is false for another tool that reports the same words, and for a create_app that worked', () => {
     const words =
       'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';

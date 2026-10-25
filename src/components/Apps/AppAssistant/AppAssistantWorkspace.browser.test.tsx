@@ -3078,6 +3078,35 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
   });
+
+  test('on the server runner, appears from the limit in a released runner’s words (v0.0.9)', async () => {
+    await page.viewport(1440, 900);
+    m.list = kept();
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
+    await userSends('A tiny click counter app.');
+    // The runner ships separately from the page and bundles the wording it was released with: this is
+    // runner v0.0.9's KEEP_LIMIT, byte for byte (`git show assistant-runner-v0.0.9:packages/
+    // civitai-app-assistant/src/app-tools.ts`), as its `tool-reported` result carries it.
+    m.chat!.onToolResult!({
+      name: 'create_app',
+      input: { name: 'Click counter' },
+      output: {
+        error:
+          'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
+      },
+      isError: true,
+    });
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
+    await confirmDelete('app-bbbb');
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    expect(m.send).toHaveBeenCalledWith('A tiny click counter app.');
+  });
 });
 
 describe('AppAssistantWorkspace keeps the app awake while the user works in its preview', () => {
