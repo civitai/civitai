@@ -90,15 +90,19 @@ const setWindow = (present: boolean) => {
  * should reach `initializeFaro` needs new module state. MUST be awaited: the dynamic import
  * defers the whole render past the current microtask.
  */
-const renderProvider = async (region: string | null | undefined) => {
+const renderProvider = async (
+  region: string | null | undefined,
+  hardLoad: { shell: boolean; signedIn: boolean } = { shell: false, signedIn: false }
+) => {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
-  return renderToStaticMarkup(createElement(FaroProvider, { region }));
+  return renderToStaticMarkup(createElement(FaroProvider, { region, ...hardLoad }));
 };
 
 const initOptions = () =>
   initializeFaro.mock.calls[0][0] as {
     sessionTracking: { samplingRate: number; session?: { attributes: Record<string, string> } };
+    pageTracking?: { page?: { attributes?: Record<string, string> } };
   };
 
 beforeEach(() => {
@@ -164,8 +168,34 @@ describe('FaroProvider — session-attributes wiring', () => {
     const { FaroProvider } = await import('~/components/Faro/FaroProvider');
     // TWO renders against the SAME module instance — StrictMode double-mount and
     // Fast-Refresh re-mounts must not re-initialize (module + window guards).
-    renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
-    renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
+    const props = { region: 'US', shell: false, signedIn: false };
+    renderToStaticMarkup(createElement(FaroProvider, props));
+    renderToStaticMarkup(createElement(FaroProvider, props));
     expect(initializeFaro).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('FaroProvider — page attributes wiring', () => {
+  it('a signed-in shell hard load reaches initializeFaro as `shell` + `signed-in`', async () => {
+    await renderProvider('US', { shell: true, signedIn: true });
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({
+      render_mode: 'shell',
+      viewer: 'signed-in',
+    });
+  });
+
+  it('an anonymous full render reaches initializeFaro as `ssr` + `anon`', async () => {
+    await renderProvider('US');
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({
+      render_mode: 'ssr',
+      viewer: 'anon',
+    });
+  });
+
+  it('they are PAGE attributes, never session ones (a session outlives the hard load)', async () => {
+    await renderProvider('US', { shell: true, signedIn: true });
+    const sessionAttrs = initOptions().sessionTracking.session?.attributes;
+    expect(sessionAttrs).not.toHaveProperty('render_mode');
+    expect(sessionAttrs).not.toHaveProperty('viewer');
   });
 });
