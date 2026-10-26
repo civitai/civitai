@@ -164,6 +164,13 @@ they are a decision or a verification, not a known way in.
 - [ ] **Let creators message an audience segment.** Creators want to announce to people who both
       follow them and have downloaded a specific model. Articles are the only current option and
       reach the wrong set. Needs a per-creator send-rate limit.
+- [ ] **Timed polls on creator profiles.** Creators want to ask their audience a question on their
+      profile, e.g. "which character should I train next". Today the only route is a StrawPoll
+      embed in an article: the vote happens off-site and the result never reaches the profile.
+      Desired outcome: a native poll in an opt-in profile section, single- or multiple-choice with
+      an optional image per option, that closes at a set time and then shows its result. Awaiting
+      a build / won't-do decision; options, data model and open questions are in
+      [`creator-profile-polls-proposal.md`](./creator-profile-polls-proposal.md).
 - [ ] **Import a model file from an external host.** Accept a source URL plus an access token and
       have the platform pull the file server-side, instead of requiring a browser upload. Large
       model files over unreliable residential upstream links make uploads slow and failure-prone;
