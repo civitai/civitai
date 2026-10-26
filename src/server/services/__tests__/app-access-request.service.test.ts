@@ -2,26 +2,35 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 // Relative, because `~` does not reach `apps/`.
 import { freshPglite } from '../../../../apps/moderator/src/test/pglite';
-import {
+
+const { refreshSession } = vi.hoisted(() => ({ refreshSession: vi.fn(async () => undefined) }));
+vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionInvalidation>()),
+  refreshSession,
+}));
+
+const {
   APP_ACCESS_ALREADY_APPROVED,
+  APP_ACCESS_ALREADY_PENDING,
   decideAppAccessRequest,
   getMyAppAccessRequest,
   listAppAccessRequests,
   submitAppAccessRequest,
-} from '../app-access-request.service';
+} = await import('../app-access-request.service');
 
 /**
  * `AppAccessRequest` against REAL rows: the hand-applied migration runs on an in-process Postgres,
  * and every statement the service sends runs there as the parameterised text Prisma would send.
  *
  * The one-pending-per-user rule is a PARTIAL unique index the service targets with
- * `ON CONFLICT … WHERE`. A mock cannot tell a statement that hits that index from one that inserts a
- * second row, so only rows can test the idempotent resubmit — and nothing else in CI executes the
- * migration SQL.
+ * `ON CONFLICT … WHERE`, and an approved row is the builder grant the auth hub reads. A mock can
+ * tell neither a statement that hits that index nor a status transition from one that does not, so
+ * only rows can test them — and nothing else in CI executes the migration SQL.
  */
 
 const MIGRATION = join(
@@ -34,11 +43,22 @@ const PRELUDE = `CREATE TABLE "User" ("id" SERIAL PRIMARY KEY, "username" TEXT);
 
 const MIRA_IDEA =
   'A pose-reference board that pulls my favourite model images into collections I can share.';
-const MIRA_IDEA_EDITED =
+const MIRA_IDEA_AGAIN =
   'A pose-reference board with tagging, so a collection can be filtered by camera angle.';
 const TOMASZ_IDEA = 'A prompt diary that shows how my results changed across model versions.';
-const MIRA_LINKS = ['https://example.com/sketch-board', 'https://example.org/inspiration'];
-const MIRA_LINKS_EDITED = ['https://example.net/sketch-v2'];
+
+/**
+ * The auth hub's grant predicate, verbatim (`apps/auth/.../session-producer.ts`): EXISTS an
+ * approved row. Asserted here against the rows the service writes, so a transition that leaves the
+ * wrong status behind is a failing test rather than a silent grant or a silent non-revoke.
+ */
+const isApproved = async (userId: number) =>
+  (
+    await pg.query<{ approved: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM "AppAccessRequest" WHERE "userId" = $1 AND "status" = 'approved') AS "approved"`,
+      [userId]
+    )
+  ).rows[0].approved;
 
 let pg: PGlite;
 let mira: number;
@@ -57,14 +77,16 @@ const seedUser = async (username: string) =>
 
 const rowsFor = async (userId: number) =>
   (
-    await pg.query<{ id: number; status: string; whatToBuild: string; links: string[] }>(
-      'SELECT "id", "status", "whatToBuild", "links" FROM "AppAccessRequest" WHERE "userId" = $1 ORDER BY "id"',
+    await pg.query<{ id: number; status: string; whatToBuild: string }>(
+      'SELECT "id", "status", "whatToBuild" FROM "AppAccessRequest" WHERE "userId" = $1 ORDER BY "id"',
       [userId]
     )
   ).rows;
 
-const submit = (userId: number, whatToBuild: string, links: string[] = []) =>
-  submitAppAccessRequest({ userId, input: { whatToBuild, links } });
+const submit = (userId: number, whatToBuild: string) =>
+  submitAppAccessRequest({ userId, input: { whatToBuild } });
+const decide = (id: number, decision: 'approved' | 'declined') =>
+  decideAppAccessRequest({ moderatorId: moderator, input: { id, decision } });
 
 beforeEach(async () => {
   pg = await freshPglite();
@@ -76,6 +98,7 @@ beforeEach(async () => {
   tomasz = await seedUser('tomasz_k');
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockImplementation(run as never);
+  refreshSession.mockClear();
 });
 
 afterEach(async () => {
@@ -89,55 +112,47 @@ describe('the fixtures', () => {
 });
 
 describe('submitAppAccessRequest', () => {
-  it('creates one pending request with the text and links', async () => {
-    const row = await submit(mira, MIRA_IDEA, MIRA_LINKS);
-    expect(row).toMatchObject({
-      status: 'pending',
-      whatToBuild: MIRA_IDEA,
-      links: MIRA_LINKS,
-      reviewedAt: null,
-    });
+  it('creates one pending request with the text', async () => {
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', whatToBuild: MIRA_IDEA, reviewedAt: null });
     expect(await rowsFor(mira)).toEqual([
-      { id: row.id, status: 'pending', whatToBuild: MIRA_IDEA, links: MIRA_LINKS },
+      { id: row.id, status: 'pending', whatToBuild: MIRA_IDEA },
     ]);
+    expect(await isApproved(mira)).toBe(false);
   });
 
-  it('🔴 a resubmit UPDATES the pending request instead of adding a second one', async () => {
-    const first = await submit(mira, MIRA_IDEA, MIRA_LINKS);
-    const second = await submit(mira, MIRA_IDEA_EDITED, MIRA_LINKS_EDITED);
-    expect(second.id).toBe(first.id);
+  it('🔴 one pending request per person: a second submit is a CONFLICT and changes nothing', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: APP_ACCESS_ALREADY_PENDING,
+    });
     expect(await rowsFor(mira)).toEqual([
-      { id: first.id, status: 'pending', whatToBuild: MIRA_IDEA_EDITED, links: MIRA_LINKS_EDITED },
+      { id: first.id, status: 'pending', whatToBuild: MIRA_IDEA },
     ]);
   });
 
   it('keeps each person’s pending request separate', async () => {
-    await submit(mira, MIRA_IDEA, MIRA_LINKS);
+    await submit(mira, MIRA_IDEA);
     await submit(tomasz, TOMASZ_IDEA);
     expect(await rowsFor(mira)).toHaveLength(1);
     expect(await rowsFor(tomasz)).toEqual([
-      expect.objectContaining({ status: 'pending', whatToBuild: TOMASZ_IDEA, links: [] }),
+      expect.objectContaining({ status: 'pending', whatToBuild: TOMASZ_IDEA }),
     ]);
   });
 
   it('after a decline, a new request is a NEW row and the declined one is kept', async () => {
     const first = await submit(mira, MIRA_IDEA);
-    await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: first.id, decision: 'declined' },
-    });
-    const again = await submit(mira, MIRA_IDEA_EDITED);
+    await decide(first.id, 'declined');
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
     expect(again.id).not.toBe(first.id);
     expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['declined', 'pending']);
   });
 
   it('refuses a request from someone already approved, and writes nothing', async () => {
     const first = await submit(mira, MIRA_IDEA);
-    await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: first.id, decision: 'approved' },
-    });
-    await expect(submit(mira, MIRA_IDEA_EDITED)).rejects.toMatchObject({
+    await decide(first.id, 'approved');
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({
       code: 'CONFLICT',
       message: APP_ACCESS_ALREADY_APPROVED,
     });
@@ -190,20 +205,16 @@ describe('getMyAppAccessRequest', () => {
 
   it('returns the latest request, decided ones included', async () => {
     const first = await submit(mira, MIRA_IDEA);
-    await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: first.id, decision: 'declined' },
-    });
+    await decide(first.id, 'declined');
     expect(await getMyAppAccessRequest({ userId: mira })).toMatchObject({
       id: first.id,
       status: 'declined',
     });
-    const second = await submit(mira, MIRA_IDEA_EDITED, MIRA_LINKS_EDITED);
+    const second = await submit(mira, MIRA_IDEA_AGAIN);
     expect(await getMyAppAccessRequest({ userId: mira })).toMatchObject({
       id: second.id,
       status: 'pending',
-      whatToBuild: MIRA_IDEA_EDITED,
-      links: MIRA_LINKS_EDITED,
+      whatToBuild: MIRA_IDEA_AGAIN,
     });
   });
 });
@@ -212,10 +223,7 @@ describe('listAppAccessRequests', () => {
   it('filters by status, newest first, with the requester’s and reviewer’s usernames', async () => {
     const a = await submit(mira, MIRA_IDEA);
     const b = await submit(tomasz, TOMASZ_IDEA);
-    await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: a.id, decision: 'approved' },
-    });
+    await decide(a.id, 'approved');
 
     const pending = await listAppAccessRequests({ status: 'pending', limit: 50 });
     expect(pending.items.map((i) => [i.id, i.username])).toEqual([[b.id, 'tomasz_k']]);
@@ -247,15 +255,20 @@ describe('listAppAccessRequests', () => {
   });
 });
 
-describe('decideAppAccessRequest', () => {
-  it('records the decision, who made it and when', async () => {
+describe('decideAppAccessRequest — approving GRANTS, declining an approved row REVOKES', () => {
+  it('🔴 approve: the hub predicate turns true for THAT user only, and their session is refreshed', async () => {
     const req = await submit(mira, MIRA_IDEA);
-    const decided = await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: req.id, decision: 'approved' },
-    });
+    await submit(tomasz, TOMASZ_IDEA);
+    const decided = await decide(req.id, 'approved');
+
     expect(decided).toMatchObject({ id: req.id, status: 'approved' });
     expect(decided.reviewedAt).toBeInstanceOf(Date);
+    expect(await isApproved(mira)).toBe(true);
+    expect(await isApproved(tomasz)).toBe(false);
+    // The REQUESTER's session — not the moderator's.
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+
     const [row] = (
       await pg.query<{ reviewedById: number }>(
         'SELECT "reviewedById" FROM "AppAccessRequest" WHERE "id" = $1',
@@ -265,24 +278,57 @@ describe('decideAppAccessRequest', () => {
     expect(row.reviewedById).toBe(moderator);
   });
 
-  it('🔴 a decided request is not re-decided: the second decision is a CONFLICT', async () => {
+  it('🔴 decline of a pending request grants nothing, and still refreshes the requester', async () => {
     const req = await submit(mira, MIRA_IDEA);
-    await decideAppAccessRequest({
-      moderatorId: moderator,
-      input: { id: req.id, decision: 'declined' },
+    await decide(req.id, 'declined');
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+  });
+
+  it('🔴 revoke: declining an APPROVED request turns the predicate false and refreshes the session', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    await decide(req.id, 'approved');
+    refreshSession.mockClear();
+
+    const revoked = await decide(req.id, 'declined');
+    expect(revoked).toMatchObject({ id: req.id, status: 'declined' });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+    // A revoked person can ask again.
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('🔴 a declined request is not re-decided: approving it is a CONFLICT and grants nothing', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    await decide(req.id, 'declined');
+    refreshSession.mockClear();
+    await expect(decide(req.id, 'approved')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This request was already declined.',
     });
-    await expect(
-      decideAppAccessRequest({
-        moderatorId: moderator,
-        input: { id: req.id, decision: 'approved' },
-      })
-    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'This request was already declined.' });
     expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['declined']);
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it('a second approve of the same request is a CONFLICT', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    await decide(req.id, 'approved');
+    await expect(decide(req.id, 'approved')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This request was already approved.',
+    });
+  });
+
+  it('a failed session refresh does not undo or fail the decision', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    refreshSession.mockRejectedValueOnce(new Error('sysredis down'));
+    await expect(decide(req.id, 'approved')).resolves.toMatchObject({ status: 'approved' });
+    expect(await isApproved(mira)).toBe(true);
   });
 
   it('is NOT_FOUND for an id that does not exist', async () => {
-    await expect(
-      decideAppAccessRequest({ moderatorId: moderator, input: { id: 9_999, decision: 'approved' } })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(decide(9_999, 'approved')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(refreshSession).not.toHaveBeenCalled();
   });
 });

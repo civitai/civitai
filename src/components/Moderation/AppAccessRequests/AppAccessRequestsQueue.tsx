@@ -1,6 +1,5 @@
 import {
   Alert,
-  Anchor,
   Badge,
   Button,
   Center,
@@ -33,8 +32,10 @@ const STATUS_COLOR: Record<AppAccessRequestStatus, string> = {
 };
 
 /**
- * The moderator queue for "Request access" on `/apps/build`. Approve and Decline RECORD a
- * decision; neither grants anything, which the banner says so nobody approves and walks away.
+ * The moderator queue for "Request access" on `/apps/build`. Approving GRANTS builder access —
+ * the App Assistant and the builder flags, through the `app-builder-approved` Flipt segment — and
+ * Revoke (a decline of an approved request) takes it away. The banner says so, because both take
+ * effect on the person's next page load.
  */
 export function AppAccessRequestsQueue() {
   const [filter, setFilter] = useState<Filter>('pending');
@@ -56,9 +57,9 @@ export function AppAccessRequestsQueue() {
 
   return (
     <Stack gap="md">
-      <Alert color="blue" variant="light" title="Approving does not grant access">
-        Approve records the decision and shows the requester that they were approved. To let them
-        build, add their user to the app developer testers segment in the feature-flag service.
+      <Alert color="blue" variant="light" title="Approving grants access">
+        Approve lets the person build apps, including the App Assistant, from their next page load.
+        Revoke takes that away again.
       </Alert>
       <SegmentedControl
         value={filter}
@@ -79,7 +80,6 @@ export function AppAccessRequestsQueue() {
               <Table.Tr>
                 <Table.Th>User</Table.Th>
                 <Table.Th>What they want to build</Table.Th>
-                <Table.Th>Links</Table.Th>
                 <Table.Th>Sent</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th />
@@ -104,23 +104,7 @@ export function AppAccessRequestsQueue() {
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <Stack gap={2}>
-                      {item.links.map((link) => (
-                        <Anchor
-                          key={link}
-                          href={link}
-                          target="_blank"
-                          rel="noopener noreferrer nofollow ugc"
-                          size="sm"
-                          style={{ wordBreak: 'break-all' }}
-                        >
-                          {link}
-                        </Anchor>
-                      ))}
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{formatDate(item.updatedAt)}</Text>
+                    <Text size="sm">{formatDate(item.createdAt)}</Text>
                   </Table.Td>
                   <Table.Td>
                     <Badge color={STATUS_COLOR[item.status]} variant="light">
@@ -152,6 +136,18 @@ export function AppAccessRequestsQueue() {
                           Decline
                         </Button>
                       </Group>
+                    )}
+                    {item.status === 'approved' && (
+                      <Button
+                        size="xs"
+                        variant="default"
+                        color="red"
+                        loading={decide.isPending && decide.variables?.id === item.id}
+                        onClick={() => decide.mutate({ id: item.id, decision: 'declined' })}
+                        data-testid={`app-access-request-revoke-${item.id}`}
+                      >
+                        Revoke
+                      </Button>
                     )}
                   </Table.Td>
                 </Table.Tr>

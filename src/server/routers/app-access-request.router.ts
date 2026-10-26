@@ -1,4 +1,3 @@
-import { rateLimit } from '~/server/middleware.trpc';
 import {
   decideAppAccessRequestSchema,
   listAppAccessRequestsSchema,
@@ -11,11 +10,10 @@ import {
   submitAppAccessRequest,
 } from '~/server/services/app-access-request.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
-import { APP_ACCESS_REQUEST_SUBMIT_RATE_LIMITS } from '~/shared/constants/app-access-request.constants';
 
 export const appAccessRequestRouter = router({
+  // No rate limiter: the one-pending-row index already caps a person at one open request.
   submit: protectedProcedure
-    .use(rateLimit(APP_ACCESS_REQUEST_SUBMIT_RATE_LIMITS))
     .input(submitAppAccessRequestSchema)
     .mutation(({ ctx, input }) => submitAppAccessRequest({ userId: ctx.user.id, input })),
 
@@ -25,7 +23,7 @@ export const appAccessRequestRouter = router({
     .input(listAppAccessRequestsSchema)
     .query(({ input }) => listAppAccessRequests(input)),
 
-  /** Records the decision only. Granting access is a separate, manual step. */
+  /** Approving grants builder access; declining an approved request revokes it. */
   decide: moderatorProcedure
     .input(decideAppAccessRequestSchema)
     .mutation(({ ctx, input }) => decideAppAccessRequest({ moderatorId: ctx.user.id, input })),

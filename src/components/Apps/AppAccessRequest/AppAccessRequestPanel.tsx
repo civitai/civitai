@@ -8,7 +8,6 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-import type { AppAccessRequestModalProps } from './AppAccessRequestModal';
 
 const AppAccessRequestModal = dynamic(() => import('./AppAccessRequestModal'));
 
@@ -18,13 +17,18 @@ const STATUS_BADGE: Record<AppAccessRequestStatus, { label: string; color: strin
   declined: { label: 'Not approved', color: 'gray' },
 };
 
-export function openAppAccessRequestModal(props: AppAccessRequestModalProps) {
-  dialogStore.trigger({ id: 'app-access-request', component: AppAccessRequestModal, props });
+export function openAppAccessRequestModal() {
+  dialogStore.trigger({ id: 'app-access-request', component: AppAccessRequestModal });
 }
 
 /**
  * The "Request access" control on the `/apps/build` pitch, and where the viewer sees what became
  * of their request. Signed out, the button goes through the sign-in flow first.
+ *
+ * Approval is the grant: it puts the viewer on the builder flags (App Assistant included) and
+ * busts their session, so the next page load renders the assistant here. That is why the approved
+ * state offers a full page load rather than a client navigation — the page mode is decided in
+ * `getServerSideProps` from the session's flags.
  *
  * The status comes from a client-only query, so the server render and the first client paint
  * both show the plain button, and the status replaces it once the query lands.
@@ -48,12 +52,7 @@ export function AppAccessRequestPanel({ onRequest }: { onRequest?: () => void })
 
   const open = () => {
     onRequest?.();
-    openAppAccessRequestModal({
-      pending:
-        request?.status === 'pending'
-          ? { whatToBuild: request.whatToBuild, links: request.links }
-          : null,
-    });
+    openAppAccessRequestModal();
   };
 
   if (!request) {
@@ -79,31 +78,27 @@ export function AppAccessRequestPanel({ onRequest }: { onRequest?: () => void })
           {badge.label}
         </Badge>
         <Text size="sm" c="dimmed">
-          {request.status === 'pending'
-            ? `Sent ${formatDate(request.updatedAt)}`
-            : `Reviewed ${formatDate(request.reviewedAt ?? request.updatedAt)}`}
+          {request.reviewedAt
+            ? `Reviewed ${formatDate(request.reviewedAt)}`
+            : `Sent ${formatDate(request.createdAt)}`}
         </Text>
       </Group>
       <Text size="sm">
-        {request.status === 'pending' &&
-          'A moderator will review your request. You can change it until then.'}
+        {request.status === 'pending' && 'A moderator will review your request.'}
         {request.status === 'approved' &&
-          'Your request was approved. Access is switched on by hand, so the App Assistant can take a little while to appear here.'}
-        {request.status === 'declined' &&
-          'Your last request was not approved. You can send a new one.'}
+          'You can build apps now. Reload this page and the App Assistant opens here.'}
+        {request.status === 'declined' && 'Your request was not approved. You can send a new one.'}
       </Text>
-      {request.status !== 'approved' && (
-        <Group>
-          <Button
-            variant="light"
-            onClick={open}
-            data-testid={
-              request.status === 'pending' ? 'app-access-request-edit' : 'app-access-request-button'
-            }
-          >
-            {request.status === 'pending' ? 'Update request' : 'Request access again'}
-          </Button>
-        </Group>
+      {request.status === 'approved' && (
+        // A full page load, not a client navigation: the assistant view is chosen server-side.
+        <Button component="a" href="/apps/build" data-testid="app-access-request-open-assistant">
+          Open the App Assistant
+        </Button>
+      )}
+      {request.status === 'declined' && (
+        <Button variant="light" onClick={open} data-testid="app-access-request-button">
+          Request access again
+        </Button>
       )}
     </Stack>
   );

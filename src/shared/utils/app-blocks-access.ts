@@ -329,19 +329,21 @@ export function canAccessAppAssistant(features: AppAssistantFeatureFlags): boole
  *
  * - `assistant` — {@link canAccessAppAssistant} admits them and they are signed in: the App
  *   Assistant workspace. It used to live at `/apps/assistant`, which now 301s here.
- * - `sign-in` — the assistant gate admits them but they are signed out, and the build gate does
- *   not: send them to log in (what `/apps/assistant` did), not to a 404.
  * - `build` — {@link canAccessAppsBuild} admits them: pitch / first app / workbench.
  * - `null` — neither: `notFound`.
  *
+ * There is no signed-out assistant mode. `appAssistant` is `availability: []` with Flipt as its
+ * only on-switch, and every rollout on `app-assistant` is a segment matched on `isModerator` /
+ * `userId` / `appBuilderApproved` — properties an anonymous context does not carry — over
+ * `enabled: false` (which flipt-state's flag-shape gate enforces for segment-only flags). So the
+ * assistant gate cannot admit a signed-out viewer, and one falls through to the build gate.
+ *
  * Composed from the two predicates, never restated: the page resolver and the rail's Build row
- * both call THIS, so the tab and the page cannot disagree (#3899, PR #4668). The rail shows the
- * row for `assistant` and `build` only — a `sign-in` viewer has no session, and the old
- * App Assistant row was hidden from them too.
+ * both call THIS, so the tab and the page cannot disagree (#3899, PR #4668).
  *
  * Hydration-safe for the reasons both predicates give: every input is SSR-seeded and frozen.
  */
-export type AppsBuildPageMode = 'assistant' | 'sign-in' | 'build' | null;
+export type AppsBuildPageMode = 'assistant' | 'build' | null;
 
 export type AppsBuildPageFeatureFlags =
   | (NonNullable<AppsBuildFeatureFlags> & NonNullable<AppAssistantFeatureFlags>)
@@ -352,12 +354,8 @@ export function resolveAppsBuildPageMode(
   user: { isModerator?: boolean | null } | null | undefined,
   features: AppsBuildPageFeatureFlags
 ): AppsBuildPageMode {
-  const build = canAccessAppsBuild(user, features);
-  if (canAccessAppAssistant(features)) {
-    if (user) return 'assistant';
-    if (!build) return 'sign-in';
-  }
-  return build ? 'build' : null;
+  if (user && canAccessAppAssistant(features)) return 'assistant';
+  return canAccessAppsBuild(user, features) ? 'build' : null;
 }
 
 /**

@@ -69,14 +69,19 @@ describe('the REST transport targets Flipt with the token subject, not an empty 
   });
 
   it('threads the verified subject id and isModerator into the flag context', async () => {
-    getUserById.mockResolvedValue({ id: VIEWER, isModerator: true });
+    getUserById.mockResolvedValue({ id: VIEWER, isModerator: true, appAccessRequests: [] });
     const { blockWorkflowCaller } = await import('~/server/services/blocks/block-workflow-rest');
     await blockWorkflowCaller(reqWith(`user:${VIEWER}`), res);
 
-    // The lookup asks for exactly the two properties Flipt segments read.
+    // The lookup asks for exactly the properties Flipt segments read: id, isModerator, and the
+    // approved App Access Request that becomes `appBuilderApproved`.
     expect(getUserById).toHaveBeenCalledWith({
       id: VIEWER,
-      select: { id: true, isModerator: true },
+      select: {
+        id: true,
+        isModerator: true,
+        appAccessRequests: { where: { status: 'approved' }, select: { id: true }, take: 1 },
+      },
     });
     const user = captured.ctx?.user as { id?: number; isModerator?: boolean } | undefined;
     expect(user?.id).toBe(VIEWER);
@@ -87,6 +92,23 @@ describe('the REST transport targets Flipt with the token subject, not an empty 
     const flagInput = (captured.ctx?.features as { __input?: { user?: { id?: number } } })?.__input;
     expect(flagInput?.user?.id).toBe(VIEWER);
   });
+
+  it.each([
+    ['an approved App Access Request', [{ id: 5 }], true],
+    ['none', [], false],
+  ])(
+    '🔴 threads appBuilderApproved from the DB row (%s) to the flag context',
+    async (_label, appAccessRequests, approved) => {
+      getUserById.mockResolvedValue({ id: VIEWER, isModerator: false, appAccessRequests });
+      const { blockWorkflowCaller } = await import('~/server/services/blocks/block-workflow-rest');
+      await blockWorkflowCaller(reqWith(`user:${VIEWER}`), res);
+      const flagUser = (captured.ctx?.features as { __input?: { user?: Record<string, unknown> } })
+        ?.__input?.user;
+      expect(flagUser?.appBuilderApproved).toBe(approved);
+      // The relation rows themselves do not leak onto the flag-targeting user.
+      expect(flagUser).not.toHaveProperty('appAccessRequests');
+    }
+  );
 
   it('leaves an ANON subject with no user — an empty context is CORRECT there', async () => {
     // The literal `anon`, which is what the mint issues — NOT `anon:<something>`.

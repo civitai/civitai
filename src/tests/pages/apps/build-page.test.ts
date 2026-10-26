@@ -48,9 +48,6 @@ const ASSISTANT = { appBlocks: true, appAssistant: true };
 
 const NOT_FOUND = { notFound: true };
 const BUILD = { props: { mode: 'build' } };
-const LOGIN = {
-  redirect: { destination: '/login?returnUrl=%2Fapps%2Fbuild', permanent: false },
-};
 const ASSISTANT_PROPS = {
   props: {
     mode: 'assistant',
@@ -61,12 +58,8 @@ const ASSISTANT_PROPS = {
   },
 };
 
-async function resolve(
-  features: Record<string, boolean>,
-  user: User | null,
-  resolvedUrl = '/apps/build'
-) {
-  return captured.fn!({ features, session: user ? { user } : null, ctx: { resolvedUrl } });
+async function resolve(features: Record<string, boolean>, user: User | null) {
+  return captured.fn!({ features, session: user ? { user } : null, ctx: {} });
 }
 
 beforeEach(() => {
@@ -99,7 +92,9 @@ describe('/apps/build — the page each viewer gets', () => {
       NOT_FOUND,
     ],
     ['the runtime without the assistant flag', { appBlocks: true }, NOT_FOUND, NOT_FOUND, BUILD],
-    ['the assistant', ASSISTANT, LOGIN, ASSISTANT_PROPS, ASSISTANT_PROPS],
+    // Signed out with only the assistant flags is unreachable in production (the flag's only
+    // rollouts are segments an anonymous context cannot match); it is a plain 404 here.
+    ['the assistant', ASSISTANT, NOT_FOUND, ASSISTANT_PROPS, ASSISTANT_PROPS],
     [
       'the assistant + get-started',
       { ...ASSISTANT, appBlocksGetStarted: true },
@@ -116,15 +111,6 @@ describe('/apps/build — the page each viewer gets', () => {
   it('sends a banned account home instead of into the assistant', async () => {
     expect(await resolve(ASSISTANT, BANNED)).toEqual({
       redirect: { destination: '/', permanent: false },
-    });
-  });
-
-  it('🔴 the login round trip keeps the query, so a fork link still opens the fork', async () => {
-    expect(await resolve(ASSISTANT, null, '/apps/build?fork=pose-board-2')).toEqual({
-      redirect: {
-        destination: '/login?returnUrl=%2Fapps%2Fbuild%3Ffork%3Dpose-board-2',
-        permanent: false,
-      },
     });
   });
 });

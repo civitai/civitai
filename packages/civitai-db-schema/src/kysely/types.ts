@@ -313,14 +313,12 @@ export type AppAccessRequest = {
   id: Generated<number>;
   userId: number;
   whatToBuild: string;
-  links: Generated<string[]>;
   /**
    * pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
    * per user: the migration's PARTIAL unique index, which Prisma cannot express.
    */
   status: Generated<string>;
   createdAt: Generated<Timestamp>;
-  updatedAt: Generated<Timestamp>;
   reviewedAt: Timestamp | null;
   reviewedById: number | null;
 };

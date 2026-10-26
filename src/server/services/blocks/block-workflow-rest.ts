@@ -151,6 +151,11 @@ type BlocksCaller = ReturnType<typeof blocksRouter.createCaller>;
  * `tier: 'free'` / `isMember: 'false'` / `isEarlyAdopter: 'false'` here. If one of them
  * ever gates a block-reachable path, widen this — do not assume it is already covered.
  *
+ * `appBuilderApproved` IS supplied: it gates the App Blocks builder flags (the
+ * `app-builder-approved` segment), and it costs no extra round trip — it rides the same
+ * `User` read as a relation select over the approved `AppAccessRequest` rows, the same
+ * predicate the auth hub's session producer applies.
+ *
  * Cost: one `getUserById` per request. The two spend procedures hydrate the same user
  * again internally, so on submit/estimate this is a second read of a row that is already
  * being fetched; accepted rather than plumbed through, because the alternative couples
@@ -167,8 +172,17 @@ async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefi
   // Anon subjects have no user id — `{ isLoggedIn: 'false' }` is then CORRECT, and is
   // what the bridge produces for the same caller.
   if (userId == null) return undefined;
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  return row ? (row as unknown as SessionUser) : undefined;
+  const row = await getUserById({
+    id: userId,
+    select: {
+      id: true,
+      isModerator: true,
+      appAccessRequests: { where: { status: 'approved' }, select: { id: true }, take: 1 },
+    },
+  });
+  if (!row) return undefined;
+  const { appAccessRequests, ...user } = row;
+  return { ...user, appBuilderApproved: appAccessRequests.length > 0 } as unknown as SessionUser;
 }
 
 /**

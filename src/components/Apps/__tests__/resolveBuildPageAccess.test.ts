@@ -5,7 +5,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * The `/apps/build` SSR resolver. The BUILD decision is `canAccessAppsBuild` and is
  * exhaustively covered in `appsBuildAccess.test.ts`; the full viewer matrix, assistant included,
  * is `src/tests/pages/apps/build-page.test.ts`. What this file owns is the two things the resolver
- * adds on top — the SHAPE it returns, and WHEN it redirects.
+ * adds on top — the SHAPE it returns, and that it never sends anyone to log in.
  */
 describe('resolveBuildPageAccess', () => {
   it('returns the build view for an admitted viewer', () => {
@@ -58,33 +58,25 @@ describe('resolveBuildPageAccess', () => {
     expect(result).toEqual({ notFound: true });
   });
 
-  it('never redirects anywhere without the assistant flag, for ANY input in the build flag space', () => {
+  it('never redirects a non-banned viewer anywhere, for ANY input in the flag space', () => {
     for (const appListings of [false, true])
       for (const appBlocks of [false, true])
         for (const appBlocksAuthor of [false, true])
           for (const appBlocksGetStarted of [false, true])
-            for (const user of [null, { isModerator: false }, { isModerator: true }]) {
-              expect(
-                resolveBuildPageAccess({
-                  features: { appListings, appBlocks, appBlocksAuthor, appBlocksGetStarted },
-                  user,
-                })
-              ).not.toHaveProperty('redirect');
-            }
-  });
-
-  it('the ONE login redirect: assistant flags, signed out, and no build access', () => {
-    expect(
-      resolveBuildPageAccess({
-        features: { appBlocks: true, appAssistant: true },
-        user: null,
-        resolvedUrl: '/apps/build?fork=palette-lab',
-      })
-    ).toEqual({
-      redirect: {
-        destination: '/login?returnUrl=%2Fapps%2Fbuild%3Ffork%3Dpalette-lab',
-        permanent: false,
-      },
-    });
+            for (const appAssistant of [false, true])
+              for (const user of [null, { isModerator: false }, { isModerator: true }]) {
+                expect(
+                  resolveBuildPageAccess({
+                    features: {
+                      appListings,
+                      appBlocks,
+                      appBlocksAuthor,
+                      appBlocksGetStarted,
+                      appAssistant,
+                    },
+                    user,
+                  })
+                ).not.toHaveProperty('redirect');
+              }
   });
 });

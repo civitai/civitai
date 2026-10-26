@@ -53,6 +53,8 @@ export interface ProducerUserRow {
   filePreferences: unknown;
   settings: unknown;
   meta: unknown;
+  /** `EXISTS` an approved `AppAccessRequest` for this user (the producer's query). */
+  appBuilderApproved?: boolean | null;
   profilePicture: { url: string } | null;
   referral: { id: number } | null;
 }
@@ -132,6 +134,11 @@ export function shapeSessionUser({
   const isEarlyAdopter: boolean | undefined =
     settings.isEarlyAdopter != null ? settings.isEarlyAdopter : undefined;
 
+  // App-builder grant, from the producer's EXISTS over `AppAccessRequest` — a column of the
+  // query, not of `settings`, so a settings blob carrying the same key is ignored. Sparse like
+  // `isEarlyAdopter`: only an approved user's payload changes.
+  const appBuilderApproved: true | undefined = row.appBuilderApproved === true ? true : undefined;
+
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
   const fullMeta = asObject(row.meta) as { banDetails?: BanDetailsMeta } & Record<string, unknown>;
@@ -167,6 +174,7 @@ export function shapeSessionUser({
     memberInBadState,
     allowAds,
     isEarlyAdopter,
+    appBuilderApproved,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

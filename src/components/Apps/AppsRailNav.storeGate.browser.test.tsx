@@ -514,7 +514,7 @@ describe('the rail — the getNavSummary query gate stays on appBlocks', () => {
  * Build follows `resolveAppsBuildPageMode` — the page's own gate — now that `/apps/build` also
  * hosts the App Assistant (`/apps/assistant` 301s there and lost its own row). So the App
  * Assistant gate ADMITS a non-author to the Build entry, exactly as the page renders the workspace
- * for them, and a signed-out viewer the page would send to log in gets no entry.
+ * for them, and a signed-out viewer (whom the page 404s) gets no entry.
  */
 describe('the rail — Build follows the page mode, App Assistant included', () => {
   const ASSISTANT_FLAGS = { appBlocks: true, appAssistant: true };

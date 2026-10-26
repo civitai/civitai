@@ -49,12 +49,8 @@ export const APPS_BUILD_APPS_VIEW = 'apps';
  */
 export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
   useSession: true,
-  resolver: async ({ features, session, ctx }) => {
-    const access = resolveBuildPageAccess({
-      features,
-      user: session?.user,
-      resolvedUrl: ctx.resolvedUrl,
-    });
+  resolver: async ({ features, session }) => {
+    const access = resolveBuildPageAccess({ features, user: session?.user });
     if (!('assistant' in access)) return access;
 
     const user = session!.user!;

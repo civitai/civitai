@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
 import type {
   DecideAppAccessRequestInput,
@@ -7,12 +8,17 @@ import type {
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
 import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
+import { handleLogError } from '~/server/utils/errorHandling';
 
 /**
  * "Request access" from the `/apps/build` pitch, and the moderator queue that reviews it.
  *
- * A decision is a RECORD, not a grant: approving writes `approved` and nothing else. Who can build
- * is still decided by feature flags, which a person changes by hand after approving.
+ * 🔴 AN `approved` ROW IS THE GRANT. The auth hub's session producer reads "has an approved row"
+ * into `SessionUser.appBuilderApproved`, `buildFliptContext` emits it as the `appBuilderApproved`
+ * targeting property, and the `app-builder-approved` Flipt segment puts that user on the builder
+ * flags (App Assistant included). So `decide` busts the REQUESTER's cached session after it writes:
+ * without that, the hub keeps serving the old value for up to its 4h TTL and an approval (or a
+ * revoke) changes nothing until then.
  *
  * Raw SQL rather than the Prisma model API because the one-pending-per-user rule lives in a PARTIAL
  * unique index (`AppAccessRequest_userId_pending_key`), and only `ON CONFLICT … WHERE` can target
@@ -20,16 +26,14 @@ import type { AppAccessRequestStatus } from '~/shared/constants/app-access-reque
  * re-reads the queue straight after deciding, so a lagging replica would show the old state.
  */
 
-export const APP_ACCESS_ALREADY_APPROVED =
-  'Your request was already approved. Access is switched on by hand, so it can take a little while.';
+export const APP_ACCESS_ALREADY_APPROVED = 'You already have access to build apps.';
+export const APP_ACCESS_ALREADY_PENDING = 'Your request is waiting for review.';
 
 export type AppAccessRequestView = {
   id: number;
   whatToBuild: string;
-  links: string[];
   status: AppAccessRequestStatus;
   createdAt: Date;
-  updatedAt: Date;
   reviewedAt: Date | null;
 };
 
@@ -40,13 +44,11 @@ export type AppAccessRequestQueueItem = AppAccessRequestView & {
   reviewedByUsername: string | null;
 };
 
-const VIEW_COLUMNS = Prisma.raw(
-  `"id", "whatToBuild", "links", "status", "createdAt", "updatedAt", "reviewedAt"`
-);
+const VIEW_COLUMNS = Prisma.raw(`"id", "whatToBuild", "status", "createdAt", "reviewedAt"`);
 
 /**
- * Creates the viewer's pending request, or updates it if they already have one. A request that was
- * declined leaves room for a new one; an approved one does not.
+ * Creates the viewer's request. One pending request per person (the partial unique index), so a
+ * second submit while one is pending is a CONFLICT; after a decline a new request is a new row.
  */
 export async function submitAppAccessRequest({
   userId,
@@ -64,15 +66,12 @@ export async function submitAppAccessRequest({
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
 
   const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
-    INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "links")
-    VALUES (${userId}, ${input.whatToBuild}, ${input.links}::text[])
-    ON CONFLICT ("userId") WHERE "status" = 'pending'
-    DO UPDATE SET
-      "whatToBuild" = EXCLUDED."whatToBuild",
-      "links" = EXCLUDED."links",
-      "updatedAt" = CURRENT_TIMESTAMP
+    INSERT INTO "AppAccessRequest" ("userId", "whatToBuild")
+    VALUES (${userId}, ${input.whatToBuild})
+    ON CONFLICT ("userId") WHERE "status" = 'pending' DO NOTHING
     RETURNING ${VIEW_COLUMNS}
   `);
+  if (!row) throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_PENDING });
   return row;
 }
 
@@ -99,8 +98,8 @@ export async function listAppAccessRequests(
   const cursor = input.cursor ? Prisma.sql`AND r."id" < ${input.cursor}` : Prisma.empty;
   const rows = await dbWrite.$queryRaw<AppAccessRequestQueueItem[]>(Prisma.sql`
     SELECT
-      r."id", r."userId", u."username", r."whatToBuild", r."links", r."status",
-      r."createdAt", r."updatedAt", r."reviewedAt", r."reviewedById",
+      r."id", r."userId", u."username", r."whatToBuild", r."status",
+      r."createdAt", r."reviewedAt", r."reviewedById",
       rv."username" AS "reviewedByUsername"
     FROM "AppAccessRequest" r
     JOIN "User" u ON u."id" = r."userId"
@@ -114,9 +113,19 @@ export async function listAppAccessRequests(
   return { items, nextCursor: hasMore ? items[items.length - 1].id : null };
 }
 
+/** The statuses each decision may replace. Declining an approved row is the revoke. */
+const DECIDABLE_FROM: Record<DecideAppAccessRequestInput['decision'], AppAccessRequestStatus[]> = {
+  approved: ['pending'],
+  declined: ['pending', 'approved'],
+};
+
 /**
- * Records a moderator's decision on a PENDING request. A decided request is not re-decided here:
- * two moderators acting on one row get one decision and one CONFLICT, not a silent overwrite.
+ * Records a moderator's decision. Allowed moves: pending → approved, pending → declined, and
+ * approved → declined (a revoke). Anything else — a second approve, re-deciding a declined row —
+ * is a CONFLICT, so two moderators acting on one row get one decision, not a silent overwrite.
+ *
+ * Then busts the requester's session, because the grant rides on it (see the file comment).
+ * Best-effort: the decision has committed, and a failed bust is bounded by the session TTL.
  */
 export async function decideAppAccessRequest({
   moderatorId,
@@ -125,16 +134,20 @@ export async function decideAppAccessRequest({
   moderatorId: number;
   input: DecideAppAccessRequestInput;
 }): Promise<AppAccessRequestView> {
-  const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
+  const from = DECIDABLE_FROM[input.decision];
+  const [row] = await dbWrite.$queryRaw<(AppAccessRequestView & { userId: number })[]>(Prisma.sql`
     UPDATE "AppAccessRequest"
     SET "status" = ${input.decision},
         "reviewedAt" = CURRENT_TIMESTAMP,
-        "reviewedById" = ${moderatorId},
-        "updatedAt" = CURRENT_TIMESTAMP
-    WHERE "id" = ${input.id} AND "status" = 'pending'
-    RETURNING ${VIEW_COLUMNS}
+        "reviewedById" = ${moderatorId}
+    WHERE "id" = ${input.id} AND "status" IN (${Prisma.join(from)})
+    RETURNING "userId", ${VIEW_COLUMNS}
   `);
-  if (row) return row;
+  if (row) {
+    const { userId, ...view } = row;
+    await refreshSession(userId, { caller: 'moderation' }).catch(handleLogError);
+    return view;
+  }
 
   const [existing] = await dbWrite.$queryRaw<{ status: AppAccessRequestStatus }[]>(Prisma.sql`
     SELECT "status" FROM "AppAccessRequest" WHERE "id" = ${input.id}

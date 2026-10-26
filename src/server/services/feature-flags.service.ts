@@ -1192,11 +1192,13 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
-// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/permissions,
-// host (domain gating), and the FULL region. `isEarlyAdopter` is in the key for
-// exactly this reason — it feeds buildFliptContext, so an entry cached before the
-// user toggled it would keep the OLD cohort decision for the whole TTL, which is
-// precisely the staleness the toggle's `refreshSession` exists to prevent.
+// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/appBuilderApproved/
+// permissions, host (domain gating), and the FULL region. `isEarlyAdopter` and
+// `appBuilderApproved` are in the key for exactly this reason — both feed
+// buildFliptContext, so an entry cached before the user toggled the setting (or a
+// moderator approved/revoked their app access request) would keep the OLD cohort
+// decision for the whole TTL, which is precisely the staleness the `refreshSession`
+// after each of those writes exists to prevent.
 // Region gates compliance-sensitive
 // restricted-region features, so two different regions must NEVER share an entry
 // — the whole region object is serialized into the key to guarantee that. Live
@@ -1217,7 +1219,7 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
   const u = user
     ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${
         user.isEarlyAdopter ? 1 : 0
-      }:${(user.permissions ?? []).slice().sort().join(',')}`
+      }:${user.appBuilderApproved ? 1 : 0}:${(user.permissions ?? []).slice().sort().join(',')}`
     : 'anon';
   return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
 }

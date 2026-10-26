@@ -2,49 +2,34 @@ import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import {
-  appAccessRequestFormSchema,
-  toSubmitInput,
-  type AppAccessRequestFormValues,
+  submitAppAccessRequestSchema,
+  type SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
-import {
-  APP_ACCESS_LINKS_MAX,
-  APP_ACCESS_WHAT_TO_BUILD_MAX,
-} from '~/shared/constants/app-access-request.constants';
+import { APP_ACCESS_WHAT_TO_BUILD_MAX } from '~/shared/constants/app-access-request.constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export type AppAccessRequestModalProps = {
-  /** The viewer's pending request, when they are editing it rather than starting one. */
-  pending?: { whatToBuild: string; links: string[] } | null;
-};
-
-/**
- * "Request access" form. Submitting while a request is pending UPDATES it — the server keeps one
- * pending request per person — so the same form serves a first request and an edit.
- */
-export default function AppAccessRequestModal({ pending }: AppAccessRequestModalProps) {
+/** "Request access" form: one free-text answer, validated by the same schema the server uses. */
+export default function AppAccessRequestModal() {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const form = useForm({
-    schema: appAccessRequestFormSchema,
-    defaultValues: {
-      whatToBuild: pending?.whatToBuild ?? '',
-      links: pending?.links.join('\n') ?? '',
-    },
+    schema: submitAppAccessRequestSchema,
+    defaultValues: { whatToBuild: '' },
   });
 
   const submit = trpc.appAccessRequest.submit.useMutation({
     onSuccess: async () => {
       await utils.appAccessRequest.getMine.invalidate();
       showSuccessNotification({
-        title: pending ? 'Request updated' : 'Request sent',
+        title: 'Request sent',
         message: 'A moderator will review it. You can check its status on this page.',
       });
       dialog.onClose();
     },
   });
 
-  const onSubmit = (values: AppAccessRequestFormValues) => submit.mutate(toSubmitInput(values));
+  const onSubmit = (values: SubmitAppAccessRequestInput) => submit.mutate(values);
 
   return (
     <Modal {...dialog} title={<Text fw={600}>Request access</Text>} size="lg">
@@ -56,20 +41,12 @@ export default function AppAccessRequestModal({ pending }: AppAccessRequestModal
           <InputTextArea
             name="whatToBuild"
             label="What do you want to build?"
-            description="The idea, who it's for, and what it should do."
+            description="The idea, who it's for, and what it should do. Add links if they help — a sketch, a similar app, your work."
             autosize
             minRows={4}
             maxLength={APP_ACCESS_WHAT_TO_BUILD_MAX}
             withAsterisk
             data-testid="app-access-what-to-build"
-          />
-          <InputTextArea
-            name="links"
-            label="Links (optional)"
-            description={`Anything that helps us picture it — a sketch, a similar app, your work. One per line, up to ${APP_ACCESS_LINKS_MAX}.`}
-            autosize
-            minRows={2}
-            data-testid="app-access-links"
           />
           {submit.error && (
             <Alert color="red" variant="light" data-testid="app-access-submit-error">
@@ -81,7 +58,7 @@ export default function AppAccessRequestModal({ pending }: AppAccessRequestModal
               Cancel
             </Button>
             <Button type="submit" loading={submit.isPending} data-testid="app-access-submit">
-              {pending ? 'Update request' : 'Send request'}
+              Send request
             </Button>
           </Group>
         </Stack>

@@ -2141,10 +2141,8 @@ export interface AppAccessRequest {
   userId: number;
   user?: User;
   whatToBuild: string;
-  links: string[];
   status: string;
   createdAt: Date;
-  updatedAt: Date;
   reviewedAt: Date | null;
   reviewedById: number | null;
   reviewedBy?: User | null;

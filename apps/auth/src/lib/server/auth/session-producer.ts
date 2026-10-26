@@ -81,6 +81,18 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           .select(['UserRole.role'])
           .whereRef('UserRole.userId', '=', 'User.id')
       ).as('roleRows'),
+      // The app-builder grant: an APPROVED App Access Request (civitai `/apps/build` → Request
+      // access → a moderator approves). Read here, never from settings, so nothing the user can
+      // write reaches it. Declining an approved row revokes it; the decide path busts this cache.
+      eb
+        .exists(
+          eb
+            .selectFrom('AppAccessRequest')
+            .select('AppAccessRequest.id')
+            .whereRef('AppAccessRequest.userId', '=', 'User.id')
+            .where('AppAccessRequest.status', '=', 'approved')
+        )
+        .as('appBuilderApproved'),
       jsonObjectFrom(
         eb
           .selectFrom('UserMembershipOverride')

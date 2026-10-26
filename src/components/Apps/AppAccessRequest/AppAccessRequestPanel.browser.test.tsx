@@ -6,25 +6,21 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as RequireLoginMod from '~/components/Login/requireLogin';
 import type * as ToursProviderMod from '~/components/Tours/ToursProvider';
-import {
-  APP_ACCESS_LINK_INVALID,
-  APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT,
-} from '~/server/schema/app-access-request.schema';
+import { APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT } from '~/server/schema/app-access-request.schema';
 
 /**
  * "Request access" on the `/apps/build` pitch, through the REAL panel, the REAL dialog store and
  * the REAL modal form: the button opens the form, the form validates against the server's own
  * schema before anything is sent, a valid form sends the mutation's input shape, and the viewer
- * sees what became of their request.
+ * sees what became of their request — including that an approval is real: the approved state
+ * links to a full load of `/apps/build`, where the assistant is chosen server-side.
  */
 
 type Request = {
   id: number;
   status: 'pending' | 'approved' | 'declined';
   whatToBuild: string;
-  links: string[];
   createdAt: Date;
-  updatedAt: Date;
   reviewedAt: Date | null;
 };
 
@@ -80,9 +76,7 @@ const PENDING: Request = {
   id: 77,
   status: 'pending',
   whatToBuild: 'A recipe card maker that illustrates each step with a generated image.',
-  links: ['https://example.com/recipe-mock'],
   createdAt: new Date('2026-10-20T09:00:00Z'),
-  updatedAt: new Date('2026-10-21T09:00:00Z'),
   reviewedAt: null,
 };
 
@@ -96,7 +90,6 @@ function render() {
 }
 
 const whatToBuild = () => page.getByTestId('app-access-what-to-build');
-const links = () => page.getByTestId('app-access-links');
 const submit = () => page.getByTestId('app-access-submit');
 
 beforeEach(() => {
@@ -111,24 +104,17 @@ beforeEach(() => {
 });
 
 describe('AppAccessRequestPanel — a first request', () => {
-  test('the button opens the form, and a valid form sends the text and one link per line', async () => {
+  test('the button opens the form, and a valid form sends the text', async () => {
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
     expect(mocks.onRequest).toHaveBeenCalledTimes(1);
     await expect.element(whatToBuild()).toBeInTheDocument();
 
     await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
-    await userEvent.fill(
-      links().element() as HTMLElement,
-      'https://example.com/line-art\n\n  https://example.org/panels  '
-    );
     await submit().click();
 
     await vi.waitFor(() => expect(mocks.submitted).toHaveLength(1));
-    expect(mocks.submitted[0]).toEqual({
-      whatToBuild: IDEA,
-      links: ['https://example.com/line-art', 'https://example.org/panels'],
-    });
+    expect(mocks.submitted[0]).toEqual({ whatToBuild: IDEA });
   });
 
   test('🔴 a too-short idea shows the schema’s message and sends nothing', async () => {
@@ -141,45 +127,32 @@ describe('AppAccessRequestPanel — a first request', () => {
     expect(mocks.submitted).toEqual([]);
   });
 
-  test('🔴 a link that is not an http(s) URL shows the link message and sends nothing', async () => {
-    render();
-    await page.getByRole('button', { name: 'Request access' }).click();
-    await expect.element(whatToBuild()).toBeInTheDocument();
-    await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
-    await userEvent.fill(links().element() as HTMLElement, 'javascript:alert(1)');
-    await submit().click();
-    await expect.element(page.getByText(APP_ACCESS_LINK_INVALID)).toBeInTheDocument();
-    expect(mocks.submitted).toEqual([]);
-  });
-
   test('while sending, the submit button is busy; a server refusal is shown in the form', async () => {
     mocks.submitPending = true;
-    mocks.submitError = { message: 'You have updated your request a lot. Try again later.' };
+    mocks.submitError = { message: 'Your request is waiting for review.' };
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
     await expect.element(submit()).toHaveAttribute('data-loading', 'true');
     await expect
       .element(page.getByTestId('app-access-submit-error'))
-      .toHaveTextContent('You have updated your request a lot. Try again later.');
+      .toHaveTextContent('Your request is waiting for review.');
   });
 });
 
 describe('AppAccessRequestPanel — the viewer’s request status', () => {
-  test('🔴 pending: shows the status, and "Update request" opens the form FILLED with it', async () => {
+  test('🔴 pending: shows the status and offers no form — one open request at a time', async () => {
     mocks.request = PENDING;
     render();
     const status = page.getByTestId('app-access-request-status');
     await expect.element(status).toHaveAttribute('data-status', 'pending');
     await expect.element(page.getByText('Pending review', { exact: true })).toBeInTheDocument();
-    expect(page.getByRole('button', { name: 'Request access' }).elements()).toHaveLength(0);
-
-    await page.getByRole('button', { name: 'Update request' }).click();
-    await expect.element(whatToBuild()).toHaveValue(PENDING.whatToBuild);
-    await expect.element(links()).toHaveValue('https://example.com/recipe-mock');
-    await expect.element(submit()).toHaveTextContent('Update request');
+    await expect
+      .element(page.getByText('A moderator will review your request.'))
+      .toBeInTheDocument();
+    expect(page.getByRole('button').elements()).toHaveLength(0);
   });
 
-  test('approved: says so, and offers no way to ask again', async () => {
+  test('🔴 approved: says access is on, and links to a FULL load of /apps/build', async () => {
     mocks.request = {
       ...PENDING,
       status: 'approved',
@@ -187,7 +160,17 @@ describe('AppAccessRequestPanel — the viewer’s request status', () => {
     };
     render();
     await expect.element(page.getByText('Approved', { exact: true })).toBeInTheDocument();
-    expect(page.getByRole('button').elements()).toHaveLength(0);
+    await expect
+      .element(
+        page.getByText('You can build apps now. Reload this page and the App Assistant opens here.')
+      )
+      .toBeInTheDocument();
+    const open = page.getByTestId('app-access-request-open-assistant');
+    // A plain anchor (a full navigation), not a Next <Link>: the assistant view is decided by
+    // getServerSideProps from the refreshed session, which a client transition would not re-run
+    // with fresh flags.
+    await expect.element(open).toHaveAttribute('href', '/apps/build');
+    expect(page.getByRole('button', { name: /Request access/ }).elements()).toHaveLength(0);
   });
 
   test('declined: says so, and a new request starts from an EMPTY form', async () => {

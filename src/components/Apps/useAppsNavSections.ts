@@ -141,10 +141,6 @@ export function useAppsNavSections(): AppsSection[] {
   // separately from its page's gate WILL drift, and both #3899 and PR #4668 were that
   // drift caught late. Do not "simplify" this to a flag read.
   //
-  // `sign-in` is deliberately NOT a Build entry: that viewer has no session, the page sends
-  // them to log in, and the App Assistant row this replaced was hidden from them too. An
-  // entry that only ever bounces to login is a link we would rather not offer.
-  //
   // 🔴 IT IS NOT SESSION-SCOPED, unlike `isAuthor`, and that asymmetry is deliberate
   // rather than an oversight. `isAppDeveloper` reads `isModerator`, so `isAuthor`
   // collapses to `false` without a session; the mode takes the user as an argument and
@@ -156,7 +152,7 @@ export function useAppsNavSections(): AppsSection[] {
     isAuthor: currentUser
       ? isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })
       : NO_APPS_NAV_CAPABILITIES.isAuthor,
-    canBuild: buildMode === 'build' || buildMode === 'assistant',
+    canBuild: buildMode !== null,
     canSeeStore: hasAppsStoreAccess(features),
   };
 

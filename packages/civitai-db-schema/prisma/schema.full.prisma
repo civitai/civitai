@@ -2822,18 +2822,17 @@ model Feedback {
 }
 
 /// A request to build apps on Civitai, sent from the `/apps/build` pitch and reviewed by a moderator.
-/// Approving records the decision only; access itself is granted outside this table.
+/// An `approved` row is the grant: the auth hub projects it onto the session as `appBuilderApproved`,
+/// which Flipt's `app-builder-approved` segment matches. Declining an approved row revokes it.
 model AppAccessRequest {
   id           Int       @id @default(autoincrement())
   userId       Int
   user         User      @relation("AppAccessRequestUser", fields: [userId], references: [id], onDelete: Cascade)
   whatToBuild  String
-  links        String[]  @default([])
   /// pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
   /// per user: the migration's PARTIAL unique index, which Prisma cannot express.
   status       String    @default("pending")
   createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @default(now())
   reviewedAt   DateTime?
   reviewedById Int?
   reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
