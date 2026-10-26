@@ -10,6 +10,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { DisputeResolution } from '$lib/server/creator-services-disputes.service';
+  import { buyerFinalDownloads } from './downloads';
   import { disputeOrigin, viewerParty } from './origin';
   import type { DisputeCardRow, ResolveOutcome } from './+page.server';
 
@@ -38,6 +39,9 @@
   const releaseBlocked = $derived(!row.finalsClear || !!outcome?.releaseRefused);
   // The main app refuses a party too; hiding the buttons only saves the round trip.
   const party = $derived(viewerParty(row, viewerId));
+  const buyerDownloads = $derived(
+    row.files ? buyerFinalDownloads(row.files, row.disputeOpenedAt) : null
+  );
 
   const choose = (value: DisputeResolution) => () => {
     chosen = value;
@@ -91,6 +95,31 @@
     <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0 whitespace-pre-wrap">
       {origin.text}
     </p>
+  {/if}
+
+  {#if buyerDownloads}
+    <p class="mt-2 text-sm text-dark-0">
+      Buyer downloaded the final:
+      {#if buyerDownloads.downloaded === null}
+        <span class="text-dark-2">unknown (not reported yet)</span>
+      {:else if buyerDownloads.downloaded}
+        yes, {dateTime(buyerDownloads.lastAt)}, {buyerDownloads.count}
+        {buyerDownloads.count === 1 ? 'time' : 'times'}
+        <span class="text-xs text-dark-2">
+          · first {dateTime(buyerDownloads.firstAt)}{buyerDownloads.beforeDispute
+            ? ', before the dispute'
+            : ', after the dispute opened'}
+        </span>
+      {:else}
+        never
+      {/if}
+    </p>
+    {#if buyerDownloads.downloaded && buyerDownloads.beforeDispute}
+      <p class="mt-1 text-xs text-dark-2">
+        A download before the dispute counts toward releasing to the seller, unless the files are
+        missing or broken.
+      </p>
+    {/if}
   {/if}
 
   <details class="mt-2">

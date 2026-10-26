@@ -51,6 +51,17 @@ export type DealFile = {
   scanStatus: 'Pending' | 'Passed' | 'Failed' | 'NotScanned';
   previewUrl: string | null;
   canDownload: boolean;
+  /** Who has taken the file. Absent from a main app that predates it. */
+  access?: DealFileAccess[];
+};
+
+/** One role's accesses of one file. `ModeratorFetch` is the dispute tool, never a party's download. */
+export type DealFileAccess = {
+  role: 'Buyer' | 'Seller' | 'Moderator';
+  kind: 'Download' | 'PreviewView' | 'ModeratorFetch';
+  count: number;
+  firstAt: string;
+  lastAt: string;
 };
 
 /**

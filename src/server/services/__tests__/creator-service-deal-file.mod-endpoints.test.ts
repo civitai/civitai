@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const service = vi.hoisted(() => ({
   listServiceDealFiles: vi.fn(),
+  listServiceDealFileAccess: vi.fn(),
   resolveServiceDealFileDownload: vi.fn(),
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
@@ -27,6 +28,8 @@ const notFound = () => new TRPCError({ code: 'NOT_FOUND' });
 
 beforeEach(() => {
   service.listServiceDealFiles.mockReset();
+  service.listServiceDealFileAccess.mockReset();
+  service.listServiceDealFileAccess.mockResolvedValue([]);
   service.resolveServiceDealFileDownload.mockReset();
   service.getServiceDealFileDownloadUrl.mockReset();
   service.listServiceDealFiles.mockImplementation(async ({ dealId }: { dealId: number }) => [
@@ -37,13 +40,43 @@ beforeEach(() => {
 describe('deal-files', () => {
   it('lists one deal, tagging each row with its deal, as a moderator', async () => {
     expect(await files.handler({ dealId: 4 }, actor)).toEqual({
-      items: [{ dealId: 4, id: 40, kind: 'Final' }],
+      items: [{ dealId: 4, id: 40, kind: 'Final', access: [] }],
     });
     expect(service.listServiceDealFiles).toHaveBeenCalledWith({
       dealId: 4,
       userId: 99,
       isModerator: true,
     });
+  });
+
+  it("puts each file's recorded accesses on that file", async () => {
+    const at = new Date('2026-10-01T00:00:00Z');
+    const entry = (fileId: number, role: string, count: number) => ({
+      dealId: fileId / 10,
+      fileId,
+      role,
+      kind: 'Download',
+      count,
+      firstAt: at,
+      lastAt: at,
+    });
+    service.listServiceDealFileAccess.mockResolvedValue([
+      entry(30, 'Buyer', 2),
+      entry(30, 'Seller', 1),
+      entry(50, 'Buyer', 1),
+    ]);
+    const { items } = await files.handler({ dealIds: '3,5,7' }, actor);
+    expect(service.listServiceDealFileAccess).toHaveBeenCalledWith([3, 5, 7]);
+    expect(
+      items.map((i) => [
+        i.id,
+        i.access.map((a: { role: string; count: number }) => `${a.role}:${a.count}`),
+      ])
+    ).toEqual([
+      [30, ['Buyer:2', 'Seller:1']],
+      [50, ['Buyer:1']],
+      [70, []],
+    ]);
   });
 
   it('lists a page of deals in one call, each row carrying its own dealId', async () => {
@@ -108,6 +141,8 @@ describe('deal-file-url', () => {
       fileId: 12,
       userId: 99,
       isModerator: true,
+      // Recorded as a moderator fetch, so it can never read as the buyer having downloaded.
+      moderatorFetch: true,
     });
   });
 

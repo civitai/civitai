@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -110,6 +110,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
+  '20261206120000_creator_service_deal_file_access',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -235,7 +236,7 @@ beforeEach(async () => {
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealFileAccess", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER}), (${MOD});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -1425,5 +1426,85 @@ describe('a scanner verdict on a final', () => {
     await files.deleteServiceDealFile({ fileId: finalId, userId: SELLER });
     await uploaded(dealId, { fileName: 'fixed.zip' });
     await files.deliverServiceDeal({ dealId, userId: SELLER });
+  });
+});
+
+describe('recording who took a file', () => {
+  async function completedDeal() {
+    const dealId = await accepted();
+    const finalId = await uploaded(dealId);
+    await readyPreview(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed',
+        "deliveryKey" = 'service-deals/delivered/k', "repackedAt" = now() WHERE id = $1`,
+      [finalId]
+    );
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    return { dealId, finalId };
+  }
+  const take = async (target: Awaited<ReturnType<typeof download>>) =>
+    files.getServiceDealFileDownloadUrl(target!);
+  const accesses = () =>
+    q<{ dealId: number; fileId: number; userId: number; role: string; kind: string }>(
+      `SELECT "dealId", "fileId", "userId", role::text, kind::text FROM "ServiceDealFileAccess" ORDER BY id`
+    );
+
+  it("records the buyer's download of a final", async () => {
+    const { dealId, finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    await vi.waitFor(async () =>
+      expect(await accesses()).toEqual([
+        { dealId, fileId: finalId, userId: BUYER, role: 'Buyer', kind: 'Download' },
+      ])
+    );
+  });
+
+  it('records the seller and a moderator apart from the buyer, and summarises per file', async () => {
+    const { dealId, finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    await take(await download(finalId, BUYER));
+    await take(await download(finalId, SELLER));
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    await vi.waitFor(async () => expect(await accesses()).toHaveLength(4));
+    expect((await accesses()).map((a) => [a.role, a.kind])).toEqual([
+      ['Buyer', 'Download'],
+      ['Buyer', 'Download'],
+      ['Seller', 'Download'],
+      ['Moderator', 'ModeratorFetch'],
+    ]);
+
+    const summary = await files.listServiceDealFileAccess([dealId]);
+    expect(summary.map(({ fileId, role, kind, count }) => ({ fileId, role, kind, count }))).toEqual(
+      [
+        { fileId: finalId, role: 'Buyer', kind: 'Download', count: 2 },
+        { fileId: finalId, role: 'Seller', kind: 'Download', count: 1 },
+        { fileId: finalId, role: 'Moderator', kind: 'ModeratorFetch', count: 1 },
+      ]
+    );
+    expect(summary[0].firstAt <= summary[0].lastAt).toBe(true);
+  });
+
+  it('still hands out the link when the record cannot be written, and logs it', async () => {
+    const { finalId } = await completedDeal();
+    const target = await download(finalId, BUYER);
+    await q(`ALTER TABLE "ServiceDealFileAccess" RENAME TO "ServiceDealFileAccessGone"`);
+    try {
+      expect(await take(target)).toBe('https://get/service-deals/delivered/k');
+      await vi.waitFor(() =>
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'creator-service-file-access' })
+        )
+      );
+    } finally {
+      await q(`ALTER TABLE "ServiceDealFileAccessGone" RENAME TO "ServiceDealFileAccess"`);
+    }
   });
 });

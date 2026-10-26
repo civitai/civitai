@@ -276,6 +276,10 @@ export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expi
 
 export type ServiceDealFileKind = "Preview" | "Final";
 
+export type ServiceDealAccessRole = "Buyer" | "Seller" | "Moderator";
+
+export type ServiceDealAccessKind = "Download" | "PreviewView" | "ModeratorFetch";
+
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
 export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotScanned";
@@ -6799,6 +6803,16 @@ export interface ServiceDealFile {
   repackedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
+}
+
+export interface ServiceDealFileAccess {
+  id: number;
+  dealId: number;
+  fileId: number;
+  userId: number;
+  role: ServiceDealAccessRole;
+  kind: ServiceDealAccessKind;
+  createdAt: Date;
 }
 
 export interface ServiceDealFileEntry {

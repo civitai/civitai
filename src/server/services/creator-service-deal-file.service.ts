@@ -36,6 +36,8 @@ import {
   SERVICE_ZIP_MAX_IMAGE_BYTES,
 } from '~/shared/constants/creator-services.constants';
 import type {
+  ServiceDealAccessKind,
+  ServiceDealAccessRole,
   ServiceDealFileKind,
   ServiceDealFileScanStatus,
   ServiceDealFileStatus,
@@ -583,7 +585,20 @@ export async function listServiceDealFiles({
   });
 }
 
-export type ServiceDealFileDownload = { bucket: string; key: string; fileName: string };
+type ServiceDealFileAccess = {
+  dealId: number;
+  fileId: number;
+  userId: number;
+  role: ServiceDealAccessRole;
+  kind: ServiceDealAccessKind;
+};
+
+export type ServiceDealFileDownload = {
+  bucket: string;
+  key: string;
+  fileName: string;
+  access: ServiceDealFileAccess;
+};
 
 /**
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
@@ -599,14 +614,18 @@ export async function resolveServiceDealFileDownload({
   userId,
   isModerator,
   delivered = false,
+  moderatorFetch = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
+  /** The moderator dispute tool, recorded apart from a party's own download even on their own deal. */
+  moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
     {
+      dealId: number;
       s3Key: string;
       deliveryKey: string | null;
       fileName: string;
@@ -622,7 +641,7 @@ export async function resolveServiceDealFileDownload({
       completedAt: Date | null;
     }[]
   >`
-    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
+    SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
       f."malwareScanStatus", f."status",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
@@ -648,16 +667,75 @@ export async function resolveServiceDealFileDownload({
     // An archive is only ever handed out in the form the server built.
     else if (fileExtension(row.fileName) === 'zip') return null;
   }
-  return { bucket: await getBucket(), key, fileName: row.fileName };
+  const role: ServiceDealAccessRole =
+    moderatorFetch || (row.sellerId !== userId && row.buyerId !== userId)
+      ? 'Moderator'
+      : row.sellerId === userId
+      ? 'Seller'
+      : 'Buyer';
+  return {
+    bucket: await getBucket(),
+    key,
+    fileName: row.fileName,
+    access: {
+      dealId: row.dealId,
+      fileId,
+      userId,
+      role,
+      kind: moderatorFetch ? 'ModeratorFetch' : 'Download',
+    },
+  };
 }
 
+/** Signs the link and records who took it. The record is dispute evidence but never worth a failed
+ *  or slower download, so it is not awaited and a failure is only logged. */
 export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
   const { url } = await getGetUrlByKey(target.key, {
     bucket: target.bucket,
     fileName: target.fileName,
     expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   });
+  void recordServiceDealFileAccess(target.access);
   return url;
+}
+
+async function recordServiceDealFileAccess(access: ServiceDealFileAccess) {
+  try {
+    await dbWrite.$executeRaw`
+      INSERT INTO "ServiceDealFileAccess" ("dealId", "fileId", "userId", "role", "kind")
+      VALUES (${access.dealId}::int, ${access.fileId}::int, ${access.userId}::int,
+        ${access.role}::"ServiceDealAccessRole", ${access.kind}::"ServiceDealAccessKind")`;
+  } catch (error) {
+    logToAxiom({
+      name: 'creator-service-file-access',
+      type: 'error',
+      message: 'Could not record a deal file access',
+      ...access,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+  }
+}
+
+export type ServiceDealFileAccessSummary = {
+  dealId: number;
+  fileId: number;
+  role: ServiceDealAccessRole;
+  kind: ServiceDealAccessKind;
+  count: number;
+  firstAt: Date;
+  lastAt: Date;
+};
+
+/** Every recorded access to the given deals' files, one row per file, role and kind. */
+export async function listServiceDealFileAccess(dealIds: number[]) {
+  if (!dealIds.length) return [];
+  return dbWrite.$queryRaw<ServiceDealFileAccessSummary[]>`
+    SELECT "dealId", "fileId", "role", "kind", count(*)::int AS "count",
+      min("createdAt") AS "firstAt", max("createdAt") AS "lastAt"
+    FROM "ServiceDealFileAccess"
+    WHERE "dealId" = ANY(${dealIds}::int[])
+    GROUP BY "dealId", "fileId", "role", "kind"
+    ORDER BY "dealId", "fileId", "role", "kind"`;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -10553,6 +10553,18 @@ enum ServiceDealFileKind {
   Final
 }
 
+enum ServiceDealAccessRole {
+  Buyer
+  Seller
+  Moderator
+}
+
+enum ServiceDealAccessKind {
+  Download
+  PreviewView
+  ModeratorFetch
+}
+
 /// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
 /// exists; a Final is Ready once the upload is confirmed. Scanning is tracked apart, in scanStatus.
 enum ServiceDealFileStatus {
@@ -10758,6 +10770,21 @@ model ServiceDealFile {
   entries        ServiceDealFileEntry[]
 
   @@index([dealId, round, kind])
+}
+
+/// One row each time a deal file's download link is handed out: evidence for a dispute. No foreign
+/// keys, so a row outlives the file it names and can never block a delete.
+model ServiceDealFileAccess {
+  id        Int                   @id @default(autoincrement())
+  dealId    Int
+  fileId    Int
+  userId    Int
+  role      ServiceDealAccessRole
+  kind      ServiceDealAccessKind
+  createdAt DateTime              @default(now())
+
+  @@index([dealId, role, createdAt])
+  @@index([fileId])
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip

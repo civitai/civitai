@@ -1,6 +1,9 @@
 import * as z from 'zod';
 import { TRPCError } from '@trpc/server';
-import { listServiceDealFiles } from '~/server/services/creator-service-deal-file.service';
+import {
+  listServiceDealFileAccess,
+  listServiceDealFiles,
+} from '~/server/services/creator-service-deal-file.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 const MAX_DEALS = 25;
@@ -14,6 +17,7 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
     'A moderator sees every file, including previews that failed processing and finals that have not passed their scan.',
     'Get a short-lived download link for one with GET /api/mod/creator-services/deal-file-url (the original, not the watermarked preview).',
     '`previewUrl` is the watermarked derivative a buyer sees. Null until the preview is Ready.',
+    '`access` lists who has taken the file: one entry per role (Buyer, Seller, Moderator) and kind (Download through the site, ModeratorFetch through deal-file-url), with `count`, `firstAt` and `lastAt`. Empty if nobody has.',
   ],
   input: z.object({
     dealId: z.coerce.number().int().positive().optional().describe('One deal id.'),
@@ -35,22 +39,38 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
     if (ids.size > MAX_DEALS)
       throw new TRPCError({ code: 'BAD_REQUEST', message: `At most ${MAX_DEALS} deals per call.` });
 
-    const perDeal = await Promise.all(
-      [...ids].map(async (id) => {
-        try {
-          const files = await listServiceDealFiles({
-            dealId: id,
-            userId: actor.id,
-            isModerator: true,
-          });
-          return files.map((file) => ({ dealId: id, ...file }));
-        } catch (error) {
-          // A deal that is not there has no files; anything else is a real failure.
-          if (error instanceof TRPCError && error.code === 'NOT_FOUND') return [];
-          throw error;
-        }
-      })
-    );
-    return { items: perDeal.flat() };
+    const [perDeal, access] = await Promise.all([
+      Promise.all(
+        [...ids].map(async (id) => {
+          try {
+            const files = await listServiceDealFiles({
+              dealId: id,
+              userId: actor.id,
+              isModerator: true,
+            });
+            return files.map((file) => ({ dealId: id, ...file }));
+          } catch (error) {
+            // A deal that is not there has no files; anything else is a real failure.
+            if (error instanceof TRPCError && error.code === 'NOT_FOUND') return [];
+            throw error;
+          }
+        })
+      ),
+      listServiceDealFileAccess([...ids]),
+    ]);
+    return {
+      items: perDeal.flat().map((file) => ({
+        ...file,
+        access: access
+          .filter((a) => a.fileId === file.id)
+          .map(({ role, kind, count, firstAt, lastAt }) => ({
+            role,
+            kind,
+            count,
+            firstAt,
+            lastAt,
+          })),
+      })),
+    };
   },
 });

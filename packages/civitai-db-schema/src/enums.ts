@@ -1381,6 +1381,24 @@ export const ServiceDealFileKind = {
 
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
 
+export const ServiceDealAccessRole = {
+  Buyer: 'Buyer',
+  Seller: 'Seller',
+  Moderator: 'Moderator',
+} as const;
+
+export type ServiceDealAccessRole =
+  (typeof ServiceDealAccessRole)[keyof typeof ServiceDealAccessRole];
+
+export const ServiceDealAccessKind = {
+  Download: 'Download',
+  PreviewView: 'PreviewView',
+  ModeratorFetch: 'ModeratorFetch',
+} as const;
+
+export type ServiceDealAccessKind =
+  (typeof ServiceDealAccessKind)[keyof typeof ServiceDealAccessKind];
+
 export const ServiceDealFileStatus = {
   Uploading: 'Uploading',
   Processing: 'Processing',
