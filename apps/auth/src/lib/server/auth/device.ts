@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
-import { deviceCookieName, isSecureCookie } from '@civitai/auth';
+import { DEVICE_COOKIE_BASE, deviceCookieName, isSecureCookie } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { getSysRedis } from '../redis';
-import { cookieDomain } from './cookie';
+import { clearOtherCookieNames, cookieDomain } from './cookie';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
 // httpOnly `device` cookie; the hub keeps a per-device set of accounts that have authenticated on it, each
@@ -63,6 +63,7 @@ export function clearDeviceCookie(cookies: Cookies): void {
   const secure = isSecureCookie();
   cookies.delete(DEVICE_COOKIE, { path: '/', secure, domain });
   if (domain) cookies.delete(DEVICE_COOKIE, { path: '/', secure });
+  clearOtherCookieNames(cookies, DEVICE_COOKIE_BASE, DEVICE_COOKIE);
 }
 
 /**

@@ -320,6 +320,7 @@
         {#if data.logoutUrl}
           <a
             href={data.logoutUrl}
+            data-sveltekit-reload
             aria-label="Sign out"
             title="Sign out"
             class="rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
