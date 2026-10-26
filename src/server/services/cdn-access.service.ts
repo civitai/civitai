@@ -10,6 +10,7 @@ import { uniq } from 'lodash-es';
 import { purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
 import { holdMarkerSql } from '~/server/services/legal-hold.service';
+import type { ImageRetractionOutcome } from '~/server/services/image.service';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { EntityType, JobQueueType, ModelStatus } from '~/shared/utils/prisma/enums';
@@ -165,7 +166,21 @@ function cdnCallRequest(url: string, call: CdnCall, { persist = false }: CdnCall
   } as const;
 }
 
-/** Throws unless the image server accepted the call, after `CALL_ATTEMPTS` tries. */
+/**
+ * The image server answered 429: it is at its limit and did nothing. Never retried in the same run,
+ * which would add to the load it is shedding; each caller leaves the work for a later run.
+ */
+export class ImageServerBusyError extends Error {
+  constructor(readonly retryAfter: string | null) {
+    super('image server answered 429 (busy)');
+    this.name = 'ImageServerBusyError';
+  }
+}
+
+/**
+ * Throws unless the image server accepted the call, after `CALL_ATTEMPTS` tries. A 429 throws
+ * `ImageServerBusyError` at once, without the remaining tries.
+ */
 export async function callCdnAccess(url: string, call: CdnCall, options: CdnCallOptions = {}) {
   if (!env.IMAGE_CACHER_URL) throw new Error('IMAGE_CACHER_URL is not set');
   if (!env.IMAGE_CACHER_ADMIN_SECRET) throw new Error('IMAGE_CACHER_ADMIN_SECRET is not set');
@@ -185,8 +200,10 @@ export async function callCdnAccess(url: string, call: CdnCall, options: CdnCall
         signal: AbortSignal.timeout(call === 'retract' ? RETRACT_TIMEOUT_MS : CALL_TIMEOUT_MS),
       });
       if (res.ok) return;
+      if (res.status === 429) throw new ImageServerBusyError(res.headers.get('retry-after'));
       lastError = new Error(`image server answered ${res.status}`);
     } catch (error) {
+      if (error instanceof ImageServerBusyError) throw error;
       lastError = error;
     }
   }
@@ -602,7 +619,8 @@ export async function queueTakedownPersistRetry({
 
 /**
  * The one retry. Each row gets a single attempt and is removed whatever happens, unless another run
- * holds its url. A url lifted since the failure is skipped: persisting it would deny a restored
+ * holds its url or the image server answered 429; after a 429 the rest of the batch waits for the
+ * next run too. A url lifted since the failure is skipped: persisting it would deny a restored
  * image.
  */
 export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}) {
@@ -613,11 +631,16 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
     ORDER BY "createdAt"
     LIMIT ${limit}
   `;
-  const totals = { queued: rows.length, sent: 0, skipped: 0, failed: 0, busy: 0 };
+  const totals = { queued: rows.length, sent: 0, skipped: 0, failed: 0, busy: 0, throttled: 0 };
+  let throttled = false;
   await limitConcurrency(
     rows.map((row) => async () => {
       const data = row.data;
       if (data?.url) {
+        if (throttled) {
+          totals.throttled++;
+          return;
+        }
         const url = data.url;
         let outcome: 'sent' | 'skipped' | 'failed';
         try {
@@ -645,6 +668,11 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
           }
           outcome = result.value;
         } catch (error) {
+          if (error instanceof ImageServerBusyError) {
+            throttled = true;
+            totals.throttled++;
+            return;
+          }
           outcome = 'failed';
           await logToAxiom({
             type: 'error',
@@ -679,16 +707,17 @@ const DELETE_PERSIST_CONCURRENCY = 10;
  * Persists the takedowns `remove-blocked-images` has just hard-deleted. It runs after their storage
  * deletes, never between a row's delete and its object's, and is bounded: one attempt each, and
  * none started past the budget. Whatever does not land is queued for the one retry, which resends
- * the retraction too. A url another row still uses is left alone, as `deleteImageFromS3` does.
+ * the retraction too. A row whose retraction did not land is queued without an attempt, since the
+ * retry sends both. A url another row still uses is left alone, as `deleteImageFromS3` does.
  */
 export async function persistDeletedTakedowns(
-  rows: { id: number; url: string }[],
+  rows: { id: number; url: string; retraction?: ImageRetractionOutcome }[],
   { budgetMs = DELETE_PERSIST_BUDGET_MS } = {}
 ) {
   const deadline = Date.now() + budgetMs;
-  const totals = { sent: 0, queued: 0, skipped: 0, notAttempted: 0 };
+  const totals = { sent: 0, queued: 0, skipped: 0, notAttempted: 0, retractionPending: 0 };
   await limitConcurrency(
-    rows.map(({ id, url }) => async () => {
+    rows.map(({ id, url, retraction }) => async () => {
       try {
         if (!cdnImageKey(url)) {
           totals.skipped++;
@@ -699,6 +728,10 @@ export async function persistDeletedTakedowns(
         if (shared?.shared) {
           totals.skipped++;
           return;
+        }
+        if (retraction !== undefined && retraction !== 'confirmed') {
+          totals.retractionPending++;
+          throw new Error(`retraction ${retraction}`);
         }
         if (Date.now() >= deadline) {
           totals.notAttempted++;
@@ -804,9 +837,15 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   const pending = new Set<string>();
   let calls = 0;
   let failed = 0;
+  // After a 429 the rest of the run's urls wait for the next run rather than each drawing one.
+  let throttled = false;
   const planned = urls.filter((url) => callFor(url, facts.get(url), state.get(url)));
   await limitConcurrency(
     planned.map((url) => async () => {
+      if (throttled) {
+        pending.add(url);
+        return;
+      }
       let call: CdnCall | null = null;
       try {
         const result = await withUrlClaim(url, async () => {
@@ -820,8 +859,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       } catch (error) {
         pending.add(url);
         failed++;
+        if (error instanceof ImageServerBusyError) throttled = true;
         logToAxiom({
-          type: 'error',
+          type: error instanceof ImageServerBusyError ? 'warning' : 'error',
           name: 'cdn-access-sync',
           message: 'image server call failed; will retry',
           imageKey: url,
@@ -873,7 +913,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       failed,
     }).catch(() => undefined);
 
-  return { queued: queue.length, calls, failed, removed: done.length };
+  return { queued: queue.length, calls, failed, throttled, removed: done.length };
 }
 
 // ── reconciler ──────────────────────────────────────────────────────────────────────────────────

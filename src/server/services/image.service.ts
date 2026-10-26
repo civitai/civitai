@@ -231,6 +231,7 @@ import {
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
+import pLimit, { type LimitFunction } from 'p-limit';
 import {
   isClickHouseConnectionError,
   throwAuthorizationError,
@@ -372,6 +373,22 @@ export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
  */
 export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
 
+/**
+ * How long a caller waits for the image-cache service to answer when it needs the result: a
+ * retraction, or a purge the CDN purge must follow. The service finishes a retraction even when the
+ * caller gives up, so a shorter wait does not shorten the work, it only hides how much is running.
+ */
+export const IMAGE_CACHER_WAIT_MS = 70_000;
+
+/**
+ * - `confirmed`: the service answered 2xx.
+ * - `busy`: the service answered 429, so it did not do the work; try again on a later run.
+ * - `unconfirmed`: any other answer, a network error, or the wait ran out.
+ * - `pending`: sent without waiting for the answer.
+ * - `not-sent`: no service is configured.
+ */
+export type PurgeResizeCacheOutcome = 'confirmed' | 'busy' | 'unconfirmed' | 'pending' | 'not-sent';
+
 export async function purgeResizeCache({
   url,
   scope = 'all',
@@ -381,9 +398,10 @@ export async function purgeResizeCache({
   url: string;
   scope?: PurgeResizeCacheScope;
   /** Wait up to this long for the service to answer, for a caller that must purge the CDN after it.
-   *  Running out of time is expected for a slow purge and logged as info. Still never throws. */
+   *  Running out of time is expected for a slow purge and logged as info. Still never throws.
+   *  A retraction always waits, `IMAGE_CACHER_WAIT_MS` unless this says otherwise. */
   waitForInvalidationMs?: number;
-} & PurgeResizeCacheRetraction) {
+} & PurgeResizeCacheRetraction): Promise<PurgeResizeCacheOutcome> {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -462,18 +480,43 @@ export async function purgeResizeCache({
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
     }
 
-    const invalidation = fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
-      method: 'POST',
-      headers,
-      // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
-      // Cookie on a cross-origin hop but forwards CUSTOM headers verbatim, so a 30x from this
-      // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
-      // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
-      redirect: 'error',
-      // Invalidation must not slow down the delete flow.
-      signal: AbortSignal.timeout(waitForInvalidationMs ?? 2000),
-    })
-      .then((res) => {
+    // 🔴 A retraction waits for the answer. The service does not stop a retraction when the caller
+    // aborts, so abandoning it at 2 s only frees this caller's concurrency slot while the work goes
+    // on: a bulk delete then has an unbounded number of retractions running on the service.
+    const waitMs = waitForInvalidationMs ?? (retract ? IMAGE_CACHER_WAIT_MS : undefined);
+
+    const invalidation: Promise<PurgeResizeCacheOutcome> = fetch(
+      `${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`,
+      {
+        method: 'POST',
+        headers,
+        // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
+        // Cookie on a cross-origin hop but forwards CUSTOM headers verbatim, so a 30x from this
+        // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
+        // 202/400/401/429, so a redirect here is already anomalous — fail instead of chasing it.
+        redirect: 'error',
+        // Invalidation must not slow down the delete flow.
+        signal: AbortSignal.timeout(waitMs ?? 2000),
+      }
+    )
+      .then(async (res): Promise<PurgeResizeCacheOutcome> => {
+        // The service is at its retraction limit and did nothing. Not retried here: retrying at
+        // once multiplies the load it is shedding, so the caller decides when to come back.
+        if (res.status === 429) {
+          await logToAxiom({
+            type: 'warning',
+            name: 'image-cacher-invalidate',
+            message: 'image-cacher invalidate answered 429 (busy); not done',
+            imageKey: url,
+            scope,
+            retract,
+            status: res.status,
+            retryAfter: res.headers.get('retry-after') ?? undefined,
+          }).catch(() => {
+            // swallow — best effort logging
+          });
+          return 'busy';
+        }
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
         // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
         // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
@@ -482,7 +525,7 @@ export async function purgeResizeCache({
         // the first symptom of a stale shared secret would otherwise be stale images with no
         // signal anywhere.
         if (!res.ok) {
-          return logToAxiom({
+          await logToAxiom({
             type: 'warning',
             name: 'image-cacher-invalidate',
             message: 'image-cacher invalidate returned a non-success status',
@@ -492,12 +535,13 @@ export async function purgeResizeCache({
           }).catch(() => {
             // swallow — best effort logging
           });
+          return 'unconfirmed';
         }
+        return 'confirmed';
       })
-      .catch((err) => {
+      .catch((err): PurgeResizeCacheOutcome => {
         const expectedTimeout =
-          waitForInvalidationMs !== undefined &&
-          (err as Error | undefined)?.name === 'TimeoutError';
+          waitMs !== undefined && (err as Error | undefined)?.name === 'TimeoutError';
         logToAxiom({
           type: expectedTimeout ? 'info' : 'warning',
           name: 'image-cacher-invalidate',
@@ -510,12 +554,29 @@ export async function purgeResizeCache({
         }).catch(() => {
           // swallow — best effort logging
         });
+        return 'unconfirmed';
       });
-    if (waitForInvalidationMs !== undefined) await invalidation;
+    if (waitMs !== undefined) return await invalidation;
+    return 'pending';
   }
+  return 'not-sent';
 }
 
-export async function deleteImageFromS3({
+type DeleteImageFromS3Args = {
+  id: number;
+  url: string;
+  purgeOnFailure?: boolean;
+  abortSignal?: AbortSignal;
+} & PurgeResizeCacheRetraction;
+
+export async function deleteImageFromS3(
+  args: DeleteImageFromS3Args
+): Promise<StorageDeleteOutcome> {
+  return (await deleteImageFromStorage(args)).storage;
+}
+
+/** `purge` is absent when no invalidation was sent (the object is shared, or not ours). */
+async function deleteImageFromStorage({
   id,
   url,
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
@@ -527,13 +588,11 @@ export async function deleteImageFromS3({
   // The shared B2 client sets no request timeout, and it also serves uploads, so a caller that
   // needs a bound supplies its own.
   abortSignal,
-}: {
-  id: number;
-  url: string;
-  purgeOnFailure?: boolean;
-  abortSignal?: AbortSignal;
-} & PurgeResizeCacheRetraction): Promise<StorageDeleteOutcome> {
-  if (!env.DATABASE_IS_PROD) return 'skipped';
+}: DeleteImageFromS3Args): Promise<{
+  storage: StorageDeleteOutcome;
+  purge?: PurgeResizeCacheOutcome;
+}> {
+  if (!env.DATABASE_IS_PROD) return { storage: 'skipped' };
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
   if (!url || url.startsWith('http')) {
@@ -548,7 +607,7 @@ export async function deleteImageFromS3({
         imageId: id,
         url,
       }).catch(() => undefined);
-    return 'skipped';
+    return { storage: 'skipped' };
   }
 
   let outcome: StorageDeleteOutcome = 'deleted';
@@ -561,7 +620,7 @@ export async function deleteImageFromS3({
       where: { url },
     });
 
-    if (!!imageWithSameUrl) return 'skipped';
+    if (!!imageWithSameUrl) return { storage: 'skipped' };
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -644,8 +703,8 @@ export async function deleteImageFromS3({
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
   if (outcome === 'deleted' || purgeOnFailure)
-    await purgeResizeCache({ url: url, retractPublicBlobs });
-  return outcome;
+    return { storage: outcome, purge: await purgeResizeCache({ url: url, retractPublicBlobs }) };
+  return { storage: outcome };
 }
 
 export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
@@ -927,6 +986,11 @@ export async function deleteImages(
     onlyWhere?: Prisma.Sql;
   } = {}
 ) {
+  // One limit across every batch of this call: the batches below run concurrently, so a limit per
+  // batch would multiply by their count.
+  const retractionLimit = retractPublicBlobs
+    ? pLimit(env.IMAGE_CACHER_RETRACTION_CONCURRENCY)
+    : null;
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -983,19 +1047,70 @@ export async function deleteImages(
       ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
     ]);
 
-    await Limiter({ batchSize: 5 }).process(
-      results,
-      async (results) =>
-        await Promise.all(
-          results.map(({ id, url }) => deleteImageFromS3({ id, url, retractPublicBlobs }))
-        )
-    );
+    const deleted = await deleteFromStorage(results, { retractPublicBlobs, retractionLimit });
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
-    return results;
+    return deleted;
   });
 
   return images;
+}
+
+/**
+ * Whether a retracting delete's retraction landed: `busy` when the image-cache service was at its
+ * limit, `unconfirmed` for any other failure. Absent when nothing was asked of the service, which
+ * happens when another row still uses the url.
+ */
+export type ImageRetractionOutcome = 'confirmed' | 'busy' | 'unconfirmed';
+
+type DeletedImageRow = {
+  id: number;
+  url: string;
+  postId: number | null;
+  nsfwLevel: number;
+  userId: number;
+  parentId: number | null;
+  retraction?: ImageRetractionOutcome;
+};
+
+function retractionOutcome(
+  purge: PurgeResizeCacheOutcome | undefined
+): ImageRetractionOutcome | undefined {
+  if (purge === undefined) return undefined;
+  if (purge === 'confirmed' || purge === 'busy') return purge;
+  return 'unconfirmed';
+}
+
+/**
+ * 🔴 A retracting delete runs every row through `retractionLimit`, which waits for each retraction's
+ * answer, so the limit is the number of retractions running on the image-cache service.
+ */
+async function deleteFromStorage(
+  rows: Omit<DeletedImageRow, 'retraction'>[],
+  {
+    retractPublicBlobs,
+    retractionLimit,
+  }: Required<PurgeResizeCacheRetraction> & { retractionLimit: LimitFunction | null }
+): Promise<DeletedImageRow[]> {
+  if (!retractPublicBlobs || !retractionLimit) {
+    await Limiter({ batchSize: 5 }).process(
+      rows,
+      async (rows) => await Promise.all(rows.map(({ id, url }) => deleteImageFromS3({ id, url })))
+    );
+    return rows;
+  }
+  return await Promise.all(
+    rows.map((row) =>
+      retractionLimit(async () => {
+        const { purge } = await deleteImageFromStorage({
+          id: row.id,
+          url: row.url,
+          retractPublicBlobs,
+        });
+        return { ...row, retraction: retractionOutcome(purge) };
+      })
+    )
+  );
 }
 
 function getReviewTypeToBlockedReason(reason: string) {

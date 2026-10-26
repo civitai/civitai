@@ -11,8 +11,6 @@ type HiddenMetaImage = {
   type?: MediaType | null;
 };
 
-const CACHER_WAIT_MS = 70_000;
-
 /**
  * Clear an image's cached copies after its owner hides its metadata, so they re-derive under the
  * new setting. Keyed by url, so it also covers other rows that share the url.
@@ -29,13 +27,15 @@ export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
 async function purgeCachedCopies(image: HiddenMetaImage) {
   try {
     // Lazy: post.service imports this module, and a static edge would join the image.service cycle.
-    const { purgeResizeCache } = await import('~/server/services/image.service');
+    const { purgeResizeCache, IMAGE_CACHER_WAIT_MS } = await import(
+      '~/server/services/image.service'
+    );
     // 🔴 Scoped: the image stays live, and only the variants derived before the flip are stale.
     // A full purge would also drop the variants the page is serving right now.
     await purgeResizeCache({
       url: image.url,
       scope: 'hidden-meta-orphans',
-      waitForInvalidationMs: CACHER_WAIT_MS,
+      waitForInvalidationMs: IMAGE_CACHER_WAIT_MS,
     });
     await purgeCache({ urls: getImageEdgePurgeUrls(image) });
   } catch (error) {

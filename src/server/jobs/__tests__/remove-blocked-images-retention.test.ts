@@ -105,6 +105,7 @@ const {
     IMAGE_SCANNING_RETRY_DELAY: 5,
     IMAGE_SCANNING_PENDING_TIMEOUT: 30,
     DATABASE_IS_PROD: true,
+    IMAGE_CACHER_RETRACTION_CONCURRENCY: 5,
   };
   // Inlines nested `Prisma.sql` fragments, so a query built from a shared fragment is routed by
   // the text it actually sends.
@@ -155,7 +156,11 @@ const {
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
       const ids = (values[0] as number[]) ?? [];
-      return MOD_ACTIVITY.filter(
+      const extraActivity = extraQueue.map((q) => ({
+        entityId: q.entityId,
+        lastActedAt: new Date(q.createdAt.getTime() + 1000),
+      }));
+      return [...MOD_ACTIVITY, ...extraActivity].filter(
         (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
       );
     }
@@ -295,6 +300,7 @@ async function runJob() {
     evidenceHeld: number;
     accountHeld: number;
     processed: number;
+    retractionDeferred: number;
     skipped: string;
   }>;
 }
@@ -731,5 +737,70 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(mockDeleteImages.mock.calls[1]?.[0]).toEqual([1]);
     expect(result).toMatchObject({ deletedWithoutRetraction: 0, heldAtDelete: 1 });
+  });
+});
+
+describe('remove-blocked-images retraction load', () => {
+  // 60 more moderator takedowns past retention, so the takedowns span several chunks.
+  const addTakedowns = () => {
+    for (let id = 100; id < 160; id++) {
+      extraImages.push({ id, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({ entityId: id, createdAt: EXPIRED });
+    }
+  };
+  const retractingCalls = () =>
+    mockDeleteImages.mock.calls.filter(
+      (c) => (c[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs === true
+    );
+
+  it('stops starting retracting deletes after a 429 and leaves the rest queued', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id) => ({ id, url: `key-${id}`, retraction: 'busy' as const }))
+    );
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    const started = retractingCalls()[0][0] as number[];
+    expect(started.length).toBeGreaterThan(0);
+    expect(started.length).toBeLessThan(60);
+    const deferred = [...Array(60).keys()]
+      .map((i) => 100 + i)
+      .filter((id) => !started.includes(id));
+    expect(deferred.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ retractionDeferred: deferred.length });
+    for (const id of deferred) expect(queuePruneIds()).not.toContain(id);
+    for (const id of started) expect(queuePruneIds()).toContain(id);
+    // Deferred, not held: they were never handed to the delete.
+    expect(result).toMatchObject({ heldAtDelete: 0 });
+  });
+
+  it('keeps going while the service answers, in chunks', async () => {
+    addTakedowns();
+    const result = await runJob();
+
+    const chunks = retractingCalls().map((c) => c[0] as number[]);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.flat().sort((a, b) => a - b)).toEqual(
+      [1, 7, 8, ...[...Array(60).keys()].map((i) => 100 + i)].sort((a, b) => a - b)
+    );
+    expect(result).toMatchObject({ retractionDeferred: 0 });
+  });
+
+  it('stops starting retracting deletes once its time budget is spent', async () => {
+    addTakedowns();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      mockDeleteImages.mockImplementationOnce(async (ids: number[]) => {
+        vi.setSystemTime(Date.now() + 9 * 60 * 1000);
+        return ids.map((id) => ({ id }));
+      });
+      const result = await runJob();
+
+      expect(retractingCalls()).toHaveLength(1);
+      expect(result.retractionDeferred).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

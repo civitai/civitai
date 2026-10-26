@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
@@ -64,6 +65,13 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // run can't dump more than 20 in-flight submits on the rating scanner at once (the
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
+
+// remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
+// 20-minute lock: a second run taking the lock would double the retractions in flight. Each chunk
+// is five rounds of `IMAGE_CACHER_RETRACTION_CONCURRENCY` retractions of up to `IMAGE_CACHER_WAIT_MS`
+// (~6 min), so the worst case is this budget plus one chunk plus the persist budget.
+const TAKEDOWN_RETRACTION_BUDGET_MS = 8 * 60 * 1000;
+const TAKEDOWN_CHUNK_ROUNDS = 5;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -913,21 +921,45 @@ export const removeBlockedImages = createJob(
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
     const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
     const deleted: number[] = [];
-    if (takedowns.length > 0) {
-      const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
+    // Takedowns not started this run. Their queue rows stay, and being oldest they lead the next run.
+    const retractionDeferred: number[] = [];
+    let retractionStoppedBy: 'busy' | 'budget' | null = null;
+    const takedownChunkSize = env.IMAGE_CACHER_RETRACTION_CONCURRENCY * TAKEDOWN_CHUNK_ROUNDS;
+    for (const ids of chunk(takedowns, takedownChunkSize)) {
+      if (retractionStoppedBy) {
+        retractionDeferred.push(...ids);
+        continue;
+      }
+      const rows = await deleteImages(ids, true, { retractPublicBlobs: true, onlyWhere });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
       // and the retention window outlasts anything cached before the deny, so no CDN purge here.
       // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
+      // A retraction that did not land is queued here for the takedown retry.
       const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
       await persistDeletedTakedowns(rows);
+      // A 429 means the image server is at its retraction limit: more of them now only add load.
+      if (rows.some((x) => x.retraction === 'busy')) retractionStoppedBy = 'busy';
+      else if (Date.now() - startedAt >= TAKEDOWN_RETRACTION_BUDGET_MS)
+        retractionStoppedBy = 'budget';
     }
+    if (retractionDeferred.length)
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'retracting deletes stopped for this run; the rest stay queued',
+        reason: retractionStoppedBy,
+        count: retractionDeferred.length,
+      }).catch(() => undefined);
     if (deletedWithoutRetraction.length > 0) {
       const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);
-    const heldAtDelete = takedownCandidateIds.filter((id) => !deletedSet.has(id));
+    const deferredSet = new Set(retractionDeferred);
+    const heldAtDelete = takedownCandidateIds.filter(
+      (id) => !deletedSet.has(id) && !deferredSet.has(id)
+    );
 
     // Remove processed and stale entries from queue. Anything the guard kept stays queued.
     const idsToRemove = [...deleted, ...staleIds];
@@ -949,6 +981,7 @@ export const removeBlockedImages = createJob(
       // account deletions plus every automated block plus every whole-library block.
       retracted: takedowns.filter((id) => deletedSet.has(id)).length,
       deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
+      retractionDeferred: retractionDeferred.length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,

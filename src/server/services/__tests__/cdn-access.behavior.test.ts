@@ -105,7 +105,7 @@ let scripted: number[] = [];
 const fetchFake = vi.fn(async (input: string, init?: { method?: string }) => {
   calls.push({ method: init?.method ?? 'GET', path: input.replace(CACHER, '') });
   const status = scripted.length ? (scripted.shift() as number) : 202;
-  return { ok: status >= 200 && status < 300, status } as Response;
+  return { ok: status >= 200 && status < 300, status, headers: new Headers() } as Response;
 });
 
 const realFetch = globalThis.fetch;
@@ -1140,6 +1140,97 @@ describe('failures', () => {
   });
 });
 
+// The image server answers 429 when its retraction limit is full. Retrying at once adds to the load
+// it is shedding, so each path leaves the work for a later run.
+describe('image server busy (429)', () => {
+  it('the drain makes one call, keeps the queue row, and retracts on a later run', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [429];
+    const first = await syncCdnAccess();
+
+    expect(callsFor(u(1))).toEqual(['retract']);
+    expect(first).toMatchObject({ failed: 1, throttled: true });
+    expect(await stateOf(u(1))).toBeUndefined();
+    expect((await queued()).n).toBe(1);
+
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract', 'retract']);
+    expect(await stateOf(u(1))).toBe('Retracted');
+    expect((await queued()).n).toBe(0);
+  });
+
+  it('the drain leaves the rest of the run for later after a 429', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => i + 1);
+    for (const id of ids) {
+      await image(id);
+      await moderatorBlock(id);
+    }
+    scripted = ids.map(() => 429);
+    await syncCdnAccess();
+
+    // Fewer calls than urls, and never a second call for one url.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThan(ids.length);
+    for (const id of ids) expect(callsFor(u(id)).length).toBeLessThanOrEqual(1);
+    expect((await queued()).n).toBe(ids.length);
+  });
+
+  it('the persist retry keeps a busy row for the next run instead of dropping it', async () => {
+    combinedOk.add(GONE);
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (7, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: GONE, retract: true, purgeEdge: false })}::jsonb)`;
+    scripted = [429];
+
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 0, throttled: 1 });
+    expect(calls).toHaveLength(1);
+    expect(await retryRows()).toHaveLength(1);
+
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(calls).toHaveLength(2);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('the persist retry stops the batch after a 429', async () => {
+    const urls = Array.from({ length: 12 }, (_, i) => u(200 + i));
+    for (const [i, url] of urls.entries()) {
+      combinedOk.add(url);
+      await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+                VALUES (${200 + i}, 'Image', 'ImageCdnPersistRetry',
+                        ${JSON.stringify({ url, retract: true, purgeEdge: false })}::jsonb)`;
+    }
+    scripted = urls.map(() => 429);
+
+    const totals = await retryTakedownPersists();
+    expect(totals).toMatchObject({
+      queued: urls.length,
+      sent: 0,
+      failed: 0,
+      throttled: urls.length,
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThan(urls.length);
+    expect(await retryRows()).toHaveLength(urls.length);
+  });
+
+  it('a hard-deleted takedown whose retraction was busy is queued for the retry, not persisted', async () => {
+    expect(
+      await persistDeletedTakedowns([
+        { id: 1, url: u(1), retraction: 'busy' },
+        { id: 2, url: u(2), retraction: 'unconfirmed' },
+        { id: 3, url: u(3), retraction: 'confirmed' },
+      ])
+    ).toMatchObject({ sent: 1, queued: 2, retractionPending: 2 });
+    expect(calls.map((c) => c.path)).toEqual([`/admin/invalidate?imageKey=${u(3)}&persist=true`]);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: true, purgeEdge: false } },
+      { entityId: 2, data: { url: u(2), retract: true, purgeEdge: false } },
+    ]);
+    calls.length = 0;
+  });
+});
+
 describe('reconciler', () => {
   it('re-asserts an old deny, leaves a fresh one, and forgets a url with no rows left', async () => {
     await image(1);
@@ -1551,7 +1642,7 @@ describe('persist after a takedown hard delete', () => {
         { id: 1, url: u(1) },
         { id: 2, url: u(2) },
       ])
-    ).toEqual({ sent: 2, queued: 0, skipped: 0, notAttempted: 0 });
+    ).toEqual({ sent: 2, queued: 0, skipped: 0, notAttempted: 0, retractionPending: 0 });
     expect(calls.map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(1)}&persist=true`,
       `/admin/invalidate?imageKey=${u(2)}&persist=true`,
@@ -1592,6 +1683,7 @@ describe('persist after a takedown hard delete', () => {
       queued: 30,
       skipped: 0,
       notAttempted: 30,
+      retractionPending: 0,
     });
     expect(calls).toEqual([]);
     // One error for the run, the rows at warn.
@@ -1662,7 +1754,7 @@ describe('the persist retry, as the job runs it', () => {
     const before = calls.length;
 
     const totals = await retryTakedownPersists();
-    expect(totals).toEqual({ queued: 1, sent: 0, skipped: 0, failed: 0, busy: 1 });
+    expect(totals).toEqual({ queued: 1, sent: 0, skipped: 0, failed: 0, busy: 1, throttled: 0 });
     expect(Object.values(totals).every((n) => Number.isInteger(n))).toBe(true);
     expect(calls.slice(before)).toEqual([]);
     expect(await retryRows()).toHaveLength(1);

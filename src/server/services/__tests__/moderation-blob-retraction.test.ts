@@ -305,3 +305,78 @@ describe('deleteImageById never retracts', () => {
     );
   });
 });
+
+describe('retraction load on the image-cache service', () => {
+  // The service finishes a retraction even after the caller aborts, so the caller's wait is the only
+  // thing that makes its concurrency limit the number running there.
+  it('waits up to the long timeout for a retraction, and 2 s otherwise', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      await purgeResizeCache({ url: KEY, retractPublicBlobs: true });
+      expect(timeout).toHaveBeenLastCalledWith(70_000);
+
+      await purgeResizeCache({ url: KEY });
+      expect(timeout).toHaveBeenLastCalledWith(2000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it('keeps at most 5 retractions in flight across every batch of a bulk delete', async () => {
+    // 120 ids is two DELETE batches, which run concurrently.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (!strings.join('').includes('DELETE FROM "Image"')) return [];
+      const joined = values.find(
+        (v): v is { values: number[] } =>
+          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
+      );
+      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+    }) as never);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockFetch.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return { ok: true, status: 202 } as never;
+    });
+
+    const ids = Array.from({ length: 120 }, (_, i) => i + 1);
+    const rows = await deleteImages(ids, true, { retractPublicBlobs: true });
+
+    expect(invalidateCalls()).toHaveLength(120);
+    expect(invalidateCalls().every((c) => String(c[0]).includes(`&${RETRACT}`))).toBe(true);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(5);
+    expect(inFlight).toBe(0);
+    expect(rows.every((r) => r.retraction === 'confirmed')).toBe(true);
+  });
+
+  it('reports a 429 as busy, not done, and does not retry it', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'retry-after': '30' }),
+    } as never);
+
+    expect(await purgeResizeCache({ url: KEY, retractPublicBlobs: true })).toBe('busy');
+    expect(invalidateCalls()).toHaveLength(1);
+
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([row(1, KEY)]);
+    mockFetch.mockClear();
+    const rows = await deleteImages([1], true, { retractPublicBlobs: true });
+    expect(invalidateCalls()).toHaveLength(1);
+    expect(rows).toEqual([expect.objectContaining({ id: 1, retraction: 'busy' })]);
+  });
+
+  it('reports any other failure as unconfirmed', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 503, headers: new Headers() } as never);
+    expect(await purgeResizeCache({ url: KEY, retractPublicBlobs: true })).toBe('unconfirmed');
+    mockFetch.mockRejectedValue(new Error('connection reset'));
+    expect(await purgeResizeCache({ url: KEY, retractPublicBlobs: true })).toBe('unconfirmed');
+  });
+});
