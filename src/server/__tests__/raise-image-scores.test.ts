@@ -149,3 +149,114 @@ describe('raise-image-scores', () => {
     expect(status).toBe(405);
   });
 });
+
+describe('raise-image-scores raiseValues', () => {
+  const values = (rows: { ownerId: number; expected: number | null; next: number }[]) => ({
+    mode: 'raiseValues',
+    checkpoint: CHECKPOINT,
+    rows,
+  });
+  const written = () => mocks.raiseImagesScores.mock.calls[0][1];
+
+  it('refuses values computed against a checkpoint the cron has since moved', async () => {
+    const { status } = await call(
+      { ...values([{ ownerId: 1, expected: 100, next: 400 }]), checkpoint: CHECKPOINT - 3_600_000 },
+      { dryRun: 'false' }
+    );
+    expect(status).toBe(409);
+    expect(mocks.raiseImagesScores).not.toHaveBeenCalled();
+  });
+
+  it('writes the sent value, guarded by the expected score and the checkpoint', async () => {
+    const { body } = await call(values([{ ownerId: 1, expected: 100, next: 400 }]), {
+      dryRun: 'false',
+    });
+    expect(mocks.imageScoresAsOf).not.toHaveBeenCalled();
+    expect(mocks.raiseImagesScores).toHaveBeenCalledWith(
+      expect.anything(),
+      [{ id: 1, expected: 100, next: 400 }],
+      expect.objectContaining({
+        checkpoint: { key: 'update-user-score:images', value: CHECKPOINT },
+      })
+    );
+    expect(body).toMatchObject({ raise: 1, written: [{ ownerId: 1 }], skippedRace: [] });
+  });
+
+  it('writes nothing for an owner whose stored score is not the expected one', async () => {
+    const { body } = await call(values([{ ownerId: 1, expected: 90, next: 400 }]), {
+      dryRun: 'false',
+    });
+    expect(body).toMatchObject({ raise: 0, stale: 1 });
+    expect(written()).toEqual([]);
+  });
+
+  it('plans an owner already at the sent value as equal, not stale, on a re-run', async () => {
+    const { body } = await call(values([{ ownerId: 3, expected: 10, next: 70 }]));
+    expect(body).toMatchObject({ equal: 1, stale: 0 });
+  });
+
+  it('never lowers a score or rewrites an equal one', async () => {
+    const { body } = await call(
+      values([
+        { ownerId: 2, expected: 500, next: 300 },
+        { ownerId: 3, expected: 70, next: 70 },
+      ]),
+      { dryRun: 'false' }
+    );
+    expect(body).toMatchObject({ raise: 0, down: 1, equal: 1 });
+    expect(written()).toEqual([]);
+  });
+
+  it('never writes a metric-excluded owner, even when the value would go up', async () => {
+    mocks.excluded.mockResolvedValue([1]);
+    const { body } = await call(values([{ ownerId: 1, expected: 100, next: 400 }]), {
+      dryRun: 'false',
+    });
+    expect(body).toMatchObject({ raise: 0, excluded: 1 });
+    expect(written()).toEqual([]);
+  });
+
+  it('dry run summarises the sent values against the stored scores and writes nothing', async () => {
+    mocks.excluded.mockResolvedValue([3]);
+    mocks.stored.mockResolvedValue([
+      { id: 1, images: '100', total: '100' },
+      { id: 2, images: '500', total: '500' },
+      { id: 3, images: '70', total: '70' },
+      { id: 5, images: '40', total: '40' },
+    ]);
+    const { status, body } = await call(
+      values([
+        { ownerId: 1, expected: 100, next: 400 },
+        { ownerId: 2, expected: 500, next: 300 },
+        { ownerId: 3, expected: 70, next: 900 },
+        { ownerId: 4, expected: null, next: 10 },
+        { ownerId: 5, expected: 40, next: 40 },
+      ])
+    );
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      dryRun: true,
+      considered: 4,
+      raise: 1,
+      equal: 1,
+      down: 1,
+      excluded: 1,
+      stale: 0,
+    });
+    expect(mocks.raiseImagesScores).not.toHaveBeenCalled();
+  });
+
+  it('takes at most 500 rows, each owner once', async () => {
+    const rows = Array.from({ length: 501 }, (_, i) => ({ ownerId: i + 1, expected: 0, next: 1 }));
+    await expect(call(values(rows))).rejects.toThrow();
+    await expect(call(values(rows.slice(0, 500)))).resolves.toMatchObject({ status: 200 });
+    await expect(
+      call(
+        values([
+          { ownerId: 1, expected: 100, next: 400 },
+          { ownerId: 1, expected: 100, next: 500 },
+        ])
+      )
+    ).rejects.toThrow();
+  });
+});
