@@ -437,4 +437,72 @@ describe('retraction load on the image-cache service', () => {
     expect(rows.every((r) => r.retraction === 'busy')).toBe(true);
     expect(mockB2Send).toHaveBeenCalledTimes(20);
   });
+
+  const bulkRows = () =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (!strings.join('').includes('DELETE FROM "Image"')) return [];
+      const joined = values.find(
+        (v): v is { values: number[] } =>
+          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
+      );
+      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+    }) as never);
+  const requestedLogs = () =>
+    mockLogToAxiom.mock.calls.filter(
+      (c) => (c[0] as { name?: string }).name === 'image-blob-retraction-requested'
+    );
+
+  // A slow service sheds load the same way a refusing one does.
+  it('starts no retraction in a bulk delete after the first timeout', async () => {
+    bulkRows();
+    mockFetch.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    });
+    const gate = { busy: false };
+
+    const rows = await deleteImages(
+      Array.from({ length: 20 }, (_, i) => i + 1),
+      true,
+      { retractPublicBlobs: true, retractionGate: gate }
+    );
+
+    expect(invalidateCalls().length).toBeGreaterThan(0);
+    expect(invalidateCalls().length).toBeLessThanOrEqual(5);
+    expect(gate.busy).toBe(true);
+    expect(rows.every((r) => r.retraction === 'busy')).toBe(true);
+    // The attribution trail records what was sent, not what was held back.
+    expect(requestedLogs()).toHaveLength(invalidateCalls().length);
+  });
+
+  it('holds a retraction back unsent when no slot comes free within the wait', async () => {
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    mockFetch.mockImplementation(async (url) => {
+      if (String(url).includes('8000-00000000009')) await held;
+      return { ok: true, status: 202, headers: new Headers() } as never;
+    });
+    // Another sender holds every slot.
+    const holders = [...Array(5).keys()].map((i) => callCdnAccess(uuid(90 + i), 'retract'));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const purge = purgeResizeCache({ url: KEY, retractPublicBlobs: true });
+      await vi.advanceTimersByTimeAsync(60_000);
+      vi.useRealTimers();
+      release();
+      await Promise.all(holders);
+
+      expect(await purge).toBe('busy');
+      expect(
+        invalidateCalls().filter((c) => String(c[0]).includes(encodeURIComponent(KEY)))
+      ).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      release();
+    }
+  });
 });

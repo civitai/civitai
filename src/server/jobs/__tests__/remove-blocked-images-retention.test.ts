@@ -231,15 +231,19 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(async () => []) }));
 // Hand-listed for the same reason: the takedown sync loads the CDN and edge-url clients, which
 // this file's env and logging stubs cannot boot. The job imports only this from it.
-const { mockPersistDeletedTakedowns } = vi.hoisted(() => ({
+const { mockPersistDeletedTakedowns, mockReserve, mockSettle } = vi.hoisted(() => ({
   mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[]) => ({
     sent: 0,
     queued: 0,
     skipped: 0,
   })),
+  mockReserve: vi.fn(async (_rows: { id: number; url?: string | null }[]) => 'reservation'),
+  mockSettle: vi.fn(async (_ids: number[], _reservation: string) => undefined),
 }));
 vi.mock('~/server/services/cdn-access.service', () => ({
   persistDeletedTakedowns: mockPersistDeletedTakedowns,
+  reserveTakedownRetractions: mockReserve,
+  settleTakedownReservations: mockSettle,
 }));
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
@@ -353,6 +357,9 @@ beforeEach(() => {
   mockDbWrite.$executeRaw.mockClear();
   mockDeleteImages.mockClear();
   mockLogToAxiom.mockClear();
+  mockPersistDeletedTakedowns.mockClear();
+  mockReserve.mockReset().mockResolvedValue('reservation');
+  mockSettle.mockClear();
 });
 
 describe('remove-blocked-images retention clock', () => {
@@ -801,5 +808,72 @@ describe('remove-blocked-images retraction load', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("queues each chunk's retractions before deleting it, so a crash after the delete leaves them", async () => {
+    addTakedowns();
+    mockPersistDeletedTakedowns.mockRejectedValueOnce(new Error('process died'));
+    await expect(runJob()).rejects.toThrow('process died');
+
+    expect(retractingCalls()).toHaveLength(1);
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockReserve).toHaveBeenCalledTimes(1);
+    expect(mockReserve.mock.calls[0][0].map((r) => r.id)).toEqual(chunkIds);
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteImages.mock.invocationCallOrder[0]
+    );
+    // Nothing settled them, so they stay queued for the retry.
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it('settles only the reservations whose retraction landed', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id, i) => ({
+        id,
+        retraction: i === 0 ? ('unconfirmed' as const) : ('confirmed' as const),
+      }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockSettle.mock.calls[0]).toEqual([chunkIds.slice(1), 'reservation']);
+  });
+
+  it('deletes no takedown when their retractions cannot be queued', async () => {
+    addTakedowns();
+    mockReserve.mockRejectedValue(new Error('invalid input value for enum'));
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(0);
+    expect(result).toMatchObject({ retractionDeferred: 63 });
+    for (const id of [1, 7, 8, 100, 159]) expect(queuePruneIds()).not.toContain(id);
+  });
+
+  it('stops starting retracting deletes after a timeout trips the run gate', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[], _u, opts) => {
+      (opts as { retractionGate: { busy: boolean } }).retractionGate.busy = true;
+      return ids.map((id) => ({ id, retraction: 'unconfirmed' as const }));
+    });
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    expect(result.retractionDeferred).toBeGreaterThan(0);
+  });
+
+  it('deletes the takedowns that have waited longest first', async () => {
+    // Queued in the opposite order to the image rows the job reads.
+    for (let i = 0; i < 40; i++) {
+      extraImages.push({ id: 200 + i, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({
+        entityId: 200 + i,
+        createdAt: new Date(EXPIRED.getTime() - (40 - i) * DAY),
+      });
+    }
+    await runJob();
+
+    const first = retractingCalls()[0][0] as number[];
+    expect([...first].sort((a, b) => a - b)).toEqual([...Array(25).keys()].map((i) => 200 + i));
   });
 });

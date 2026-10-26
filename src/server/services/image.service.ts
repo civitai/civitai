@@ -231,12 +231,15 @@ import {
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
+import pLimit, { type LimitFunction } from 'p-limit';
 import {
+  HELD_BACK,
   IMAGE_CACHER_WAIT_MS,
   type ImageCacherOutcome,
+  inRetractionSlot,
+  MAX_IN_FLIGHT_RETRACTIONS,
   newRetractionGate,
   type RetractionGate,
-  retractionLimit,
 } from '~/server/services/image-cacher-retraction';
 import {
   isClickHouseConnectionError,
@@ -385,6 +388,7 @@ export async function purgeResizeCache({
   retractPublicBlobs = false,
   waitForInvalidationMs,
   retractionGate,
+  onRetractionSent,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
@@ -392,8 +396,10 @@ export async function purgeResizeCache({
    *  Running out of time is expected for a slow purge and logged as info. Still never throws.
    *  A retraction always waits, `IMAGE_CACHER_WAIT_MS` unless this says otherwise. */
   waitForInvalidationMs?: number;
-  /** A retraction is not sent, and is `busy`, once this gate is set; a 429 sets it. */
+  /** A retraction is not sent, and is `busy`, once this gate is set; a 429 or a timeout sets it. */
   retractionGate?: RetractionGate;
+  /** Called just before a retraction is actually sent; not called when it is held back. */
+  onRetractionSent?: () => Promise<void>;
 } & PurgeResizeCacheRetraction): Promise<ImageCacherOutcome> {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
@@ -532,8 +538,8 @@ export async function purgeResizeCache({
           return 'confirmed';
         })
         .catch((err): ImageCacherOutcome => {
-          const expectedTimeout =
-            waitMs !== undefined && (err as Error | undefined)?.name === 'TimeoutError';
+          const timedOut = (err as Error | undefined)?.name === 'TimeoutError';
+          const expectedTimeout = waitMs !== undefined && timedOut;
           logToAxiom({
             type: expectedTimeout ? 'info' : 'warning',
             name: 'image-cacher-invalidate',
@@ -546,10 +552,18 @@ export async function purgeResizeCache({
           }).catch(() => {
             // swallow — best effort logging
           });
+          // A slow service sheds load the same way a refusing one does.
+          if (retract && timedOut) {
+            if (retractionGate) retractionGate.busy = true;
+            return 'busy';
+          }
           return 'unconfirmed';
         });
     const invalidation = retract
-      ? retractionLimit(() => (retractionGate?.busy ? Promise.resolve('busy' as const) : send()))
+      ? inRetractionSlot(async () => {
+          await onRetractionSent?.();
+          return send();
+        }, retractionGate).then((outcome) => (outcome === HELD_BACK ? 'busy' : outcome))
       : send();
     if (waitMs !== undefined) return await invalidation;
   }
@@ -682,9 +696,10 @@ async function deleteImageFromStorage({
     await queueImageStorageDeleteRetry({ id, url });
   }
 
-  // The attribution trail for a retraction (see `PurgeResizeCacheRetraction`). Emitted before the
-  // request rather than after, so a request that is made but never confirmed still leaves a record.
-  if (retractPublicBlobs) {
+  // The attribution trail for a retraction (see `PurgeResizeCacheRetraction`). Emitted just before
+  // the request rather than after, so a request that is made but never confirmed still leaves a
+  // record, and not at all for one held back unsent.
+  const onRetractionSent = async () => {
     await logToAxiom({
       type: 'warning',
       name: 'image-blob-retraction-requested',
@@ -692,7 +707,7 @@ async function deleteImageFromStorage({
       imageId: id,
       url,
     }).catch(() => undefined);
-  }
+  };
 
   // Outside the try: a failed object delete is exactly when invalidation matters, because the
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
@@ -701,7 +716,12 @@ async function deleteImageFromStorage({
   if (outcome === 'deleted' || purgeOnFailure)
     return {
       storage: outcome,
-      purge: await purgeResizeCache({ url: url, retractPublicBlobs, retractionGate }),
+      purge: await purgeResizeCache({
+        url: url,
+        retractPublicBlobs,
+        retractionGate,
+        onRetractionSent,
+      }),
     };
   return { storage: outcome };
 }
@@ -980,14 +1000,18 @@ export async function deleteImages(
   {
     retractPublicBlobs = false,
     onlyWhere,
+    retractionGate = newRetractionGate(),
   }: PurgeResizeCacheRetraction & {
     /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
     onlyWhere?: Prisma.Sql;
+    /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is sent;
+     *  those rows come back `busy` so the caller can queue them. */
+    retractionGate?: RetractionGate;
   } = {}
 ) {
-  // Once one retraction in this call is refused with a 429, the rest are not sent; their rows come
-  // back `busy` so the caller can queue them.
-  const retractionGate = newRetractionGate();
+  // This call's own rows run no wider than the shared limit, so they never wait out their slot
+  // behind each other; only other senders in the process can hold them back.
+  const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1044,7 +1068,11 @@ export async function deleteImages(
       ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
     ]);
 
-    const deleted = await deleteFromStorage(results, { retractPublicBlobs, retractionGate });
+    const deleted = await deleteFromStorage(results, {
+      retractPublicBlobs,
+      retractionGate,
+      ownLimit,
+    });
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
     return deleted;
@@ -1064,24 +1092,34 @@ type DeletedImageRow = {
   retraction?: ImageCacherOutcome;
 };
 
-/** Every retraction request also passes `retractionLimit`, which caps them per process. */
 async function deleteFromStorage(
   rows: Omit<DeletedImageRow, 'retraction'>[],
   {
     retractPublicBlobs,
     retractionGate,
-  }: Required<PurgeResizeCacheRetraction> & { retractionGate: RetractionGate }
+    ownLimit,
+  }: Required<PurgeResizeCacheRetraction> & {
+    retractionGate: RetractionGate;
+    ownLimit: LimitFunction;
+  }
 ): Promise<DeletedImageRow[]> {
-  return await Limiter({ batchSize: 5 }).process(rows, async (rows) =>
-    Promise.all(
-      rows.map(async (row): Promise<DeletedImageRow> => {
+  if (!retractPublicBlobs) {
+    await Limiter({ batchSize: 5 }).process(
+      rows,
+      async (rows) => await Promise.all(rows.map(({ id, url }) => deleteImageFromS3({ id, url })))
+    );
+    return rows;
+  }
+  return await Promise.all(
+    rows.map((row) =>
+      ownLimit(async (): Promise<DeletedImageRow> => {
         const { purge } = await deleteImageFromStorage({
           id: row.id,
           url: row.url,
           retractPublicBlobs,
           retractionGate,
         });
-        return retractPublicBlobs ? { ...row, retraction: purge } : row;
+        return { ...row, retraction: purge };
       })
     )
   );
