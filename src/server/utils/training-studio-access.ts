@@ -1,7 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { isFlipt } from '~/server/flipt/client';
 import {
+  buildFliptContext,
   computeUserFeatureFlagsOverlay,
   getFeatureFlagsLazy,
   getFliptGatedEligibility,
@@ -41,8 +43,37 @@ export async function allowTrainingStudio(
   if (requiresEmailVerification(user))
     return refuse(res, 403, { error: 'Verify your email address to do this' });
   if (!pageFlag) return true;
-  // Same merge the client provider performs (overlay over host flags) — keep them in step, or the
-  // page renders for a user this endpoint refuses.
+  if (!(await userFeatureFlags(req, user)).trainingStudioUi)
+    return refuse(res, 403, { error: 'Training Studio is not available on this account' });
+  return true;
+}
+
+/** The standalone Studio's closed-beta gate (its `TRAINING_STUDIO_FLAG`): moderators, else Flipt. */
+const STANDALONE_STUDIO_FLIPT_KEY = 'trainingStudio';
+
+/**
+ * The gates for the Studio's system-paid auto-label: `allowTrainingStudio`'s, then the same flags as
+ * `training.submitAutoLabelWorkflow` (`trainingAutoLabelOrchestrator` is the operators' off switch),
+ * then access to either Studio surface — the embed's `trainingStudioUi` or the standalone beta.
+ */
+export async function allowStudioAutoLabel(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  user: SessionUser
+): Promise<boolean> {
+  if (!(await allowTrainingStudio(req, res, user, { pageFlag: false }))) return false;
+  const features = await userFeatureFlags(req, user);
+  if (!features.imageTraining || !features.trainingAutoLabelOrchestrator)
+    return refuse(res, 403, { error: 'Auto-labeling is not available on this account' });
+  if (features.trainingStudioUi || user.isModerator) return true;
+  if (await isFlipt(STANDALONE_STUDIO_FLIPT_KEY, String(user.id), buildFliptContext(user)))
+    return true;
+  return refuse(res, 403, { error: 'Training Studio is not available on this account' });
+}
+
+// Same merge the client provider performs (overlay over host flags) — keep them in step, or the
+// page renders for a user these endpoints refuse.
+async function userFeatureFlags(req: NextApiRequest, user: SessionUser) {
   const hostFlags = getFeatureFlagsLazy({ user, req });
   const { features: userFeatures } = await getUserSettings(user.id);
   const overlay = computeUserFeatureFlagsOverlay(
@@ -50,9 +81,7 @@ export async function allowTrainingStudio(
     hostFlags,
     getFliptGatedEligibility({ user, req })
   );
-  if (!{ ...hostFlags, ...overlay }.trainingStudioUi)
-    return refuse(res, 403, { error: 'Training Studio is not available on this account' });
-  return true;
+  return { ...hostFlags, ...overlay };
 }
 
 function refuse(res: NextApiResponse, status: number, body: { error: string }): false {

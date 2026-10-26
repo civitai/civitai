@@ -41,6 +41,14 @@ interface TrainingStudioHost {
   checkTrainingText(input: { triggerWord: string }):
     Promise<{ ok: true } | { ok: false; error: string }>;
 
+  /** The main app's system-paid auto-label routes (`POST /api/training-studio/auto-label`, then
+   *  `GET /api/training-studio/auto-label/[workflowId]`). Without them the component does not
+   *  auto-label: on the user's token every tag/caption job would bill the user. */
+  autoLabel?: {
+    submit(body: AutoLabelRequest): Promise<{ workflowId: string }>;
+    poll(workflowId: string): Promise<MainAppAutoLabelWorkflow>;
+  };
+
   /** Spendable balances for the header/pricing UI. The buzz service is internal-only (no
    *  browser CORS), so this stays a host call. Null => balances hidden, flow still works. */
   getBuzzBalances(): Promise<{ yellow: number; green: number; blue: number } | null>;
@@ -139,7 +147,6 @@ the same SDK call; in the component it becomes a browser call.
 | Rename a run | `updateWorkflow` | `POST /api/rename` |
 | Import from generations | `queryWorkflows` | `GET /api/generations` |
 | Blob upload URL | `getConsumerBlobUploadUrl` | `GET /api/upload-url` |
-| Auto-label (submit + poll) | `submitWorkflow` / `getWorkflow` | `/api/auto-label` |
 | Dataset blob fetch | consumer blobs GET, `Authorization: Bearer` | `GET /api/dataset-blob` |
 | Live trace tail | streaming-blobs GET (no auth today) | direct in prod already |
 
@@ -151,6 +158,9 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
 - **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
   shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
+- **Auto-label** — the main app's `/api/training-studio/auto-label` routes, which submit on the
+  system token so the user pays nothing; the standalone shell's server calls them with the user's
+  session cookie, the embed through `autoLabel`.
 
 ## CORS requirement
 

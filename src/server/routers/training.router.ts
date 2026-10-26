@@ -5,6 +5,7 @@ import { dbKV } from '~/server/db/db-helpers';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  AUTO_LABEL_SUBMIT_RATE_LIMIT,
   autoCaptionInput,
   autoTagInput,
   createTrainingRequestDryRunSchema,
@@ -140,9 +141,7 @@ export const trainingRouter = router({
     .input(submitAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Per-batch (≤16 images): 100/min covers ~1600 images/min in flight, leaving a
-    // little headroom above the 1000/min upload ceiling.
-    .use(rateLimit({ limit: 100, period: 60 }))
+    .use(rateLimit(AUTO_LABEL_SUBMIT_RATE_LIMIT))
     .mutation(({ input, ctx }) => submitAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
   getAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

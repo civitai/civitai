@@ -1,16 +1,18 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireToken } from '$lib/server/token';
-import { submitAutoLabel, type AutoLabelItem, type AutoLabelMode } from '$lib/server/autolabel';
+import {
+  submitAutoLabel,
+  upstreamStatus,
+  type AutoLabelItem,
+  type AutoLabelMode,
+} from '$lib/server/autolabel';
 import type { Media } from '$lib/data/trainingModels';
 
 // Submit one free auto-label workflow for a batch of uploaded blobs; returns its id for the client to
-// poll via GET /api/auto-label/[id].
+// poll via GET /api/auto-label/[id]. The main app submits it on the system token, so the user pays nothing.
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const token = await requireToken(
-    locals,
-    'Auto-labeling is unavailable right now — no orchestrator token.'
-  );
+  // The dev-login preview has no main-app session to forward.
+  if (locals.devPreview) error(503, 'Auto-labeling needs a main-app session (not in dev preview).');
 
   const body = (await request.json().catch(() => null)) as {
     mode?: AutoLabelMode;
@@ -27,10 +29,15 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   }
 
   try {
-    const workflowId = await submitAutoLabel(token, body.mode, body.media, body.items);
+    const workflowId = await submitAutoLabel(
+      request.headers.get('cookie') ?? '',
+      body.mode,
+      body.media,
+      body.items
+    );
     return json({ workflowId });
   } catch (err) {
     console.warn('[training-studio] submitAutoLabel failed', err);
-    error(502, 'Could not start auto-labeling. Try again.');
+    error(upstreamStatus(err), 'Could not start auto-labeling. Try again.');
   }
 };

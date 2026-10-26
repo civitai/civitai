@@ -28,6 +28,7 @@ import type {
   GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
   SubmitAutoLabelWorkflowInput,
+  SubmitStudioAutoLabelInput,
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
@@ -594,7 +595,9 @@ export async function updateTrainingWorkflowRecords(
 type AutoLabelWorkflowMetadata = {
   kind: 'auto-label';
   userId: number;
-  modelId: number;
+  /** Absent for the Training Studio, which labels a dataset before any model exists. */
+  modelId?: number;
+  source?: 'training-studio';
   mediaType: 'image' | 'video' | 'audio';
   type: 'tag' | 'caption';
 };
@@ -731,13 +734,41 @@ export async function getAutoLabelUploadUrl({
 }
 
 export async function submitAutoLabelWorkflow({
-  userId,
   modelId,
+  ...batch
+}: SubmitAutoLabelWorkflowInput & { userId: number }) {
+  await assertModelOwnership(modelId, batch.userId);
+  return submitSystemAutoLabelWorkflow({
+    ...batch,
+    tags: ['civitai', 'training', 'auto-label'],
+    metadata: { modelId },
+  });
+}
+
+/** The Training Studio's auto-label: system-paid like the trainer's, but with no model to own yet. */
+export async function submitStudioAutoLabelWorkflow(
+  batch: SubmitStudioAutoLabelInput & { userId: number }
+) {
+  return submitSystemAutoLabelWorkflow({
+    ...batch,
+    // No `training` tag: that is what training-list queries match on.
+    tags: ['civitai', 'auto-label', 'training-studio'],
+    metadata: { source: 'training-studio' },
+  });
+}
+
+async function submitSystemAutoLabelWorkflow({
+  userId,
   mediaType,
   images,
   params,
-}: SubmitAutoLabelWorkflowInput & { userId: number }) {
-  await assertModelOwnership(modelId, userId);
+  tags,
+  metadata,
+}: SubmitStudioAutoLabelInput & {
+  userId: number;
+  tags: string[];
+  metadata: Pick<AutoLabelWorkflowMetadata, 'modelId' | 'source'>;
+}) {
   assertSafeMediaUrls(images.map((i) => i.mediaUrl));
 
   const steps: WorkflowStepTemplate[] = images.map((img, index) => {
@@ -789,9 +820,9 @@ export async function submitAutoLabelWorkflow({
   });
 
   const workflowMetadata: AutoLabelWorkflowMetadata = {
+    ...metadata,
     kind: 'auto-label',
     userId,
-    modelId,
     mediaType,
     type: params.type,
   };
@@ -799,7 +830,7 @@ export async function submitAutoLabelWorkflow({
   const { data, error } = await clientSubmitWorkflow({
     client: internalOrchestratorClient,
     body: {
-      tags: ['civitai', 'training', 'auto-label'],
+      tags,
       metadata: workflowMetadata,
       steps,
       // System-paid: no user buzz currency required.

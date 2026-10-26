@@ -30,6 +30,13 @@ export interface StudioElementHost {
   checkTrainingText?(input: {
     triggerWord: string;
   }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The main app's system-paid auto-label routes (`/api/training-studio/auto-label`): submit one
+   *  batch, then poll it. A host without them gets no auto-labeling — the element never labels on the
+   *  user's token, which would bill them for a step the UI calls free. */
+  autoLabel?: {
+    submit(body: label.AutoLabelRequest): Promise<{ workflowId: string }>;
+    poll(workflowId: string): Promise<label.MainAppAutoLabelWorkflow>;
+  };
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
@@ -165,12 +172,15 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       }
     },
 
-    autoLabelSubmit: (items, mode, media) =>
-      call(async (client) => ({
-        workflowId: await label.submitAutoLabel(client, mode, media, items),
-      })),
+    autoLabelSubmit: async (items, mode, media) => {
+      if (!host.autoLabel) throw new Error('Auto-labeling is unavailable on this page.');
+      return host.autoLabel.submit(label.autoLabelRequest(mode, media, items));
+    },
 
-    autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
+    autoLabelPoll: async (workflowId) => {
+      if (!host.autoLabel) throw new Error('Auto-labeling is unavailable on this page.');
+      return label.autoLabelResults(await host.autoLabel.poll(workflowId));
+    },
 
     submitTraining: (runs) =>
       call((client) =>

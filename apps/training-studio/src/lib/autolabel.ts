@@ -3,6 +3,7 @@
 // prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
 import { backend } from '$lib/host';
+import { pool } from '$lib/pool';
 import type { Media } from '$lib/data/trainingModels';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
@@ -11,6 +12,9 @@ export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend
 const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+// Batches in flight per run. Each polls every POLL_INTERVAL_MS and the main app rate-limits submits, so an
+// unbounded fan-out over a large dataset floods the poll route and 429s the tail of the submits.
+const MAX_BATCHES_IN_FLIGHT = 8;
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
 // switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
@@ -141,8 +145,8 @@ export async function runAutoLabel(
     );
     for (const item of refused) onResult({ key: item.key, status: 'failed' });
   }
-  await Promise.all(
-    chunk(allowed, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))
+  await pool(chunk(allowed, BATCH_SIZE), MAX_BATCHES_IN_FLIGHT, (batch) =>
+    runBatch(mode, media, batch, onResult, signal)
   );
   return allowed.length;
 }

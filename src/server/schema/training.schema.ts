@@ -5,6 +5,8 @@ import { autoCaptionSchema, autoLabelLimits } from '~/store/training.store';
 // Auto-label workflow batches map 1 step per image; the orchestrator can ingest larger
 // payloads but 16 fits cleanly into the 64-tasks-per-GPU budget without starving other work.
 export const AUTO_LABEL_BATCH_SIZE = 16;
+// Per-user ceiling on system-paid auto-label submits (≤16 images a batch): ~1600 images/min in flight.
+export const AUTO_LABEL_SUBMIT_RATE_LIMIT = { limit: 100, period: 60 };
 
 /**
  * @deprecated for orchestrator v2
@@ -72,26 +74,37 @@ const autoLabelCaptionParamsSchema = z.object({
     .default(autoLabelLimits.caption.maxNewTokens.def),
 });
 
+const autoLabelBatchSchema = z.object({
+  mediaType: z.enum(['image', 'video', 'audio']).default('image'),
+  images: z
+    .array(autoLabelImageSchema)
+    .min(1)
+    .max(AUTO_LABEL_BATCH_SIZE)
+    .refine((imgs) => new Set(imgs.map((i) => i.mediaUrl)).size === imgs.length, {
+      message: 'Duplicate mediaUrl in batch',
+    }),
+  params: z.discriminatedUnion('type', [autoLabelTagParamsSchema, autoLabelCaptionParamsSchema]),
+});
+// Audio only flows through the audioCaptioning step; the tag/wdTagging path
+// can't process audio URLs, so reject the combination at the schema layer.
+const isAudioCaptionOnly = (v: z.infer<typeof autoLabelBatchSchema>) =>
+  !(v.mediaType === 'audio' && v.params.type === 'tag');
+const audioCaptionOnlyError = {
+  message: 'Audio auto-label only supports caption mode',
+  path: ['params'],
+};
+
 export type SubmitAutoLabelWorkflowInput = z.infer<typeof submitAutoLabelWorkflowSchema>;
-export const submitAutoLabelWorkflowSchema = z
-  .object({
-    modelId: z.number().positive(),
-    mediaType: z.enum(['image', 'video', 'audio']).default('image'),
-    images: z
-      .array(autoLabelImageSchema)
-      .min(1)
-      .max(AUTO_LABEL_BATCH_SIZE)
-      .refine((imgs) => new Set(imgs.map((i) => i.mediaUrl)).size === imgs.length, {
-        message: 'Duplicate mediaUrl in batch',
-      }),
-    params: z.discriminatedUnion('type', [autoLabelTagParamsSchema, autoLabelCaptionParamsSchema]),
-  })
-  // Audio only flows through the audioCaptioning step; the tag/wdTagging path
-  // can't process audio URLs, so reject the combination at the schema layer.
-  .refine((v) => !(v.mediaType === 'audio' && v.params.type === 'tag'), {
-    message: 'Audio auto-label only supports caption mode',
-    path: ['params'],
-  });
+export const submitAutoLabelWorkflowSchema = autoLabelBatchSchema
+  .extend({ modelId: z.number().positive() })
+  .refine(isAudioCaptionOnly, audioCaptionOnlyError);
+
+// The Training Studio labels a dataset before any model exists, so its batches carry no modelId.
+export type SubmitStudioAutoLabelInput = z.infer<typeof submitStudioAutoLabelSchema>;
+export const submitStudioAutoLabelSchema = autoLabelBatchSchema.refine(
+  isAudioCaptionOnly,
+  audioCaptionOnlyError
+);
 
 export type GetAutoLabelUploadUrlInput = z.infer<typeof getAutoLabelUploadUrlSchema>;
 export const getAutoLabelUploadUrlSchema = z.object({
