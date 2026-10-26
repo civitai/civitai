@@ -270,6 +270,16 @@ if (!OTEL_ENABLED) {
     sdk.start();
     console.log(`[instrumentation.node] OTEL SDK started - traces and logs -> ${OTEL_ENDPOINT}`);
 
+    // Arm withSpan's unsampled-parent shortcut (dark until the `otel-withspan-skip-unsampled`
+    // Flipt flag is on). Dynamic, like the warmer: keeps the Flipt client out of this module's
+    // static graph, and a failure here must never affect boot — withSpan simply keeps opening
+    // spans as before. See ~/server/utils/otel-withspan-gate.
+    void import('~/server/utils/otel-withspan-gate')
+      .then((m) => m.registerWithSpanSkipUnsampledGate())
+      .catch((err) => {
+        console.error('[instrumentation.node] withSpan gate registration failed (fail-open):', err);
+      });
+
     // Test span
     const testTracer = trace.getTracer('instrumentation-test');
     testTracer.startActiveSpan('test-span', (span) => {

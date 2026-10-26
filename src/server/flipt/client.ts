@@ -172,6 +172,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // Lets `withSpan` (@civitai/telemetry/otel-helpers) run its work without opening a span when the
+  // active parent is a local, unsampled span — that span could never be recorded or exported.
+  // DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized client, which
+  // keeps today's behaviour. Global boolean, evaluated with no entity or context, and read at most
+  // once per refresh interval per process. See `src/server/utils/otel-withspan-gate.ts`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, which bypasses the eval cache on every refresh.
+  OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path

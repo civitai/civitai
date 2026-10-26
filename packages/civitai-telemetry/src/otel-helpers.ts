@@ -2,6 +2,28 @@ import { trace, context, propagation, ROOT_CONTEXT, SpanStatusCode } from '@open
 
 const tracer = trace.getTracer('civitai-app');
 
+// The gate behind `withSpan`'s unsampled-parent shortcut (see `withSpan`). Kept on `globalThis`
+// because this module can be emitted into more than one bundled server chunk, and the app sets
+// the gate ONCE at boot: a module-scope variable would arm only the copy that boot imported and
+// leave every other copy's call sites on the old path, with no error. Enrolled as SHARED_STATE
+// in scripts/server-graph-watchlist.mjs. Unset (the default, and always in tests that do not
+// set it) means withSpan behaves exactly as before the gate existed.
+type WithSpanGateState = { gate: (() => boolean) | undefined };
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiWithSpanSkipUnsampledGate: WithSpanGateState | undefined;
+}
+const withSpanGateState = (globalThis.__civitaiWithSpanSkipUnsampledGate ??= { gate: undefined });
+
+/**
+ * Install (or, with `undefined`, remove) the switch that lets `withSpan` skip opening a span
+ * under an unsampled local parent. The function is called on the hot path, once per `withSpan`
+ * call that has such a parent, so it must be cheap — the app passes a cached flag read.
+ */
+export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined): void {
+  withSpanGateState.gate = gate;
+}
+
 /**
  * Set attributes on the CURRENTLY ACTIVE span, if there is one. For values only known after the
  * work inside a `withSpan` callback has finished (a result count, an attempt count) — call it from
