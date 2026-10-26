@@ -70,7 +70,6 @@ export const SHELL_BOUNCE_CDN_CACHE_CONTROL = 'no-store';
 export function applyShellBounceHeaders(res: ServerResponse) {
   applyShellPrivateHeaders(res);
   for (const name of SHELL_EDGE_HEADERS) res.removeHeader(name);
-  res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, SHELL_BOUNCE_CDN_CACHE_CONTROL);
 }
 
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
