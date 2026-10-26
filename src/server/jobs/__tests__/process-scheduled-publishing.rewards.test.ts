@@ -88,7 +88,11 @@ type Chapter = {
 };
 type Follower = { projectId: number; userId: number };
 
+// Read by the default transaction stub, so a test that installs its own keeps it.
+const txPosts: { scheduled: Row[]; flipped: Row[] } = { scheduled: [], flipped: [] };
+
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
+// `flipped` is the rows the post UPDATE returns; by default every scheduled post publishes.
 const stubReads = ({
   models = [],
   versions = [],
@@ -96,6 +100,7 @@ const stubReads = ({
   newlyLive = [],
   chapters = [],
   followers = [],
+  flipped,
 }: {
   models?: Row[];
   versions?: (Row & { extras: { modelId: number } })[];
@@ -103,7 +108,10 @@ const stubReads = ({
   newlyLive?: Row[];
   chapters?: Chapter[];
   followers?: Follower[];
+  flipped?: Row[];
 }) => {
+  txPosts.scheduled = scheduled;
+  txPosts.flipped = flipped ?? scheduled;
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const sql = (args[0] as string[]).join(' ');
     // There is no "ComicEngagement" table — prod answers 42P01. Throwing rather than
@@ -135,7 +143,18 @@ beforeEach(() => {
   mockApply.mockResolvedValue(undefined);
   mockRewardedIds.mockResolvedValue(new Set<number>());
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-    fn({ $executeRaw: vi.fn(), $queryRaw: vi.fn().mockResolvedValue([]) })
+    fn({
+      $executeRaw: vi.fn(),
+      $queryRaw: vi.fn(async (strings: string[]) => {
+        const sql = strings.join(' ');
+        if (sql.includes('FOR NO KEY UPDATE OF mv, p'))
+          return txPosts.scheduled.map(({ id }) => ({ postId: id, versionId: 1 }));
+        // Keyed on the RETURNING too: without it Postgres hands back no rows at all.
+        if (sql.includes('UPDATE "Post" p') && sql.includes('RETURNING p.id, p."userId"'))
+          return txPosts.flipped;
+        return [];
+      }),
+    })
   );
   mockDbWrite.image.findMany.mockResolvedValue([]);
   stubReads({});
@@ -147,6 +166,60 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     await runJob();
     expect(mockApply).toHaveBeenCalledTimes(1);
     expect(mockApply).toHaveBeenCalledWith({ postId: 1, posterId: 10 });
+  });
+
+  // The post UPDATE re-checks each post, so one taken down or moved since the select publishes
+  // nothing; paying it the reward, or queueing its images, would act on a post that is not live.
+  it('gives a scheduled post the UPDATE skipped none of the publish side effects', async () => {
+    stubReads({
+      scheduled: [
+        { id: 1, userId: 10 },
+        { id: 2, userId: 20 },
+      ],
+      flipped: [{ id: 1, userId: 10 }],
+    });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 900 }]);
+    await runJob();
+    expect(mockApply.mock.calls).toEqual([[{ postId: 1, posterId: 10 }]]);
+    expect(
+      mockProcessEngagement.mock.calls
+        .filter(([e]) => e.entityType === 'post')
+        .map(([e]) => e.entityId)
+    ).toEqual([1]);
+    expect(mockDbWrite.image.findMany).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ where: { postId: { in: [1] } } })
+    );
+    expect(mockRefreshImageVideoCounts).toHaveBeenCalledExactlyOnceWith([10]);
+    expect(mockScanEntitiesInBackground).toHaveBeenCalledExactlyOnceWith('Post', [1]);
+  });
+
+  // The owner can change between the select and the write; the reward goes to whoever owns the
+  // post when it actually publishes, which is what the UPDATE's ownership check compared against.
+  it('pays the owner the post UPDATE returned, not the one the select read', async () => {
+    stubReads({ scheduled: [{ id: 1, userId: 10 }], flipped: [{ id: 1, userId: 11 }] });
+    await runJob();
+    expect(mockApply.mock.calls).toEqual([[{ postId: 1, posterId: 11 }]]);
+  });
+
+  // Guards a future edit, not today's code: an uncaught rollback already stops the run. The UPDATE's
+  // rows mean nothing once the transaction rolls back, so they stay its return value; a later catch
+  // added to carry the run on must not pay for, index or scan posts that never published.
+  it('keeps rolled-back posts out of the side effects even if the failure is caught', async () => {
+    stubReads({ scheduled: [{ id: 1, userId: 10 }] });
+    const txImpl = mockDbWrite.$transaction.getMockImplementation()!;
+    let flippedInTx: unknown;
+    mockDbWrite.$transaction.mockImplementation(async (...args: unknown[]) => {
+      flippedInTx = await (txImpl as (...a: unknown[]) => Promise<unknown>)(...args);
+      throw new Error('could not serialize access');
+    });
+    await runJob().catch(() => undefined);
+    // The UPDATE really returned the post inside the transaction, so its absence below is the rollback.
+    expect(flippedInTx).toEqual([{ id: 1, userId: 10 }]);
+    expect(mockApply).not.toHaveBeenCalled();
+    expect(mockProcessEngagement).not.toHaveBeenCalled();
+    expect(mockDbWrite.image.findMany).not.toHaveBeenCalled();
+    expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 
   it('rewards standalone scheduled posts on the day they go live', async () => {
@@ -482,6 +555,9 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
 
     const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
     expect(sql.some((q) => q.includes('UPDATE "Post" p'))).toBe(false);
+    expect(mockApply).not.toHaveBeenCalled();
+    expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 
   it('publishes no early access when the UPDATE published none of them', async () => {
