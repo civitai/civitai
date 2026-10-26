@@ -74,36 +74,36 @@
               —
             {/if}
           </FactRow>
-        </dl>
-      {/if}
-
-      {#if author.recentReports}
-        <div>
-          <p class="m-0 mb-1.5 text-dark-0">
-            {recent.length ? 'Latest reports on their content' : 'No human reports on their content.'}
-          </p>
-          {#if recent.length}
-            <ul class="m-0 list-none space-y-1 p-0">
-              {#each recent as r (r.id)}
-                {@const href = entityUrl(page.data.civitaiUrl, r.type, r.entityId)}
-                <li class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dark-0">
-                  {#if href}
-                    <a {href} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-                      {r.entityType} #{r.entityId}
-                    </a>
-                  {:else}
-                    <span>{r.entityType}{r.entityId ? ` #${r.entityId}` : ''}</span>
-                  {/if}
-                  <span>{reportReasonLabel(r.details, r.reason)}</span>
-                  <span class="text-dark-2">{shortAge(r.createdAt)} ago</span>
-                </li>
-              {/each}
-            </ul>
-            <a href={userLookupUrl(author.userId, 'reports')} class="mt-1 inline-block text-xs {LINK_CLASS}">
-              All reports in User Lookup
-            </a>
+          {#if author.recentReports}
+            <FactRow label="Latest reports">
+              {#if recent.length}
+                <ul class="m-0 list-none space-y-1.5 p-0">
+                  {#each recent as r (r.id)}
+                    {@const href = entityUrl(page.data.civitaiUrl, r.type, r.entityId)}
+                    <li>
+                      <span class="flex items-baseline justify-between gap-2">
+                        {#if href}
+                          <a {href} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+                            {r.entityType} #{r.entityId}
+                          </a>
+                        {:else}
+                          <span>{r.entityType}{r.entityId ? ` #${r.entityId}` : ''}</span>
+                        {/if}
+                        <span class="shrink-0 text-dark-2">{shortAge(r.createdAt)} ago</span>
+                      </span>
+                      <span class="block text-dark-2">{reportReasonLabel(r.details, r.reason)}</span>
+                    </li>
+                  {/each}
+                </ul>
+                <a href={userLookupUrl(author.userId, 'reports')} class="mt-1.5 inline-block {LINK_CLASS}">
+                  All reports in User Lookup
+                </a>
+              {:else}
+                no human reports
+              {/if}
+            </FactRow>
           {/if}
-        </div>
+        </dl>
       {/if}
 
       <div>
