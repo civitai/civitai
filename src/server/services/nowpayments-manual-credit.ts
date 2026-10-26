@@ -3,6 +3,7 @@ import { getUserBuzzTransactionsResponse } from '~/server/schema/buzz.schema';
 import { buzzService } from '~/server/services/buzz.service';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import dayjs from '~/shared/utils/dayjs';
 
 // Where a hand grant for a deposit can land, and the types it is made as. Goodwill grants are made
 // as Rewards to yellow or blue. Compensation is left out: automated, and numerous enough on a
@@ -86,9 +87,13 @@ export function matchManualCredit(
 
 /** Every credit of a scanned type into the user's accounts since `start`, read live from the Buzz service. */
 async function getCreditsSince(userId: number, start: Date) {
-  const credits: ManualCredit[] = [];
-  for (const [accountType, types] of SCANS) {
-    for (const type of types) {
+  const pairs = SCANS.flatMap(([accountType, types]) =>
+    types.map((type) => ({ accountType, type }))
+  );
+  // Read the pairs together: the deposit webhook waits on this scan.
+  const perPair = await Promise.all(
+    pairs.map(async ({ accountType, type }) => {
+      const credits: ManualCredit[] = [];
       let cursor: Date | undefined;
       for (let page = 0; ; page++) {
         if (page === SCAN_MAX_PAGES)
@@ -115,9 +120,10 @@ async function getCreditsSince(userId: number, start: Date) {
         if (!parsed.cursor || parsed.transactions.length === 0) break;
         cursor = parsed.cursor;
       }
-    }
-  }
-  return credits;
+      return credits;
+    })
+  );
+  return perPair.flat();
 }
 
 export async function findManualCredits(
@@ -143,4 +149,29 @@ export async function findManualCredits(
     if (match) matches.push({ ...credit, ...match, fromStaff });
   }
   return matches;
+}
+
+const SCAN_FALLBACK_DAYS = 7;
+
+/**
+ * The hand grants that stop an automatic credit of this deposit, and the ones only worth flagging.
+ * Only staff grants hold a deposit: anyone can tip a description citing a public payin hash.
+ */
+export async function findHandGrantsForDeposit(
+  userId: number,
+  ctx: {
+    paymentId: number;
+    payinHash: string | null;
+    expectedBuzz: number;
+    paymentCreatedAt: Date | null | undefined;
+  }
+) {
+  // Support grants only after the user reports the payment; the day of margin covers clock skew.
+  const since = dayjs
+    .utc(ctx.paymentCreatedAt ?? dayjs.utc().subtract(SCAN_FALLBACK_DAYS, 'day'))
+    .subtract(1, 'day')
+    .toDate();
+  const matches = await findManualCredits(userId, { ...ctx, since });
+  const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff);
+  return { covering, possible: covering.length ? [] : matches };
 }

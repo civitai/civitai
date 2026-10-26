@@ -706,6 +706,16 @@ describe('nowpayments webhook: a payment support already paid by hand', () => {
     expect(caller.getPaymentStatus).not.toHaveBeenCalled();
   });
 
+  it('spends no lookup on a held deposit delivered again', async () => {
+    await deliver(ipn());
+    caller.lookupPayment.mockClear();
+
+    const res = await deliver(ipn());
+
+    expect(res._status()).toBe(200);
+    expect(caller.lookupPayment).not.toHaveBeenCalled();
+  });
+
   it('credits as usual when the citing grant came from another user', async () => {
     handGrants[0].fromAccountId = 77;
 

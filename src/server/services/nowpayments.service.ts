@@ -10,7 +10,7 @@ import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
-  findManualCredits,
+  findHandGrantsForDeposit,
   type ManualCreditMatch,
 } from '~/server/services/nowpayments-manual-credit';
 import { signalClient } from '~/utils/signal-client';
@@ -73,13 +73,6 @@ export const manualPayinCreditExternalId = (payinHash: string) =>
 const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
 const HELD = 'held';
 
-const HAND_GRANT_SCAN_FALLBACK_DAYS = 7;
-// Support can only grant once the user reports the payment, so a day of margin covers clock skew.
-const handGrantScanStart = (paymentCreatedAt: Date | null | undefined) =>
-  dayjs
-    .utc(paymentCreatedAt ?? dayjs.utc().subtract(HAND_GRANT_SCAN_FALLBACK_DAYS, 'day'))
-    .subtract(1, 'day')
-    .toDate();
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
 // the event is not trusted as "no hash": the status response is the authority.
@@ -172,12 +165,13 @@ export const userIdFromOrderId = (orderId: string | null | undefined) => {
   return userId && !isNaN(userId) ? userId : null;
 };
 
+/** Nothing left to credit: credited already, or held because a hand grant paid it. */
 export const isDepositCredited = async (paymentId: number) => {
   const row = await dbRead.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },
     select: { status: true, buzzCredited: true },
   });
-  return row?.status === 'finished' && row.buzzCredited != null;
+  return (row?.status === 'finished' && row.buzzCredited != null) || row?.status === HELD;
 };
 
 /** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
@@ -277,7 +271,7 @@ export const processDeposit = async (
 
           // A moderator crediting by hand has already been through assessDepositCredit.
           if (!actor) {
-            const row = await dbRead.cryptoDeposit.findUnique({
+            const row = await dbWrite.cryptoDeposit.findUnique({
               where: { paymentId: BigInt(paymentId) },
               select: { status: true, createdAt: true },
             });
@@ -286,14 +280,12 @@ export const processDeposit = async (
             if (await getTransactionByExternalId(`np-deposit-${paymentId}`))
               return 'already_granted';
 
-            const matches = await findManualCredits(userId, {
+            const { covering, possible } = await findHandGrantsForDeposit(userId, {
               paymentId,
               payinHash,
               expectedBuzz: buzzAmount,
-              since: handGrantScanStart(event.created_at ?? row?.createdAt),
+              paymentCreatedAt: event.created_at ?? row?.createdAt,
             });
-            // Staff only: anyone can tip a description citing a public payin hash.
-            const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff);
             if (covering.length) {
               await log({
                 type: 'warning',
@@ -304,7 +296,7 @@ export const processDeposit = async (
               });
               return HELD;
             }
-            possibleHandGrants = matches;
+            possibleHandGrants = possible;
           }
 
           return grantBuzzPurchase({

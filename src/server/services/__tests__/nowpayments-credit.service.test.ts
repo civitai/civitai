@@ -480,8 +480,10 @@ describe('automatic deposit credit (webhook, reconcile, sweep, reprocess)', () =
   it('keeps a held deposit uncredited when NowPayments redelivers it', async () => {
     supportTip(`Crypto deposit ${PAYMENT_ID} not received`);
     await ipn();
-    // The hold must not depend on the scan finding the grant a second time.
+    // The hold must not depend on the scan finding the grant a second time,
     ledger.length = 0;
+    // nor on a replica that has not seen the hold yet.
+    dbMock.dbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
 
     await ipn();
     const { reprocessDeposit } = await import('~/server/services/nowpayments.service');

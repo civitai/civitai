@@ -58,7 +58,7 @@ vi.mock('~/utils/signal-client', () => ({
 // The hand-grant scan runs against a fake ledger in nowpayments-credit.service.test.ts.
 vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
   ...(await importOriginal<typeof ManualCredit>()),
-  findManualCredits: vi.fn(async () => []),
+  findHandGrantsForDeposit: vi.fn(async () => ({ covering: [], possible: [] })),
 }));
 
 vi.mock('~/server/utils/distributed-lock', () => ({
@@ -132,7 +132,7 @@ async function statusAfter(
   event: NOWPayments.WebhookEvent
 ) {
   let status = existing?.status as string | undefined;
-  mockDbWrite.cryptoDeposit.findUnique.mockResolvedValueOnce(existing);
+  mockDbWrite.cryptoDeposit.findUnique.mockResolvedValue(existing);
   mockDbWrite.cryptoDeposit.upsert.mockImplementationOnce(async ({ create }: any) => {
     status ??= create.status;
     return {};
