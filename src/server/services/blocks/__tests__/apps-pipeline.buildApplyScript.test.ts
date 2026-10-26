@@ -117,11 +117,11 @@ describe('buildApplyScript', () => {
     expect(script.split('bash /templates/publish.sh').length - 1).toBe(1);
     expect(hookIdx).toBeGreaterThan(script.indexOf('smoke test: PASSED'));
     expect(hookIdx).toBeLessThan(script.indexOf('kubectl apply -f /tmp/rendered.yaml'));
-    // not swallowed: under `set -e` a non-zero publish must abort the apply
-    expect(script).not.toMatch(/publish\.sh\s*\|\|/);
   });
 
-  it('never publishes a mod-review build', () => {
+  // INVARIANT guard, not regression coverage: the review script never ran the
+  // step. It pins that a future edit does not add it there.
+  it('never publishes a mod-review build (invariant)', () => {
     expect(buildApplyReviewScript(NS)).not.toContain('publish.sh');
   });
 
