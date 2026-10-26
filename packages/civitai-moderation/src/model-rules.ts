@@ -92,7 +92,7 @@ export type ModelRuleCategory = (typeof MODEL_RULE_CATEGORIES)[number]['value'];
 
 const CATEGORY_VALUES = MODEL_RULE_CATEGORIES.map((c) => c.value) as [
   ModelRuleCategory,
-  ...ModelRuleCategory[],
+  ...ModelRuleCategory[]
 ];
 
 export const modelRuleCategoryField = z.enum(CATEGORY_VALUES);
@@ -161,7 +161,10 @@ export const semanticModelRuleSchema = storedModelRuleSchema.extend({
   references: modelRuleReferencesField.default([]),
 });
 
-export type SemanticModelRule = z.infer<typeof semanticModelRuleSchema>;
+/** A definition as stored: one saved before `references` existed has none. */
+export type SemanticModelRule = Omit<z.infer<typeof semanticModelRuleSchema>, 'references'> & {
+  references?: ModelRuleReference[];
+};
 
 export const isSemanticDefinition = (definition: unknown): definition is SemanticModelRule =>
   typeof definition === 'object' &&
