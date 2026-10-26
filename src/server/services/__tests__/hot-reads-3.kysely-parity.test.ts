@@ -318,18 +318,28 @@ const SCHEMA_PRISMA = resolve(
   '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
 );
 
-/** Every model declared `/// @view` in schema.full.prisma. */
-function declaredViews(): Set<string> {
-  const lines = readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
+const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
+const isViewMarker = (line: string) => line.trim() === '/// @view';
+
+/**
+ * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
+ * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
+ * line skips blank and `///` lines and stops at anything else.
+ */
+function declaredViews(): Set<string> & { markersAttributed: number } {
+  const lines = schemaLines();
   const views = new Set<string>();
+  const attributed = new Set<number>();
   lines.forEach((line, i) => {
     const model = /^model (\w+) \{/.exec(line);
     if (!model) return;
-    // The `/// @view` marker sits in the doc comment block directly above the model.
-    for (let j = i - 1; j >= 0 && lines[j].startsWith('///'); j--)
-      if (lines[j].trim() === '/// @view') views.add(model[1]);
+    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
+      if (isViewMarker(lines[j])) {
+        views.add(model[1]);
+        attributed.add(j);
+      }
   });
-  return views;
+  return Object.assign(views, { markersAttributed: attributed.size });
 }
 
 /** The quoted relation names a compiled statement reads FROM or JOINs. */
@@ -351,6 +361,9 @@ describe('hot reads 3: no statement reads a view', () => {
       expect(views.has(known), known).toBe(true);
     for (const table of ['Model', 'ModelVersion', 'ModelAssociations', 'User', 'Post', 'Placement'])
       expect(views.has(table), table).toBe(false);
+    // Every marker line in the file is attributed to a model, so none is missed. (Counted by marker
+    // line, not by view: a model may carry the marker twice.)
+    expect(views.markersAttributed).toBe(schemaLines().filter(isViewMarker).length);
   });
 
   it('control: the relation extractor finds a view a statement reads', () => {
