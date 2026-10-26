@@ -46,6 +46,7 @@
       <DisputeCard
         {row}
         canResolve={!!data.grants['creatorServices.resolveDispute']}
+        viewerId={data.user?.id ?? null}
         outcome={outcomeFor(row.id)}
       />
     {/each}

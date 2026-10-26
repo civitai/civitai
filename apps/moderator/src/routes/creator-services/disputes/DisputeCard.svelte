@@ -10,16 +10,18 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { DisputeResolution } from '$lib/server/creator-services-disputes.service';
-  import { disputeOrigin } from './origin';
+  import { disputeOrigin, viewerParty } from './origin';
   import type { DisputeCardRow, ResolveOutcome } from './+page.server';
 
   let {
     row,
     canResolve,
+    viewerId,
     outcome,
   }: {
     row: DisputeCardRow;
     canResolve: boolean;
+    viewerId: number | null;
     outcome: ResolveOutcome | null;
   } = $props();
 
@@ -34,6 +36,8 @@
   const amount = $derived(`${num(row.price)} ${row.buzzType} Buzz`);
   // The server's refusal is the authority; `finalsClear` only spares the moderator a round trip.
   const releaseBlocked = $derived(!row.finalsClear || !!outcome?.releaseRefused);
+  // The main app refuses a party too; hiding the buttons only saves the round trip.
+  const party = $derived(viewerParty(row, viewerId));
 
   const choose = (value: DisputeResolution) => () => {
     chosen = value;
@@ -143,7 +147,11 @@
   {#if outcome?.error}
     <ErrorAlert class="mt-3" message={outcome.error} />
   {/if}
-  {#if canResolve}
+  {#if canResolve && party}
+    <p class="mt-3 text-xs text-dark-2">
+      You are the {party} on this deal. Another moderator must resolve it.
+    </p>
+  {:else if canResolve}
     <form
       bind:this={formEl}
       method="POST"
