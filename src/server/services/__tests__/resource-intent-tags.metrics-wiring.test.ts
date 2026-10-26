@@ -1,5 +1,5 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -19,59 +19,32 @@ const findMany = dbMock.dbRead.keyValue.findMany as unknown as Spy;
 const queryRaw = dbMock.dbRead.$queryRaw as unknown as Spy;
 
 const FLAG = 'resource-intent-tag-index-build';
-// Generous: the background read does cold dynamic imports, which a loaded runner makes slow.
-const WAIT = { timeout: 20_000, interval: 20 };
-
-// The gauges' cache clock (cachedRead defaults to Date.now): pushed past its 60 s TTL to probe
-// whether a read has finished. Real time plus a skew that only grows.
-const realNow = Date.now.bind(Date);
-let skewMs = 0;
-
-/**
- * Resolves once the background read this gauge's scrape started has fully finished: the flag read
- * and, when the flag is on, the imports and the database read. No fixed sleep, so a slow import
- * cannot outrun it, and the flag-off assertions below run after the point where a read would land.
- *
- * cachedRead starts another read only after the one in flight settled (its `finally` stamps the
- * read time; until then a scrape gets the same in-flight read back). So once that scrape's flag
- * read was asked, scraping again past the TTL asks the flag again exactly when the first read is
- * done. That probe's flag answer never arrives, so the probe itself reads nothing.
- */
-async function settled(metric: { get: () => Promise<unknown> }, flagReadsBefore: number) {
-  await vi.waitFor(() => expect(isFlipt).toHaveBeenCalledTimes(flagReadsBefore + 1), WAIT);
-  isFlipt.mockReturnValueOnce(new Promise(() => undefined));
-  await vi.waitFor(async () => {
-    skewMs += 61_000;
-    await metric.get();
-    expect(isFlipt).toHaveBeenCalledTimes(flagReadsBefore + 2);
-  }, WAIT);
-}
 
 /** One scrape of the two database-reading gauges, waiting until each one's background read ended. */
 async function scrape() {
   // A fresh registration, as a pod's first import of the module makes it.
   instrumentationRegistry.clear();
   vi.resetModules();
-  const { TAG_INDEX_METRICS } = await import('~/server/prom/resource-intent-tags.metrics');
+  const { TAG_INDEX_METRICS, waitForTagIndexGaugeRead } = await import(
+    '~/server/prom/resource-intent-tags.metrics'
+  );
   const names = [TAG_INDEX_METRICS.newestReadyCreated, TAG_INDEX_METRICS.buildLastSuccess];
   // One gauge at a time: vitest can hand the second of two concurrent first imports of a mocked
   // module the unmocked one (measured here), which is a property of the test runner, not the code.
   for (const name of names) {
     const metric = instrumentationRegistry.getSingleMetric(name);
     expect(metric, name).toBeDefined();
-    const flagReadsBefore = isFlipt.mock.calls.length;
-    await metric!.get();
-    await settled(metric!, flagReadsBefore);
+    // The scrape starts the gauge's background read (collect runs as get() is called); wait for
+    // that read to finish (the flag read, and when it is on the imports and the database read)
+    // instead of sleeping, so a slow import cannot outrun the assertions.
+    const scraped = metric!.get();
+    await waitForTagIndexGaugeRead(name);
+    await scraped;
   }
 }
 
 describe('tag-index metrics wiring', () => {
-  let dateNow: { mockRestore: () => void };
-  afterEach(() => dateNow.mockRestore());
   beforeEach(() => {
-    // Before the scrape imports the module: the gauges capture Date.now when they are created.
-    skewMs = 0;
-    dateNow = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + skewMs);
     isFlipt.mockReset();
     findMany.mockReset();
     queryRaw.mockReset();
@@ -84,9 +57,8 @@ describe('tag-index metrics wiring', () => {
     await scrape();
     expect(findMany).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();
-    // Each gauge did run its read, and asked the build flag: once for its read, once for the probe
-    // that saw that read finish.
-    expect(isFlipt.mock.calls).toEqual([[FLAG], [FLAG], [FLAG], [FLAG]]);
+    // Each gauge did run its read, and asked the build flag (once each: the wait starts no read).
+    expect(isFlipt.mock.calls).toEqual([[FLAG], [FLAG]]);
   });
 
   it('with it on, the same wiring reads both (positive control)', async () => {
