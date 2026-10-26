@@ -217,6 +217,15 @@ export function slugit(value: string) {
 }
 
 /**
+ * `slugit` strips everything outside ASCII, so a name written only in CJK (or emoji)
+ * comes back empty. In a path that leaves `//` — use this wherever a slug is a path
+ * segment that must not be empty.
+ */
+export function slugitOr(value: string | null | undefined, fallback: string) {
+  return (value ? slugit(value) : '') || fallback;
+}
+
+/**
  * Build a canonical model detail URL. Includes the slugified name when
  * provided so links match the canonical form Google indexes; falls back
  * gracefully when the name is missing/null/empty.
