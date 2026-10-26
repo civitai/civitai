@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -41,7 +42,9 @@ const APPROVED = 'approved';
 
 export const POST_INTENT_USER_STAGE_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 export const POST_INTENT_APP_STAGE_LIMIT = { max: 2000, windowSeconds: 60 * 60 };
-const STAGE_LOCK_SECONDS = 15 * 60;
+const STAGE_LOCK_SECONDS = 30 * 60;
+const DEL_IF_EQUALS =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const SWEEP_BUDGET_MS = 4 * 60 * 1000;
 
 export type StagedIntentMedia = {
@@ -119,12 +122,13 @@ async function checkStageRateLimit(key: string, limit: { max: number; windowSeco
 /** Holds `key` for one staging at a time; returns a release function, or null if it is held. */
 async function acquireStageLock(key: string): Promise<(() => Promise<void>) | null> {
   const redisKey = `${REDIS_KEYS.POST_INTENT.RATE_LIMIT}:lock:${key}` as never;
+  const token = randomUUID();
   const acquired = await redis
-    .set(redisKey, '1', { NX: true, EX: STAGE_LOCK_SECONDS })
+    .set(redisKey, token, { NX: true, EX: STAGE_LOCK_SECONDS })
     .catch(() => null);
   if (!acquired) return null;
   return async () => {
-    await redis.del(redisKey).catch(() => null);
+    await redis.eval(DEL_IF_EQUALS, { keys: [redisKey], arguments: [token] }).catch(() => null);
   };
 }
 
@@ -278,10 +282,14 @@ export async function stageIntent({
   if (existing) {
     const resumed = resumeClaim(existing, manifestUrl, userId, now, record);
     if (resumed) return resumed;
-    await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]);
+    if (!(await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]))) {
+      const after = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
+      if (after?.postedAt)
+        throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+      if (after)
+        throw new PostIntentRefusal('busy', 'This share is still being cleared. Try again later.');
+    }
   }
-
-  await checkStageRateLimit(`user:${userId}`, POST_INTENT_USER_STAGE_LIMIT);
 
   const releaseUser = await acquireStageLock(`user:${userId}`);
   if (!releaseUser)
@@ -290,6 +298,7 @@ export async function stageIntent({
   try {
     if (!releaseUrl)
       throw new PostIntentRefusal('busy', 'This share is still loading. Try again in a moment.');
+    await checkStageRateLimit(`user:${userId}`, POST_INTENT_USER_STAGE_LIMIT);
     return await fetchAndStage({ manifestUrl, record, userId, now });
   } finally {
     await releaseUser();
@@ -383,14 +392,15 @@ async function fetchAndStage({
  * files, then delete the row. The row stays (released) if the files could not be deleted, so the
  * sweep retries rather than orphaning them.
  */
-async function releaseClaim(id: number, staged: StagedIntentMedia[]) {
+async function releaseClaim(id: number, staged: StagedIntentMedia[]): Promise<boolean> {
   const { count } = await dbWrite.postIntentManifest.updateMany({
     where: { id, postedAt: null },
     data: { claimExpiresAt: new Date(0) },
   });
-  if (!count) return;
-  if (!(await deleteStagedObjects(staged))) return;
-  await dbWrite.postIntentManifest.deleteMany({ where: { id, postedAt: null } });
+  if (!count) return false;
+  if (!(await deleteStagedObjects(staged))) return false;
+  const deleted = await dbWrite.postIntentManifest.deleteMany({ where: { id, postedAt: null } });
+  return deleted.count === 1;
 }
 
 async function resolveToolId(record: AppPostIntentRecord) {
@@ -486,8 +496,12 @@ export async function publishIntent({
         where: { id: claim.id, userId, postedAt: null, claimExpiresAt: { gt: new Date() } },
         data: { postId: created.id, postedAt: now },
       });
-      if (marked.count !== 1)
-        throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+      if (marked.count !== 1) {
+        const current = await tx.postIntentManifest.findUnique({ where: { id: claim.id } });
+        if (current?.postedAt)
+          throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+        throw new PostIntentRefusal('not-staged', 'Open the share link again to continue.');
+      }
 
       if (publish)
         await tx.$executeRaw`

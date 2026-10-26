@@ -115,6 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   redisMock.redis.incrBy.mockResolvedValue(1);
+  redisMock.redis.eval.mockResolvedValue(1);
   uploadMock.mockImplementation(async () => ({ key: `key-${uploadMock.mock.calls.length}` }));
   deleteManyMock.mockResolvedValue(undefined);
   createImageMock.mockImplementation(async () => ({ id: 500 + createImageMock.mock.calls.length }));
@@ -324,6 +325,100 @@ describe('stageIntent: one manifest, one key', () => {
     expect(requested).toEqual([]);
   });
 
+  const lockKeys = () => redisMock.redis.set.mock.calls.map((c: unknown[]) => String(c[0]));
+  const releasedTokens = () =>
+    redisMock.redis.eval.mock.calls.map((c: any[]) => [String(c[1].keys[0]), c[1].arguments[0]]);
+  const heldTokens = () => redisMock.redis.set.mock.calls.map((c: any[]) => [String(c[0]), c[1]]);
+
+  it('refuses while the same manifest is staging for someone, and frees the user lock', async () => {
+    redisMock.redis.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null);
+    const requested = serve({ body: manifestJson() });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'busy',
+    });
+    expect(requested).toEqual([]);
+    expect(lockKeys()[1]).toContain(`url:${MANIFEST_URL}`);
+    expect(releasedTokens()).toEqual([heldTokens()[0]]);
+  });
+
+  it.each([
+    [
+      'succeeds',
+      () =>
+        serve(
+          { headers: { 'content-type': 'application/json' }, body: manifestJson() },
+          { body: PNG }
+        ),
+    ],
+    ['fails', () => serve({ status: 302, headers: { location: 'https://games.civitai.com/x' } })],
+  ])('releases both locks, with their own tokens, when staging %s', async (_label, prime) => {
+    prime();
+    await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now }).catch(() => null);
+    const held = heldTokens();
+    expect(held).toHaveLength(2);
+    expect(new Set(held.map(([, token]) => token)).size).toBe(2);
+    expect(releasedTokens()).toEqual(held);
+  });
+
+  it('does not spend the user quota on a double-tap refused as busy', async () => {
+    redisMock.redis.set.mockResolvedValueOnce(null);
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'busy',
+    });
+    expect(redisMock.redis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('refuses before any fetch when an expired hold could not be cleared', async () => {
+    const stale = {
+      id: 9,
+      userId: 8,
+      postedAt: null,
+      claimExpiresAt: new Date(0),
+      manifest: {},
+      staged: [{ key: 'old' }],
+    };
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValue(stale);
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 1 });
+    deleteManyMock.mockRejectedValueOnce(new Error('s3 down'));
+    const requested = serve({ body: manifestJson() });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'busy',
+    });
+    expect(requested).toEqual([]);
+  });
+
+  it('stops reading an image at the image cap instead of the video cap', async () => {
+    const MB = 1024 * 1024;
+    let pulled = 0;
+    function* body() {
+      yield PNG;
+      for (let i = 0; i < 120; i++) {
+        pulled++;
+        yield Buffer.alloc(MB);
+      }
+    }
+    let call = 0;
+    requestMock.mockImplementation((options: any, cb: (res: unknown) => void) => {
+      const req = Object.assign(new EventEmitter(), {
+        end: () => undefined,
+        destroy: () => undefined,
+      });
+      req.end = () => {
+        const first = call++ === 0;
+        const stream = Object.assign(
+          first ? Readable.from([Buffer.from(manifestJson())]) : Readable.from(body()),
+          { statusCode: 200, headers: first ? { 'content-type': 'application/json' } : {} }
+        );
+        queueMicrotask(() => cb(stream));
+      };
+      return req;
+    });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'too-large',
+    });
+    expect(pulled).toBeLessThan(60);
+  });
+
   it("does not spend the app's quota on a manifest that fails validation", async () => {
     serve({ headers: { 'content-type': 'application/json' }, body: manifestJson({ app: 'x' }) });
     await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
@@ -424,12 +519,22 @@ describe('publishIntent', () => {
 
   it('rolls back when a concurrent publish marked the manifest first, leaving no image rows', async () => {
     dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 0 });
+    dbMock.dbWrite.postIntentManifest.findUnique
+      .mockResolvedValueOnce(claim())
+      .mockResolvedValueOnce(claim({ postedAt: now }));
     await expect(
       publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
     ).rejects.toMatchObject({ code: 'already-posted' });
     expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: [501] }, userId: 7, postId: null },
     });
+  });
+
+  it('says not-staged, not already-posted, when the hold lapsed before commit', async () => {
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
+    ).rejects.toMatchObject({ code: 'not-staged' });
   });
 
   it('deletes the image rows it made when a later item fails', async () => {

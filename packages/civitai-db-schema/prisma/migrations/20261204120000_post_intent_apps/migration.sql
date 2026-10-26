@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS "post_intent_manifests" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "post_intent_manifests_manifest_url_key"
   ON "post_intent_manifests" ("manifest_url");
+DROP INDEX IF EXISTS "post_intent_manifests_unposted_expiry_idx";
 CREATE INDEX IF NOT EXISTS "post_intent_manifests_claim_expires_at_idx"
   ON "post_intent_manifests" ("claim_expires_at");
 CREATE INDEX IF NOT EXISTS "post_intent_manifests_user_id_idx"
