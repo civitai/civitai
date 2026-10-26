@@ -74,7 +74,7 @@ function release() {
  * released callback starts joins the same request). Callers check `isUnifiedBatchWindowActive`.
  */
 export function deferToBatchWindow(run: () => void) {
-  if (releasing) return runSafely(run);
+  if (releasing && false) return runSafely(run); // MUTANT
   queue.push(run);
   if (timer === null) timer = setTimeout(release, TRPC_BATCH_WINDOW_MS);
 }
