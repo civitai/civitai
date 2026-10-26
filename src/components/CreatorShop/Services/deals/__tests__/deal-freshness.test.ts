@@ -56,7 +56,16 @@ const prodClient = () =>
     defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false, staleTime: Infinity } },
   });
 
-const flush = () => act(() => new Promise((r) => setTimeout(r, 0)));
+// Waits for every query to hold data with no fetch in flight, rather than a fixed tick, which loses
+// the race under CI load. Bounded, so a query that never resolves fails with this message.
+async function settled(client: QueryClient) {
+  for (let i = 0; i < 500; i++) {
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    const queries = client.getQueryCache().getAll();
+    if (client.isFetching() === 0 && queries.every((q) => q.state.data !== undefined)) return;
+  }
+  throw new Error('queries did not settle within 5s');
+}
 
 function mount<T>(client: QueryClient, useHook: () => T) {
   const result = { current: undefined as T };
@@ -80,13 +89,13 @@ describe('deal queries do not serve a stale read', () => {
   it('deal page shows the new round when reopened', async () => {
     const client = prodClient();
     const first = mount(client, () => useServiceDeal(1));
-    await flush();
+    await settled(client);
     expect((first.result.current.deal as { round: string }).round).toBe('round-1');
     first.unmount();
 
     server.deal = 'round-2'; // the seller delivers while the buyer is away
     const second = mount(client, () => useServiceDeal(1));
-    await flush();
+    await settled(client);
     expect((second.result.current.deal as { round: string }).round).toBe('round-2');
     second.unmount();
   });
@@ -94,13 +103,13 @@ describe('deal queries do not serve a stale read', () => {
   it('deal page shows the new round on tab refocus', async () => {
     const client = prodClient();
     const page = mount(client, () => useServiceDeal(1));
-    await flush();
+    await settled(client);
     server.deal = 'round-2';
-    await act(async () => {
+    act(() => {
       focusManager.setFocused(false);
       focusManager.setFocused(true);
-      await new Promise((r) => setTimeout(r, 20));
     });
+    await settled(client);
     expect((page.result.current.deal as { round: string }).round).toBe('round-2');
     page.unmount();
   });
@@ -109,13 +118,13 @@ describe('deal queries do not serve a stale read', () => {
     const client = prodClient();
     const args = { role: 'seller', status: 'open', enabled: true } as const;
     const first = mount(client, () => useMyServiceDeals(args));
-    await flush();
+    await settled(client);
     expect(first.result.current.deals).toEqual(['req-1']);
     first.unmount();
 
     server.requests = ['req-2', 'req-1'];
     const second = mount(client, () => useMyServiceDeals(args));
-    await flush();
+    await settled(client);
     expect(second.result.current.deals).toEqual(['req-2', 'req-1']);
     second.unmount();
   });
