@@ -40,6 +40,7 @@ import {
   classifyStoredObjectIntegrity,
   readRecordedEtag,
 } from '~/server/services/blocks/stored-object-integrity';
+import { BLOCK_SCREENSHOT_AUTOGEN_ENABLED } from '~/server/services/blocks/autogenerate-screenshot.constants';
 import {
   appInitial,
   categoryGlyph,
@@ -2420,9 +2421,6 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
     // the whole autogen path is disabled. Gate here too — single source of truth
     // — so a future `'autogen'` plan mode can't silently re-arm standalone
     // capture without flipping BLOCK_SCREENSHOT_AUTOGEN_ENABLED.
-    const { BLOCK_SCREENSHOT_AUTOGEN_ENABLED } = await import(
-      '~/server/services/blocks/autogenerate-screenshot.service'
-    );
     if (!BLOCK_SCREENSHOT_AUTOGEN_ENABLED) return null;
     // Reuse the verify-runner fetch from the App Blocks autogen path, but store
     // the PNG as an Image row (not the bundle-MinIO screenshots path).
