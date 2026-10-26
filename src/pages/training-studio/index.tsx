@@ -163,6 +163,15 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
+        // Auto-label is free: it runs on the system token here, never the user's (which would be
+        // charged). The element refuses auto-label when a host lacks these.
+        autoLabelSubmit: (
+          items: { mediaUrl: string; key: string }[],
+          mode: 'tag' | 'caption',
+          media: 'image' | 'video' | 'audio'
+        ) => utilsRef.current.client.training.studioAutoLabelSubmit.mutate({ items, mode, media }),
+        autoLabelPoll: (workflowId: string, signal?: AbortSignal) =>
+          utilsRef.current.client.training.studioAutoLabelPoll.query({ workflowId }, { signal }),
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
         getBuzzBalances: async () => {

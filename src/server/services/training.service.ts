@@ -644,7 +644,7 @@ type AutoLabelStepMetadata = {
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
 // canonical helper makes the same call for App Blocks manifests, so the two now agree.
-function assertSafeMediaUrls(urls: string[]) {
+export function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
     try {
