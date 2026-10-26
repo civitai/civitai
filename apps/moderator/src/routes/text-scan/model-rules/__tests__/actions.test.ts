@@ -86,10 +86,41 @@ describe('save', () => {
     });
     expect(service.updateModelRule).toHaveBeenCalledWith(
       3,
-      { subject: 'Example', description: '', aliases: ['One', 'Two'], note: '' },
+      { subject: 'Example', description: '', aliases: ['One', 'Two'], references: [], note: '' },
       1,
       { baseUpdatedAt: '2026-09-01T10:00:00.000Z' }
     );
+  });
+
+  it('passes the category and references the editor posted, dropping blank rows', async () => {
+    service.updateModelRule.mockResolvedValue({ cacheStale: false });
+    await post('save', {
+      id: '3',
+      subject: 'Example',
+      category: 'likeness',
+      references: JSON.stringify([
+        { url: ' https://example.com/a ', label: ' Profile ' },
+        { url: '', label: 'blank' },
+      ]),
+    });
+    expect(service.updateModelRule).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({
+        category: 'likeness',
+        references: [{ url: 'https://example.com/a', label: 'Profile' }],
+      }),
+      1,
+      expect.anything()
+    );
+  });
+
+  it.each([
+    ['a non-http link', { references: JSON.stringify([{ url: 'javascript:alert(1)' }]) }],
+    ['an unknown category', { category: 'celebrity' }],
+    ['malformed references', { references: '{' }],
+  ])('returns 400 for %s', async (_name, extra) => {
+    expect(await post('save', { subject: 'Example', ...extra })).toMatchObject({ status: 400 });
+    expect(service.createModelRule).not.toHaveBeenCalled();
   });
 
   it('returns 409 for a draft written against an older rule', async () => {
@@ -129,6 +160,38 @@ describe('saveAll', () => {
         failed: [{ draftId: 3 }, { draftId: -2, error: 'Subject is required.' }],
       },
     });
+  });
+
+  it('carries each draft’s category and references, and reports a bad link on that draft', async () => {
+    service.createModelRule.mockResolvedValue({ id: 11, cacheStale: false });
+    const rules = [
+      {
+        draftId: -1,
+        subject: 'New',
+        description: '',
+        aliases: '',
+        category: 'legal',
+        references: [{ url: 'https://example.com/x' }],
+        note: '',
+      },
+      {
+        draftId: -2,
+        subject: 'Bad',
+        description: '',
+        aliases: '',
+        references: [{ url: 'ftp://example.com' }],
+        note: '',
+      },
+    ];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 422,
+      data: { saved: [{ draftId: -1 }], failed: [{ draftId: -2 }] },
+    });
+    expect(service.createModelRule).toHaveBeenCalledTimes(1);
+    expect(service.createModelRule).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'legal', references: [{ url: 'https://example.com/x' }] }),
+      1
+    );
   });
 
   it('succeeds when every draft saved', async () => {

@@ -5,6 +5,8 @@ export type ModelRuleVersionView = {
   subject: string;
   description: string;
   aliases: string[];
+  category?: string;
+  references: { url: string; label?: string }[];
   note: string;
   enabled: boolean;
   needsAttention: boolean;
@@ -17,10 +19,15 @@ export type RuleStateView = {
   subject: string;
   description: string;
   aliases: readonly string[];
+  category?: string;
+  references?: readonly { url: string; label?: string }[];
   note: string;
   enabled: boolean;
   needsAttention?: boolean;
 };
+
+const referencesText = (references: RuleStateView['references']) =>
+  (references ?? []).map((r) => (r.label ? `${r.label} — ${r.url}` : r.url)).join('\n');
 
 export type RuleDiffRow = { field: string; before: string; after: string; changed: boolean };
 
@@ -29,6 +36,8 @@ export function ruleVersionDiff(from: RuleStateView, to: RuleStateView): RuleDif
     ['Subject', from.subject, to.subject],
     ['Description', from.description, to.description],
     ['Aliases', from.aliases.join('\n'), to.aliases.join('\n')],
+    ['Category', from.category ?? '', to.category ?? ''],
+    ['References', referencesText(from.references), referencesText(to.references)],
     ['Internal note', from.note, to.note],
     ['Enabled', from.enabled ? 'Yes' : 'No', to.enabled ? 'Yes' : 'No'],
     ['Needs attention', from.needsAttention ? 'Yes' : 'No', to.needsAttention ? 'Yes' : 'No'],

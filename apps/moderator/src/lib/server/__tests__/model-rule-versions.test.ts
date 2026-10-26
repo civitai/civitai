@@ -54,7 +54,15 @@ const RULE = {
   createdById: 3,
   updatedAt: UPDATED,
 };
-const FORM = { subject: 'New subject', description: 'New', aliases: ['New alias'], note: '' };
+const REFS = [{ url: 'https://example.com/ref', label: 'Official art' }];
+const FORM = {
+  subject: 'New subject',
+  description: 'New',
+  aliases: ['New alias'],
+  category: 'ip' as const,
+  references: REFS,
+  note: '',
+};
 const versionInserts = () =>
   captured.flatMap((s, i) => (s.startsWith('insert into "ModerationRuleVersion"') ? [i] : []));
 
@@ -88,12 +96,28 @@ describe('updateModelRule', () => {
       42,
       UPDATED,
       7,
-      expect.objectContaining({ subject: 'New subject', aliases: ['New alias'], updatedById: 5 }),
+      expect.objectContaining({
+        subject: 'New subject',
+        aliases: ['New alias'],
+        category: 'ip',
+        references: REFS,
+        updatedById: 5,
+      }),
       true,
       'Block',
       null,
       5,
     ]);
+  });
+
+  it('keeps a stored category and references when the rule is toggled', async () => {
+    answers.rule = [
+      { ...RULE, definition: { ...SEMANTIC, category: 'artist', references: REFS } },
+    ];
+    await setModelRuleEnabled(7, false, 5);
+    expect(params[1]).toContainEqual(
+      expect.objectContaining({ category: 'artist', references: REFS })
+    );
   });
 
   it('records only the new state when the rule already has history', async () => {
@@ -279,6 +303,8 @@ describe('a rule that needs attention', () => {
     subject: 'Old subject',
     description: 'Old',
     aliases: ['Old alias'],
+    category: undefined,
+    references: [],
     note: '',
   };
 

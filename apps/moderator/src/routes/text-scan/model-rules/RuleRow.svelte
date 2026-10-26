@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as NativeSelect from '@civitai/ui/components/ui/native-select/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { TableCell, TableRow } from '@civitai/ui/components/ui/table/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -15,7 +16,14 @@
     MODEL_RULE_MATCHES_PATH,
     modelRuleHoldFilterParams,
   } from '$lib/model-rule-holds';
-  import { BROAD_ALIAS_WARNING, aliasBreadth, appendAliases, parseAliases } from '$lib/model-rules';
+  import {
+    BROAD_ALIAS_WARNING,
+    MODEL_RULE_CATEGORIES,
+    MODEL_RULE_LIMITS,
+    aliasBreadth,
+    appendAliases,
+    parseAliases,
+  } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { EMPTY, type RuleDraftsState, type RuleFields } from '$lib/text-scan-lab/rule-drafts';
   import { notifySaved } from './notify-saved';
@@ -64,6 +72,15 @@
   );
   // Saving a flagged rule unchanged is how a person marks it reviewed.
   const canSave = $derived(!!draft || !!rule?.needsAttention);
+
+  const categoryLabel = (value: string) =>
+    MODEL_RULE_CATEGORIES.find((c) => c.value === value)?.label ?? value;
+
+  function setReference(index: number, patch: Partial<RuleFields['references'][number]>) {
+    update({
+      references: fields.references.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    });
+  }
 
   function update(patch: Partial<RuleFields>) {
     const next = { ...fields, ...patch };
@@ -119,6 +136,7 @@
         <Badge variant="destructive">Needs attention — not scanned</Badge>
       {/if}
       {#if rule?.legacy}<Badge variant="outline">Regex</Badge>{/if}
+      {#if fields.category}<Badge variant="secondary">{categoryLabel(fields.category)}</Badge>{/if}
     </button>
     {#if dismissed && dismissedHref}
       <a
@@ -250,6 +268,66 @@
                 bind:value={() => fields.description, (v) => update({ description: v })}
               />
             </div>
+            <div>
+              <Label for="rule-category-{draftId}" class="text-xs text-dark-2">
+                Category (shown to the moderator on a match)
+              </Label>
+              <NativeSelect.Root
+                id="rule-category-{draftId}"
+                class="mt-1"
+                bind:value={() => fields.category, (v) => update({ category: v ?? '' })}
+              >
+                <NativeSelect.Option value="">None</NativeSelect.Option>
+                {#each MODEL_RULE_CATEGORIES as category (category.value)}
+                  <NativeSelect.Option value={category.value}>{category.label}</NativeSelect.Option>
+                {/each}
+              </NativeSelect.Root>
+            </div>
+            <div class="sm:col-span-2">
+              <Label class="text-xs text-dark-2">
+                References (links shown on a match; not used for matching)
+              </Label>
+              <div class="mt-1 space-y-2">
+                {#each fields.references as reference, i (i)}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Input
+                      aria-label="Reference link {i + 1}"
+                      placeholder="https://"
+                      maxlength={MODEL_RULE_LIMITS.referenceUrlChars}
+                      class="min-w-48 flex-1"
+                      bind:value={() => reference.url, (v) => setReference(i, { url: v })}
+                    />
+                    <Input
+                      aria-label="Reference label {i + 1}"
+                      placeholder="Label (optional)"
+                      maxlength={MODEL_RULE_LIMITS.referenceLabelChars}
+                      class="w-48"
+                      bind:value={() => reference.label, (v) => setReference(i, { label: v })}
+                    />
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      aria-label="Remove reference {i + 1}"
+                      onclick={() =>
+                        update({ references: fields.references.filter((_, j) => j !== i) })}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                {/each}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={fields.references.length >= MODEL_RULE_LIMITS.referencesPerRule}
+                  onclick={() =>
+                    update({ references: [...fields.references, { url: '', label: '' }] })}
+                >
+                  Add reference
+                </Button>
+              </div>
+            </div>
             <div class="sm:col-span-2">
               <Label for="rule-note-{draftId}" class="text-xs text-dark-2">
                 Internal note (not shown to the scan)
@@ -277,6 +355,8 @@
               <input type="hidden" name="subject" value={fields.subject} />
               <input type="hidden" name="description" value={fields.description} />
               <input type="hidden" name="aliases" value={fields.aliases} />
+              <input type="hidden" name="category" value={fields.category} />
+              <input type="hidden" name="references" value={JSON.stringify(fields.references)} />
               <input type="hidden" name="note" value={fields.note} />
               <Button type="submit" size="sm" disabled={!canSave || stale || save.submitting}>
                 {save.submitting
