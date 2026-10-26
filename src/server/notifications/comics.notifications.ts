@@ -1,6 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { slugit } from '~/utils/string-helpers';
+import { slugitOr } from '~/utils/string-helpers';
 
 export type NotifDetailsNewComicChapter = {
   comicProjectId: string;
@@ -39,8 +39,8 @@ export const comicNotifications = createNotificationProcessor({
     category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       const det = details as NotifDetailsComicComment;
-      const projectSlug = slugit(det.comicProjectName || 'comic');
-      const chapterSlug = slugit(det.chapterName || 'chapter');
+      const projectSlug = slugitOr(det.comicProjectName, 'comic');
+      const chapterSlug = slugitOr(det.chapterName, 'chapter');
       const url =
         det.chapterPosition != null && det.commentId != null
           ? `/comics/${det.comicProjectId}/${projectSlug}/${

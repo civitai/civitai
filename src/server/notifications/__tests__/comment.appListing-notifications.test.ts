@@ -409,9 +409,14 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
   it.each(Object.keys(queries))('%s: joins app_listings and selects the slug', (name) => {
     const sql = normalizeSql(queries[name as keyof typeof queries]);
 
-    expect(sql).toContain('LEFT JOIN "app_listings" al ON al."serial_id" =');
+    // LEFT, and keyed on the entity type, so a comment on any other entity keeps its row.
+    expect(sql).toContain(
+      `LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"`
+    );
     expect(sql).toContain(`'appListingSlug', al.slug`);
-    expect(sql).toContain(`WHEN al.slug IS NOT NULL THEN 'appListing'`);
+    expect(sql).toContain(
+      `WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END`
+    );
   });
 
   // The whole normalised statement, pinned. A fragment assertion is satisfied by semantically
@@ -424,82 +429,56 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       SELECT DISTINCT
       pc."userId" "ownerId",
       JSONB_BUILD_OBJECT(
-      'version', 2,
+      'version', 3,
       'commentId', c.id,
-      'threadId', c."threadId",
-      'threadParentId', COALESCE(
-      root."imageId",
-      root."modelId",
-      root."postId",
-      root."questionId",
-      root."answerId",
-      root."reviewId",
-      root."articleId",
-      root."bountyId",
-      root."bountyEntryId",
-      root."challengeId",
-      root."crucibleId",
-      root."storylineId",
-      root."model3dId",
-      root."comicProjectId"
-      ),
-      'threadType', CASE
-      WHEN root."imageId" IS NOT NULL THEN 'image'
-      WHEN root."modelId" IS NOT NULL THEN 'model'
-      WHEN root."postId" IS NOT NULL THEN 'post'
-      WHEN root."questionId" IS NOT NULL THEN 'question'
-      WHEN root."answerId" IS NOT NULL THEN 'answer'
-      WHEN root."reviewId" IS NOT NULL THEN 'review'
-      WHEN root."articleId" IS NOT NULL THEN 'article'
-      WHEN root."bountyId" IS NOT NULL THEN 'bounty'
-      WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
-      WHEN root."challengeId" IS NOT NULL THEN 'challenge'
-      WHEN root."crucibleId" IS NOT NULL THEN 'crucible'
-      WHEN root."storylineId" IS NOT NULL THEN 'storyline'
-      WHEN root."model3dId" IS NOT NULL THEN 'model3d'
-      WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
-      WHEN al.slug IS NOT NULL THEN 'appListing'
-      ELSE 'comment'
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadType', CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', t."commentId",
-      'commentParentType', 'comment',
+      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
+      END ELSE 'comment' END,
       'username', u.username
       ) "details"
-      FROM "CommentV2" c
-      JOIN "Thread" t ON t.id = c."threadId"
-      JOIN "CommentV2" pc ON pc.id = t."commentId"
+      FROM "CommentV3" c
+      JOIN "CommentV3" pc ON pc.id = COALESCE(c."replyToId", c."parentId") AND pc."deletedAt" IS NULL
       JOIN "User" u ON c."userId" = u.id
-      JOIN "Thread" root ON root.id = t."rootThreadId"
-      LEFT JOIN "app_listings" al ON al."serial_id" = root."appListingId"
-      WHERE c."createdAt" > '2026-01-01T00:00:00.000Z' AND c."userId" != pc."userId"
+      LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
+      LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
+      WHERE NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL)
+      AND c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."userId" != pc."userId"
       AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
       WHERE (blk."userId" = pc."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = pc."userId" AND blk.type = 'Block')
       )
-      AND NOT EXISTS (
-      WITH RECURSIVE muteable_threads AS (
-      SELECT t.id "id", 0 "depth"
-      UNION ALL
-      SELECT pc."threadId", mt."depth" + 1
-      FROM muteable_threads mt
-      JOIN "Thread" th ON th.id = mt."id"
-      JOIN "CommentV2" pc ON pc.id = th."commentId"
-      WHERE mt."depth" < 100
-      )
-      SELECT 1
-      FROM muteable_threads mt
-      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
-      WHERE tm."userId" = pc."userId"
-      )
-      AND (root."appListingId" IS NULL OR al.slug IS NOT NULL)
+      AND (NOT EXISTS (
+      SELECT 1 FROM "CommentTopicMute" ctm
+      WHERE ctm."userId" = pc."userId"
+      AND ctm."entityType" = c."entityType" AND ctm."entityId" = c."entityId"
+      ) AND NOT EXISTS (
+      SELECT 1 FROM "CommentMute" cm
+      JOIN "CommentV3" anc ON anc.id = cm."commentId"
+      WHERE cm."userId" = pc."userId"
+      AND anc.id <> c.id
+      AND (anc.path @> c.path OR anc.id = c."replyToId")
+      ))
+      AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
       SELECT
-      concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
+      concat('new-comment-reply:owner:v3:', details->>'commentId') "key",
       case
-      when details->>'version' is null then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')
-      when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')
+      when details->>'threadType' is null then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')
+      when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')
       end "dedupeKey",
       "ownerId"    "userId",
       'new-comment-reply' "type",
@@ -514,146 +493,91 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
     expect(normalizeSql(queries['new-thread-response'])).toMatchInlineSnapshot(`
       "WITH new_thread_response AS (
       SELECT DISTINCT
-      UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId" AND NOT EXISTS (
+      UNNEST(CASE
+      WHEN c."parentId" IS NULL THEN (SELECT ARRAY_AGG(s."userId") FROM (
+      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
+      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      ) s
+      WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
-      WHERE (blk."userId" = cu."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
-      OR (blk."userId" = c."userId" AND blk."targetUserId" = cu."userId" AND blk.type = 'Block')
-      ))) "ownerId",
-      JSONB_BUILD_OBJECT(
-      'modelId', c."modelId",
-      'commentId', c.id,
-      'parentId', c."parentId",
+      WHERE (blk."userId" = s."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
+      OR (blk."userId" = c."userId" AND blk."targetUserId" = s."userId" AND blk.type = 'Block')
+      )
+      AND (NOT EXISTS (
+      SELECT 1 FROM "CommentTopicMute" ctm
+      WHERE ctm."userId" = s."userId"
+      AND ctm."entityType" = c."entityType" AND ctm."entityId" = c."entityId"
+      ) AND NOT EXISTS (
+      SELECT 1 FROM "CommentMute" cm
+      JOIN "CommentV3" anc ON anc.id = cm."commentId"
+      WHERE cm."userId" = s."userId"
+      AND anc.id <> c.id
+      AND (anc.path @> c.path OR anc.id = c."replyToId")
+      )))
+      ELSE (SELECT ARRAY_AGG(s."userId") FROM (
+      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
+      WHERE ((cu."parentId" = COALESCE(c."replyToId", c."parentId") AND cu."replyToId" IS NULL) OR cu."replyToId" = COALESCE(c."replyToId", c."parentId")) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      ) s
+      WHERE NOT EXISTS (
+      SELECT 1 FROM "UserEngagement" blk
+      WHERE (blk."userId" = s."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
+      OR (blk."userId" = c."userId" AND blk."targetUserId" = s."userId" AND blk.type = 'Block')
+      )
+      AND (NOT EXISTS (
+      SELECT 1 FROM "CommentTopicMute" ctm
+      WHERE ctm."userId" = s."userId"
+      AND ctm."entityType" = c."entityType" AND ctm."entityId" = c."entityId"
+      ) AND NOT EXISTS (
+      SELECT 1 FROM "CommentMute" cm
+      JOIN "CommentV3" anc ON anc.id = cm."commentId"
+      WHERE cm."userId" = s."userId"
+      AND anc.id <> c.id
+      AND (anc.path @> c.path OR anc.id = c."replyToId")
+      )))
+      END) "ownerId",
+      CASE WHEN (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) THEN JSONB_BUILD_OBJECT(
+      'version', 3,
+      'modelId', c."entityId",
+      'commentId', c."legacyV1Id",
+      'parentId', p."legacyV1Id",
       'parentType', 'comment',
       'modelName', m.name,
       'username', u.username
-      ) "details"
-      FROM "Comment" c
-      JOIN "Model" m ON m.id = c."modelId"
-      JOIN "User" u ON c."userId" = u.id
-      WHERE c."parentId" IS NOT NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
-      UNION
-      SELECT DISTINCT
-      UNNEST((SELECT ARRAY_AGG("userId") FROM "CommentV2" cu WHERE cu."threadId" = c."threadId" AND cu."userId" != c."userId" AND NOT EXISTS (
-      SELECT 1 FROM "UserEngagement" blk
-      WHERE (blk."userId" = cu."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
-      OR (blk."userId" = c."userId" AND blk."targetUserId" = cu."userId" AND blk.type = 'Block')
-      ) AND NOT EXISTS (
-      WITH RECURSIVE muteable_threads AS (
-      SELECT t.id "id", 0 "depth"
-      UNION ALL
-      SELECT pc."threadId", mt."depth" + 1
-      FROM muteable_threads mt
-      JOIN "Thread" th ON th.id = mt."id"
-      JOIN "CommentV2" pc ON pc.id = th."commentId"
-      WHERE mt."depth" < 100
-      )
-      SELECT 1
-      FROM muteable_threads mt
-      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
-      WHERE tm."userId" = cu."userId"
-      ))) "ownerId",
-      JSONB_BUILD_OBJECT(
-      'version', 2,
+      ) ELSE JSONB_BUILD_OBJECT(
+      'version', 3,
       'commentId', c.id,
-      'threadId', c."threadId",
-      'threadParentId', COALESCE(
-      root."imageId",
-      root."modelId",
-      root."postId",
-      root."questionId",
-      root."answerId",
-      root."reviewId",
-      root."articleId",
-      root."bountyId",
-      root."bountyEntryId",
-      root."challengeId",
-      root."crucibleId",
-      root."storylineId",
-      root."model3dId",
-      root."comicProjectId",
-      t."imageId",
-      t."modelId",
-      t."postId",
-      t."questionId",
-      t."answerId",
-      t."reviewId",
-      t."articleId",
-      t."bountyId",
-      t."bountyEntryId",
-      t."challengeId",
-      t."crucibleId",
-      t."storylineId",
-      t."model3dId",
-      t."comicProjectId"
-      ),
-      'threadType', CASE
-      WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
-      WHEN COALESCE(root."modelId", t."modelId") IS NOT NULL THEN 'model'
-      WHEN COALESCE(root."postId", t."postId") IS NOT NULL THEN 'post'
-      WHEN COALESCE(root."questionId", t."questionId") IS NOT NULL THEN 'question'
-      WHEN COALESCE(root."answerId", t."answerId") IS NOT NULL THEN 'answer'
-      WHEN COALESCE(root."reviewId", t."reviewId") IS NOT NULL THEN 'review'
-      WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
-      WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
-      WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
-      WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
-      WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
-      WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
-      WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
-      WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
-      WHEN al.slug IS NOT NULL THEN 'appListing'
-      ELSE 'comment'
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadType', CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(
-      t."imageId",
-      t."modelId",
-      t."postId",
-      t."questionId",
-      t."answerId",
-      t."reviewId",
-      t."articleId",
-      t."bountyId",
-      t."bountyEntryId",
-      t."challengeId",
-      t."crucibleId",
-      t."storylineId",
-      t."model3dId",
-      t."commentId"
-      ),
-      'commentParentType', CASE
-      WHEN t."imageId" IS NOT NULL THEN 'image'
-      WHEN t."modelId" IS NOT NULL THEN 'model'
-      WHEN t."postId" IS NOT NULL THEN 'post'
-      WHEN t."questionId" IS NOT NULL THEN 'question'
-      WHEN t."answerId" IS NOT NULL THEN 'answer'
-      WHEN t."reviewId" IS NOT NULL THEN 'review'
-      WHEN t."articleId" IS NOT NULL THEN 'article'
-      WHEN t."bountyId" IS NOT NULL THEN 'bounty'
-      WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
-      WHEN t."challengeId" IS NOT NULL THEN 'challenge'
-      WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
-      WHEN t."storylineId" IS NOT NULL THEN 'storyline'
-      WHEN t."model3dId" IS NOT NULL THEN 'model3d'
-      ELSE 'comment'
-      END,
+      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
+      END ELSE 'comment' END,
       'username', u.username
-      ) "details"
-      FROM "CommentV2" c
-      JOIN "Thread" t ON t.id = c."threadId"
+      ) END "details"
+      FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
-      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-      LEFT JOIN "app_listings" al ON al."serial_id" = COALESCE(root."appListingId", t."appListingId")
-      WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'
-      AND t."questionId" IS NULL
-      AND t."answerId" IS NULL
-      AND (COALESCE(root."appListingId", t."appListingId") IS NULL OR al.slug IS NOT NULL)
+      LEFT JOIN "CommentV3" p ON p.id = c."parentId"
+      LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
+      LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
+      LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
+      WHERE c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR c."parentId" IS NOT NULL)
+      AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
       SELECT
-      concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
+      concat('new-thread-response:user:v3:', details->>'commentId') "key",
       case
-      when details->>'version' is null then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')
-      when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')
+      when details->>'threadType' is null then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')
+      when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')
       end "dedupeKey",
       "ownerId"    "userId",
       'new-thread-response' "type",
@@ -668,131 +592,52 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
     expect(normalizeSql(queries['new-mention'])).toMatchInlineSnapshot(`
       "WITH new_mentions AS (
       SELECT DISTINCT
-      CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+      CAST(unnest(regexp_matches(c.content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
       c."userId" "actorId",
-      JSONB_BUILD_OBJECT(
-      'version', 2,
+      CASE WHEN (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) THEN JSONB_BUILD_OBJECT(
+      'version', 3,
       'mentionedIn', 'comment',
+      'modelId', c."entityId",
+      'commentId', c."legacyV1Id",
+      'parentId', p."legacyV1Id",
+      'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
+      'modelName', m.name,
+      'username', u.username
+      ) ELSE JSONB_BUILD_OBJECT(
+      'version', 3,
       'commentId', c.id,
-      'threadId', c."threadId",
-      'threadParentId', COALESCE(
-      root."imageId",
-      root."modelId",
-      root."postId",
-      root."questionId",
-      root."answerId",
-      root."reviewId",
-      root."articleId",
-      root."bountyId",
-      root."bountyEntryId",
-      root."challengeId",
-      root."crucibleId",
-      root."storylineId",
-      root."model3dId",
-      root."comicProjectId",
-      t."imageId",
-      t."modelId",
-      t."postId",
-      t."questionId",
-      t."answerId",
-      t."reviewId",
-      t."articleId",
-      t."bountyId",
-      t."bountyEntryId",
-      t."challengeId",
-      t."crucibleId",
-      t."storylineId",
-      t."model3dId",
-      t."comicProjectId"
-      ),
-      'threadType', CASE
-      WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
-      WHEN COALESCE(root."modelId", t."modelId") IS NOT NULL THEN 'model'
-      WHEN COALESCE(root."postId", t."postId") IS NOT NULL THEN 'post'
-      WHEN COALESCE(root."questionId", t."questionId") IS NOT NULL THEN 'question'
-      WHEN COALESCE(root."answerId", t."answerId") IS NOT NULL THEN 'answer'
-      WHEN COALESCE(root."reviewId", t."reviewId") IS NOT NULL THEN 'review'
-      WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
-      WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
-      WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
-      WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
-      WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
-      WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
-      WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
-      WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
-      WHEN al.slug IS NOT NULL THEN 'appListing'
-      ELSE 'comment'
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadType', CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(
-      t."imageId",
-      t."modelId",
-      t."postId",
-      t."questionId",
-      t."answerId",
-      t."reviewId",
-      t."articleId",
-      t."bountyId",
-      t."bountyEntryId",
-      t."challengeId",
-      t."crucibleId",
-      t."storylineId",
-      t."model3dId",
-      t."commentId"
-      ),
-      'commentParentType', CASE
-      WHEN t."imageId" IS NOT NULL THEN 'image'
-      WHEN t."modelId" IS NOT NULL THEN 'model'
-      WHEN t."postId" IS NOT NULL THEN 'post'
-      WHEN t."questionId" IS NOT NULL THEN 'question'
-      WHEN t."answerId" IS NOT NULL THEN 'answer'
-      WHEN t."reviewId" IS NOT NULL THEN 'review'
-      WHEN t."articleId" IS NOT NULL THEN 'article'
-      WHEN t."bountyId" IS NOT NULL THEN 'bounty'
-      WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
-      WHEN t."challengeId" IS NOT NULL THEN 'challenge'
-      WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
-      WHEN t."storylineId" IS NOT NULL THEN 'storyline'
-      WHEN t."model3dId" IS NOT NULL THEN 'model3d'
-      ELSE 'comment'
-      END,
+      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
+      WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
+      WHEN 'model3dReview' THEN 'comment'
+      ELSE c."entityType"::text
+      END ELSE 'comment' END,
+      'mentionedIn', 'comment',
       'username', u.username
-      ) "details"
-      FROM "CommentV2" c
+      ) END "details"
+      FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
-      JOIN "Thread" t ON t.id = c."threadId"
-      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-      LEFT JOIN "app_listings" al ON al."serial_id" = COALESCE(root."appListingId", t."appListingId")
+      LEFT JOIN "CommentV3" p ON p.id = c."parentId"
+      LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
+      LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
+      LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
       AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
       AND c."tosViolation" = false
       AND c.hidden IS NOT TRUE
+      AND c."deletedAt" IS NULL
       AND c.content LIKE '%"mention:%'
-      AND t."questionId" IS NULL
-      AND t."answerId" IS NULL
-      AND (COALESCE(root."appListingId", t."appListingId") IS NULL OR al.slug IS NOT NULL)
-      UNION
-      SELECT DISTINCT
-      CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
-      c."userId" "actorId",
-      JSONB_BUILD_OBJECT(
-      'mentionedIn', 'comment',
-      'modelId', c."modelId",
-      'commentId', c.id,
-      'parentId', c."parentId",
-      'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
-      'modelName', m.name,
-      'username', u.username
-      ) "details"
-      FROM "Comment" c
-      JOIN "User" u ON c."userId" = u.id
-      JOIN "Model" m ON m.id = c."modelId"
-      WHERE m."userId" > 0
-      AND c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
-      AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
-      AND c."tosViolation" = false
-      AND c.hidden IS NOT TRUE
-      AND c.content LIKE '%"mention:%'
+      AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR m."userId" > 0)
+      AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       UNION
       SELECT DISTINCT
       CAST(unnest(regexp_matches(m.description, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
@@ -811,12 +656,12 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND m.status = 'Published'
       )
       SELECT
-      concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+      concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
       case
       when details->>'mentionedIn' <> 'comment' then null
-      when details->>'version' is not null then
-      case when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') end
-      when details->>'parentType' = 'comment' then concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')
+      when details->>'threadType' is not null then
+      case when details->>'threadType' <> 'comment' then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId') end
+      when details->>'parentType' = 'comment' then concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')
       end "dedupeKey",
       "ownerId"    "userId",
       'new-mention' "type",

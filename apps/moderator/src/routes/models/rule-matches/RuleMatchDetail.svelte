@@ -76,7 +76,7 @@
 
   const decidedRow = $derived(row.status !== 'Pending');
   const dismissedRow = $derived(row.status === 'Dismissed');
-  const keys = $derived(decisionButtons(row.mode));
+  const keys = $derived(decisionButtons(row.mode, row.clearsRules));
   const enabled = $derived(holdDecisionEnabled(row, { canStrike }));
   const subjects = $derived(row.rules.map((rule) => rule.subject).join(', '));
 
@@ -135,7 +135,20 @@
 
   const ask = (next: ModelRuleHoldDecision, count: number) => {
     const auto = row.mode === 'active';
-    const base = takesDown(next)
+    const base = row.clearsRules
+      ? takesDown(next)
+        ? {
+            title: 'Confirm this hold?',
+            description: 'The hold is confirmed; the model is not published.',
+            label: 'Confirm',
+          }
+        : {
+            title: 'Dismiss this hold?',
+            description:
+              'These matches are cleared for this text, so the owner can resubmit or publish it.',
+            label: 'Dismiss',
+          }
+      : takesDown(next)
       ? {
           title: auto ? 'Keep this model down?' : 'Unpublish this model?',
           description: auto
@@ -160,7 +173,7 @@
     };
   };
 
-  const outcome = () => decisionOutcome(decision, row.mode);
+  const outcome = () => decisionOutcome(decision, row.mode, row.clearsRules);
 
   const decided: SubmitFunction = (input) => {
     const inner = submit(outcome)(input);
@@ -200,6 +213,8 @@
           <MetaChip>{modelStatusLabel(row.modelStatus)}</MetaChip>
         {/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.source === 'training'}<MetaChip tone="amber">Training</MetaChip>{/if}
+        {#if row.uploadType === 'Trained'}<MetaChip>Trained on Civitai</MetaChip>{/if}
         {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
         {#if row.poi}<FlagBadge label="poi" />{/if}
         {#if row.minor}<FlagBadge label="minor" />{/if}
@@ -278,7 +293,11 @@
         <input type="hidden" name="decision" value={decision} />
         {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
         <TriageDecisionBar
-          hint={row.mode === 'active'
+          hint={row.source === 'training'
+            ? `A training run matched ${subjects || 'the rule'}${row.mode === 'active' ? ' and was refused' : ' and went ahead'}. Confirm records it as a violation; a dismissal lets the same text through next time. J/K to move.`
+            : row.clearsRules
+            ? 'The model is not live. Confirm records the violation; a dismissal clears these matches for this text. J/K to move.'
+            : row.mode === 'active'
             ? `The model was taken down when ${subjects || 'the rule'} matched. Confirm keeps it down; a dismissal republishes it.`
             : 'The model is still live. Confirm unpublishes it; a dismissal changes nothing on the model. J/K to move.'}
         >

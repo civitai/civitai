@@ -1,5 +1,6 @@
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelRulesHoldMode } from '@civitai/moderation/model-rules';
 import {
   syncModelRulesHold,
   type ModelRulesHoldDetection,
@@ -18,13 +19,13 @@ const REASON_CHARS = 500;
 /** An `active` detection: the caller takes the model to review, then records it with `applied: true`. */
 export type ModelRulesLiteralHold = ModelRulesHoldDetection & { ruleIds: number[] };
 
-/**
- * Checks a model's text against the Model rules and records what it finds as a `modelRules` hold.
- * `versionIds` (the versions this publish makes public) and `live` (a public model as it is now)
- * exist so the hash equals the one a rescan computes and a moderator's clearance applies to it.
- * A failing check lets the publish through.
- */
-export async function checkModelRulesLiteralHold({
+type Detected =
+  | { kind: 'skip' }
+  | { kind: 'clean'; mode: ModelRulesHoldMode; cleared: number[] }
+  | { kind: 'hit'; detection: ModelRulesLiteralHold };
+
+/** Matches a model's text against the Model rules, for the hash and rule snapshot every caller records. */
+export async function detectModelRulesLiteral({
   modelId,
   versionIds = [],
   meta,
@@ -34,43 +35,41 @@ export async function checkModelRulesLiteralHold({
   versionIds?: number[];
   meta?: ModelMeta | null;
   live?: boolean;
-}): Promise<ModelRulesLiteralHold | null> {
-  try {
-    const mode = await getTextScanMode('ModelRules', modelId);
-    if (mode === 'off') return null;
-    const rules = await getEnabledModelRules();
-    if (!rules.length) return null;
-    const subject = (
-      await loadModelScanSubjects(
-        [modelId],
-        live ? { publicOnly: true } : { prePublish: { versionIds } }
-      )
-    ).get(modelId);
-    // A model that is not public yet keeps any pending hold: it is the one that took it down.
-    if (!subject) return null;
+}): Promise<Detected> {
+  const mode = await getTextScanMode('ModelRules', modelId);
+  if (mode === 'off') return { kind: 'skip' };
+  const rules = await getEnabledModelRules();
+  if (!rules.length) return { kind: 'skip' };
+  const subject = (
+    await loadModelScanSubjects(
+      [modelId],
+      live ? { publicOnly: true } : { prePublish: { versionIds } }
+    )
+  ).get(modelId);
+  // A model that is not public yet keeps any pending hold: it is the one that took it down.
+  if (!subject) return { kind: 'skip' };
 
-    const textHash = textScanTextHash(subject);
-    const cleared =
-      meta?.modelRulesCleared?.textHash === textHash ? meta.modelRulesCleared.ruleIds : [];
-    // Offsets point into the text as stored, which Postgres may have had to clean.
-    const stored = {
-      ...subject,
-      fields: subject.fields.map((f) => ({
-        ...f,
-        text: f.text ? sanitizeForPostgres(f.text) : f.text,
-      })),
-    };
-    const matches = findLiteralMatchesInSubject(stored, rules).filter(
-      (m) => !cleared.includes(m.ruleId)
-    );
-    if (!matches.length) {
-      await syncModelRulesHold(modelId, null);
-      return null;
-    }
+  const textHash = textScanTextHash(subject);
+  const cleared =
+    meta?.modelRulesCleared?.textHash === textHash ? meta.modelRulesCleared.ruleIds : [];
+  // Offsets point into the text as stored, which Postgres may have had to clean.
+  const stored = {
+    ...subject,
+    fields: subject.fields.map((f) => ({
+      ...f,
+      text: f.text ? sanitizeForPostgres(f.text) : f.text,
+    })),
+  };
+  const matches = findLiteralMatchesInSubject(stored, rules).filter(
+    (m) => !cleared.includes(m.ruleId)
+  );
+  if (!matches.length) return { kind: 'clean', mode, cleared };
 
-    const hit = new Set(matches.map((m) => m.ruleId));
-    const matched = rules.filter((rule) => hit.has(rule.id));
-    const detection: ModelRulesLiteralHold = {
+  const hit = new Set(matches.map((m) => m.ruleId));
+  const matched = rules.filter((rule) => hit.has(rule.id));
+  return {
+    kind: 'hit',
+    detection: {
       ruleIds: matched.map((rule) => rule.id),
       textHash,
       userId: subject.userId && subject.userId > 0 ? subject.userId : null,
@@ -91,9 +90,29 @@ export async function checkModelRulesLiteralHold({
       mode,
       applied: false,
       ...(versionIds.length ? { versionIds } : {}),
-    };
-    if (mode === 'active') return detection;
-    await syncModelRulesHold(modelId, detection);
+    },
+  };
+}
+
+/**
+ * Checks a model's text against the Model rules and records what it finds as a `modelRules` hold.
+ * `versionIds` (the versions this publish makes public) and `live` (a public model as it is now)
+ * exist so the hash equals the one a rescan computes and a moderator's clearance applies to it.
+ * A failing check lets the publish through.
+ */
+export async function checkModelRulesLiteralHold(
+  input: Parameters<typeof detectModelRulesLiteral>[0]
+): Promise<ModelRulesLiteralHold | null> {
+  const { modelId } = input;
+  try {
+    const found = await detectModelRulesLiteral(input);
+    if (found.kind === 'skip') return null;
+    if (found.kind === 'clean') {
+      await syncModelRulesHold(modelId, null);
+      return null;
+    }
+    if (found.detection.mode === 'active') return found.detection;
+    await syncModelRulesHold(modelId, found.detection);
     return null;
   } catch (error) {
     logToAxiom({
