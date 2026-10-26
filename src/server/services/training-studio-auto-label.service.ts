@@ -12,7 +12,10 @@ import type {
   StudioAutoLabelPollInput,
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
+import { env as clientEnv } from '~/env/client';
+import { isOrchestratorUrl } from '~/server/common/constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hasUrlAmbiguousBytes } from '~/server/schema/blocks/civitai-image-url';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { assertSafeMediaUrls, toOrchestratorError } from '~/server/services/training.service';
 import {
@@ -46,6 +49,26 @@ export type StudioAutoLabelResult = {
   caption?: string;
 };
 
+// Runs on the system token, so only media on Civitai's orchestrator (where the Studio uploads) may be
+// fetched. The raw string is forwarded, so ambiguous bytes are refused rather than normalised.
+function assertCivitaiMediaUrls(urls: string[]) {
+  const envHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  for (const raw of urls) {
+    const parsed = !hasUrlAmbiguousBytes(raw) && URL.canParse(raw) ? new URL(raw) : null;
+    const ok =
+      parsed &&
+      parsed.protocol === 'https:' &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.port &&
+      (isOrchestratorUrl(raw) || parsed.host === envHost);
+    if (!ok)
+      throw throwBadRequestError(
+        'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
+      );
+  }
+}
+
 export async function submitStudioAutoLabel({
   userId,
   mode,
@@ -53,6 +76,7 @@ export async function submitStudioAutoLabel({
   items,
 }: StudioAutoLabelSubmitInput & { userId: number }) {
   assertSafeMediaUrls(items.map((i) => i.mediaUrl));
+  assertCivitaiMediaUrls(items.map((i) => i.mediaUrl));
   const release = await reserveDailyItems(userId, items.length);
 
   const steps: WorkflowStepTemplate[] = items.map((item, i) => {

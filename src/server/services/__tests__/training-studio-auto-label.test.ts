@@ -11,6 +11,10 @@ vi.mock('@civitai/orchestration-client', () => ({
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: { system: true },
 }));
+const clientEnv = vi.hoisted(() => ({
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: 'https://orchestration.civitai.com',
+}));
+vi.mock('~/env/client', () => ({ env: clientEnv }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
@@ -24,7 +28,9 @@ const counters = new Map<string, number>();
 const quotaKey = () =>
   `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:7:${new Date().toISOString().slice(0, 10)}`;
 
-const items = [{ mediaUrl: 'https://image.example.com/a.png', key: 'a.png' }];
+const items = [
+  { mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.png', key: 'a.png' },
+];
 
 describe('Training Studio auto-label', () => {
   beforeEach(() => {
@@ -64,6 +70,82 @@ describe('Training Studio auto-label', () => {
     expect(orch.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  describe('only accepts media on Civitai media hosts', () => {
+    const submitOne = (mediaUrl: string, media: 'image' | 'video' | 'audio' = 'image') =>
+      submitStudioAutoLabel({
+        userId: 7,
+        mode: media === 'audio' ? 'caption' : 'tag',
+        media,
+        items: [{ mediaUrl, key: 'k' }],
+      });
+
+    it.each([
+      ['a third-party host', 'https://example.com/a.png'],
+      ['a lookalike suffix', 'https://orchestration.civitai.com.evil.net/v2/consumer/blobs/a.png'],
+      ['civitai.com as a subdomain', 'https://civitai.com.evil.net/v2/consumer/blobs/a.png'],
+      ['a prefixed lookalike', 'https://evil-orchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['a hyphen lookalike', 'https://orchestration-civitai.com/v2/consumer/blobs/a.png'],
+      ['a non-media Civitai host', 'https://image.civitai.com/v2/consumer/blobs/a.png'],
+      ['the main site', 'https://civitai.com/v2/consumer/blobs/a.png'],
+      ['userinfo', 'https://x@orchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['a port', 'https://orchestration.civitai.com:8443/v2/consumer/blobs/a.png'],
+      ['a backslash', 'https://orchestration.civitai.com\\v2/consumer/blobs/a.png'],
+      ['a CRLF', 'https://orchestration\r\n.civitai.com/v2/consumer/blobs/a.png'],
+      ['http', 'http://orchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['a blob: URL', 'blob:https://civitai.com/0b5f-4c1e'],
+    ])('refuses %s before submitting', async (_label, mediaUrl) => {
+      await expect(submitOne(mediaUrl)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(orch.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('says why, so the Studio can tell the user to upload the file', async () => {
+      await expect(submitOne('https://example.com/a.png')).rejects.toThrow(
+        /only accepts media uploaded to Civitai/
+      );
+    });
+
+    it('refuses the whole batch when one item is off-host', async () => {
+      await expect(
+        submitStudioAutoLabel({
+          userId: 7,
+          mode: 'tag',
+          media: 'image',
+          items: [
+            { mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.png', key: 'a' },
+            { mediaUrl: 'https://example.com/b.png', key: 'b' },
+          ],
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(orch.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['image', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png?sig=s&exp=e'],
+      ['image', 'https://orchestration-new.civitai.com/v2/consumer/blobs/a.jpeg'],
+      ['image', 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/a.webp?sig=s'],
+      ['image', 'https://ORCHESTRATION.civitai.com/v1/consumer/blobs/a.png'],
+      ['video', 'https://orchestration.civitai.com/v2/consumer/blobs/a.mp4?sig=s&exp=e'],
+      ['audio', 'https://orchestration.civitai.com/v2/consumer/blobs/a.mp3?sig=s&exp=e'],
+    ] as const)('accepts %s at %s', async (media, mediaUrl) => {
+      await expect(submitOne(mediaUrl, media)).resolves.toEqual({ workflowId: 'wf-1' });
+      expect(orch.submitWorkflow.mock.calls[0][0].body.steps[0].input.mediaUrl).toBe(mediaUrl);
+    });
+
+    it("accepts the env's public orchestrator host when it is not orchestration*.civitai.com", async () => {
+      clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT = 'https://orch.dev.example.net/';
+      try {
+        await expect(
+          submitOne('https://orch.dev.example.net/v2/consumer/blobs/a.png')
+        ).resolves.toEqual({ workflowId: 'wf-1' });
+        await expect(
+          submitOne('https://orch.dev.example.net:8443/v2/consumer/blobs/a.png')
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      } finally {
+        clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT = 'https://orchestration.civitai.com';
+      }
+    });
+  });
+
   it("reads another user's workflow as missing", async () => {
     orch.getWorkflow.mockResolvedValue({
       data: { id: 'wf-1', status: 'succeeded', metadata: { kind: 'studio-auto-label', userId: 8 } },
@@ -97,8 +179,8 @@ describe('Training Studio auto-label', () => {
   it("refuses a batch past the user's daily item quota, and doesn't count it", async () => {
     counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     const two = [
-      { mediaUrl: 'https://image.example.com/a.png', key: 'a' },
-      { mediaUrl: 'https://image.example.com/b.png', key: 'b' },
+      { mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.png', key: 'a' },
+      { mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/b.png', key: 'b' },
     ];
     await expect(
       submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items: two })
