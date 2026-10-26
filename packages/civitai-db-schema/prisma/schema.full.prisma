@@ -2201,6 +2201,10 @@ model Image {
   @@index([userId, postId])
   @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
+  // NOTE: a partial index `("createdAt") WHERE "postId" IS NULL AND (metadata->>'batchDraft') = 'true'`
+  // exists for the batch-draft-images-cleanup job. It is created via a manual migration and is
+  // not modeled here because Prisma does not support partial indexes. See:
+  // prisma/migrations/20261022120000_image_batch_draft_idx/
 }
 
 model ImageTagForReview {

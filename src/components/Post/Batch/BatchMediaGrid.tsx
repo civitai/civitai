@@ -7,16 +7,26 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
-import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 import { POST_BATCH_MAX_IMAGES } from '@civitai/shared/post-scheduling';
 import { useBatchComposerStore } from './batch-composer.store';
-import { groupIntoPosts } from './batch-composer.utils';
+import type { BatchMedia } from './batch-composer.utils';
+import {
+  groupIntoPosts,
+  isBlockedMedia,
+  isFailedMedia,
+  isPersistingMedia,
+  isPostable,
+  isScanningMedia,
+} from './batch-composer.utils';
 
 export type DroppedFile = { file: File; meta?: Record<string, unknown> };
 
@@ -41,19 +51,22 @@ export function BatchMediaGrid({
   /** Files dropped past the batch limit on the last drop. */
   skippedCount: number;
 }) {
-  const [media, imagesPerPost, removeMedia, shuffleMedia, setImagesPerPost] = useBatchComposerStore(
-    (state) => [
+  const [media, imagesPerPost, removeMedia, patchMedia, shuffleMedia, setImagesPerPost] =
+    useBatchComposerStore((state) => [
       state.media,
       state.imagesPerPost,
       state.removeMedia,
+      state.patchMedia,
       state.shuffleMedia,
       state.setImagesPerPost,
-    ]
-  );
+    ]);
+  const removeBatchMedia = trpc.post.removeBatchMedia.useMutation();
 
   const uploaded = media.filter((x) => x.status === 'added');
-  const failed = media.filter((x) => x.status === 'error');
-  const blocked = media.filter((x) => x.status === 'blocked');
+  const postable = media.filter(isPostable);
+  const failed = media.filter(isFailedMedia);
+  const blocked = media.filter(isBlockedMedia);
+  const scanning = media.filter(isScanningMedia);
   const inFlight = uploading.filter((x) => x.status === 'pending' || x.status === 'uploading');
   const total = uploaded.length + failed.length + inFlight.length;
   const uploadProgress = inFlight.length
@@ -62,9 +75,18 @@ export function BatchMediaGrid({
           100
       )
     : 100;
-  const postCount = groupIntoPosts(uploaded, imagesPerPost).length;
+  const postCount = groupIntoPosts(postable, imagesPerPost).length;
 
-  const retry = async (item: MediaUploadOnCompleteProps) => {
+  const remove = (item: BatchMedia) => {
+    removeMedia(item.url);
+    // Best effort: a row left behind is reaped after the draft retention anyway.
+    if (item.imageId !== undefined) removeBatchMedia.mutate({ ids: [item.imageId] });
+  };
+  const retry = async (item: BatchMedia) => {
+    if (item.persistFailed) {
+      patchMedia(item.url, { persistFailed: false });
+      return;
+    }
     const blob = await fetch(item.objectUrl).then((response) => response.blob());
     removeMedia(item.url);
     onDrop([{ file: new File([blob], item.name, { type: item.mimeType }), meta: item.meta }]);
@@ -134,7 +156,7 @@ export function BatchMediaGrid({
             <MediaThumb
               key={item.url}
               item={item}
-              onRemove={() => removeMedia(item.url)}
+              onRemove={() => remove(item)}
               onRetry={() => void retry(item)}
             />
           ))}
@@ -159,12 +181,18 @@ export function BatchMediaGrid({
         </div>
       )}
 
-      {(blocked.length > 0 || failed.length > 0) && (
-        <div className="flex flex-col gap-0.5">
+      {(blocked.length > 0 || failed.length > 0 || scanning.length > 0) && (
+        <div className="flex flex-col gap-0.5" data-testid="batch-media-notes">
           {blocked.length > 0 && (
             <Text size="sm" c="red">
               {blocked.length} {blocked.length === 1 ? 'image was' : 'images were'} blocked and
               won&apos;t be posted. Hover for details.
+            </Text>
+          )}
+          {scanning.length > 0 && (
+            <Text size="sm" c="dimmed">
+              {scanning.length} still scanning. Ratings appear as each scan finishes; you can
+              schedule without waiting.
             </Text>
           )}
           {failed.length > 0 && (
@@ -201,7 +229,7 @@ export function BatchMediaGrid({
               />
               <Text size="sm">per post</Text>
             </div>
-            {uploaded.length > 0 && (
+            {postable.length > 0 && (
               <Text size="sm" c="dimmed" data-testid="batch-grouping-summary">
                 → {postCount} post{postCount === 1 ? '' : 's'}
                 {imagesPerPost > 1 ? ` of up to ${imagesPerPost}` : ''}
@@ -230,26 +258,33 @@ function MediaThumb({
   onRemove,
   onRetry,
 }: {
-  item: MediaUploadOnCompleteProps;
+  item: BatchMedia;
   onRemove: () => void;
   onRetry: () => void;
 }) {
-  const status = item.status;
-  const tooltip =
-    status === 'blocked'
-      ? `Blocked${item.blockedFor ? `: ${item.blockedFor}` : ''}`
-      : status === 'error'
-      ? 'Upload failed'
-      : item.name;
+  const blocked = isBlockedMedia(item);
+  const failed = isFailedMedia(item);
+  const scanning = isScanningMedia(item) || isPersistingMedia(item);
+  const scanFailed = item.status === 'added' && item.ingestion === ImageIngestionStatus.Error;
+  const tooltip = blocked
+    ? `Blocked${item.blockedFor ? `: ${item.blockedFor}` : ''}`
+    : item.persistFailed
+    ? 'Could not save this upload'
+    : item.status === 'error'
+    ? 'Upload failed'
+    : scanFailed
+    ? `${item.name} · Scan failed; it will be posted and scanned again`
+    : item.name;
   return (
     <Tooltip label={tooltip} withinPortal>
       <div
         className={clsx(
           'group relative aspect-square overflow-hidden rounded-md bg-gray-1 dark:bg-dark-6',
-          status === 'blocked' && 'ring-2 ring-red-6',
-          status === 'error' && 'ring-2 ring-yellow-6'
+          blocked && 'ring-2 ring-red-6',
+          !blocked && failed && 'ring-2 ring-yellow-6'
         )}
-        data-status={status}
+        data-status={item.status}
+        data-scan={item.imageId === undefined ? undefined : item.ingestion ?? 'Pending'}
         data-testid="batch-media-thumb"
       >
         <EdgeMedia
@@ -262,16 +297,39 @@ function MediaThumb({
           alt={item.name}
           className="size-full object-cover"
         />
-        {item.type === 'video' && (
-          <IconVideo size={16} className="absolute bottom-1 left-1 text-white drop-shadow" />
-        )}
-        {status !== 'added' && (
+        <div className="absolute bottom-1 left-1 flex items-center gap-1">
+          {!blocked && !failed && !!item.nsfwLevel && (
+            <BrowsingLevelBadge
+              browsingLevel={item.nsfwLevel}
+              size="xs"
+              data-testid="batch-media-level"
+            />
+          )}
+          {!blocked && !failed && scanning && (
+            <span
+              className="rounded bg-black/70 px-1 py-0.5 text-[10px] font-medium uppercase text-white"
+              data-testid="batch-media-scanning"
+            >
+              Scanning
+            </span>
+          )}
+          {!blocked && !failed && scanFailed && (
+            <span
+              className="rounded bg-yellow-7/90 px-1 py-0.5 text-[10px] font-medium uppercase text-white"
+              data-testid="batch-media-scan-failed"
+            >
+              Scan failed
+            </span>
+          )}
+          {item.type === 'video' && <IconVideo size={16} className="text-white drop-shadow" />}
+        </div>
+        {(blocked || failed) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold uppercase text-white">
-            {status === 'blocked' ? 'Blocked' : 'Failed'}
+            {blocked ? 'Blocked' : 'Failed'}
           </div>
         )}
         <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-          {status === 'error' && (
+          {failed && (
             <button
               type="button"
               aria-label={`Retry ${item.name}`}

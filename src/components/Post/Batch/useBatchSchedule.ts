@@ -11,8 +11,8 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { useBatchComposerStore } from './batch-composer.store';
-import type { PlannedPost, UploadedMedia } from './batch-composer.utils';
-import { buildPlan, generateBatchDates, groupIntoPosts } from './batch-composer.utils';
+import type { PlannedPost, PostableMedia } from './batch-composer.utils';
+import { buildPlan, generateBatchDates, groupIntoPosts, isPostable } from './batch-composer.utils';
 
 const DAY_MS = 86_400_000;
 /** `post.getScheduled` refuses a range over 45 days; three of these cover the 3-month window. */
@@ -20,14 +20,15 @@ const SCHEDULED_WINDOW_DAYS = 45;
 const SCHEDULED_WINDOWS = 3;
 
 export type BatchPlan = {
-  uploaded: UploadedMedia[];
+  /** The media a post can be made of: persisted and not blocked. */
+  uploaded: PostableMedia[];
   postCount: number;
   dates: Date[];
   generationIssue: string | null;
   posts: PlannedPost[];
 };
 
-/** The posts the composer would create right now: uploaded media grouped, dated and titled. */
+/** The posts the composer would create right now: postable media grouped, dated and titled. */
 export function useBatchPlan(names: { model?: string | null; version?: string | null }): BatchPlan {
   const [media, imagesPerPost, schedule, seed, fixedDates, titleTemplate] = useBatchComposerStore(
     (state) => [
@@ -40,7 +41,7 @@ export function useBatchPlan(names: { model?: string | null; version?: string | 
     ]
   );
   return useMemo(() => {
-    const uploaded = media.filter((x): x is UploadedMedia => x.status === 'added');
+    const uploaded = media.filter(isPostable);
     const postCount = groupIntoPosts(uploaded, imagesPerPost).length;
     const generated = postCount ? generateBatchDates(schedule, postCount, seed) : null;
     const dates =

@@ -152,6 +152,7 @@ import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
+import { batchDraftImagesCleanup } from '~/server/jobs/batch-draft-images';
 import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -191,6 +192,7 @@ export const jobs: Job[] = [
   cdnAccessSync,
   cdnAccessReconcile,
   removeReplacedImages,
+  batchDraftImagesCleanup,
   retryImageStorageDeletes,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,

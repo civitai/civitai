@@ -1436,6 +1436,35 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
   return detailData;
 };
 
+/** The tool and technique an image's generation meta names, as `addPostImage` attaches them. */
+export async function resolveMetaToolAndTechnique(meta: ImageSchema['meta']) {
+  let toolId: number | undefined;
+  const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
+  if (meta && 'engine' in meta) {
+    toolId = (await getToolByAlias(meta.engine as string))?.id;
+    if (!toolId) {
+      toolId = (await getToolByName(meta.engine as string))?.id;
+    }
+  } else if (sourceName || sourceHomepage) {
+    if (sourceName) {
+      toolId = (await getToolByName(sourceName))?.id;
+    }
+    if (sourceHomepage && !toolId) {
+      toolId = (await getToolByDomain(sourceHomepage))?.id;
+    }
+  }
+
+  let techniqueId: number | undefined;
+  if (meta && 'engine' in meta) {
+    // older meta has type: string, but the updated meta has process: string
+    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    if (process) {
+      techniqueId = (await getTechniqueForWorkflow(process))?.id;
+    }
+  }
+  return { toolId, techniqueId };
+}
+
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
 export const addPostImage = async ({
@@ -1472,30 +1501,7 @@ export const addPostImage = async ({
     }
   }
 
-  let toolId: number | undefined;
-  const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
-  if (meta && 'engine' in meta) {
-    toolId = (await getToolByAlias(meta.engine as string))?.id;
-    if (!toolId) {
-      toolId = (await getToolByName(meta.engine as string))?.id;
-    }
-  } else if (sourceName || sourceHomepage) {
-    if (sourceName) {
-      toolId = (await getToolByName(sourceName))?.id;
-    }
-    if (sourceHomepage && !toolId) {
-      toolId = (await getToolByDomain(sourceHomepage))?.id;
-    }
-  }
-
-  let techniqueId: number | undefined;
-  if (meta && 'engine' in meta) {
-    // older meta has type: string, but the updated meta has process: string
-    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
-    if (process) {
-      techniqueId = (await getTechniqueForWorkflow(process))?.id;
-    }
-  }
+  const { toolId, techniqueId } = await resolveMetaToolAndTechnique(meta);
 
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
