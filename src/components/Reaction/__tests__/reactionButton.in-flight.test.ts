@@ -12,7 +12,7 @@ type CallbackSet = {
 };
 type Call = { variables: Variables; settle: (result: string | Error) => void };
 
-// A stand-in for react-query: the options given to `useMutation` always run, the callbacks given to
+// A stand-in for react-query v5 semantics, which the unmount fix relies on: the options given to `useMutation` always run, the callbacks given to
 // `mutate` run only while the component that called it is still mounted.
 const h = vi.hoisted(() => ({ calls: [] as Call[], options: [] as CallbackSet[] }));
 
@@ -142,6 +142,26 @@ describe('ReactionButton — shared state and unmounting', () => {
     act(() => {
       settle(h.calls[0], 'created');
       settle(h.calls[1], 'ignored');
+    });
+    expect(a.button().dataset.reacted).toBe('true');
+    expect(b.button().dataset.reacted).toBe('true');
+  });
+
+  // The server applies whichever request claims the toggle first, not necessarily the first click.
+  it.each([
+    ['the twin answers first', true],
+    ['the twin answers last', false],
+  ])('the second click wins on the server and %s', (_name, twinFirst) => {
+    const a = mount(204);
+    const b = mount(204);
+    act(() => {
+      a.click();
+      b.click();
+    });
+    act(() => {
+      if (twinFirst) settle(h.calls[1], 'created');
+      settle(h.calls[0], 'ignored');
+      if (!twinFirst) settle(h.calls[1], 'created');
     });
     expect(a.button().dataset.reacted).toBe('true');
     expect(b.button().dataset.reacted).toBe('true');
