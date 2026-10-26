@@ -975,19 +975,35 @@ export const removeBlockedImages = createJob(
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
       // and the retention window outlasts anything cached before the deny, so no CDN purge here.
-      // A retraction that did not land replaces its reservation with a retry that is due now.
-      await cdnAccess.persistDeletedTakedowns(rows, { reservation: reservation ?? undefined });
-      // Settled: retracted, nothing to retract (another row still uses the url), or not deleted at
-      // all (a hold kept it, and a held image must get no retraction). Only a deleted row whose
-      // retraction did not land keeps a retry, and the persist above already released it to be due.
+      // A retraction that did not land replaces its reservation with a retry that is due now (or,
+      // when another run has reserved the image since, joins that run's reservation).
+      const persisted = await cdnAccess.persistDeletedTakedowns(rows, {
+        reservation: reservation ?? undefined,
+      });
       if (reservation) {
-        const pending = new Set(
-          rows
-            .filter((x) => x.retraction === 'busy' || x.retraction === 'unconfirmed')
-            .map((x) => x.id)
-        );
+        // Kept back from settling, so its reservation stays the retry:
+        // - a row whose retry could not be written;
+        // - an image gone without this delete returning it (its owner deleted it in between): it is
+        //   deleted, so its retraction is still owed, and the reservation sends it once due.
+        // Everything else settles: retracted, nothing to retract (another row still uses the url),
+        // queued (that write already released this reservation), or kept by a hold (a held image
+        // must get no retraction).
+        const returned = new Set(rows.map((x) => x.id));
+        const notReturned = ids.filter((id) => !returned.has(id));
+        const stillThere = notReturned.length
+          ? new Set(
+              (
+                await dbWrite.$queryRaw<{ id: number }[]>`
+                  SELECT id FROM "Image" WHERE id = ANY(${notReturned}::int[])`
+              ).map((x) => x.id)
+            )
+          : new Set<number>();
+        const keep = new Set([
+          ...(persisted?.unqueued ?? []),
+          ...notReturned.filter((id) => !stillThere.has(id)),
+        ]);
         await cdnAccess.settleTakedownReservations(
-          ids.filter((id) => !pending.has(id)),
+          ids.filter((id) => !keep.has(id)),
           reservation
         );
       }

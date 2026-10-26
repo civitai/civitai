@@ -1423,6 +1423,59 @@ describe('image server busy (429)', () => {
     });
   });
 
+  it("a failure merged into another delete's reservation survives that delete's settle", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations, queueTakedownPersistRetry } =
+      await import('~/server/services/cdn-access.service');
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    // The sync's deny persist for the same image fails while the delete is still running.
+    expect(
+      await queueTakedownPersistRetry({ imageId: 1, url: u(1), retract: false, purgeEdge: true })
+    ).toBe(true);
+
+    // The delete's retraction landed, so it settles.
+    await settleTakedownReservations([1], reservation!);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+  });
+
+  // Two overlapping runs select the same image. A deletes it and its retraction is refused, but B
+  // has reserved the image since; B's delete finds nothing to delete and settles.
+  it("a retraction one run still owes survives an overlapping run's settle", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations, queueTakedownPersistRetry } =
+      await import('~/server/services/cdn-access.service');
+    const a = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const b = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    await queueTakedownPersistRetry({
+      imageId: 1,
+      url: u(1),
+      retract: true,
+      purgeEdge: false,
+      settles: a!,
+    });
+    await settleTakedownReservations([1], b!);
+
+    const rows = await retryRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data).toMatchObject({ url: u(1), retract: true });
+    expect(rows[0].data.reservation).toBeUndefined();
+    // Due now: the next retry run sends it.
+    expect(rows[0].data.nextAttemptAt).toBeUndefined();
+  });
+
+  it('reports a takedown whose retry could not be written', async () => {
+    scripted = [503];
+    dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
+      throw new Error('insert failed');
+    }) as never);
+    expect(await persistDeletedTakedowns([{ id: 1, url: u(1) }])).toMatchObject({
+      queued: 1,
+      unqueued: [1],
+    });
+    expect(await retryRows()).toEqual([]);
+    calls.length = 0;
+  });
+
   it('a new reservation revives a retry that had run out of attempts, and says so once', async () => {
     const { reserveTakedownRetractions } = await import('~/server/services/cdn-access.service');
     await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
@@ -1937,7 +1990,14 @@ describe('persist after a takedown hard delete', () => {
         { id: 1, url: u(1) },
         { id: 2, url: u(2) },
       ])
-    ).toEqual({ sent: 2, queued: 0, skipped: 0, notAttempted: 0, retractionPending: 0 });
+    ).toEqual({
+      sent: 2,
+      queued: 0,
+      skipped: 0,
+      notAttempted: 0,
+      retractionPending: 0,
+      unqueued: [],
+    });
     expect(calls.map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(1)}&persist=true`,
       `/admin/invalidate?imageKey=${u(2)}&persist=true`,
@@ -1979,6 +2039,7 @@ describe('persist after a takedown hard delete', () => {
       skipped: 0,
       notAttempted: 30,
       retractionPending: 0,
+      unqueued: [],
     });
     expect(calls).toEqual([]);
     // One error for the run, the rows at warn.
