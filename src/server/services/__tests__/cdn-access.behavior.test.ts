@@ -102,9 +102,14 @@ type Call = { method: string; path: string };
 const calls: Call[] = [];
 /** Statuses to answer, in order, before falling back to 202. */
 let scripted: number[] = [];
+/** Answers by call instead, ahead of `scripted`: a status, or an error to throw. */
+let respond: ((c: Call) => number | Error | undefined) | null = null;
 const fetchFake = vi.fn(async (input: string, init?: { method?: string }) => {
-  calls.push({ method: init?.method ?? 'GET', path: input.replace(CACHER, '') });
-  const status = scripted.length ? (scripted.shift() as number) : 202;
+  const call = { method: init?.method ?? 'GET', path: input.replace(CACHER, '') };
+  calls.push(call);
+  const answer = respond?.(call);
+  if (answer instanceof Error) throw answer;
+  const status = answer ?? (scripted.length ? (scripted.shift() as number) : 202);
   return { ok: status >= 200 && status < 300, status, headers: new Headers() } as Response;
 });
 
@@ -214,6 +219,7 @@ beforeEach(async () => {
   `);
   calls.length = 0;
   scripted = [];
+  respond = null;
   purged.length = 0;
   purgeFails = 0;
   combinedOk.clear();
@@ -1212,6 +1218,82 @@ describe('image server busy (429)', () => {
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.length).toBeLessThan(urls.length);
     expect(await retryRows()).toHaveLength(urls.length);
+  });
+
+  it("the drain's denies still go after a 429 holds back its retractions", async () => {
+    // Retractions first in the queue, so every deny is planned after the 429s land.
+    for (let id = 1; id <= 8; id++) {
+      await image(id);
+      await moderatorBlock(id);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    for (let id = 9; id <= 12; id++) {
+      await image(id);
+      await scannerBlock(id);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+    await syncCdnAccess();
+
+    for (let id = 9; id <= 12; id++) {
+      expect(callsFor(u(id)), `image ${id}`).toEqual(['deny']);
+      expect(await stateOf(u(id))).toBe('Denied');
+    }
+    for (let id = 1; id <= 8; id++) expect(await stateOf(u(id))).toBeUndefined();
+    expect(calls.filter((c) => kind(c) === 'retract').length).toBeLessThanOrEqual(5);
+    // Only the retractions' rows stay queued.
+    expect((await queued()).n).toBe(8);
+  });
+
+  it('a retraction that runs out of wait time is left for the next run, not resent', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      await image(1);
+      await moderatorBlock(1);
+      respond = (c) =>
+        kind(c) === 'retract'
+          ? Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+          : undefined;
+      const first = await syncCdnAccess();
+
+      expect(callsFor(u(1))).toEqual(['retract']);
+      expect(timeout).toHaveBeenCalledWith(70_000);
+      expect(first).toMatchObject({ failed: 1 });
+      expect(await stateOf(u(1))).toBeUndefined();
+      expect((await queued()).n).toBe(1);
+
+      respond = null;
+      await syncCdnAccess();
+      expect(callsFor(u(1))).toEqual(['retract', 'retract']);
+      expect(await stateOf(u(1))).toBe('Retracted');
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it('the reconciler leaves a busy upgrade for the next run, at warn, and stops sending them', async () => {
+    const ids = [...Array(10).keys()].map((i) => i + 1);
+    for (const id of ids) {
+      await image(id);
+      await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${id}`;
+      await moderatorBlock(id);
+    }
+    await syncCdnAccess();
+    for (const id of ids) expect(callsFor(u(id))).toEqual(['deny']);
+    await sql`UPDATE "Image" SET "needsReview" = NULL`;
+    calls.length = 0;
+
+    respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+    const totals = await reconcileCdnAccess();
+    expect(totals).toMatchObject({ upgraded: 0, failed: 0, throttled: ids.length });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThanOrEqual(5);
+    expect(errorLogs('cdn-access-reconcile')).toEqual([]);
+    for (const id of ids) expect(await stateOf(u(id))).toBe('Denied');
+
+    respond = null;
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: ids.length, throttled: 0 });
+    for (const id of ids) expect(await stateOf(u(id))).toBe('Retracted');
   });
 
   it('a hard-deleted takedown whose retraction was busy is queued for the retry, not persisted', async () => {

@@ -2,6 +2,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
+import { IMAGE_CACHER_WAIT_MS } from '~/server/services/image-cacher-retraction';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 type HiddenMetaImage = {
@@ -27,9 +28,7 @@ export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
 async function purgeCachedCopies(image: HiddenMetaImage) {
   try {
     // Lazy: post.service imports this module, and a static edge would join the image.service cycle.
-    const { purgeResizeCache, IMAGE_CACHER_WAIT_MS } = await import(
-      '~/server/services/image.service'
-    );
+    const { purgeResizeCache } = await import('~/server/services/image.service');
     // 🔴 Scoped: the image stays live, and only the variants derived before the flip are stale.
     // A full purge would also drop the variants the page is serving right now.
     await purgeResizeCache({

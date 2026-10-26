@@ -105,7 +105,6 @@ const {
     IMAGE_SCANNING_RETRY_DELAY: 5,
     IMAGE_SCANNING_PENDING_TIMEOUT: 30,
     DATABASE_IS_PROD: true,
-    IMAGE_CACHER_RETRACTION_CONCURRENCY: 5,
   };
   // Inlines nested `Prisma.sql` fragments, so a query built from a shared fragment is routed by
   // the text it actually sends.

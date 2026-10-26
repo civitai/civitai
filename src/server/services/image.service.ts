@@ -231,7 +231,13 @@ import {
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
-import pLimit, { type LimitFunction } from 'p-limit';
+import {
+  IMAGE_CACHER_WAIT_MS,
+  type ImageCacherOutcome,
+  newRetractionGate,
+  type RetractionGate,
+  retractionLimit,
+} from '~/server/services/image-cacher-retraction';
 import {
   isClickHouseConnectionError,
   throwAuthorizationError,
@@ -373,27 +379,12 @@ export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
  */
 export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
 
-/**
- * How long a caller waits for the image-cache service to answer when it needs the result: a
- * retraction, or a purge the CDN purge must follow. The service finishes a retraction even when the
- * caller gives up, so a shorter wait does not shorten the work, it only hides how much is running.
- */
-export const IMAGE_CACHER_WAIT_MS = 70_000;
-
-/**
- * - `confirmed`: the service answered 2xx.
- * - `busy`: the service answered 429, so it did not do the work; try again on a later run.
- * - `unconfirmed`: any other answer, a network error, or the wait ran out.
- * - `pending`: sent without waiting for the answer.
- * - `not-sent`: no service is configured.
- */
-export type PurgeResizeCacheOutcome = 'confirmed' | 'busy' | 'unconfirmed' | 'pending' | 'not-sent';
-
 export async function purgeResizeCache({
   url,
   scope = 'all',
   retractPublicBlobs = false,
   waitForInvalidationMs,
+  retractionGate,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
@@ -401,7 +392,9 @@ export async function purgeResizeCache({
    *  Running out of time is expected for a slow purge and logged as info. Still never throws.
    *  A retraction always waits, `IMAGE_CACHER_WAIT_MS` unless this says otherwise. */
   waitForInvalidationMs?: number;
-} & PurgeResizeCacheRetraction): Promise<PurgeResizeCacheOutcome> {
+  /** A retraction is not sent, and is `busy`, once this gate is set; a 429 sets it. */
+  retractionGate?: RetractionGate;
+} & PurgeResizeCacheRetraction): Promise<ImageCacherOutcome> {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -485,9 +478,8 @@ export async function purgeResizeCache({
     // on: a bulk delete then has an unbounded number of retractions running on the service.
     const waitMs = waitForInvalidationMs ?? (retract ? IMAGE_CACHER_WAIT_MS : undefined);
 
-    const invalidation: Promise<PurgeResizeCacheOutcome> = fetch(
-      `${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`,
-      {
+    const send = (): Promise<ImageCacherOutcome> =>
+      fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
         method: 'POST',
         headers,
         // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
@@ -497,69 +489,71 @@ export async function purgeResizeCache({
         redirect: 'error',
         // Invalidation must not slow down the delete flow.
         signal: AbortSignal.timeout(waitMs ?? 2000),
-      }
-    )
-      .then(async (res): Promise<PurgeResizeCacheOutcome> => {
-        // The service is at its retraction limit and did nothing. Not retried here: retrying at
-        // once multiplies the load it is shedding, so the caller decides when to come back.
-        if (res.status === 429) {
-          await logToAxiom({
-            type: 'warning',
+      })
+        .then(async (res): Promise<ImageCacherOutcome> => {
+          // The service is at its retraction limit and did nothing. Not retried here: retrying at
+          // once multiplies the load it is shedding, so the caller decides when to come back.
+          if (res.status === 429) {
+            if (retractionGate) retractionGate.busy = true;
+            await logToAxiom({
+              type: 'warning',
+              name: 'image-cacher-invalidate',
+              message: 'image-cacher invalidate answered 429 (busy); not done',
+              imageKey: url,
+              scope,
+              retract,
+              status: res.status,
+              retryAfter: res.headers.get('retry-after') ?? undefined,
+            }).catch(() => {
+              // swallow — best effort logging
+            });
+            return 'busy';
+          }
+          // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
+          // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
+          // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
+          // line. That is the failure mode this check exists for: whatever the service decides to do
+          // with a rejected call, this branch is the only place it becomes visible on this side, and
+          // the first symptom of a stale shared secret would otherwise be stale images with no
+          // signal anywhere.
+          if (!res.ok) {
+            await logToAxiom({
+              type: 'warning',
+              name: 'image-cacher-invalidate',
+              message: 'image-cacher invalidate returned a non-success status',
+              imageKey: url,
+              scope,
+              status: res.status,
+            }).catch(() => {
+              // swallow — best effort logging
+            });
+            return 'unconfirmed';
+          }
+          return 'confirmed';
+        })
+        .catch((err): ImageCacherOutcome => {
+          const expectedTimeout =
+            waitMs !== undefined && (err as Error | undefined)?.name === 'TimeoutError';
+          logToAxiom({
+            type: expectedTimeout ? 'info' : 'warning',
             name: 'image-cacher-invalidate',
-            message: 'image-cacher invalidate answered 429 (busy); not done',
+            message: expectedTimeout
+              ? 'image-cacher invalidate still running at the wait deadline'
+              : 'image-cacher invalidate failed',
             imageKey: url,
             scope,
-            retract,
-            status: res.status,
-            retryAfter: res.headers.get('retry-after') ?? undefined,
-          }).catch(() => {
-            // swallow — best effort logging
-          });
-          return 'busy';
-        }
-        // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
-        // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
-        // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
-        // line. That is the failure mode this check exists for: whatever the service decides to do
-        // with a rejected call, this branch is the only place it becomes visible on this side, and
-        // the first symptom of a stale shared secret would otherwise be stale images with no
-        // signal anywhere.
-        if (!res.ok) {
-          await logToAxiom({
-            type: 'warning',
-            name: 'image-cacher-invalidate',
-            message: 'image-cacher invalidate returned a non-success status',
-            imageKey: url,
-            scope,
-            status: res.status,
+            error: safeError(err),
           }).catch(() => {
             // swallow — best effort logging
           });
           return 'unconfirmed';
-        }
-        return 'confirmed';
-      })
-      .catch((err): PurgeResizeCacheOutcome => {
-        const expectedTimeout =
-          waitMs !== undefined && (err as Error | undefined)?.name === 'TimeoutError';
-        logToAxiom({
-          type: expectedTimeout ? 'info' : 'warning',
-          name: 'image-cacher-invalidate',
-          message: expectedTimeout
-            ? 'image-cacher invalidate still running at the wait deadline'
-            : 'image-cacher invalidate failed',
-          imageKey: url,
-          scope,
-          error: safeError(err),
-        }).catch(() => {
-          // swallow — best effort logging
         });
-        return 'unconfirmed';
-      });
+    const invalidation = retract
+      ? retractionLimit(() => (retractionGate?.busy ? Promise.resolve('busy' as const) : send()))
+      : send();
     if (waitMs !== undefined) return await invalidation;
-    return 'pending';
   }
-  return 'not-sent';
+  return 'unconfirmed';
 }
 
 type DeleteImageFromS3Args = {
@@ -567,6 +561,7 @@ type DeleteImageFromS3Args = {
   url: string;
   purgeOnFailure?: boolean;
   abortSignal?: AbortSignal;
+  retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
 
 export async function deleteImageFromS3(
@@ -588,9 +583,10 @@ async function deleteImageFromStorage({
   // The shared B2 client sets no request timeout, and it also serves uploads, so a caller that
   // needs a bound supplies its own.
   abortSignal,
+  retractionGate,
 }: DeleteImageFromS3Args): Promise<{
   storage: StorageDeleteOutcome;
-  purge?: PurgeResizeCacheOutcome;
+  purge?: ImageCacherOutcome;
 }> {
   if (!env.DATABASE_IS_PROD) return { storage: 'skipped' };
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
@@ -703,7 +699,10 @@ async function deleteImageFromStorage({
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
   if (outcome === 'deleted' || purgeOnFailure)
-    return { storage: outcome, purge: await purgeResizeCache({ url: url, retractPublicBlobs }) };
+    return {
+      storage: outcome,
+      purge: await purgeResizeCache({ url: url, retractPublicBlobs, retractionGate }),
+    };
   return { storage: outcome };
 }
 
@@ -986,11 +985,9 @@ export async function deleteImages(
     onlyWhere?: Prisma.Sql;
   } = {}
 ) {
-  // One limit across every batch of this call: the batches below run concurrently, so a limit per
-  // batch would multiply by their count.
-  const retractionLimit = retractPublicBlobs
-    ? pLimit(env.IMAGE_CACHER_RETRACTION_CONCURRENCY)
-    : null;
+  // Once one retraction in this call is refused with a 429, the rest are not sent; their rows come
+  // back `busy` so the caller can queue them.
+  const retractionGate = newRetractionGate();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1047,7 +1044,7 @@ export async function deleteImages(
       ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
     ]);
 
-    const deleted = await deleteFromStorage(results, { retractPublicBlobs, retractionLimit });
+    const deleted = await deleteFromStorage(results, { retractPublicBlobs, retractionGate });
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
     return deleted;
@@ -1056,13 +1053,6 @@ export async function deleteImages(
   return images;
 }
 
-/**
- * Whether a retracting delete's retraction landed: `busy` when the image-cache service was at its
- * limit, `unconfirmed` for any other failure. Absent when nothing was asked of the service, which
- * happens when another row still uses the url.
- */
-export type ImageRetractionOutcome = 'confirmed' | 'busy' | 'unconfirmed';
-
 type DeletedImageRow = {
   id: number;
   url: string;
@@ -1070,44 +1060,28 @@ type DeletedImageRow = {
   nsfwLevel: number;
   userId: number;
   parentId: number | null;
-  retraction?: ImageRetractionOutcome;
+  /** A retracting delete's outcome; absent when nothing was asked (another row still uses the url). */
+  retraction?: ImageCacherOutcome;
 };
 
-function retractionOutcome(
-  purge: PurgeResizeCacheOutcome | undefined
-): ImageRetractionOutcome | undefined {
-  if (purge === undefined) return undefined;
-  if (purge === 'confirmed' || purge === 'busy') return purge;
-  return 'unconfirmed';
-}
-
-/**
- * 🔴 A retracting delete runs every row through `retractionLimit`, which waits for each retraction's
- * answer, so the limit is the number of retractions running on the image-cache service.
- */
+/** Every retraction request also passes `retractionLimit`, which caps them per process. */
 async function deleteFromStorage(
   rows: Omit<DeletedImageRow, 'retraction'>[],
   {
     retractPublicBlobs,
-    retractionLimit,
-  }: Required<PurgeResizeCacheRetraction> & { retractionLimit: LimitFunction | null }
+    retractionGate,
+  }: Required<PurgeResizeCacheRetraction> & { retractionGate: RetractionGate }
 ): Promise<DeletedImageRow[]> {
-  if (!retractPublicBlobs || !retractionLimit) {
-    await Limiter({ batchSize: 5 }).process(
-      rows,
-      async (rows) => await Promise.all(rows.map(({ id, url }) => deleteImageFromS3({ id, url })))
-    );
-    return rows;
-  }
-  return await Promise.all(
-    rows.map((row) =>
-      retractionLimit(async () => {
+  return await Limiter({ batchSize: 5 }).process(rows, async (rows) =>
+    Promise.all(
+      rows.map(async (row): Promise<DeletedImageRow> => {
         const { purge } = await deleteImageFromStorage({
           id: row.id,
           url: row.url,
           retractPublicBlobs,
+          retractionGate,
         });
-        return { ...row, retraction: retractionOutcome(purge) };
+        return retractPublicBlobs ? { ...row, retraction: purge } : row;
       })
     )
   );

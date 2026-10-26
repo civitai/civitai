@@ -8,6 +8,7 @@ import { createJob, type JobContext } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
+import { MAX_IN_FLIGHT_RETRACTIONS } from '~/server/services/image-cacher-retraction';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -68,7 +69,7 @@ const INGEST_SUBMIT_CONCURRENCY = 20;
 
 // remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
 // 20-minute lock: a second run taking the lock would double the retractions in flight. Each chunk
-// is five rounds of `IMAGE_CACHER_RETRACTION_CONCURRENCY` retractions of up to `IMAGE_CACHER_WAIT_MS`
+// is five rounds of `MAX_IN_FLIGHT_RETRACTIONS` retractions of up to `IMAGE_CACHER_WAIT_MS`
 // (~6 min), so the worst case is this budget plus one chunk plus the persist budget.
 const TAKEDOWN_RETRACTION_BUDGET_MS = 8 * 60 * 1000;
 const TAKEDOWN_CHUNK_ROUNDS = 5;
@@ -924,7 +925,7 @@ export const removeBlockedImages = createJob(
     // Takedowns not started this run. Their queue rows stay, and being oldest they lead the next run.
     const retractionDeferred: number[] = [];
     let retractionStoppedBy: 'busy' | 'budget' | null = null;
-    const takedownChunkSize = env.IMAGE_CACHER_RETRACTION_CONCURRENCY * TAKEDOWN_CHUNK_ROUNDS;
+    const takedownChunkSize = MAX_IN_FLIGHT_RETRACTIONS * TAKEDOWN_CHUNK_ROUNDS;
     for (const ids of chunk(takedowns, takedownChunkSize)) {
       if (retractionStoppedBy) {
         retractionDeferred.push(...ids);

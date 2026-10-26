@@ -90,6 +90,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 const { purgeResizeCache, deleteImageFromS3, deleteImages, deleteImageById } = await import(
   '../image.service'
 );
+const { callCdnAccess } = await import('../cdn-access.service');
 
 const invalidateCalls = () =>
   mockFetch.mock.calls.filter((call) => String(call[0]).includes('/admin/invalidate'));
@@ -378,5 +379,62 @@ describe('retraction load on the image-cache service', () => {
     expect(await purgeResizeCache({ url: KEY, retractPublicBlobs: true })).toBe('unconfirmed');
     mockFetch.mockRejectedValue(new Error('connection reset'));
     expect(await purgeResizeCache({ url: KEY, retractPublicBlobs: true })).toBe('unconfirmed');
+  });
+
+  // One limit for every retraction the process sends, whichever path sends it.
+  it('caps retractions from purgeResizeCache and callCdnAccess together at 5, and not denies', async () => {
+    const inFlight = { retract: 0, deny: 0 };
+    const max = { retract: 0, deny: 0 };
+    mockFetch.mockImplementation(async (url) => {
+      const kind = String(url).includes(RETRACT) ? 'retract' : 'deny';
+      inFlight[kind]++;
+      max[kind] = Math.max(max[kind], inFlight[kind]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight[kind]--;
+      return { ok: true, status: 202, headers: new Headers() } as never;
+    });
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const n = [...Array(8).keys()];
+
+    await Promise.all([
+      ...n.map((i) => purgeResizeCache({ url: `key-${i}`, retractPublicBlobs: true })),
+      ...n.map((i) => callCdnAccess(uuid(i), 'retract')),
+      ...n.map((i) => callCdnAccess(uuid(100 + i), 'deny')),
+    ]);
+
+    const sent = (kind: 'retract' | 'deny') =>
+      mockFetch.mock.calls.filter((c) => String(c[0]).includes(RETRACT) === (kind === 'retract'));
+    expect(sent('retract')).toHaveLength(16);
+    expect(sent('deny')).toHaveLength(8);
+    expect(max.retract).toBeGreaterThan(1);
+    expect(max.retract).toBeLessThanOrEqual(5);
+    expect(max.deny).toBe(8);
+  });
+
+  it('starts no retraction in a bulk delete after the first 429, and still deletes storage', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (!strings.join('').includes('DELETE FROM "Image"')) return [];
+      const joined = values.find(
+        (v): v is { values: number[] } =>
+          !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
+      );
+      return (joined?.values ?? []).map((id) => row(id, `key-${id}`));
+    }) as never);
+    mockFetch.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { ok: false, status: 429, headers: new Headers() } as never;
+    });
+
+    const ids = Array.from({ length: 20 }, (_, i) => i + 1);
+    const rows = await deleteImages(ids, true, { retractPublicBlobs: true });
+
+    expect(invalidateCalls().length).toBeGreaterThan(0);
+    expect(invalidateCalls().length).toBeLessThanOrEqual(5);
+    expect(rows).toHaveLength(20);
+    expect(rows.every((r) => r.retraction === 'busy')).toBe(true);
+    expect(mockB2Send).toHaveBeenCalledTimes(20);
   });
 });

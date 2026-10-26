@@ -193,7 +193,7 @@ describe('purgeResizeCache', () => {
     it('does not wait by default, so the delete flow is not slowed down', async () => {
       mockFetch.mockReturnValueOnce(new Promise(() => undefined));
 
-      await expect(purgeResizeCache({ url: UUID })).resolves.toBe('pending');
+      await expect(purgeResizeCache({ url: UUID })).resolves.toBe('unconfirmed');
     });
   });
 
