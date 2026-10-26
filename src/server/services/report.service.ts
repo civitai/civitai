@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
+import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -196,12 +197,15 @@ export const findReportToFoldInto = ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  /** Fold only into a report still waiting for a moderator. */
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
@@ -223,6 +227,7 @@ export const findReportToFoldInto = ({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
+      ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -235,6 +240,7 @@ const validateReportCreation = async ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   userId: number;
@@ -242,6 +248,7 @@ const validateReportCreation = async ({
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -250,6 +257,7 @@ const validateReportCreation = async ({
     entityReportId,
     reason,
     details,
+    pendingOnly,
     tx,
   });
 
@@ -344,6 +352,11 @@ type CreateReportProps = CreateReportInput & {
   userId: number;
   isModerator?: boolean;
   /**
+   * The reporter may not vote on tags yet (see `requiresEmailVerification`), so an NSFW report
+   * records no tag votes or rating request and waits for a moderator.
+   */
+  emailVerificationRequired?: boolean;
+  /**
    * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
    * needs its idempotency receipt committed atomically with the report, or a resend after a crash
    * re-appends the reporter to `alsoReportedBy` and pays them twice.
@@ -391,6 +404,7 @@ export const createReport = async ({
   userId,
   id,
   isModerator,
+  emailVerificationRequired,
   type,
   tx: callerTx,
   ...data
@@ -447,14 +461,25 @@ export const createReport = async ({
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
-  // Nothing automated acts on a crucible's, game's, storyline's or service's mature-content report,
-  // unlike an image's or a model's tag votes, so it goes to a moderator like any other reason:
-  // deduped, and left Pending.
+  // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
+  // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
+  // storyline's or service's, it goes to a moderator like any other reason: deduped, and left Pending.
+  // It joins only a report still waiting for one, never an earlier report that was already actioned.
+  const castsNoTagVotes =
+    !!emailVerificationRequired &&
+    data.reason === ReportReason.NSFW &&
+    (type === ReportEntity.Image || type === ReportEntity.Model);
   const awaitsModerator =
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
-    type === ReportEntity.ServiceOffering;
+    type === ReportEntity.ServiceOffering ||
+    castsNoTagVotes;
+  // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
+  // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
+  const details = data.details as MixedObject;
+  if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
+  else delete details[NO_REPORT_REWARD_KEY];
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -462,7 +487,8 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
-          details: data.details as MixedObject,
+          details,
+          pendingOnly: castsNoTagVotes,
           tx: callerTx,
         })
       : null;
@@ -543,17 +569,19 @@ export const createReport = async ({
             }
           }
 
-          await Promise.all([
-            createImageRatingRequest(),
-            addTagVotes({
-              userId,
-              type: type,
-              id,
-              tags: data.details.tags ?? [],
-              isModerator,
-              vote: 1,
-            }),
-          ]);
+          if (!castsNoTagVotes) {
+            await Promise.all([
+              createImageRatingRequest(),
+              addTagVotes({
+                userId,
+                type: type,
+                id,
+                tags: data.details.tags ?? [],
+                isModerator,
+                vote: 1,
+              }),
+            ]);
+          }
 
           break;
         case ReportEntity.Article:
@@ -685,7 +713,7 @@ export async function bulkSetReportStatus({
 
   const reports = await dbRead.report.findMany({
     where: { id: { in: ids }, status: { not: status } },
-    select: { id: true, userId: true, alsoReportedBy: true },
+    select: { id: true, userId: true, alsoReportedBy: true, details: true },
   });
 
   if (!reports) return;
@@ -723,7 +751,7 @@ export async function bulkSetReportStatus({
         });
     const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
-      const excluded = noRewardFor(report.id);
+      const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,
         userIds: [report.userId, ...report.alsoReportedBy].filter(

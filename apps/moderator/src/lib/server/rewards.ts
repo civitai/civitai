@@ -16,12 +16,15 @@ const REPORT_ACCEPTED_AWARD = 50;
 export async function rewardReportReporters(input: {
   reportId: number;
   reporterIds: number[];
+  /** Reporters the report itself marks as earning nothing for it (`reportersWithoutReward`). */
+  unpaidReporterIds?: number[];
   ip?: string;
 }): Promise<void> {
   if (!input.reporterIds.length) return;
   try {
     const globalBonus = await getGlobalRewardsBonus();
     const ineligible = await getIneligibleReporters(input.reporterIds);
+    for (const id of input.unpaidReporterIds ?? []) ineligible.add(id);
     const clamped: number[] = [];
     const floored: number[] = [];
     const rows = await Promise.all(
