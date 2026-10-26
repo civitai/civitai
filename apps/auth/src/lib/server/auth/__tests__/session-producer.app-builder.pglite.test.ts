@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
-import { Kysely } from 'kysely';
+import { PGlite } from '@electric-sql/pglite';
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type DatabaseConnection,
+  type Dialect,
+} from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-// Relative: the PGlite harness lives in the moderator app, as it does for the main app's tests.
-import { freshPglite } from '../../../../../../moderator/src/test/pglite';
-import { pgliteDialect } from '../../../../../../moderator/src/lib/server/__tests__/abuse-detection-pglite.harness';
 
 /**
  * The app-builder grant, at the ONE place it is derived: the hub's session producer, run for real
@@ -64,6 +68,35 @@ const MODERATOR = 7303;
 
 let pg: PGlite;
 
+/** Kysely over in-process PGlite: one connection, no pool, no transactions needed here. */
+function pgliteDialect(db: PGlite): Dialect {
+  const connection: DatabaseConnection = {
+    async executeQuery(compiled) {
+      const result = await db.query(compiled.sql, compiled.parameters as unknown[]);
+      return { rows: result.rows as never[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+    },
+    // eslint-disable-next-line require-yield
+    async *streamQuery() {
+      throw new Error('the session producer does not stream');
+    },
+  };
+  const noop = async () => undefined;
+  return {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => ({
+      init: noop,
+      acquireConnection: async () => connection,
+      beginTransaction: noop,
+      commitTransaction: noop,
+      rollbackTransaction: noop,
+      releaseConnection: noop,
+      destroy: noop,
+    }),
+    createIntrospector: (kysely) => new PostgresIntrospector(kysely),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  };
+}
+
 const request = (userId: number, status: 'pending' | 'approved' | 'declined') =>
   pg.query(
     `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "reviewedById")
@@ -72,7 +105,7 @@ const request = (userId: number, status: 'pending' | 'approved' | 'declined') =>
   );
 
 beforeEach(async () => {
-  pg = await freshPglite();
+  pg = await PGlite.create();
   await pg.exec(PRELUDE);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
   await pg.query(

@@ -53,8 +53,11 @@ export interface ProducerUserRow {
   filePreferences: unknown;
   settings: unknown;
   meta: unknown;
-  /** `EXISTS` an approved `AppAccessRequest` for this user (the producer's query). */
-  appBuilderApproved?: boolean | null;
+  /**
+   * `EXISTS` an approved `AppAccessRequest` for this user (the producer's query). Kysely types an
+   * `EXISTS` as `SqlBool` (`boolean | 0 | 1`); node-postgres returns a boolean.
+   */
+  appBuilderApproved?: boolean | 0 | 1 | null;
   profilePicture: { url: string } | null;
   referral: { id: number } | null;
 }
@@ -137,7 +140,7 @@ export function shapeSessionUser({
   // App-builder grant, from the producer's EXISTS over `AppAccessRequest` — a column of the
   // query, not of `settings`, so a settings blob carrying the same key is ignored. Sparse like
   // `isEarlyAdopter`: only an approved user's payload changes.
-  const appBuilderApproved: true | undefined = row.appBuilderApproved === true ? true : undefined;
+  const appBuilderApproved: true | undefined = row.appBuilderApproved ? true : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
