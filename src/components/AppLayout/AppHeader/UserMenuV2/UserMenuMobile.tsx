@@ -37,6 +37,7 @@ import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
@@ -105,6 +106,7 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     opened: true,
     pins: pins.pins,
     muted: pins.mutedBadges,
+    mobile: true,
   });
   const pinActions = usePinActions(pins);
   const { announce, region } = pinActions;
@@ -571,7 +573,7 @@ export function MobileItem({
     </>
   );
 
-  const link = item.href ? (
+  const row = item.href ? (
     item.external ? (
       <a
         href={item.href}
@@ -607,6 +609,15 @@ export function MobileItem({
       {content}
     </MenuItemButton>
   );
+
+  const link =
+    item.redirectReason && item.href ? (
+      <LoginRedirect reason={item.redirectReason} returnUrl={item.href}>
+        {row}
+      </LoginRedirect>
+    ) : (
+      row
+    );
 
   if (!canPin && !canMute) return link;
   // A row, not one button: the pin and the mute are controls of their own, and a button cannot hold another.
