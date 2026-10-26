@@ -93,9 +93,11 @@ export default function StorylineFirstChapterModal({
             </Alert>
           )}
           {post && raisesCeiling && (
+            // Hedged: a ceiling held to safe for work cannot be raised, and the client is not told.
             <Text size="sm" c="dimmed">
               This post is rated {getBrowsingLevelLabel(getHighestBrowsingLevelBit(post.nsfwLevel))}
-              , so the storyline&apos;s maximum rating goes up from {ceiling} to fit it.
+              , above this storyline&apos;s maximum of {ceiling}. Making it chapter 1 raises the
+              maximum to fit it, where the storyline allows that.
             </Text>
           )}
           {setFirstChapter.error && (

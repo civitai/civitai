@@ -142,7 +142,7 @@ describe('StorylineFirstChapterModal', () => {
 
     await tile(10).click();
     await expect
-      .element(page.getByText(/goes up from PG-13 to fit it/))
+      .element(page.getByText(/raises the maximum to fit it/))
       .toHaveTextContent(/rated R/);
     await expect.element(submit()).toBeEnabled();
   });
@@ -155,7 +155,7 @@ describe('StorylineFirstChapterModal', () => {
 
     await page.getByRole('radio', { name: /above this storyline's PG-13 limit/ }).click();
     await expect.element(page.getByText(/rated above this storyline's maximum/)).toBeVisible();
-    expect(page.getByText(/goes up from/).elements()).toHaveLength(0);
+    expect(page.getByText(/raises the maximum/).elements()).toHaveLength(0);
     await expect.element(submit()).toBeDisabled();
   });
 
