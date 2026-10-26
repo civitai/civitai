@@ -39,6 +39,7 @@ vi.mock('$lib/server/clickhouse', () => ({
 }));
 
 const { getAccountsOnAddresses } = await import('../ip-links.service');
+const { ipCluster } = await import('../ip-clusters');
 
 beforeEach(() => {
   peerQueries.length = 0;
@@ -65,6 +66,19 @@ describe('getAccountsOnAddresses', () => {
     expect(linked!.addresses.filter((a) => a.source === 'login')).toEqual([
       { cluster: A, source: 'login', accounts: 1 },
       { cluster: B, source: 'login', accounts: 2 },
+    ]);
+  });
+
+  it('takes an IPv6 /64 key as given, and reads two addresses in one /64 as that one prefix', async () => {
+    const prefix = ipCluster('2001:db8:abc::1')!;
+    const { linked, invalid } = await getAccountsOnAddresses([
+      '2001:db8:abc::1',
+      '2001:db8:abc::2',
+      prefix,
+    ]);
+    expect(invalid).toEqual([]);
+    expect(linked!.addresses.filter((a) => a.source === 'login').map((a) => a.cluster)).toEqual([
+      prefix,
     ]);
   });
 

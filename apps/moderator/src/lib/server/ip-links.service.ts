@@ -180,15 +180,12 @@ export async function getAccountsOnAddresses(
 ): Promise<{ linked: LinkedAccounts | null; invalid: string[] }> {
   const own: OwnAddress[] = [];
   const invalid: string[] = [];
-  const seen = new Set<string>();
   for (const address of addresses) {
     const cluster = isClusterKey(address) ? address : ipCluster(address);
     if (!cluster) {
       invalid.push(address);
       continue;
     }
-    if (seen.has(`${cluster} ${address}`)) continue;
-    seen.add(`${cluster} ${address}`);
     for (const source of ['login', 'reaction'] as const)
       own.push({ cluster, ips: cluster === address ? [] : [address], last: '', source });
   }

@@ -224,9 +224,20 @@ describe('accounts_on_address', () => {
     expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1', '198.51.100.7']);
   });
 
-  it('still takes one address as before', async () => {
+  it('still takes one address as before, and says when it is not one', async () => {
     await ask({ address: '192.0.2.1' });
     expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1']);
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['nope'] });
+    expect(await ask({ address: 'nope' })).toEqual({ error: 'Not an IP address.' });
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['a', 'b'] });
+    expect(await ask({ addresses: ['aaa', 'bbb'] })).toEqual({
+      error: 'None of these is an IP address.',
+    });
+  });
+
+  it('passes the window and the page through, so a later page is not page one again', async () => {
+    await ask({ addresses: ['192.0.2.1'], days: 7, offset: 100, limit: 50 });
+    expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
   });
 
   it('names back what was not an address, so it is not read as an empty one', async () => {
