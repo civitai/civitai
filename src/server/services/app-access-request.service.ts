@@ -135,14 +135,30 @@ export async function decideAppAccessRequest({
   input: DecideAppAccessRequestInput;
 }): Promise<AppAccessRequestView> {
   const from = DECIDABLE_FROM[input.decision];
-  const [row] = await dbWrite.$queryRaw<(AppAccessRequestView & { userId: number })[]>(Prisma.sql`
-    UPDATE "AppAccessRequest"
+  // 🔴 A REVOKE DECLINES EVERY APPROVED ROW THE PERSON HOLDS, not just the one clicked. Two can
+  // exist: `submit`'s approved-check and its INSERT are separate statements, so a submit racing an
+  // approve leaves a second pending row a moderator may also approve. The grant is "EXISTS an
+  // approved row", so a one-row revoke would leave access in place. The sweep runs only when the
+  // TARGET was approved: declining a stray pending row must not take away a standing grant.
+  // (Chosen over a partial unique index on approved rows: that would make approving the stray row
+  // a unique violation, and the migration is hand-applied with IF NOT EXISTS, so an environment
+  // that already ran it would never get the index.)
+  const rows = await dbWrite.$queryRaw<(AppAccessRequestView & { userId: number })[]>(Prisma.sql`
+    WITH target AS (
+      SELECT "id", "userId", "status" AS "prev" FROM "AppAccessRequest"
+      WHERE "id" = ${input.id} AND "status" IN (${Prisma.join(from)})
+      FOR UPDATE
+    )
+    UPDATE "AppAccessRequest" r
     SET "status" = ${input.decision},
         "reviewedAt" = CURRENT_TIMESTAMP,
         "reviewedById" = ${moderatorId}
-    WHERE "id" = ${input.id} AND "status" IN (${Prisma.join(from)})
-    RETURNING "userId", ${VIEW_COLUMNS}
+    FROM target t
+    WHERE r."id" = t."id"
+       OR (t."prev" = 'approved' AND r."userId" = t."userId" AND r."status" = 'approved')
+    RETURNING r."userId", r."id", r."whatToBuild", r."status", r."createdAt", r."reviewedAt"
   `);
+  const row = rows.find((r) => r.id === input.id);
   if (row) {
     const { userId, ...view } = row;
     await refreshSession(userId, { caller: 'moderation' }).catch(handleLogError);

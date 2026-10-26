@@ -12,6 +12,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { APPS_BUILD_APPS_VIEW, MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
 type AssistantProps = {
@@ -26,9 +27,6 @@ type AssistantProps = {
   remoteRunner: boolean;
 };
 export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
-
-/** `?view=apps`: an author in the assistant view opens their app list instead. */
-export const APPS_BUILD_APPS_VIEW = 'apps';
 
 /**
  * `/apps/build` — the ONE place to build an app. It replaced `/apps/get-started`, `/apps/mine`
@@ -114,7 +112,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
     ) : isAuthor ? (
       <Button
         component={Link}
-        href={`/apps/build?view=${APPS_BUILD_APPS_VIEW}`}
+        href={MY_APPS_HREF}
         variant="default"
         leftSection={<IconLayoutList size={16} />}
         data-testid="apps-build-show-apps"

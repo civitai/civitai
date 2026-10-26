@@ -113,6 +113,23 @@ describe('/apps/build — which view the page mounts', () => {
     expect(seen('workspace')).toBe(1);
   });
 
+  /**
+   * 🔴 THE COHORT EVERY "My apps" LINK IS POINTED AT `?view=apps` FOR: a NON-moderator author who
+   * also holds the App Assistant. The server hands them the assistant view, so a bare
+   * `/apps/build` opens the assistant; `?view=apps` must open their app list instead.
+   */
+  test('🔴 an assistant-holding author (not a moderator) with ?view=apps gets the app list', async () => {
+    mocks.user = MEMBER;
+    mocks.flags = { appBlocksAuthor: true };
+    (Router as unknown as { query: Record<string, string> }).query = { view: 'apps' };
+    await renderPage(ASSISTANT);
+    expect(seen('build-body')).toBe(1);
+    expect(seen('workspace')).toBe(0);
+    await expect
+      .element(page.getByTestId('apps-build-show-assistant'))
+      .toHaveAttribute('href', '/apps/build');
+  });
+
   test('🔴 …and ?view=apps shows it, with a way back to the assistant', async () => {
     mocks.user = MODERATOR; // moderators are authors by floor
     (Router as unknown as { query: Record<string, string> }).query = { view: 'apps' };

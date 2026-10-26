@@ -298,6 +298,66 @@ describe('decideAppAccessRequest — approving GRANTS, declining an approved row
     await expect(submit(mira, MIRA_IDEA_AGAIN)).resolves.toMatchObject({ status: 'pending' });
   });
 
+  /**
+   * Two approved rows for one person is reachable: `submit`'s "already approved?" read and its
+   * INSERT are two statements, so a submit that reads before a moderator approves the pending row
+   * and inserts after it leaves a second pending row, which a moderator can then approve too. The
+   * grant is "EXISTS an approved row", so revoking only the row the moderator clicked would leave
+   * the other one granting access.
+   */
+  const raceIntoTwoApprovedRows = async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'approved');
+    // The losing half of the race: the INSERT that ran after the approve (the service's read
+    // would refuse it now, which is the point — it did not when it ran).
+    const [{ id: secondId }] = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild") VALUES ($1, $2) RETURNING "id"`,
+        [mira, MIRA_IDEA_AGAIN]
+      )
+    ).rows;
+    await decide(secondId, 'approved');
+    expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['approved', 'approved']);
+    return { firstId: first.id, secondId };
+  };
+
+  it('🔴 revoke removes access even when the person holds TWO approved rows', async () => {
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    const { firstId, secondId } = await raceIntoTwoApprovedRows();
+    refreshSession.mockClear();
+
+    const revoked = await decide(firstId, 'declined');
+    expect(revoked).toMatchObject({ id: firstId, status: 'declined' });
+    expect(await isApproved(mira)).toBe(false);
+    expect(await rowsFor(mira)).toEqual([
+      { id: firstId, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: secondId, status: 'declined', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
+    // Another person's grant is untouched, and only the requester's session is refreshed, once.
+    expect(await isApproved(tomasz)).toBe(true);
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+  });
+
+  it('🔴 declining a PENDING request does not revoke the same person’s approved one', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'approved');
+    const [{ id: strayId }] = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild") VALUES ($1, $2) RETURNING "id"`,
+        [mira, MIRA_IDEA_AGAIN]
+      )
+    ).rows;
+
+    await expect(decide(strayId, 'declined')).resolves.toMatchObject({
+      id: strayId,
+      status: 'declined',
+    });
+    expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['approved', 'declined']);
+    expect(await isApproved(mira)).toBe(true);
+  });
+
   it('🔴 a declined request is not re-decided: approving it is a CONFLICT and grants nothing', async () => {
     const req = await submit(mira, MIRA_IDEA);
     await decide(req.id, 'declined');
