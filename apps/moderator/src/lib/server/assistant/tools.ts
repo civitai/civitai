@@ -121,7 +121,8 @@ const ACCOUNT_FIELDS = [
   'normalizedEmail',
 ] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
 
-/** One accounts_on_address call: enough for a chain's addresses, small enough to page through. */
+/** Addresses per accounts_on_address call. Raising it means raising `groupUniqArray(50)` in
+ *  ip-links.service.ts too, or an account's address list is cut short without saying so. */
 const MAX_BATCH_ADDRESSES = 50;
 
 const EMAILS_NOTE =
