@@ -1588,7 +1588,7 @@ export const upsertCollection = async ({
             )
           )
       `;
-    } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
+    } else if (!updated.mode && updated.read !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
       // left alone so their own stamps survive.
       await dbWrite.$executeRaw`
