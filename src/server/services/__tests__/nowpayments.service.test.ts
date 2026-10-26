@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
+import type * as ManualCredit from '~/server/services/nowpayments-manual-credit';
 
 // Use vi.hoisted so mocks are available inside vi.mock factories
 const {
@@ -52,6 +53,12 @@ vi.mock('~/server/services/buzz.service', () => ({
 
 vi.mock('~/utils/signal-client', () => ({
   signalClient: mockSignalClient,
+}));
+
+// The hand-grant scan runs against a fake ledger in nowpayments-credit.service.test.ts.
+vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManualCredit>()),
+  findManualCredits: vi.fn(async () => []),
 }));
 
 vi.mock('~/server/utils/distributed-lock', () => ({
@@ -504,7 +511,9 @@ describe('processDeposit', () => {
         makeWebhookEvent({ outcome_amount: 5 })
       );
 
-      expect(mockGetTransactionByExternalId).not.toHaveBeenCalled();
+      expect(mockGetTransactionByExternalId).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^np-payin-/)
+      );
       expect(result.transactionId).toBe('tx_123');
     });
 
