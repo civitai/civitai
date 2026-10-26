@@ -69,6 +69,11 @@ export class FakeSandboxService {
   readonly abandoned: string[] = [];
   /** The next N `tools/call` requests are answered 503, as a paused sandbox's address is. */
   failCalls = 0;
+  /**
+   * MCP `initialize` is accepted and never answered (until the client hangs up), as a sandbox that
+   * listens but is wedged: the connect every tool call waits on never completes.
+   */
+  hangInitialize = false;
   /** How many looks at a starting sandbox it takes to run. */
   startsAfter = 1;
   /** Apps deleted just before their next open: the open then makes a new, empty one (201). */
@@ -197,6 +202,10 @@ export class FakeSandboxService {
       const record = this.sandboxes.find((s) => s.name === mcp[1]);
       if (!record || record.state !== 'running') return json(503, { error: 'not running' });
       const message = body as { method?: string; id?: unknown } | undefined;
+      if (message?.method === 'initialize' && this.hangInitialize) {
+        await new Promise<void>((resolve) => res.on('close', () => resolve()));
+        return;
+      }
       if (message?.method === 'tools/call' && this.failCalls > 0) {
         this.failCalls--;
         return json(503, { error: 'not running' });

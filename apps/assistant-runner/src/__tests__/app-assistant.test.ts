@@ -76,6 +76,13 @@ async function open(overrides: Partial<ToolContext> = {}) {
   return { tools, reported, ended, stop };
 }
 
+/** The runner's own reads as a reply opens (the SDK pin check): the assistant made none of them. */
+const RUNNER_READS = ['my-app/package.json', 'my-app/node_modules/@civitai/sdk/package.json'];
+/** Every `read_file` call but the runner's own SDK pin reads. */
+const assistantReads = () =>
+  fake.calls.filter((c) => c.tool === 'read_file' && !RUNNER_READS.includes(String(c.args.path)))
+    .length;
+
 const opensApps = () =>
   fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
 
@@ -347,7 +354,7 @@ describe('App Assistant’s gate on the runner', () => {
     // The 150th was still the gate's ordinary refusal, not the end.
     expect(reported[149]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
-    expect(fake.callsTo('read_file')).toBe(0);
+    expect(assistantReads()).toBe(0);
   });
 
   it('keeps a subagent read-only: it cannot write or run commands', async () => {
@@ -368,7 +375,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(fake.callsTo('write_file')).toBe(0);
     expect(fake.callsTo('run_command')).toBe(0);
     // Control: the read it was allowed did run.
-    expect(fake.callsTo('read_file')).toBe(1);
+    expect(assistantReads()).toBe(1);
   });
 
   it('leaves a subagent’s calls out of the parent’s 150', async () => {
@@ -387,7 +394,7 @@ describe('App Assistant’s gate on the runner', () => {
     })) as { status: string };
     expect(dispatched.status).toBe('done');
     // All five ran though the parent's count stood at 149: a subagent has its own budget.
-    expect(fake.callsTo('read_file')).toBe(5);
+    expect(assistantReads()).toBe(5);
     expect(reported.filter((r) => r.subagent !== undefined)).toHaveLength(5);
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toMatchObject({
