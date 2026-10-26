@@ -21,8 +21,11 @@ export function useQueryShopServices(userId: number, enabled: boolean) {
   return { offerings: data ?? [], isLoading };
 }
 
-export function useQueryMyServices(enabled: boolean) {
-  const eligibility = trpc.creatorService.getSellEligibility.useQuery(undefined, { enabled });
+/** `canSell` false (the services flag is off) still lists the seller's services, to pause or remove. */
+export function useQueryMyServices(enabled: boolean, canSell = enabled) {
+  const eligibility = trpc.creatorService.getSellEligibility.useQuery(undefined, {
+    enabled: enabled && canSell,
+  });
   const mine = trpc.creatorService.getMine.useQuery(undefined, { enabled });
   return {
     eligibility: eligibility.data,
