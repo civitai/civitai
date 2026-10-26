@@ -21,6 +21,7 @@ import {
 import { dbRead, dbWrite } from './db';
 import { cappedText } from './html-to-text';
 import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-covers';
+import { postCoverRows } from './post-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
@@ -94,19 +95,14 @@ async function imagesById(ids: (number | null)[]): Promise<Map<number, RatingRev
   return new Map(found.map((r) => [r.id, r]));
 }
 
-// A post's images in the author's order; `index` ties are broken by id so the first image is stable.
 async function postCovers(ids: number[]): Promise<Map<number, RatingReviewImage>> {
-  if (!ids.length) return new Map();
-  const found = await dbRead
-    .selectFrom('Image as i')
-    .distinctOn('i.postId')
-    .select(['i.postId', ...IMAGE_FIELDS])
-    .where('i.postId', 'in', ids)
-    .orderBy('i.postId')
-    .orderBy(sql`i."index" asc nulls last`)
-    .orderBy('i.id')
-    .execute();
-  return new Map(found.map((r) => [r.postId!, r]));
+  const found = await postCoverRows(ids, { limit: 1 });
+  return new Map(
+    found.map(({ postId, id, url, type, nsfwLevel }) => [
+      postId,
+      { id, url, type: type as MediaType, nsfwLevel },
+    ])
+  );
 }
 
 async function connectionCovers(
@@ -368,15 +364,17 @@ async function loadImagesForType(
 
   switch (entityType) {
     case 'Post': {
-      const { rows } = await sql<RatingReviewImage & { key: number; total: string; rn: string }>`
-        SELECT * FROM (
-          SELECT i."id", i."url", i."type", i."nsfwLevel", i."postId" AS "key",
-            row_number() OVER (PARTITION BY i."postId" ORDER BY i."index" ASC NULLS LAST, i."id") AS rn,
-            count(*) OVER (PARTITION BY i."postId") AS total
-          FROM "Image" i WHERE i."postId" IN (${sql.join(ids)})) x
-        WHERE x.rn <= ${limit}
-        ORDER BY x."key", x.rn`.execute(dbRead);
-      group(rows);
+      const rows = await postCoverRows(ids, { limit });
+      group(
+        rows.map(({ postId, id, url, type, nsfwLevel, total }) => ({
+          key: postId,
+          id,
+          url,
+          type: type as MediaType,
+          nsfwLevel,
+          total,
+        }))
+      );
       return out;
     }
     case 'Model': {
