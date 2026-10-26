@@ -243,7 +243,10 @@ export async function callCdnAccess(url: string, call: CdnCall, options: CdnCall
     const res = await inRetractionSlot(async () => {
       await options.beforeSend?.();
       try {
-        return await send();
+        const res = await send();
+        // Inside the slot: the next queued retraction must see the gate the moment this one frees it.
+        if (res.status === 429 && options.gate) options.gate.busy = true;
+        return res;
       } catch (error) {
         if (isTimeout(error)) {
           if (options.gate) options.gate.busy = true;
@@ -262,10 +265,7 @@ export async function callCdnAccess(url: string, call: CdnCall, options: CdnCall
     try {
       const res = retract ? await sendRetraction() : await send();
       if (res.ok) return;
-      if (res.status === 429) {
-        if (retract && options.gate) options.gate.busy = true;
-        throw new ImageServerBusyError(res.headers.get('retry-after'));
-      }
+      if (res.status === 429) throw new ImageServerBusyError(res.headers.get('retry-after'));
       lastError = new Error(`image server answered ${res.status}`);
     } catch (error) {
       if (error instanceof RetractionNotDoneError) throw error;
