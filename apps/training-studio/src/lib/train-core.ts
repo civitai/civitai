@@ -40,6 +40,7 @@ import {
   EXTRA_PARAM_FIELDS,
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
+  ecosystemTakesSampleImages,
   isRetiredBaseAir,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
@@ -87,6 +88,9 @@ export interface TrainingRunInput {
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
+  /** Input images the samples are rendered from (edit LoRAs), index-aligned to `prompts`. Only for
+   *  `ecosystemTakesSampleImages`; omit for text-only samples. */
+  sourceImages?: string[];
   /** A previous checkpoint's blob-reference AIR to continue training from ("keep training"); omit for fresh. */
   continueFrom?: string;
   /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
@@ -197,6 +201,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           samples: {
             prompts:
               run.ecosystem === 'yue2' ? run.prompts.map(formatYue2SamplePrompt) : run.prompts,
+            ...(run.sourceImages?.length ? { sourceImages: run.sourceImages } : {}),
           },
         },
       };
@@ -330,6 +335,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   });
   if (!Array.isArray(run.prompts) || run.prompts.some((p) => !isString(p)))
     fail(`${field}.prompts`, 'must be an array of strings.');
+  if (run.sourceImages !== undefined) {
+    if (!Array.isArray(run.sourceImages) || !run.sourceImages.every(isNonEmptyString))
+      fail(`${field}.sourceImages`, 'must be an array of image URLs.');
+    if (isFlux2(run.engine) || !ecosystemTakesSampleImages(run.ecosystem))
+      fail(`${field}.sourceImages`, 'are not supported for this model.');
+    // The orchestrator pairs them by index; a short list would render some samples from nothing.
+    if (run.sourceImages.length !== run.prompts.length)
+      fail(`${field}.sourceImages`, 'must have one image per sample prompt.');
+  }
   for (const key of OPTIONAL_STRING_FIELDS) {
     if (run[key] !== undefined && !isString(run[key])) fail(`${field}.${key}`, 'must be a string.');
   }
