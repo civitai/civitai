@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
   cosmetics: [] as unknown[],
   cosmeticsLoading: false,
   offerings: [{ status: 'Active' }] as { status: string }[],
+  // `getMine` as the page queries it itself, for an owner without the services flag.
+  mine: { items: [{ status: 'Active' }], hiddenOffDomain: 0 } as {
+    items: unknown[];
+    hiddenOffDomain: number;
+  },
 }));
 
 vi.mock('next/router', () => ({
@@ -30,6 +35,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'userProfile.get': { useQuery: () => ({ data: { id: 1 } }) },
+    'creatorService.getMine': {
+      useQuery: (_: unknown, opts?: { enabled?: boolean }) => ({
+        data: opts?.enabled ? mocks.mine : undefined,
+      }),
+    },
   }),
 }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
@@ -81,6 +91,7 @@ beforeEach(() => {
   mocks.cosmetics = [];
   mocks.cosmeticsLoading = false;
   mocks.offerings = [{ status: ServiceOfferingStatus.Active }];
+  mocks.mine = { items: [{ status: ServiceOfferingStatus.Active }], hiddenOffDomain: 0 };
 });
 
 describe('manage page: publishing a shop', () => {
@@ -111,5 +122,36 @@ describe('manage page: publishing a shop', () => {
   it("does not count the seller's services when a moderator publishes for them", () => {
     mocks.user = { id: 99, username: 'Moderator', isModerator: true };
     expect(publishDisabled(render())).toBe(true);
+  });
+});
+
+describe('manage page: the Services tab', () => {
+  const hasServicesTab = (html: string) => /role="tab"[^>]*>[\s\S]*?Services/.test(html);
+
+  it('shows for an owner with the services flag', () => {
+    mocks.mine = { items: [], hiddenOffDomain: 0 };
+    expect(hasServicesTab(render())).toBe(true);
+  });
+
+  // Without it, a seller who lost the flag cannot reach Pause or Remove.
+  it.each([
+    ['a service here', { items: [{}], hiddenOffDomain: 0 }],
+    ['only a service on the other domain', { items: [], hiddenOffDomain: 1 }],
+  ])('stays for an owner without the flag who has %s', (_, mine) => {
+    mocks.flags = { creatorServices: false };
+    mocks.mine = mine;
+    expect(hasServicesTab(render())).toBe(true);
+  });
+
+  it('is gone for an owner without the flag and no services', () => {
+    mocks.flags = { creatorServices: false };
+    mocks.mine = { items: [], hiddenOffDomain: 0 };
+    expect(hasServicesTab(render())).toBe(false);
+  });
+
+  it("is never shown to a moderator managing someone else's shop", () => {
+    mocks.user = { id: 99, username: 'Moderator', isModerator: true };
+    mocks.flags = { creatorServices: false };
+    expect(hasServicesTab(render())).toBe(false);
   });
 });

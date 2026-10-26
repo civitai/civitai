@@ -160,6 +160,8 @@ export type ModelRulesHoldMeta = {
   /** Set when an earlier hold on this model exists; `priorHoldId` is that hold. */
   kind?: 'redetected';
   priorHoldId?: number;
+  /** Where the detection came from; absent for a publish or an edit. */
+  source?: 'training';
   /** The ruling, or `superseded` when a newer detection closed the hold without one. */
   decision?: ModelRulesHoldDecision | 'superseded';
 };
@@ -191,6 +193,7 @@ const holdMetaSchema = z.object({
   versionIds: z.array(z.number()).optional().catch(undefined),
   kind: z.literal('redetected').optional().catch(undefined),
   priorHoldId: z.number().optional().catch(undefined),
+  source: z.literal('training').optional().catch(undefined),
   decision: z
     .enum([...MODEL_RULES_HOLD_DECISIONS, 'superseded'])
     .optional()
@@ -200,7 +203,7 @@ const holdMetaSchema = z.object({
 /** Keeps whatever entries parse: a hold written by an older build, or one with its meta nulled, still lists. */
 export function parseModelRulesHoldMeta(meta: unknown): ModelRulesHoldMeta {
   const parsed = holdMetaSchema.safeParse(meta ?? {});
-  const { applied, versionIds, kind, priorHoldId, decision, ...rest } = parsed.success
+  const { applied, versionIds, kind, priorHoldId, source, decision, ...rest } = parsed.success
     ? parsed.data
     : holdMetaSchema.parse({});
   return {
@@ -209,6 +212,7 @@ export function parseModelRulesHoldMeta(meta: unknown): ModelRulesHoldMeta {
     ...(versionIds?.length ? { versionIds } : {}),
     ...(kind ? { kind } : {}),
     ...(priorHoldId !== undefined ? { priorHoldId } : {}),
+    ...(source ? { source } : {}),
     ...(decision ? { decision } : {}),
   };
 }

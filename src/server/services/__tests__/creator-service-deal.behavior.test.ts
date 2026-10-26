@@ -1624,6 +1624,55 @@ describe('the finals gate and dispute resolution', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['seller', SELLER, 'Release'],
+    ['buyer', BUYER, 'Refund'],
+  ] as const)(
+    'refuses a moderator who is the %s, and moves nothing',
+    async (_, moderatorId, resolution) => {
+      const id = await completed();
+      await finals(id);
+      await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
+      await expect(
+        deals.resolveServiceDealDispute({ dealId: id, moderatorId, resolution })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringMatching(/Another moderator/),
+      });
+      expect((await deal(id)).status).toBe('Disputed');
+      expect((await disputeRow(id)).disputeResolution).toBeNull();
+      expect(await events(id)).not.toContain('DisputeResolved');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  // A party learns nothing either: not an earlier ruling, nor that the finals block a Release.
+  it.each([
+    [
+      'already resolved',
+      async (id: number) => {
+        await finals(id);
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+        await resolve(id, 'Refund');
+      },
+    ],
+    [
+      'whose finals have not passed',
+      async (id: number) => {
+        await finals(id, 'Pending');
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+      },
+    ],
+  ])('refuses the seller as moderator on a deal %s', async (_, setup) => {
+    const id = await completed();
+    await setup(id);
+    await expect(
+      deals.resolveServiceDealDispute({ dealId: id, moderatorId: SELLER, resolution: 'Release' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   it('releases a buyer dispute decided for the seller', async () => {
     const id = await completed();
     await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });

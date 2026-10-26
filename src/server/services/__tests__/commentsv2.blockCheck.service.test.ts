@@ -54,7 +54,7 @@ const installThreadLookup = () =>
   db.thread.findUnique.mockImplementation((async ({ where }: { where: { id?: number } }) =>
     where.id != null ? { imageId: 1 } : null) as never);
 const isOwnerWalk = (strings: TemplateStringsArray) =>
-  strings.join('?').includes('muteable_threads');
+  strings.join('?').includes('thread_ancestors');
 dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
   isOwnerWalk(strings) ? [{ id: 1, rooted: true }] : []) as never);
 dbMock.dbWrite.$transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) =>

@@ -75,12 +75,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     SELECT ci."imageId", i."userId", u."username", i."url",
       (ci."tagId" = ${config.judgedTagId}) as "hasJudgedTag",
       (
-        SELECT cv2.id
-        FROM "Thread" t
-        JOIN "CommentV2" cv2 ON cv2."threadId" = t.id
-        WHERE t."imageId" = ci."imageId"
-          AND cv2."userId" = ${judgingConfig.userId}
-        ORDER BY cv2."createdAt" DESC
+        SELECT cm.id
+        FROM "CommentV3" cm
+        WHERE cm."entityType" = 'image' AND cm."entityId" = ci."imageId" AND cm."parentId" IS NULL
+          AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
+        ORDER BY cm."createdAt" DESC
         LIMIT 1
       ) as "judgeCommentId"
     FROM "CollectionItem" ci

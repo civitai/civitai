@@ -1248,12 +1248,29 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       body: { data: { x: 1 } },
     });
     expect(mine.status).toBe(200);
-    const info = (await call({ token: v1, method: 'GET', path: '' })).body as {
+    const shared = await call({
+      token: v2,
+      method: 'PUT',
+      path: '/posts/theirs',
+      body: { data: { status: 'open' } },
+    });
+    expect(shared.status).toBe(200);
+    type Info = {
       usage: { app: { docs: number; bytes: number }; viewer: { docs: number; bytes: number } };
     };
-    expect(info.usage.app.docs).toBe(4);
-    expect(info.usage.viewer.docs).toBe(1);
-    expect(info.usage.viewer.bytes).toBeLessThan(info.usage.app.bytes);
+    const info = (await call({ token: v1, method: 'GET', path: '' })).body as Info;
+    // `app` is the SHARED data only (v2's one post): the four private docs are each viewer's own.
+    // `{"status": "open"}` is 18 bytes of jsonb text; `{"x": 1}` is 8.
+    expect(info.usage).toEqual({
+      app: { docs: 1, bytes: 18 },
+      viewer: { docs: 1, bytes: 8 },
+    });
+    const theirs = (await call({ token: v2, method: 'GET', path: '' })).body as Info;
+    // v2: three empty private docs (`{}`, 2 bytes each) and the post.
+    expect(theirs.usage).toEqual({
+      app: { docs: 1, bytes: 18 },
+      viewer: { docs: 4, bytes: 24 },
+    });
   });
 
   it('a refused write is refunded to the burst: 5 not_author refusals, then 6 writes all land', async () => {

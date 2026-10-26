@@ -82,6 +82,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
     opened: true,
     pins: pins.pins,
     muted: pins.mutedBadges,
+    mobile: false,
   });
   const { toggle, toggleMute, announce, region } = usePinActions(pins);
 

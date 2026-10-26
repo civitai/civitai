@@ -125,7 +125,26 @@
   const selectAll = (n = 0) => {
     for (const id of n ? selectable.slice(0, n) : selectable) selected.add(id);
   };
+
+  // The bar grows while a confirmation is open, so the spacer tracks its height rather than a constant.
+  let barHeight = $state(0);
 </script>
+
+{#snippet summary()}
+  <p class="text-sm text-dark-2">
+    {#if count === 0}
+      Select images to act on them.
+    {:else}
+      <span class="font-semibold text-white">{num(count)}</span> selected
+      {#if ownerCount > 1}
+        <span class="text-amber-300">· spanning {ownerCount} accounts</span>
+      {/if}
+      {#if offScreen > 0}
+        <span class="text-amber-300">· {num(offScreen)} on other pages</span>
+      {/if}
+    {/if}
+  </p>
+{/snippet}
 
 <section
   class={bare
@@ -136,19 +155,7 @@
       )}
 >
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <p class="text-sm text-dark-2">
-      {#if count === 0}
-        Select images to act on them.
-      {:else}
-        <span class="font-semibold text-white">{num(count)}</span> selected
-        {#if ownerCount > 1}
-          <span class="text-amber-300">· spanning {ownerCount} accounts</span>
-        {/if}
-        {#if offScreen > 0}
-          <span class="text-amber-300">· {num(offScreen)} on other pages</span>
-        {/if}
-      {/if}
-    </p>
+    {@render summary()}
 
     <div class="flex flex-wrap gap-2">
       {#if selectable.length > 0}
@@ -164,224 +171,239 @@
       {/if}
     </div>
   </div>
+</section>
 
-  {#if overCap}
-    <p class="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
-      {num(count)} selected — one action takes {num(maxSelection ?? 0)}. Unselect
-      {num(count - (maxSelection ?? 0))} before acting.
-    </p>
-  {/if}
+{#if count > 0}
+  <div style:height="{barHeight}px"></div>
+  <div
+    class="fixed inset-x-0 bottom-0 z-20 max-h-[70vh] overflow-y-auto border-t border-dark-4 bg-dark-6/95 px-4 py-3 backdrop-blur"
+    bind:clientHeight={barHeight}
+  >
+    <div class="mx-auto max-w-6xl">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        {@render summary()}
+        <Button size="sm" variant="outline" onclick={() => selected.clear()}>Unselect all</Button>
+      </div>
 
-  {#if count > 0 && !overCap && !confirming && !notifying && !flagging}
-    <div class="mt-3 flex flex-wrap gap-2">
-      <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
-        Remove selected
-      </Button>
-      <!-- Confirmed like Remove. It sits next to a destructive button and is itself destructive in a
-           way that reads as safe: restore clears needsReview, poi and blockedFor, republishes at
-           `ingestion = 'Scanned'` and disables the review tags, with no record of the prior values. -->
-      <Button size="sm" onclick={() => (confirming = 'restore')}>Restore selected</Button>
-      {#if notify}
-        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+      {#if overCap}
+        <p class="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
+          {num(count)} selected — one action takes {num(maxSelection ?? 0)}. Unselect
+          {num(count - (maxSelection ?? 0))} before acting.
+        </p>
       {/if}
-      {#if flags}
-        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+
+      {#if !overCap && !confirming && !notifying && !flagging}
+        <div class="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
+            Remove selected
+          </Button>
+          <!-- Confirmed like Remove. It sits next to a destructive button and is itself destructive in a
+               way that reads as safe: restore clears needsReview, poi and blockedFor, republishes at
+               `ingestion = 'Scanned'` and disables the review tags, with no record of the prior values. -->
+          <Button size="sm" onclick={() => (confirming = 'restore')}>Restore selected</Button>
+          {#if notify}
+            <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+          {/if}
+          {#if flags}
+            <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if confirming === 'remove'}
+        <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
+          <input type="hidden" name="imageIds" value={ids} />
+          <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+            <p class="mb-2 text-sm text-white">
+              Remove <strong>{num(count)}</strong> images
+              {#if ownerCount > 1}across <strong>{ownerCount}</strong> accounts{/if}? Their owners are not
+              notified unless you also send a message.
+            </p>
+            <!-- Retool's TosReasons radio. Picking one fills the reason with the wording the user is
+                 sent, and pre-selects the violation type and the flag it implies — moderators were
+                 otherwise writing eleven standard messages by hand. -->
+            <div class="mb-2 flex flex-wrap gap-1.5">
+              {#each TOS_REASONS as r (r.label)}
+                <button
+                  type="button"
+                  onclick={() => applyTosReason(r)}
+                  aria-pressed={tosReason === r.label}
+                  class={cn(
+                    'rounded-md border px-2 py-1 text-xs',
+                    tosReason === r.label
+                      ? 'border-primary bg-primary/15 text-white'
+                      : 'border-dark-4 text-dark-2 hover:bg-dark-5 hover:text-dark-0'
+                  )}
+                >
+                  {r.violation ? VIOLATION_LABELS[r.violation] : r.label}
+                </button>
+              {/each}
+            </div>
+            {#if pendingFlag}
+              <p class="mb-2 text-xs text-amber-200">
+                This reason also sets <strong>{pendingFlag}</strong> on the selected images.
+              </p>
+              <input type="hidden" name="alsoFlag" value={pendingFlag} />
+            {/if}
+
+            <div class="mb-2 flex flex-wrap gap-2">
+              <!-- The endpoint classifies removals by this enum and ships it to ClickHouse; free text
+                   alone left every removal from this page unclassified. -->
+              <Select.Root type="single" bind:value={violationType}>
+                <Select.Trigger class="w-52">
+                  {violationType === 'none' ? 'Violation type (optional)' : violationLabel(violationType)}
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="none">No violation type</Select.Item>
+                  {#each VIOLATION_TYPES as v (v)}
+                    <Select.Item value={v}>{VIOLATION_LABELS[v]}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              {#if violationType !== 'none'}
+                <input type="hidden" name="violationType" value={violationType} />
+              {/if}
+              <Input
+                name="reason"
+                bind:value={reason}
+                placeholder="Reason (optional, recorded with the removal)"
+                class="min-w-48 flex-1"
+              />
+            </div>
+            {#if owners.length > 1}
+              <!-- The accounts this reaches, by name. The strike below is issued against every one of
+                   them, and the page's own owner list may only cover what is on screen. -->
+              <p class="mb-2 text-xs text-amber-200">
+                Owners:
+                {#each owners as owner, i (owner.id)}{i > 0 ? ', ' : ''}{owner.username ??
+                    `#${owner.id}`}{owner.bannedAt ? ' (banned)' : ''}{/each}
+              </p>
+            {/if}
+            <!-- Retool's strikeCheckbox. The removal and the strike for it were one gesture there; without
+                 it a moderator leaves for User Lookup once per owner. -->
+            <!-- `mt-1.5` rather than `mt-0.5`, and the value is derived rather than eyeballed. This row is
+                 `items-start`, so the checkbox sits at the top and its coarse-pointer hit area reaches
+                 ABOVE it: the area's top edge is 14px above the checkbox's border box (44px tall around a
+                 14px padding box, centred). At `mt-0.5` that overhangs the row by 12px into an 8px `mb-2`
+                 gap — 4px onto the bottom edge of the reason Input above, which stretches to fill its
+                 row. `mt-1.5` (6px) puts the edge exactly flush with the gap. Tied to that `mb-2`: change
+                 the spacing above and this has to move with it. -->
+            {#if strike}
+              <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
+                <Checkbox
+                  id="strike-owners-{uid}"
+                  name="strikeOwners"
+                  value="1"
+                  bind:checked={strikeOwners}
+                  class="mt-1.5"
+                />
+                <Label for="strike-owners-{uid}" class="text-sm leading-snug font-normal text-white">
+                  Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
+                  above is sent as the strike's description.
+                </Label>
+              </div>
+            {/if}
+            {#if strikeNeedsReason}
+              <p class="mb-2 text-xs text-amber-200">
+                A strike needs a reason: pick one above, or write the message the user should be sent.
+              </p>
+            {/if}
+
+            <div class="flex gap-2">
+              <Button
+                type="submit"
+                size="sm"
+                variant="destructive"
+                disabled={submitting || strikeNeedsReason}
+                data-touch-target
+              >
+                {submitting ? 'Removing…' : `Remove ${num(count)}`}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onclick={() => (confirming = null)}
+                data-touch-target
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </form>
+      {/if}
+
+      {#if confirming === 'restore'}
+        <form method="POST" action="?/restore" use:enhance={onSubmit} class="mt-3">
+          <input type="hidden" name="imageIds" value={ids} />
+          <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+            <p class="mb-2 text-sm text-white">
+              Restore <strong>{num(count)}</strong> images? This clears <code>needsReview</code>,
+              <code>poi</code> and <code>blockedFor</code>, republishes them, and disables their review
+              tags. The previous values are not recorded anywhere.
+            </p>
+            {#if unblockedSelected > 0}
+              <!-- Restore is meant for already-blocked images; most sources return every image an account
+                   owns, so a Select-all here silently clears the review queue for the rest. -->
+              <p class="mb-2 text-sm text-amber-200">
+                {num(unblockedSelected)} of these are not currently blocked — restoring those drops them out
+                of the POI and minor review queues.
+              </p>
+            {/if}
+            <div class="flex gap-2">
+              <Button type="submit" size="sm" disabled={submitting}>
+                {submitting ? 'Restoring…' : `Restore ${num(count)}`}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </form>
+      {/if}
+
+      {#if flagging}
+        <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
+          <input type="hidden" name="imageIds" value={ids} />
+          <p class="mb-2 text-xs text-dark-2">
+            POI marks a real person; minor marks a depicted minor. Setting either restricts the image.
+          </p>
+          <!-- One field carries both, because a submit button contributes a single name/value pair. -->
+          <div class="flex flex-wrap gap-2">
+            {#each IMAGE_FLAG_VALUES as value (value)}
+              {@const [flag, on] = value.split(':')}
+              {@const label = `${on === 'true' ? 'Set' : 'Clear'} ${flag === 'poi' ? 'POI' : 'minor'}`}
+              <Button
+                type="submit"
+                name="flagValue"
+                {value}
+                size="sm"
+                variant="outline"
+                disabled={submitting}
+              >
+                {label}
+              </Button>
+            {/each}
+            <Button type="button" size="sm" variant="outline" onclick={() => (flagging = false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      {/if}
+
+      {#if notifying}
+        <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
+          <input type="hidden" name="imageIds" value={ids} />
+          <p class="mb-2 text-xs text-dark-2">One notification per affected account, not per image.</p>
+          <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
+          <div class="mt-2 flex gap-2">
+            <Button type="submit" size="sm" disabled={submitting}>Send</Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       {/if}
     </div>
-  {/if}
-
-  {#if confirming === 'remove'}
-    <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
-      <input type="hidden" name="imageIds" value={ids} />
-      <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
-        <p class="mb-2 text-sm text-white">
-          Remove <strong>{num(count)}</strong> images
-          {#if ownerCount > 1}across <strong>{ownerCount}</strong> accounts{/if}? Their owners are not
-          notified unless you also send a message.
-        </p>
-        <!-- Retool's TosReasons radio. Picking one fills the reason with the wording the user is
-             sent, and pre-selects the violation type and the flag it implies — moderators were
-             otherwise writing eleven standard messages by hand. -->
-        <div class="mb-2 flex flex-wrap gap-1.5">
-          {#each TOS_REASONS as r (r.label)}
-            <button
-              type="button"
-              onclick={() => applyTosReason(r)}
-              aria-pressed={tosReason === r.label}
-              class={cn(
-                'rounded-md border px-2 py-1 text-xs',
-                tosReason === r.label
-                  ? 'border-primary bg-primary/15 text-white'
-                  : 'border-dark-4 text-dark-2 hover:bg-dark-5 hover:text-dark-0'
-              )}
-            >
-              {r.violation ? VIOLATION_LABELS[r.violation] : r.label}
-            </button>
-          {/each}
-        </div>
-        {#if pendingFlag}
-          <p class="mb-2 text-xs text-amber-200">
-            This reason also sets <strong>{pendingFlag}</strong> on the selected images.
-          </p>
-          <input type="hidden" name="alsoFlag" value={pendingFlag} />
-        {/if}
-
-        <div class="mb-2 flex flex-wrap gap-2">
-          <!-- The endpoint classifies removals by this enum and ships it to ClickHouse; free text
-               alone left every removal from this page unclassified. -->
-          <Select.Root type="single" bind:value={violationType}>
-            <Select.Trigger class="w-52">
-              {violationType === 'none' ? 'Violation type (optional)' : violationLabel(violationType)}
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Item value="none">No violation type</Select.Item>
-              {#each VIOLATION_TYPES as v (v)}
-                <Select.Item value={v}>{VIOLATION_LABELS[v]}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-          {#if violationType !== 'none'}
-            <input type="hidden" name="violationType" value={violationType} />
-          {/if}
-          <Input
-            name="reason"
-            bind:value={reason}
-            placeholder="Reason (optional, recorded with the removal)"
-            class="min-w-48 flex-1"
-          />
-        </div>
-        {#if owners.length > 1}
-          <!-- The accounts this reaches, by name. The strike below is issued against every one of
-               them, and the page's own owner list may only cover what is on screen. -->
-          <p class="mb-2 text-xs text-amber-200">
-            Owners:
-            {#each owners as owner, i (owner.id)}{i > 0 ? ', ' : ''}{owner.username ??
-                `#${owner.id}`}{owner.bannedAt ? ' (banned)' : ''}{/each}
-          </p>
-        {/if}
-        <!-- Retool's strikeCheckbox. The removal and the strike for it were one gesture there; without
-             it a moderator leaves for User Lookup once per owner. -->
-        <!-- `mt-1.5` rather than `mt-0.5`, and the value is derived rather than eyeballed. This row is
-             `items-start`, so the checkbox sits at the top and its coarse-pointer hit area reaches
-             ABOVE it: the area's top edge is 14px above the checkbox's border box (44px tall around a
-             14px padding box, centred). At `mt-0.5` that overhangs the row by 12px into an 8px `mb-2`
-             gap — 4px onto the bottom edge of the reason Input above, which stretches to fill its
-             row. `mt-1.5` (6px) puts the edge exactly flush with the gap. Tied to that `mb-2`: change
-             the spacing above and this has to move with it. -->
-        {#if strike}
-          <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
-            <Checkbox
-              id="strike-owners-{uid}"
-              name="strikeOwners"
-              value="1"
-              bind:checked={strikeOwners}
-              class="mt-1.5"
-            />
-            <Label for="strike-owners-{uid}" class="text-sm leading-snug font-normal text-white">
-              Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
-              above is sent as the strike's description.
-            </Label>
-          </div>
-        {/if}
-        {#if strikeNeedsReason}
-          <p class="mb-2 text-xs text-amber-200">
-            A strike needs a reason: pick one above, or write the message the user should be sent.
-          </p>
-        {/if}
-
-        <div class="flex gap-2">
-          <Button
-            type="submit"
-            size="sm"
-            variant="destructive"
-            disabled={submitting || strikeNeedsReason}
-            data-touch-target
-          >
-            {submitting ? 'Removing…' : `Remove ${num(count)}`}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onclick={() => (confirming = null)}
-            data-touch-target
-          >
-            Cancel
-          </Button>
-        </div>
-      </div>
-    </form>
-  {/if}
-
-  {#if confirming === 'restore'}
-    <form method="POST" action="?/restore" use:enhance={onSubmit} class="mt-3">
-      <input type="hidden" name="imageIds" value={ids} />
-      <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-        <p class="mb-2 text-sm text-white">
-          Restore <strong>{num(count)}</strong> images? This clears <code>needsReview</code>,
-          <code>poi</code> and <code>blockedFor</code>, republishes them, and disables their review
-          tags. The previous values are not recorded anywhere.
-        </p>
-        {#if unblockedSelected > 0}
-          <!-- Restore is meant for already-blocked images; most sources return every image an account
-               owns, so a Select-all here silently clears the review queue for the rest. -->
-          <p class="mb-2 text-sm text-amber-200">
-            {num(unblockedSelected)} of these are not currently blocked — restoring those drops them out
-            of the POI and minor review queues.
-          </p>
-        {/if}
-        <div class="flex gap-2">
-          <Button type="submit" size="sm" disabled={submitting}>
-            {submitting ? 'Restoring…' : `Restore ${num(count)}`}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
-            Cancel
-          </Button>
-        </div>
-      </div>
-    </form>
-  {/if}
-
-  {#if flagging}
-    <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
-      <input type="hidden" name="imageIds" value={ids} />
-      <p class="mb-2 text-xs text-dark-2">
-        POI marks a real person; minor marks a depicted minor. Setting either restricts the image.
-      </p>
-      <!-- One field carries both, because a submit button contributes a single name/value pair. -->
-      <div class="flex flex-wrap gap-2">
-        {#each IMAGE_FLAG_VALUES as value (value)}
-          {@const [flag, on] = value.split(':')}
-          {@const label = `${on === 'true' ? 'Set' : 'Clear'} ${flag === 'poi' ? 'POI' : 'minor'}`}
-          <Button
-            type="submit"
-            name="flagValue"
-            {value}
-            size="sm"
-            variant="outline"
-            disabled={submitting}
-          >
-            {label}
-          </Button>
-        {/each}
-        <Button type="button" size="sm" variant="outline" onclick={() => (flagging = false)}>
-          Cancel
-        </Button>
-      </div>
-    </form>
-  {/if}
-
-  {#if notifying}
-    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
-      <input type="hidden" name="imageIds" value={ids} />
-      <p class="mb-2 text-xs text-dark-2">One notification per affected account, not per image.</p>
-      <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
-      <div class="mt-2 flex gap-2">
-        <Button type="submit" size="sm" disabled={submitting}>Send</Button>
-        <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
-          Cancel
-        </Button>
-      </div>
-    </form>
-  {/if}
-</section>
+  </div>
+{/if}

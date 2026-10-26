@@ -63,12 +63,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     ),
   ]);
 
-  const comicPanels = await idQueryLimiter().process(imageIds, (ids) =>
-    dbRead.comicPanel.findMany({
-      where: { imageId: { in: ids } },
-      select: { projectId: true },
-    })
-  );
+  const comicProjectIds = await getComicProjectIdsForImages(imageIds);
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
@@ -86,7 +81,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     bountyEntryIds: connections
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
-    comicProjectIds: comicPanels.map((x) => x.projectId),
+    comicProjectIds,
     collectionIds: collectionItems.map((x) => x.collectionId),
     model3dIds: model3ds.map((x) => x.id),
   };
@@ -716,10 +711,14 @@ export async function updateComicProjectNsfwLevels(projectIds: number[]) {
   if (!projectIds.length) return;
   await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
-      SELECT "projectId" as id, COALESCE(bit_or("nsfwLevel"), 0) "nsfwLevel"
-      FROM "ComicChapter"
-      WHERE "projectId" IN (${Prisma.join(projectIds)})
-      GROUP BY "projectId"
+      SELECT cp.id,
+             COALESCE((SELECT bit_or(ch."nsfwLevel") FROM "ComicChapter" ch WHERE ch."projectId" = cp.id), 0)
+               | COALESCE(ci."nsfwLevel", 0)
+               | COALESCE(hi."nsfwLevel", 0) "nsfwLevel"
+      FROM "ComicProject" cp
+      LEFT JOIN "Image" ci ON ci.id = cp."coverImageId"
+      LEFT JOIN "Image" hi ON hi.id = cp."heroImageId"
+      WHERE cp.id IN (${Prisma.join(projectIds)})
     )
     UPDATE "ComicProject" cp
     SET "nsfwLevel" = level."nsfwLevel"
@@ -728,8 +727,8 @@ export async function updateComicProjectNsfwLevels(projectIds: number[]) {
   `);
 }
 
-// Project nsfwLevel is bit_or'd from chapter nsfwLevels, which are bit_or'd from
-// panel image nsfwLevels — so the chapter recompute MUST finish before the project
+// Project nsfwLevel is bit_or'd from chapter nsfwLevels (themselves bit_or'd from
+// panel image nsfwLevels) plus the cover and hero images — so the chapter recompute MUST finish before the project
 // recompute runs, otherwise the project reads stale (often 0) chapter levels and
 // stays unrated. Use this helper at every callsite instead of firing the two
 // underlying functions side-by-side.
@@ -739,14 +738,28 @@ export async function updateComicNsfwLevels(projectIds: number[]) {
   await updateComicProjectNsfwLevels(projectIds);
 }
 
+/** Comic projects that use any of `imageIds` as a panel, cover or hero image. */
+async function getComicProjectIdsForImages(imageIds: number[]) {
+  if (!imageIds.length) return [];
+  const [panels, projects] = await Promise.all([
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.comicPanel.findMany({
+        where: { imageId: { in: ids } },
+        select: { projectId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.comicProject.findMany({
+        where: { OR: [{ coverImageId: { in: ids } }, { heroImageId: { in: ids } }] },
+        select: { id: true },
+      })
+    ),
+  ]);
+  return uniq([...panels.map((p) => p.projectId), ...projects.map((p) => p.id)]);
+}
+
 export async function updateComicNsfwLevelsForImage(imageId: number) {
-  const panels = await dbRead.comicPanel.findMany({
-    where: { imageId },
-    select: { projectId: true },
-  });
-  if (!panels.length) return;
-  const projectIds = [...new Set(panels.map((p) => p.projectId))];
-  await updateComicNsfwLevels(projectIds);
+  await updateComicNsfwLevels(await getComicProjectIdsForImages([imageId]));
 }
 
 /**
@@ -760,18 +773,10 @@ export async function updateComicNsfwLevelsForImage(imageId: number) {
  * state even after the listing route would hide it.
  *
  * Safe to fire-and-forget — only does work when the image is actually
- * tied to a comic panel.
+ * tied to a comic (panel, cover or hero).
  */
 export async function queueComicsForPanelImage(imageId: number) {
-  const panels = await dbRead.comicPanel.findMany({
-    where: { imageId },
-    select: { projectId: true },
-  });
-  if (!panels.length) return;
-  const projectIds = [...new Set(panels.map((p) => p.projectId))];
-  await comicsSearchIndex.queueUpdate(
-    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-  );
+  await queueComicsForPanelImages([imageId]);
 }
 
 /**
@@ -780,13 +785,8 @@ export async function queueComicsForPanelImage(imageId: number) {
  * images at once.
  */
 export async function queueComicsForPanelImages(imageIds: number[]) {
-  if (!imageIds.length) return;
-  const panels = await dbRead.comicPanel.findMany({
-    where: { imageId: { in: imageIds } },
-    select: { projectId: true },
-  });
-  if (!panels.length) return;
-  const projectIds = [...new Set(panels.map((p) => p.projectId))];
+  const projectIds = await getComicProjectIdsForImages(imageIds);
+  if (!projectIds.length) return;
   await comicsSearchIndex.queueUpdate(
     projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );

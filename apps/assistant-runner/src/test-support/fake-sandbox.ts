@@ -81,6 +81,8 @@ export class FakeSandboxService {
   /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
   keepLimit = Infinity;
   readonly tools = new Map<string, FakeToolBody>();
+  /** Tools this sandbox does not list, as an older sandbox image without them. */
+  readonly hiddenTools = new Set<string>();
   #server: HttpServer | undefined;
   #base = '';
   #looks = new Map<string, number>();
@@ -232,7 +234,7 @@ export class FakeSandboxService {
       { capabilities: { tools: {} } }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS.map((tool) => ({
+      tools: TOOLS.filter((tool) => !this.hiddenTools.has(tool.name)).map((tool) => ({
         ...tool,
         inputSchema: { type: 'object', properties: {}, additionalProperties: true },
       })),

@@ -152,7 +152,7 @@
   // ReviewStep, which shows them on the Start button.
   async function start(
     launched: LaunchedRun[],
-    prompts: string[],
+    prompts: SamplePrompt[],
     name: string,
     currencies: string[]
   ) {

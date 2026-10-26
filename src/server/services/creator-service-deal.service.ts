@@ -1006,6 +1006,9 @@ const FINALS_NOT_PASSED =
  *
  * Idempotent: a deal already resolved answers with its resolution and moves no money. The deal row
  * is locked before it is read, so two moderators cannot both resolve it.
+ *
+ * A moderator who is the deal's buyer or seller is refused before anything else, already resolved
+ * included: nobody rules on, or learns the ruling of, their own deal through this path.
  */
 export async function resolveServiceDealDispute({
   dealId,
@@ -1025,12 +1028,15 @@ export async function resolveServiceDealDispute({
         status: ServiceDealStatus;
         resolution: ServiceDisputeResolutionInput | null;
         clear: boolean;
+        buyerId: number;
+        sellerId: number;
       }[]
     >`
       SELECT "status"::text AS "status", "disputeResolution"::text AS "resolution",
-        ${dealFinalsClear()} AS "clear"
+        ${dealFinalsClear()} AS "clear", "buyerId", "sellerId"
       FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
     if (!deal) return 'not-found' as const;
+    if (moderatorId === deal.buyerId || moderatorId === deal.sellerId) return 'party' as const;
     if (deal.status !== 'Disputed')
       return deal.resolution ? { already: deal.resolution } : ('not-disputed' as const);
     if (resolution === 'Release' && !deal.clear) return 'finals' as const;
@@ -1058,6 +1064,11 @@ export async function resolveServiceDealDispute({
   });
 
   if (outcome === 'not-found') throw throwNotFoundError('Deal not found');
+  if (outcome === 'party')
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You are the buyer or seller on this deal. Another moderator must resolve it.',
+    });
   if (outcome === 'not-disputed') throw movedOn();
   if (outcome === 'finals')
     return { status: 'refused', reason: 'finals_not_passed', message: FINALS_NOT_PASSED };

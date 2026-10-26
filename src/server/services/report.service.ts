@@ -68,6 +68,7 @@ import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
   IMAGE_NOT_APPEALABLE,
+  isAppealableImage,
   OrphanedAppealReason,
   type OrphanedAppealOutcome,
 } from '~/shared/utils/appeal';
@@ -1176,6 +1177,20 @@ export async function isAppealBlockedByHoldMarker({
       OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" WHERE "imageId" = ${imageId}) AS blocked
   `;
   return row?.blocked !== false;
+}
+
+/**
+ * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
+ * only when it would be accepted. Anyone else's image reads as no.
+ */
+export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
+  const [image] = await dbWrite.$queryRaw<
+    { blockedFor: string | null; needsReview: string | null }[]
+  >`
+    SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
+  `;
+  if (!image || !isAppealableImage(image)) return false;
+  return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
 }
 
 async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
