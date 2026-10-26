@@ -768,18 +768,23 @@ export async function updateStoryline({
  */
 export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
   await dbWrite.$transaction(async (tx) => {
+    // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
+    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    `;
+    if (!owned) throw throwNotFoundError('Storyline not found');
+    if (owned.userId !== userId)
+      throw throwAuthorizationError('Only the owner can delete this storyline');
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
     // below would otherwise deadlock against a chapter-1 draft going live.
     await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
     // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
     // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
     // key takes KEY SHARE. Whatever committed first, the count below sees it.
-    const [storyline] = await tx.$queryRaw<{ userId: number; tosViolation: boolean }[]>`
-      SELECT "userId", "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
+      SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
-    if (storyline.userId !== userId)
-      throw throwAuthorizationError('Only the owner can delete this storyline');
     // Kept for moderation: deleting would drop the takedown and any appeal with it.
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
     const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
