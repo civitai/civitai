@@ -160,6 +160,14 @@ describe('Training Studio auto-label', () => {
       expect(orch.submitWorkflow.mock.calls[0][0].body.steps[0].input.mediaUrl).toBe(mediaUrl);
     });
 
+    // The orchestrator's presigned blob URL: sig is Uri.EscapeDataString'd, exp is ISO 8601 "O".
+    it('accepts a presigned upload URL exactly as the orchestrator builds it', async () => {
+      const mediaUrl =
+        'https://orchestration.civitai.com/v2/consumer/blobs/K7Q2M9X4ZP8B?sig=aB3%2Bx9%2FQz7%3D%3D&exp=2026-10-27T23:40:00.1234567Z';
+      await expect(submitOne(mediaUrl)).resolves.toEqual({ workflowId: 'wf-1' });
+      expect(orch.submitWorkflow.mock.calls[0][0].body.steps[0].input.mediaUrl).toBe(mediaUrl);
+    });
+
     it("accepts the env's public orchestrator host when it is not orchestration*.civitai.com", async () => {
       clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT = 'https://orch.dev.example.net/';
       try {
