@@ -582,6 +582,12 @@ function DepositStatusBadge({ status }: { status: string }) {
           Processing
         </Badge>
       );
+    case 'held':
+      return (
+        <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
+          Credited by support
+        </Badge>
+      );
     default:
       return (
         <Badge color="gray" variant="light" size="sm">

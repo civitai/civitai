@@ -9,6 +9,10 @@ import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
+import {
+  findHandGrantsForDeposit,
+  type ManualCreditMatch,
+} from '~/server/services/nowpayments-manual-credit';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
@@ -17,6 +21,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import dayjs from '~/shared/utils/dayjs';
 import {
   getChainConfig,
   getChainForNetworkWithFallback,
@@ -63,6 +68,11 @@ const log = async (data: MixedObject) => {
  */
 export const manualPayinCreditExternalId = (payinHash: string) =>
   `np-payin-${payinHash.toLowerCase()}`;
+
+/** Support monitors this exact message for deposits a staff hand grant already paid. */
+const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
+const HELD = 'held';
+
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
 // the event is not trusted as "no hash": the status response is the authority.
@@ -155,12 +165,13 @@ export const userIdFromOrderId = (orderId: string | null | undefined) => {
   return userId && !isNaN(userId) ? userId : null;
 };
 
+/** Nothing left to credit: credited already, or held because a hand grant paid it. */
 export const isDepositCredited = async (paymentId: number) => {
   const row = await dbRead.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },
     select: { status: true, buzzCredited: true },
   });
-  return row?.status === 'finished' && row.buzzCredited != null;
+  return (row?.status === 'finished' && row.buzzCredited != null) || row?.status === HELD;
 };
 
 /** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
@@ -214,6 +225,7 @@ export const processDeposit = async (
   let multiplierInt: number | null = null;
   let transactionId: string | undefined;
   let buzzGrantFailed = false;
+  let held = false;
 
   if (isDepositComplete(webhookStatus)) {
     const outcomeAmount = event.outcome_amount;
@@ -236,25 +248,60 @@ export const processDeposit = async (
       }
 
       try {
+        let possibleHandGrants: ManualCreditMatch[] = [];
+        let unscanned: string[] = [];
         // Throwing here lands the deposit in buzz_failed, which the retry sweep picks up.
-        const payinHash = await resolvePayinHash(paymentId, event);
-        const manualCredit = payinHash
-          ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
-          : null;
+        const settle = async (): Promise<string | undefined> => {
+          const payinHash = await resolvePayinHash(paymentId, event);
+          const manualCredit = payinHash
+            ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
+            : null;
 
-        if (manualCredit) {
-          transactionId = 'already_granted';
-          bonusBuzz = null;
-          multiplierInt = null;
-          await log({
-            type: 'info',
-            message: 'Deposit already credited manually by payin hash; skipping grant',
-            paymentId,
-            userId,
-            payinHash,
-          });
-        } else {
-          transactionId = await grantBuzzPurchase({
+          if (manualCredit) {
+            bonusBuzz = null;
+            multiplierInt = null;
+            await log({
+              type: 'info',
+              message: 'Deposit already credited manually by payin hash; skipping grant',
+              paymentId,
+              userId,
+              payinHash,
+            });
+            return 'already_granted';
+          }
+
+          // A moderator crediting by hand has already been through assessDepositCredit.
+          if (!actor) {
+            const row = await dbWrite.cryptoDeposit.findUnique({
+              where: { paymentId: BigInt(paymentId) },
+              select: { status: true, createdAt: true },
+            });
+            // No rescan: a redelivery must not credit it once the grant drops out of the scan.
+            if (row?.status === HELD) return HELD;
+            if (await getTransactionByExternalId(`np-deposit-${paymentId}`))
+              return 'already_granted';
+
+            const { covering, possible, overflowed } = await findHandGrantsForDeposit(userId, {
+              paymentId,
+              payinHash,
+              expectedBuzz: buzzAmount,
+              paymentCreatedAt: event.created_at ?? row?.createdAt,
+            });
+            if (covering.length) {
+              await log({
+                type: 'warning',
+                message: DEPOSIT_HELD_MESSAGE,
+                paymentId,
+                userId,
+                matches: covering.map((m) => `${m.ref} (${m.why})`),
+              });
+              return HELD;
+            }
+            possibleHandGrants = possible;
+            unscanned = overflowed;
+          }
+
+          return grantBuzzPurchase({
             userId,
             amount: buzzAmount,
             externalTransactionId: `np-deposit-${paymentId}`,
@@ -262,9 +309,46 @@ export const processDeposit = async (
             paymentId: event.payment_id,
             ...(actor && { creditedBy: actor.modUserId, ticketId: actor.ticketId }),
           });
+        };
+
+        const result = actor
+          ? { settled: await settle() }
+          : await withDistributedLock(
+              { key: `np-deposit:credit:${paymentId}`, ttl: 60, autoRenew: true, maxRetries: 0 },
+              async () => ({ settled: await settle() })
+            );
+        if (!result)
+          await log({
+            message: 'Deposit credit already running; left to the retry sweep',
+            paymentId,
+          });
+        if (result?.settled === HELD) {
+          held = true;
+          buzzAmount = 0;
+          bonusBuzz = null;
+          multiplierInt = null;
+        } else {
+          transactionId = result?.settled;
         }
 
-        if (!transactionId) {
+        if (transactionId && transactionId !== 'already_granted' && unscanned.length)
+          await log({
+            type: 'warning',
+            message: 'Deposit credited: hand-grant scan incomplete',
+            paymentId,
+            userId,
+            unscanned,
+          });
+        if (transactionId && transactionId !== 'already_granted' && possibleHandGrants.length)
+          await log({
+            type: 'warning',
+            message: 'Deposit credited with possible hand grant',
+            paymentId,
+            userId,
+            matches: possibleHandGrants.map((m) => `${m.strength}:${m.ref} (${m.why})`),
+          });
+
+        if (!transactionId && !held) {
           buzzGrantFailed = true;
           await log({
             message: 'Failed to create buzz transaction for deposit',
@@ -323,6 +407,8 @@ export const processDeposit = async (
   let depositStatus: string;
   if (buzzGrantFailed) {
     depositStatus = 'buzz_failed';
+  } else if (held) {
+    depositStatus = HELD;
   } else if (isDepositComplete(webhookStatus)) {
     depositStatus = 'finished';
   } else {
@@ -380,7 +466,8 @@ export const processDeposit = async (
         // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
         // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
         waiting: 0, unverified_exhausted: 0, confirming: 1, sending: 1, partially_paid: 1, unverified: 1.5,
-        failed: 2, buzz_failed: 3, finished: 4,
+        // Nothing automatic moves a held deposit; only a credit that finishes it can.
+        failed: 2, buzz_failed: 3, held: 3.5, finished: 4,
       };
       const nextRank = statusRank[depositStatus] ?? 0;
 
@@ -413,7 +500,11 @@ export const processDeposit = async (
     }
   }
 
-  const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
+  const normalizedStatus = held
+    ? HELD
+    : isDepositComplete(webhookStatus)
+    ? 'finished'
+    : webhookStatus;
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
   const tellUser = !buzzGrantFailed && (statusAdvanced || granted);
   if (tellUser) {
@@ -516,6 +607,7 @@ export const eventFromPayment = (
   pay_address: payment.pay_address,
   parent_payment_id: payment.parent_payment_id,
   payin_hash: payment.payin_hash,
+  created_at: payment.created_at,
 });
 
 /** Max concurrent requests to NP API when fetching individual payments */
@@ -650,6 +742,9 @@ async function reconcileSinglePayment(
     if (localDeposit?.status === 'finished' && localDeposit.buzzCredited != null) {
       return { paymentId, status: payment.payment_status, action: 'already_processed' };
     }
+    if (localDeposit?.status === HELD) {
+      return { paymentId, status: payment.payment_status, action: 'skipped', error: 'held' };
+    }
   } catch {
     // Non-fatal, proceed to process
   }
@@ -666,17 +761,7 @@ async function reconcileSinglePayment(
 
   // Process the deposit
   try {
-    const event: NOWPayments.WebhookEvent = {
-      payment_id: typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
-      payment_status: payment.payment_status,
-      order_id: payment.order_id,
-      outcome_amount: payment.outcome_amount ?? undefined,
-      actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-      pay_currency: payment.pay_currency,
-      pay_address: payment.pay_address,
-      parent_payment_id: payment.parent_payment_id,
-      payin_hash: payment.payin_hash,
-    };
+    const event = eventFromPayment(payment);
 
     const depositResult = await processDeposit(
       typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
@@ -724,11 +809,12 @@ export const retryFailedDeposits = async () => {
     ...(await sweep('unverified', MAX_SWEEP_UNVERIFIED)),
   ];
 
-  if (!failedDeposits.length) return { retried: 0, succeeded: 0, failed: 0, exhausted: 0 };
+  if (!failedDeposits.length) return { retried: 0, succeeded: 0, failed: 0, exhausted: 0, held: 0 };
 
   let succeeded = 0;
   let failed = 0;
   let exhausted = 0;
+  let held = 0;
 
   const countRetry = async (
     deposit: { paymentId: bigint; retryCount: number; status: string },
@@ -781,17 +867,7 @@ export const retryFailedDeposits = async () => {
         continue;
       }
 
-      const event: NOWPayments.WebhookEvent = {
-        payment_id: numericId,
-        payment_status: payment.payment_status,
-        order_id: payment.order_id,
-        outcome_amount: payment.outcome_amount,
-        actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-        pay_currency: payment.pay_currency,
-        pay_address: payment.pay_address,
-        parent_payment_id: payment.parent_payment_id,
-        payin_hash: payment.payin_hash,
-      };
+      const event = eventFromPayment(payment);
 
       await processDeposit(numericId, payment.payment_status, event);
 
@@ -818,6 +894,8 @@ export const retryFailedDeposits = async () => {
         await countRetry({ ...deposit, status: 'buzz_failed' });
       } else if (updated?.status === 'unverified') {
         await countRetry(deposit);
+      } else if (updated?.status === HELD) {
+        held++;
       } else {
         // Status changed by another path (e.g., webhook fixed it) — skip
         succeeded++;
@@ -827,7 +905,7 @@ export const retryFailedDeposits = async () => {
     }
   }
 
-  return { retried: failedDeposits.length, succeeded, failed, exhausted };
+  return { retried: failedDeposits.length, succeeded, failed, exhausted, held };
 };
 
 /** Hard cap on perPage to prevent abuse */
@@ -1073,22 +1151,16 @@ export const reconcileUserDeposits = async (userId: number) => {
         select: { status: true, buzzCredited: true },
       });
 
-      if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
+      if (
+        existingTx ||
+        existingDeposit?.status === HELD ||
+        (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)
+      ) {
         continue;
       }
 
       try {
-        const event: NOWPayments.WebhookEvent = {
-          payment_id: numericId,
-          payment_status: payment.payment_status,
-          order_id: payment.order_id,
-          outcome_amount: payment.outcome_amount,
-          actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-          pay_currency: payment.pay_currency,
-          pay_address: payment.pay_address,
-          parent_payment_id: payment.parent_payment_id,
-          payin_hash: payment.payin_hash,
-        };
+        const event = eventFromPayment(payment);
 
         await processDeposit(numericId, payment.payment_status, event);
         processed++;
