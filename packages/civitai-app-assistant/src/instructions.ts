@@ -1,3 +1,4 @@
+import { GENERATE_APP_COVER, type ListingCoverState } from './cover-art';
 import type { Sandbox } from './sandbox-client';
 
 export interface AssistantInstructionsInput {
@@ -11,7 +12,15 @@ export interface AssistantInstructionsInput {
    * own `start_preview`. `browser` unless set.
    */
   runner?: 'browser' | 'remote';
+  /**
+   * The cover of the open app's store listing, when the page offers `generate_app_cover` and the
+   * user has a listing for the app; unset otherwise. Only the page has the tool.
+   */
+  listingCover?: ListingCoverState | null;
 }
+
+/** Said while the open app's listing has no cover, or only the one civitai made for it. */
+export const OFFER_COVER = `This app's store listing has no cover image of its own yet. Once the app works, offer the user once to make one with ${GENERATE_APP_COVER}. It costs Buzz: its first call only returns the price, which you tell the user; generate only after they agree.`;
 
 const STATE_NOTE: Record<Sandbox['state'], string> = {
   running: 'It is running and its tools are available.',
@@ -165,6 +174,7 @@ export function buildAssistantInstructions({
   canPreview,
   previewHost,
   runner = 'browser',
+  listingCover,
 }: AssistantInstructionsInput): string {
   // The runner offers no tunnel tools: its start_preview does the tunnel steps itself.
   const lines = [
@@ -204,6 +214,8 @@ export function buildAssistantInstructions({
           : 'No preview is running yet.'
       );
     }
+    if (runner === 'browser' && (listingCover === 'none' || listingCover === 'placeholder'))
+      lines.push(OFFER_COVER);
   }
 
   return lines.join('\n\n');
