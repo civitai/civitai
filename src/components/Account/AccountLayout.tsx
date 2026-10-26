@@ -1,5 +1,5 @@
 import type { MantineSize } from '@mantine/core';
-import { Badge, CloseButton, Text, TextInput } from '@mantine/core';
+import { CloseButton, Text, TextInput } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo, useState } from 'react';
@@ -19,6 +19,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { MembershipTierBadge } from '~/components/Account/MembershipTierBadge';
 import { useLegacyAnchorRedirect } from '~/components/Account/useLegacyAnchorRedirect';
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
@@ -126,9 +127,7 @@ function MobileIndex() {
               <Text size="sm" fw={700}>
                 {currentUser.username}
               </Text>
-              <Badge size="xs" color={currentUser.tier ? 'yellow' : 'gray'} tt="capitalize">
-                {currentUser.tier ?? 'Free'}
-              </Badge>
+              <MembershipTierBadge tier={currentUser.tier} />
             </div>
             <div className="flex items-center gap-1">
               <CurrencyIcon currency="BUZZ" size={12} />
