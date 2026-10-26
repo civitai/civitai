@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
@@ -709,29 +709,26 @@ export async function bulkSetReportStatus({
   rewardRemovedReporters?: boolean;
 }) {
   if (!ids.length) return;
-  const statusSetAt = new Date();
 
-  const reports = await dbRead.report.findMany({
-    where: { id: { in: ids }, status: { not: status } },
-    select: { id: true, userId: true, alsoReportedBy: true, details: true },
-  });
-
-  if (!reports) return;
-
-  await dbWrite.$transaction(
-    reports.map((report) =>
-      dbWrite.report.update({
-        where: { id: report.id },
-        data: {
-          status,
-          statusSetAt,
-          statusSetBy: userId,
-          previouslyReviewedCount:
-            status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
-        },
-      })
-    )
-  );
+  // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
+  // report another path has already moved to `status` matches nothing, so it is not rewritten and
+  // its reporters are not paid a second time. Who is paid comes from the rows this changed.
+  const reports = await dbWrite.$queryRaw<
+    { id: number; userId: number; alsoReportedBy: number[]; details: Prisma.JsonValue }[]
+  >`
+    UPDATE "Report"
+    SET
+      status = ${status}::"ReportStatus",
+      "statusSetAt" = ${new Date()},
+      "statusSetBy" = ${userId},
+      "previouslyReviewedCount" = ${
+        status === ReportStatus.Actioned
+          ? Prisma.sql`coalesce(array_length("alsoReportedBy", 1), 0) + 1`
+          : Prisma.sql`"previouslyReviewedCount"`
+      }
+    WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
+    RETURNING id, "userId", "alsoReportedBy", details
+  `;
 
   // Track mod activity in the background
   trackModReports({ ids, userId: userId });
