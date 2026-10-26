@@ -58,11 +58,11 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` SEVEN keys are ahead: `RUN_CONFIRMED_STEP`,
- * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD`,
- * `GET_RESOURCE_FILE` and `VIEWER_ACTIVITY` (sent by `@civitai/sdk`, which this package does not
- * describe). The
- * published union's 50 types are all inventory keys.
+ * As of the installed `@civitai/app-sdk@0.80.0` the published union's 55 types are all
+ * inventory keys, and the inventory carries two keys the union lacks, neither of them
+ * ahead: `VIEWER_ACTIVITY` (sent by `@civitai/sdk`, which this package does not
+ * describe) and `PREPARE_TRAINING_DATASET` (removed from the SDK in 0.77.0; the page
+ * host still answers it with `removed`).
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
  * `package.json` — a caret on a 0.x version admits patch releases only, and
@@ -1009,9 +1009,8 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // graph (under `src`, not excluded; not a `*.test.ts` corner case).
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
-// INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP`,
-// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD`,
-// `GET_RESOURCE_FILE`, `VIEWER_ACTIVITY` as of app-sdk 0.65.1).
+// INVENTORY MAY carry extra keys the published union lacks (`VIEWER_ACTIVITY` and
+// the removed `PREPARE_TRAINING_DATASET` as of app-sdk 0.80.0).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //

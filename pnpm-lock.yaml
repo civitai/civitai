@@ -47,8 +47,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/app-sdk':
-        specifier: ^0.65.1
-        version: 0.65.1(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+        specifier: ^0.80.0
+        version: 0.80.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
       '@civitai/auth':
         specifier: workspace:*
         version: link:packages/civitai-auth
@@ -2374,8 +2374,8 @@ packages:
   '@chevrotain/utils@10.5.0':
     resolution: {integrity: sha512-hBzuU5+JjB2cqNZyszkDHZgOSrUUT8V3dhgRl8Q9Gp6dAj/H5+KILGjbhDpc3Iy9qmqlm/akuOI2ut9VUtzJxQ==}
 
-  '@civitai/app-sdk@0.65.1':
-    resolution: {integrity: sha512-/IYkXycYYYBtD0jEFx8h+6SRJiSq0+tY1h6G2/jF1/1Jt6TpdVCeSp0I4QOd95MT5/4RQV+YopSVyRpAwFWjHQ==}
+  '@civitai/app-sdk@0.80.0':
+    resolution: {integrity: sha512-kGtVdfRKYfQ34rlfBTI9mlgcBObLL5rcOTJONe2wXjDNPL2iy/W2Zg46fXYKe5kLHQBI8Wqaqwydn5voLBds/A==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/client': ^0.2.0-beta.98
@@ -14041,7 +14041,7 @@ snapshots:
 
   '@chevrotain/utils@10.5.0': {}
 
-  '@civitai/app-sdk@0.65.1(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))':
+  '@civitai/app-sdk@0.80.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))':
     optionalDependencies:
       '@civitai/client': 0.2.0-beta.98
       ajv: 8.20.0
