@@ -35,7 +35,8 @@
   /**
    * The master-detail triage every queue shares: a list on the left, the open item on the right,
    * J/K to move, digits to rule (a decision with reasons opens its reason list for a second press), and the list dimming decided items in place (offsets shift under
-   * paging, so the page is only re-cut on request). The queues supply the rows and what they show.
+   * paging, so the page is only re-cut on request). The queues supply the rows and what they show;
+   * the detail goes on `TriageColumns`. The layout: docs/moderator-app/triage-layout.md.
    */
   let {
     rows,
@@ -45,6 +46,7 @@
     queueLabel,
     itemLabel,
     decisionEnabled,
+    settled,
     decisionActions = ['uphold', 'overturn'],
     ondecision,
     pinned = null,
@@ -72,6 +74,8 @@
     itemLabel: string;
     /** One entry per decision, in key order: digit `n + 1` picks index `n`. False makes that key a no-op. */
     decisionEnabled: (row: R) => readonly boolean[];
+    /** A row that needs no decision although this shell did not act on it, so moving on skips it. */
+    settled?: (row: R) => boolean;
     /** The `data-triage-action` of the form each decision key submits, in key order. */
     decisionActions?: readonly string[];
     /** Handles a decision key itself instead of submitting that decision's form. */
@@ -164,7 +168,11 @@
 
   const advance = async (decidedKey: K) => {
     if (selectedRowKey !== decidedKey) return;
-    const next = nextUndecided(keys, decidedKey, (key) => acted.has(key));
+    const next = nextUndecided(
+      keys,
+      decidedKey,
+      (key) => acted.has(key) || (settled?.(rows[keys.indexOf(key)]) ?? false)
+    );
     if (next === null) return;
     select(next);
     await tick();

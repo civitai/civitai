@@ -7,8 +7,8 @@ export interface AssistantInstructionsInput {
   canPreview: boolean;
   previewHost: string | null;
   /**
-   * Where the reply runs. `remote` (the server runner) has no live preview: the preview opens in the
-   * page, which may be closed. `browser` unless set.
+   * Where the reply runs. `remote` (the server runner) drives the preview's tunnel itself, inside its
+   * own `start_preview`. `browser` unless set.
    */
   runner?: 'browser' | 'remote';
 }
@@ -18,7 +18,19 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
   starting: 'It is starting; its tools appear in a few seconds.',
   suspended:
     'It is paused, so you have no sandbox tools; its files are kept. It starts again by itself when the user sends a message. If it is still paused when you need it, call create_app with its name to start it again; its tools arrive with your next reply.',
+  seed_lost:
+    'It is a fork whose files never arrived, so it is empty and has no sandbox tools. Do not build in it: tell the user to use Try again on the page, which deletes it and starts a fresh fork.',
 };
+
+/** The dev server's port: the one the sandbox's tunnel forwards and its preview_check loads. */
+export const DEV_SERVER_PORT = 5173;
+/**
+ * The dev server's command, run after `cd <blockId> && ` (sandbox__dev_server_start starts in
+ * /workspace): what the assistant is told to start it with, and what the runner's Restart preview
+ * starts it with when it is not running. CIVITAI_DEV_TUNNEL_HMR=1 is what makes the dev server send
+ * the headers the preview needs to load.
+ */
+export const DEV_SERVER_COMMAND = `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port ${DEV_SERVER_PORT}`;
 
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */
 export type AssistantRunner = 'browser' | 'remote';
@@ -49,6 +61,9 @@ const RULES_AFTER_SETUP = [
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
+  // A model left to guess required status 'succeeded' and read every priced estimate as unpriced.
+  // Spelled out as well as named, so it holds on an @civitai/sdk without the helper.
+  "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
 ];
 
@@ -99,12 +114,49 @@ export function assistantSystemPrompt(
   const rules = `${assistantRules(runner)}${
     subagents ? `\n${assistantSubagentRules(runner)}` : ''
   }`;
-  return (defaults) => `${defaults}\n\n${rules}`;
+  return (defaults) =>
+    `${
+      runner === 'remote' ? withoutSentencesNaming(defaults, PAGE_ONLY_CHAT_TOOLS) : defaults
+    }\n\n${rules}`;
 }
 
-/** What a reply on the server runner is told about the preview, which only the page can show. */
-export const REMOTE_NO_PREVIEW =
-  'Live preview is not available while your replies run on the server. Test with sandbox__run_command and sandbox__preview_check instead, and if the user asks for the preview, tell them it is not available in this mode.';
+/**
+ * Tools the chat's own rules name whatever tools a reply has, which only the page can offer:
+ * `ask_choice` waits for the viewer to tap a choice, and on the runner nobody may be watching, so
+ * the runner does not offer it and its rules do not name it.
+ */
+export const PAGE_ONLY_CHAT_TOOLS = ['ask_choice'] as const;
+
+/** `text` with every sentence that names one of `tools` taken out, line by line. */
+export function withoutSentencesNaming(text: string, tools: readonly string[]): string {
+  const names = new RegExp(`\\b(?:${tools.join('|')})\\b`);
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!names.test(line)) return line;
+      // A sentence ends at ". " (the chat's rules use no other end inside a line).
+      return line
+        .split(/(?<=\.) +/)
+        .filter((sentence) => !names.test(sentence))
+        .join(' ');
+    })
+    .join('\n');
+}
+
+/**
+ * What a reply on the server runner is told about the preview. The runner opens it by itself once
+ * `sandbox__dev_server_start` starts the dev server (and does the tunnel steps inside
+ * `start_preview`); the user's page and `sandbox__preview_check` load the same dev server.
+ */
+export const REMOTE_PREVIEW =
+  'Live preview (it opens beside this chat in the user’s page, and you can see the same running app): start the dev server with sandbox__dev_server_start (or sandbox__dev_server_restart when one is already running) and leave it running; the preview then opens for the user by itself, and the answer of that call says so (or why it could not). Do not call start_preview to open it. To see what the user sees, call sandbox__preview_check, which loads the same dev server, with screenshot: true when how it looks matters (and viewport: mobile for a phone); if no image comes back, go by its text and never describe a picture you did not receive. sandbox__preview_check needs the dev server running: start it first, or it answers render: server_error. Call start_preview only when the user asks to reopen the preview, and stop_preview when they ask to stop it.';
+
+/**
+ * What a reply is told when the account has no live preview, wherever it runs: no preview for the
+ * user, but the assistant can still look at the app itself.
+ */
+export const NO_PREVIEW =
+  'Live preview is not enabled for this account: do not call start_preview, and tell the user there is no live preview. To see the app yourself, start the dev server with sandbox__dev_server_start and leave it running, then call sandbox__preview_check (with screenshot: true when how it looks matters; if no image comes back, go by its text and never describe a picture you did not receive); it answers render: server_error until the dev server runs.';
 
 /** What the page tells the assistant before every reply. */
 export function buildAssistantInstructions({
@@ -114,10 +166,10 @@ export function buildAssistantInstructions({
   previewHost,
   runner = 'browser',
 }: AssistantInstructionsInput): string {
-  // The runner has no tunnel tools (they serve only the page's preview).
+  // The runner offers no tunnel tools: its start_preview does the tunnel steps itself.
   const lines = [
     runner === 'remote'
-      ? 'You are App Assistant on civitai.com. You build a Civitai App Block for the user inside their own hosted sandbox. While the sandbox runs you have its tools, all named sandbox__<tool> (sandbox__run_command, sandbox__read_file, sandbox__write_file, sandbox__list_dir, sandbox__delete_path, sandbox__dev_server_*). Files live under /workspace; the user sees only what you show them.'
+      ? 'You are App Assistant on civitai.com. You build a Civitai App Block for the user inside their own hosted sandbox. While the sandbox runs you have its tools, all named sandbox__<tool> (sandbox__run_command, sandbox__read_file, sandbox__write_file, sandbox__list_dir, sandbox__delete_path, sandbox__dev_server_*, sandbox__preview_check). Files live under /workspace; the user sees only what you show them and the live preview.'
       : 'You are App Assistant on civitai.com. You build a Civitai App Block for the user inside their own hosted sandbox. While the sandbox runs you have its tools, all named sandbox__<tool> (sandbox__run_command, sandbox__read_file, sandbox__write_file, sandbox__list_dir, sandbox__delete_path, sandbox__dev_server_*, sandbox__tunnel_*). Files live under /workspace; the user sees only what you show them and the live preview.',
   ];
 
@@ -138,20 +190,18 @@ export function buildAssistantInstructions({
         STATE_NOTE[sandbox.state]
       } When the user asks for a different, new app, call create_app; the open one is paused and kept.${yourApps}`,
       'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.',
-      "Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). sandbox__dev_server_start also starts in /workspace, not in the project directory, so give it the command cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload work over the tunnel; any other command must keep it and --host 0.0.0.0 --port 5173."
+      `Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && ${DEV_SERVER_COMMAND}. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port ${DEV_SERVER_PORT} in any command you give it.`
     );
-    if (runner === 'remote') {
-      lines.push(REMOTE_NO_PREVIEW);
-    } else if (canPreview) {
+    if (!canPreview) {
+      lines.push(NO_PREVIEW);
+    } else if (runner === 'remote') {
+      lines.push(REMOTE_PREVIEW);
+    } else {
       lines.push(
         "Live preview (it opens beside this chat), once the dev server runs, in this order: 1) call sandbox__tunnel_key; 2) call start_preview with its publicKey as public_key, the blockId as block_id, and the manifest's scopes and auth as declared_scopes and declared_auth; 3) call sandbox__tunnel_connect with the host and ssh_host_public_key start_preview returned. A key works once: if the tunnel drops, repeat all three steps. When the user asks to stop it, call stop_preview, then sandbox__tunnel_disconnect.",
         previewHost
           ? `The preview is currently running at ${previewHost}.`
           : 'No preview is running yet.'
-      );
-    } else {
-      lines.push(
-        'Live preview is not enabled for this account: do not call start_preview. Test with sandbox__run_command instead, and tell the user there is no live preview.'
       );
     }
   }

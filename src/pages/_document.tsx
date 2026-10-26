@@ -2,8 +2,13 @@ import { ColorSchemeScript, mantineHtmlProps } from '@mantine/core';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
 import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
+import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
 import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
+import { shellPageDataPrefetchScript } from '~/components/Shell/shell-page-data';
+import type { ShellRouteName } from '~/server/shell/shell-mode';
+import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
+import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
@@ -15,6 +20,18 @@ export default class _Document extends Document {
       Document.getInitialProps(ctx)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
+    // Reached only once the page rendered, so a shell render that throws never carries these; and
+    // only when the page's own getServerSideProps took the shell branch, not on `_app`'s mark alone.
+    const marks = ctx.req as {
+      [SHELL_REQ_KEY]?: ShellRouteName;
+      [SHELL_RENDERED_REQ_KEY]?: ShellRouteName;
+    };
+    const shellRoute = marks[SHELL_REQ_KEY];
+    if (shellRoute && marks[SHELL_RENDERED_REQ_KEY] === shellRoute && ctx.res) {
+      applyShellEdgeHeaders(ctx.res, shellRoute);
+    }
+    // Not awaited: a flag evaluation or log write must never delay the response.
+    void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);
     return initialProps;
   }
 
@@ -30,14 +47,22 @@ export default class _Document extends Document {
             and Next 16 / Turbopack injects each CSS Module's `@layer modules`
             block at runtime — potentially before globals.css parses. Declaring
             the order here (the first node in <head>) makes it deterministic:
-            preflight < theme < mantine < modules < unlayered Tailwind utils.
+            preflight < theme < mantine < civitai.components < modules < unlayered
+            Tailwind utils. `civitai.components` is `@civitai/components`' sheet (the
+            `shellDesignSystemMarkup` shell): above preflight and `theme`, whose resets
+            would otherwise strip its borders and backgrounds, and below CSS modules, so
+            `ShellDs.module.css` can map civitai's exact Mantine values onto it.
           */}
           <style
             dangerouslySetInnerHTML={{
-              __html: '@layer tailwind-preflight, theme, mantine, modules;',
+              __html: '@layer tailwind-preflight, theme, mantine, civitai.components, modules;',
             }}
           />
           <ColorSchemeScript />
+          {/* A static shell page starts its page-data request here, before the bundles load. */}
+          {pageProps.shell && (
+            <script dangerouslySetInnerHTML={{ __html: shellPageDataPrefetchScript() }} />
+          )}
         </Head>
         <body
           className={clsx(pageProps.colorScheme, {

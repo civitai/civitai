@@ -183,6 +183,10 @@ export default defineNextConfig(
     generateEtags: false,
     compress: false,
     images: {
+      // Every next/image source is a static file under /public, so serve it directly instead of
+      // through /_next/image. remotePatterns below is unused while this is on; it is kept as the
+      // allow-list to restore if the optimizer is ever turned back on.
+      unoptimized: true,
       remotePatterns: [
         { hostname: 's3.us-west-1.wasabisys.com' },
         { hostname: 'model-share.s3.us-west-1.wasabisys.com' },
@@ -210,6 +214,13 @@ export default defineNextConfig(
       // won't resolve the out-of-root symlink without transpiling it
       'form-graph',
       'superjson',
+      // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
+      // left external; bundling it lets Turbopack resolve the directory.
+      '@civitai/orchestration-client',
+      // ESM-only with an `import`-only exports map (no `require` or `default`
+      // condition), and the server imports it at runtime (`checkComfyGraph`).
+      // Bundling it resolves the subpath at build time instead of at runtime.
+      '@civitai/app-sdk',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
@@ -351,7 +362,7 @@ export default defineNextConfig(
       // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
       // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
-        '@civitai/client',
+        '@civitai/orchestration-client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',

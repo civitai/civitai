@@ -186,9 +186,9 @@ describe('production catalog snapshot (2026-08-03)', () => {
  * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
  * for the same reason.
  */
-describe('production catalog snapshot (2026-10-19)', () => {
+describe('production catalog snapshot (2026-10-20)', () => {
   const current = JSON.parse(
-    readFileSync(join(here, 'fixtures/catalog-production-2026-10-19.json'), 'utf8')
+    readFileSync(join(here, 'fixtures/catalog-production-2026-10-20.json'), 'utf8')
   ) as DbCatalog;
   const currentReport = compareSchemaToCatalog(schema, current);
   const currentFound = (kind: DriftKind) =>
@@ -199,7 +199,7 @@ describe('production catalog snapshot (2026-10-19)', () => {
   it('is a catalog the differ could actually read, captured with a real instant', () => {
     expect(() => assertCatalogSanity(current)).not.toThrow();
     expect(assessCoverage(currentReport)).toEqual([]);
-    expect(current.capturedAt).toBe('2026-10-19T17:31:16.592Z');
+    expect(current.capturedAt).toBe('2026-10-20T16:23:29.382Z');
   });
 
   it('compares every referential action (a live capture carries them)', () => {
@@ -248,7 +248,35 @@ describe('production catalog snapshot (2026-10-19)', () => {
   });
 
   it('reports no missing columns: every declared column was live at capture', () => {
-    expect(currentFound('missing-column')).toEqual([]);
+    // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
+    // catalog is recaptured after it:
+    //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261123120000_csam_report_send_claim`
+    //   `Thread.storylineId`: `20261127120000_storyline_thread`
+    //   the six fork-provenance columns: `20261126120000_app_fork_provenance`
+    //   `ScanLabelClaim.token` / `ScanLabelVote.claimToken`: `20261128120000_scan_label_claim_token`
+    //   the four `ServiceDealFile.malwareScan*` columns: `20261128150000_creator_service_final_malware_scan`
+    //   `ApiKey.workerDeviceId`: `20261130120000_worker_identity`
+    //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
+    const inFlightColumns = new Set([
+      'CsamReport.sendClaimId',
+      'CsamReport.sendClaimedAt',
+      'Thread.storylineId',
+      'app_blocks.fork_of_app_block_id',
+      'app_blocks.fork_of_commit_sha',
+      'app_block_publish_requests.fork_of_app_block_id',
+      'app_block_publish_requests.fork_of_commit_sha',
+      'app_listings.forkable',
+      'app_listings.fork_of_listing_id',
+      'ScanLabelClaim.token',
+      'ScanLabelVote.claimToken',
+      'ServiceDealFile.malwareScanWorkflowId',
+      'ServiceDealFile.malwareScanStartedAt',
+      'ServiceDealFile.malwareScanSubmittedAt',
+      'ServiceDealFile.malwareScanAttempts',
+      'ApiKey.workerDeviceId',
+      'ServiceOffering.sellerAffirmation',
+    ]);
+    expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
     expect(found('missing-column').length).toBeGreaterThan(0);
   });

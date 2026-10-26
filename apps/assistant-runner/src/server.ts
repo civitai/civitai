@@ -1,11 +1,14 @@
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
+import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
 import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
 import { RunCredentials } from './credentials';
 import { RunGrants } from './grants';
+import { PgModelCalls } from './model-calls';
 import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
 import { TokenMinter } from './minter';
 import { OrchestrationClient } from './orchestration';
@@ -36,6 +39,8 @@ const pool = createPool(
   'runner-grants'
 );
 const grants = new RunGrants(pool, log);
+/** Which orchestration workflow each model request was sent as: on the same pool, ids only. */
+const modelCalls = new PgModelCalls(pool);
 /**
  * Conversation locks on a pool of their own: a lock holds its connection while the write it guards
  * looks up grants on the pool above, so sharing one pool could leave every connection held by a
@@ -57,6 +62,7 @@ const lockPool = createPool(
 let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
 let tools: ToolProvider = unconfiguredTools;
+let previews: PreviewRestarter | undefined;
 const civitai = config.civitai;
 if (civitai) {
   const credentials = new RunCredentials(
@@ -68,6 +74,8 @@ if (civitai) {
     baseUrl: civitai.orchestrationUrl,
     orchestration,
     tokens: (runId) => credentials.forRun(runId),
+    calls: modelCalls,
+    log,
   });
   store = new OrchestrationConversationStore({
     orchestration,
@@ -75,14 +83,32 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
+  // The live preview's tunnels, which civitai opens for a run's user: each call reads the run's
+  // grant from the grants table inside its own fetch, as a mint does.
+  const devTunnels = new CivitaiDevTunnels({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
+        devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
         log,
       })
     : noTools;
+  // The page's Restart preview: the request's own preview grant, for that request only.
+  if (civitai.sandboxUrl)
+    previews = new PreviewRestarter({
+      sandboxUrl: civitai.sandboxUrl,
+      forGrant: (grant) => ({
+        tokens: credentials.forGrant(grant),
+        tunnels: devTunnels.forRun(async () => grant),
+      }),
+      log,
+    });
 }
 
 const runner = new Runner({
@@ -90,6 +116,7 @@ const runner = new Runner({
   tools,
   store,
   grants,
+  modelCalls,
   log,
   wallClockMs: config.wallClockMs,
   stopGraceMs: config.stopGraceMs,
@@ -103,6 +130,7 @@ const verifier = civitai ? createTokenVerifier(civitai.publicKey) : undefined;
 const app = buildApp({
   service: runner,
   ...(verifier ? { authenticator: viewerAuthenticator(verifier), grants: verifier } : {}),
+  ...(previews ? { previews } : {}),
   basePath: config.basePath,
   logger: loggerOptions(config.logLevel),
 });
@@ -111,6 +139,7 @@ async function main(): Promise<void> {
   runner.register();
   // Before DBOS launches: the runs it recovers read their grants at once.
   await grants.init();
+  await modelCalls.init();
   await runner.launch({
     databaseUrl: config.databaseUrl,
     executorId: config.executorId,

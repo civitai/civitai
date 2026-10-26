@@ -2,7 +2,7 @@ import {
   getConsumerBlobUploadUrl,
   handleError,
   type ConsumerBlobPresignResponse,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { throwOrchestratorFailure } from '~/server/services/orchestrator/workflows';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';

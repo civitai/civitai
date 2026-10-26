@@ -9,6 +9,19 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 
+// Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
+// coerced (z.coerce turns '' into 0). Mirrors packages/civitai-db/src/env.ts — both schemas are
+// pinned to the same cases by src/env/__tests__/appdata-pool-env.test.ts.
+const intString = (min: number, max = Number.MAX_SAFE_INTEGER) =>
+  z
+    .string()
+    .regex(/^\d+$/, 'expected a whole number')
+    .transform(Number)
+    .pipe(z.number().int().min(min).max(max));
+// A bare hostname or IPv4 address (no scheme, userinfo, port, path or IPv6 literal).
+const HOSTNAME_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -37,6 +50,17 @@ export const serverSchema = z
     // BYPASSRLS; the store checks and refuses). Unset → the document store is
     // disabled (`storage_disabled`); it never falls back to APPS_DATABASE_URL.
     APPDATA_DATABASE_URL: z.url().optional(),
+    // The document store's pool is sized on its own, not by DATABASE_POOL_MAX (default 4 per
+    // process). The idle timeout falls back to DATABASE_POOL_IDLE_TIMEOUT when unset.
+    APPDATA_POOL_MAX: intString(1).default(4),
+    APPDATA_POOL_IDLE_TIMEOUT: intString(0).optional(),
+    // Optional reroute (e.g. through a connection pooler): replaces only the host and/or port of
+    // APPDATA_DATABASE_URL, keeping its user, password, database and query. Unset → unchanged.
+    APPDATA_DATABASE_HOST: z
+      .string()
+      .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
+      .optional(),
+    APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -375,6 +399,8 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+    // Recipients of evidence-hold-expiry-alert. Unset or empty: it logs an error instead of sending.
+    EVIDENCE_HOLD_ALERT_EMAILS: commaDelimitedStringArray().default([]),
     // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
     // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
     // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts
@@ -815,6 +841,8 @@ export const serverSchema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     STRIPE_CONNECT_WEBHOOK_SECRET: z.string().optional(),
     STRIPE_DONATE_ID: z.string().optional(),
+    // Billing portal configuration (bpc_...) used for every portal session; unset uses the account default.
+    STRIPE_BILLING_PORTAL_CONFIGURATION_ID: z.string().optional(),
     PADDLE_SECRET_KEY: z.string().optional(),
     PADDLE_WEBHOOK_SECRET: z.string().optional(),
     CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
@@ -897,6 +925,9 @@ export const serverSchema = z
     // webhook is created; unset disables the receiver (503) rather than trusting
     // unsigned deliveries.
     CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+    // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
+    // disables the receiver (503) rather than trusting unsigned deliveries.
+    HQ_WEBHOOK_SECRET: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -1188,6 +1219,20 @@ export const serverSchema = z
     BUNDLE_S3_BUCKET: z.string().optional(),
     BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
     BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+
+    // FORKABLE APPS — where a fork's starting files are staged for the hosted sandbox service
+    // to download (a presigned GET, valid 10 minutes). A DEDICATED bucket on an HTTPS endpoint
+    // the sandbox service can reach, with no port in the URL: the service fetches only from
+    // the exact hostnames in its SEED_URL_HOSTS, which must list this endpoint's hostname and
+    // nothing that serves anything else. Path-style addressing, so the presigned URL's host is
+    // the endpoint's host. All optional: unset (or an endpoint that is not https, or has a
+    // port), `appListings.startFork` refuses ("Forking isn’t available on this site yet.").
+    // 🔴 The bucket needs a lifecycle rule expiring `fork-seeds/` objects (a day is ample):
+    // a successful start cannot know when the sandbox service has downloaded its seed.
+    APP_FORK_SEED_S3_ENDPOINT: z.string().url().optional(),
+    APP_FORK_SEED_S3_BUCKET: z.string().optional(),
+    APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),
+    APP_FORK_SEED_S3_SECRET_ACCESS_KEY: z.string().optional(),
 
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark

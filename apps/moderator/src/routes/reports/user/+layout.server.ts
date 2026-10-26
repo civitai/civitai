@@ -40,5 +40,6 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
     // hung 104px below the fold, taking the pager with it — CSS cannot read its own offset, so
     // the header has to be a sibling of the panes rather than something above them.
     fullBleed: true,
+    headerInline: true,
   };
 };

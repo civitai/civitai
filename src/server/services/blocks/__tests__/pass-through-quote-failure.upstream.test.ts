@@ -14,7 +14,7 @@ const { mockSubmitWorkflow, mockRefreshBlob } = vi.hoisted(() => ({
   mockRefreshBlob: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   refreshBlob: mockRefreshBlob,
   addWorkflowTag: vi.fn(),

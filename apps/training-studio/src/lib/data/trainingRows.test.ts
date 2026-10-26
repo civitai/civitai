@@ -1,4 +1,4 @@
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_TOKEN_BUDGET,
@@ -252,5 +252,20 @@ describe('workflowToDetail settings export', () => {
     expect(text).not.toContain('sig=1');
     expect(text).not.toContain('defaultSteps');
     expect(text).not.toContain('trace');
+  });
+});
+
+describe('workflowToDetail sample input images', () => {
+  it("reads an edit run's input images, index-aligned to its prompts", () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.samples = { prompts: ['ohwx, make it night'], sourceImages: ['https://x/in-a.png'] };
+    const detail = workflowToDetail(w)!;
+    expect(detail.prompts).toEqual(['ohwx, make it night']);
+    expect(detail.sourceImages).toEqual(['https://x/in-a.png']);
+  });
+
+  it('carries none for a text-only run', () => {
+    expect(workflowToDetail(workflow())!.sourceImages).toBeUndefined();
   });
 });

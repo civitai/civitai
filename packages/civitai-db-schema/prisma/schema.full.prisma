@@ -461,6 +461,7 @@ model User {
   notificationSettings UserNotificationSettings[]
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
+  emailOptOuts         UserEmailNotificationOptOut[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -1098,6 +1099,13 @@ model Model {
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
   isOfficial          Boolean         @default(false)
+  // The .com face, shown to viewers who see no mature content; unrelated to `sfwOnly`. Set
+  // `sfwName` means the face is on. The cover ids have no FK: Image is too hot to constrain,
+  // and a dangling id falls back to the derived cover.
+  sfwName             String?         @db.Citext
+  sfwDescription      String?
+  coverImageId        Int?
+  sfwCoverImageId     Int?
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -2044,6 +2052,7 @@ model Post {
   reports         PostReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
+  storylinePendingChapter StorylinePendingChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -2189,6 +2198,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  caption                ImageCaption?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2291,8 +2301,7 @@ enum TextScanHoldStatus {
   Confirmed
 }
 
-// A text-scan verdict held for a moderator; nothing else acts on it. A partial index on pending rows
-// lives in migration 20261016150000_text_scan_hold (Prisma cannot model it).
+// A text-scan verdict held for a moderator. Partial indexes Prisma cannot model live in the text_scan_hold migrations.
 model TextScanHold {
   id           Int                @id @default(autoincrement())
   entityType   String
@@ -2317,8 +2326,9 @@ model TextScanHold {
   restoredAt   DateTime?
   meta         Json?
 
-  @@unique([entityType, entityId, label, textHash])
+  @@index([entityType, entityId, label, textHash])
   @@index([status, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ImageEngagementType {
@@ -2818,6 +2828,7 @@ enum ApiKeyType {
   User
   Access
   Refresh
+  Worker
 }
 
 model ApiKey {
@@ -2834,8 +2845,12 @@ model ApiKey {
   clientId   String?
   client     OauthClient? @relation(fields: [clientId], references: [id], onDelete: Cascade)
   buzzLimit  Json?        // { daily?: number, weekly?: number, monthly?: number }
+  /// Set on `Worker` tokens only: the device the token was issued to.
+  workerDeviceId Int?
+  workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([workerDeviceId])
 }
 
 model OauthClient {
@@ -2866,8 +2881,45 @@ model OauthClient {
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
   goodPurchases BlockGoodPurchase[] @relation("BlockGoodPurchaseApp")
   connectListings          AppListing[]
+  workerClient             WorkerClient?
+  workerDevices            WorkerDevice[]
 
   @@index([userId])
+}
+
+/// A workload OAuth client: a pool of workers that trade a device credential for a short-lived
+/// `Worker` token at the auth hub's token-exchange grant. One row per provider pool.
+model WorkerClient {
+  clientId               String      @id
+  client                 OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// The orchestrator provider this pool's workers register as.
+  provider               String
+  /// The `subject_token_type` URNs this client may exchange.
+  subjectTokenTypes      String[]    @default([])
+  /// Salad container groups whose IMDS tokens this client accepts.
+  saladContainerGroupIds String[]    @default([])
+  createdAt              DateTime    @default(now())
+}
+
+/// A worker machine seen at the token-exchange grant, keyed by who vouched for it (`issuer`) and its id
+/// there (`subject`). Blocking one refuses its exchanges and ends its live tokens.
+model WorkerDevice {
+  id            Int         @id @default(autoincrement())
+  clientId      String
+  client        OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+  issuer        String
+  subject       String
+  /// `active` or `blocked`.
+  status        String      @default("active")
+  firstSeenAt   DateTime    @default(now())
+  lastSeenAt    DateTime    @default(now())
+  lastIp        String?
+  blockedAt     DateTime?
+  blockedReason String?
+  tokens        ApiKey[]
+
+  @@unique([clientId, issuer, subject])
 }
 
 /// Generic per-user role grants (e.g. "tester"). Read directly by the auth hub — the OAuth /authorize gate
@@ -3013,6 +3065,24 @@ model AppBlock {
   // `appBlock` query without an explicit `select` raises P2022 until it lands.
   spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
   spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
+
+  // FORK PROVENANCE — the app this block was forked from, and the parent commit the fork
+  // started at. Attribution only: no revenue share, no inherited approval, no inherited
+  // paid goods or scopes (a fork's goods and scopes are reviewed on its own publish).
+  //
+  // 🔴 SERVER-WRITTEN ONLY, through `app-fork.service.ts`, and never from the manifest: an
+  // author must not be able to claim (or disclaim) a parent. Write-once.
+  //
+  // 🔴 BOTH FIELDS CARRY THE no-type ANNOTATION, so they are stripped from the generated
+  // client, for the reason `AppListing.visibility` documents: as ordinary fields every
+  // `appBlock` call that returns rows without an explicit `select` would name them, and
+  // would raise P2022 until the manual-apply migration runs. They are read and written by
+  // raw SQL only. The FK (`fork_of_app_block_id` → `app_blocks.id`, ON DELETE SET NULL) and
+  // its partial index live ONLY in migration `20261126120000_app_fork_provenance` — Prisma
+  // cannot declare a relation on a stripped scalar. `fork_of_commit_sha` has no FK, so it
+  // survives the parent's deletion and still marks the block as a fork.
+  forkOfAppBlockId   String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha    String?   @map("fork_of_commit_sha") // @no-type
 
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3238,6 +3308,14 @@ model AppBlockPublishRequest {
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
+  // FORK PROVENANCE carried onto the request — copied from the block's own pair when the
+  // request is created, or set by the fork flow for a fork's first version (no block yet).
+  // Read on approve to link the fork's store listing to its parent's. SERVER-WRITTEN ONLY;
+  // the request's `manifest` is never consulted for it. Same no-type posture as
+  // `AppBlock.forkOfAppBlockId` — raw SQL only; FK (ON DELETE SET NULL) + partial index in
+  // migration `20261126120000_app_fork_provenance`.
+  forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -3399,6 +3477,22 @@ model AppListing {
   // while the columns are absent rather than 500ing the public store.
   isBeta          Boolean      @default(false) @map("is_beta")
   betaMessage     String?      @map("beta_message")
+  // AUTHOR OPT-IN: "Let others fork this app's source". TRIVIAL, NOT MATERIAL (absent from
+  // `MATERIAL_LISTING_PATCH_FIELDS`, never staged on a shadow revision) — the same posture
+  // as `isBeta`. Written to the LIVE listing only.
+  //
+  // FORK PROVENANCE: the store listing this listing's app was forked from. Set on the
+  // FORK'S publish approval from the publish request's server-written provenance, never
+  // from the manifest. ON DELETE SET NULL — the fork's block keeps `fork_of_commit_sha`, so
+  // a fork whose parent is gone still reads as a fork ("Forked from an app that is no
+  // longer available").
+  //
+  // 🔴 BOTH CARRY THE no-type ANNOTATION — stripped from the generated client, read and
+  // written by raw SQL in `app-fork.service.ts` only, for the reason `visibility` below
+  // documents. The FK, the self-reference CHECK and the partial index that serves "forks of
+  // listing X" live ONLY in migration `20261126120000_app_fork_provenance`.
+  forkable        Boolean      @default(false) // @no-type
+  forkOfListingId String?      @map("fork_of_listing_id") // @no-type
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
@@ -4845,6 +4939,18 @@ model UserPushSetting {
   @@id([userId, type])
 }
 
+// Row = email OFF for this notification type. Only types whose processor sets `defaultEmail` send
+// email at all, so absence means ON for those and is meaningless for every other type. Single
+// polarity, like UserPushSetting (the opposite one) — never add an `enabled` column.
+model UserEmailNotificationOptOut {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -5001,6 +5107,8 @@ model Thread {
   appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: Cascade)
   crucibleId       Int?            @unique
   crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  storylineId      Int?            @unique
+  storyline        Storyline?      @relation(fields: [storylineId], references: [id], onDelete: Cascade)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -5049,6 +5157,7 @@ enum CommentEntityType {
   model3dReview
   appListing
   crucible
+  storyline
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -5603,6 +5712,9 @@ model CosmeticShopItem {
   // `cosmeticId` as a pack. A CHECK keeps it unlisted.
   itemDefinitionId  Int?
   itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
+  // Lowercase labels a moderator sets so a shop section with the same `meta.eventTag` picks the
+  // item up without being placed by hand.
+  eventTags         String[]  @default([])
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
@@ -5612,6 +5724,7 @@ model CosmeticShopItem {
 
   @@index([cosmeticId])
   @@index([itemDefinitionId])
+  @@index([eventTags], type: Gin)
 }
 
 // Cross-creator resale: another creator listing this item in their own shop.
@@ -6532,6 +6645,9 @@ model CsamReport {
   details          Json           @default("{}")
   images           Json           @default("[]")
   type             CsamReportType @default(Image)
+  /// The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+  sendClaimId      String?        @db.Uuid
+  sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
 }
 
@@ -6554,6 +6670,22 @@ model CsamReportAudit {
   @@index([csamReportId])
 }
 
+/// One admin release of a held user's removed-image review flags. Its images are the ModActivity
+/// rows written in the same transaction.
+model CsamFlagRelease {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  moderatorId    Int
+  approvalRef    String
+  reason         String
+  /// The hold legs the release overrode.
+  overriddenLegs Json
+  imageCount     Int
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
 /// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
 model CsamReportArchiveObject {
   id            Int      @id @default(autoincrement())
@@ -6570,6 +6702,64 @@ model CsamReportArchiveObject {
   uploadedAt    DateTime @default(now())
 
   @@index([csamReportId])
+}
+
+/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
+/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
+/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
+/// later), or when a person releases it; clearing an image's review flag never ends it.
+model EvidenceHold {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  csamReportId    Int?
+  /// subject | secondary | manual
+  role            String
+  reportSentAt    DateTime?
+  /// NULL holds until released.
+  releaseAt       DateTime?
+  extendedUntil   DateTime?
+  /// Who asked for the extension, and their reference.
+  extensionRequestedBy String?
+  extensionReference   String?
+  reason          String
+  createdAt       DateTime  @default(now())
+  createdById     Int?
+  releasedAt      DateTime?
+  releasedById    Int?
+  releaseReason   String?
+
+  @@index([userId])
+}
+
+/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
+/// is the post it was in, and nothing else records it. Purged once no hold covers the owner.
+model EvidenceHoldImage {
+  imageId Int      @id
+  userId  Int
+  postId  Int?
+  keptAt  DateTime @default(now())
+}
+
+/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
+/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
+model EvidenceHoldPost {
+  postId         Int       @id
+  userId         Int
+  title          String?
+  detail         String?
+  createdAt      DateTime?
+  publishedAt    DateTime?
+  modelVersionId Int?
+  collectionId   Int?
+  metadata       Json?
+  keptAt         DateTime  @default(now())
+}
+
+/// @view
+/// The owners with at least one active `EvidenceHold`.
+model EvidenceHeldUser {
+  userId    Int       @id
+  heldUntil DateTime?
 }
 
 model Link {
@@ -6951,8 +7141,23 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+  edits              ChatMessageEdit[]
 
   @@index([chatId, id])
+}
+
+/// The text one edit replaced, written in the same statement that overwrites `ChatMessage.content`.
+/// The text it left behind is the next row's `previousContent`, or the message's current content.
+model ChatMessageEdit {
+  id              Int         @id @default(autoincrement())
+  messageId       Int
+  /// No relation: a deleted editor must neither block nor erase the history.
+  editorId        Int
+  previousContent String
+  createdAt       DateTime    @default(now())
+  message         ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, id])
 }
 
 model BuildGuide {
@@ -7038,6 +7243,7 @@ enum JobQueueType {
   ReplacedImageDelete
   ImageStorageDelete
   CdnAccessSync
+  ImageCdnPersistRetry
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -7449,6 +7655,25 @@ model ScanLabelFlag {
   @@index([itemId])
 }
 
+/// Shadow audio scan of a video, from a workflow separate from the visual ingestion scan.
+/// Nothing reads it to filter, rate or hide media.
+model ImageAudioScan {
+  imageId       Int       @id
+  workflowId    String    @unique
+  /// Pending | Succeeded | Failed
+  status        String    @default("Pending")
+  /// null when the video has no audio or the scan failed: unknown, never "clean"
+  flagged       Boolean?
+  hasAudio      Boolean?
+  result        Json?
+  resultVersion Int?
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([flagged, createdAt])
+}
+
 model ScanLabelVote {
   itemId    Int
   userId    Int
@@ -7457,6 +7682,7 @@ model ScanLabelVote {
   reasonComment String?
   msOnItem      Int?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+  claimToken    String?  @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId, createdAt])
@@ -7466,6 +7692,7 @@ model ScanLabelClaim {
   itemId    Int
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
+  token     String?  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId])
@@ -10039,8 +10266,11 @@ model Storyline {
   heroImagePosition Int    @default(50)
 
   chapters      StorylineChapter[]
+  pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
+  /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
+  thread        Thread?
 
   @@index([userId])
   @@index([coverImageId])
@@ -10081,12 +10311,34 @@ model StorylineChapter {
   branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
   branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
   createClicks      StorylineCreateClick[]
+  pendingContinuations StorylinePendingChapter[]
 
   /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
   /// join chapters from two storylines.
   @@unique([id, storylineId])
   @@index([storylineId])
   @@index([userId])
+}
+
+/// A post draft written from the storyline flow, before it is a chapter: which storyline it will
+/// join and, for a continuation, which chapter it continues. Readers never see it; chapter rows
+/// stay the only live chapters. Removed once the chapter is written, the continuation submitted,
+/// or the author detaches the draft.
+model StorylinePendingChapter {
+  postId          Int               @id
+  post            Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  storylineId     Int
+  storyline       Storyline         @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+  /// migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+  parentChapterId Int?
+  parentChapter   StorylineChapter? @relation(fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  /// The draft's author when it was linked. Not a relation, as on StorylineChapter.
+  userId          Int
+  createdAt       DateTime          @default(now())
+
+  @@index([storylineId])
+  @@index([parentChapterId])
 }
 
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
@@ -10116,6 +10368,22 @@ model StorylineChapterEdge {
   @@id([chapterId, parentChapterId])
   /// Children of a chapter, oldest first, without a sort.
   @@index([parentChapterId, createdAt])
+}
+
+/// The post author's note on one image of a storyline chapter, shown to readers under the
+/// image. No row means no caption: an empty caption deletes it.
+model ImageCaption {
+  imageId   Int      @id
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+  userId    Int
+  content   String   @db.VarChar(500)
+  /// The text scan refused it: never shown to readers. Set and cleared only by the scan.
+  refused   Boolean  @default(false)
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+  nsfwLevel Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
@@ -10299,6 +10567,9 @@ model ServiceOffering {
   removedDetails    String?
   removedAt         DateTime?
   removedById       Int?
+  /// The seller's agreement to the services terms when they published: userId, offeringId,
+  /// affirmedAt, version and the statement verbatim. Null until first published.
+  sellerAffirmation Json?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
@@ -10431,8 +10702,14 @@ model ServiceDealFile {
   /// Set when preview processing last started, so a crashed worker's file is picked up again.
   processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
-  /// The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+  /// The malware scanner's own verdict; `scanStatus` can pass only once this has.
   malwareScanStatus ServiceDealFileScanStatus @default(Pending)
+  /// The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+  malwareScanWorkflowId  String?
+  /// When the file was first handed to the scan; the give-up window runs from here.
+  malwareScanStartedAt   DateTime?
+  malwareScanSubmittedAt DateTime?
+  malwareScanAttempts    Int       @default(0)
   /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
   unpackedAt     DateTime?
   /// What a buyer downloads: for a zip, an archive the server built from the entries it checked
@@ -10678,6 +10955,9 @@ model Crucible {
   // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
   // (the migration backfills false); new rows default to true.
   timeAdjustedPlacement Boolean    @default(true)
+  // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
+  // shown to non-moderators.
+  eventTags         String[]       @default([])
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
@@ -10688,6 +10968,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([eventTags], type: Gin)
   @@index([status, ingestion])
 }
 

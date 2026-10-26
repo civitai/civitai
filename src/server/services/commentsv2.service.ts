@@ -21,6 +21,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { getImageThread } from '@civitai/db-queries/hot-reads';
 import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
@@ -29,6 +32,7 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -245,6 +249,10 @@ export async function getThreadEntityOwnerId({
     case 'crucible':
       return findUserId(
         dbRead.crucible.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'storyline':
+      return findUserId(
+        dbRead.storyline.findUnique({ where: { id: entityId }, select: { userId: true } })
       );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
@@ -688,21 +696,92 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
   return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
 }
 
+/**
+ * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
+ * or on any chain thread's `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted
+ * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
+ */
+const storylineAboveSql = (seed: string) => Prisma.sql`
+  ${Prisma.raw(muteableThreadsCte(seed))}
+  SELECT th."storylineId"
+  FROM (
+    SELECT mt."id" FROM muteable_threads mt
+    UNION ALL
+    SELECT t."rootThreadId" FROM muteable_threads mt JOIN "Thread" t ON t.id = mt."id"
+  ) chain
+  JOIN "Thread" th ON th.id = chain."id"
+  WHERE th."storylineId" IS NOT NULL
+  LIMIT 1`;
+
+export const storylineOfThreadSql = (threadId: number) =>
+  storylineAboveSql(String(Number(threadId)));
+
+export const storylineOfCommentSql = (commentId: number) =>
+  storylineAboveSql(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+
+const firstStorylineId = async (sql: Prisma.Sql) =>
+  (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
+
+export const getCommentThreadStorylineId = (threadId: number) =>
+  firstStorylineId(storylineOfThreadSql(threadId));
+
+export const getCommentStorylineId = (commentId: number) =>
+  firstStorylineId(storylineOfCommentSql(commentId));
+
 export const deleteComment = async ({ id }: { id: number }) => {
   const deleted = await dbWrite.commentV2.delete({ where: { id } });
   void onCommentsRemoved([deleted]);
   return deleted;
 };
 
-export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Read before the delete, for the event points removal; a failed read only skips that.
-  const removed = await dbWrite.commentV2
-    .findMany({ where: { id: { in: ids } }, select: { userId: true, threadId: true } })
-    .catch(() => []);
-  const result = await dbWrite.commentV2.deleteMany({ where: { id: { in: ids } } });
-  void onCommentsRemoved(removed);
-  return { count: result.count };
+/**
+ * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
+ * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
+ * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
+ * anywhere below it.
+ */
+export async function deleteCommentsV2UnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
+    DELETE FROM "CommentV2" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
+          UNION
+          SELECT t.id FROM "Thread" t
+          JOIN "CommentV2" k ON t."commentId" = k.id
+          JOIN below b ON k."threadId" = b.id
+        )
+        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+      )
+    RETURNING c."userId", c."threadId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+/** What follows a committed `deleteCommentsV2UnlessHeld`. */
+export async function afterCommentsV2Deleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteCommentsV2UnlessHeld>>) {
+  if (retained.length)
+    await logHoldRetained(
+      'commentV2.bulkDelete',
+      retained.map((r) => r.userId)
+    );
+  void onCommentsRemoved(deleted);
 }
 
 /**
@@ -746,7 +825,10 @@ export async function bulkSetCommentV2TosViolation({
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Actioned}::"ReportStatus"
+      UPDATE "Report" r SET
+        status = ${enums.ReportStatus.Actioned}::"ReportStatus",
+        "statusSetAt" = now(),
+        "statusSetBy" = ${actor.id}
       FROM "CommentV2Report" c
       WHERE c."reportId" = r.id
         AND c."commentV2Id" = ${id}
@@ -801,10 +883,27 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
 }: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
+  const viaKysely = await readImageThreadViaKysely(entityType, entityId);
+  if (viaKysely !== undefined) return viaKysely;
   return dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
+}
+
+/**
+ * An IMAGE's thread on the replica through Kysely when `kysely-hot-reads-2` is on: `{ id, locked }`,
+ * or `null` when the image has none, exactly as the Prisma `findUnique` answers. `undefined` means
+ * "not taken": the flag is off or the entity is not an image, and the caller reads Prisma as before.
+ * Only images, the hot shape; every other entity type stays on Prisma.
+ */
+async function readImageThreadViaKysely(
+  entityType: string,
+  entityId: number
+): Promise<{ id: number; locked: boolean } | null | undefined> {
+  if (entityType !== 'image') return undefined;
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))) return undefined;
+  return (await getImageThread((await loadKyselyDb()).kyselyRead, entityId)) ?? null;
 }
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
@@ -1077,10 +1176,14 @@ export async function getCommentsInfinite({
 }: GetCommentsInfiniteInput & { excludedUserIds?: number[]; isModerator?: boolean }) {
   return withSpan('commentv2:getInfinite', async () => {
     // 1. Get thread metadata
-    const mainThread = await dbRead.thread.findUnique({
-      where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-      select: { id: true },
-    });
+    const imageThread = await readImageThreadViaKysely(entityType, entityId);
+    const mainThread =
+      imageThread !== undefined
+        ? imageThread && { id: imageThread.id }
+        : await dbRead.thread.findUnique({
+            where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+            select: { id: true },
+          });
     if (!mainThread) return null;
 
     // 2. Fetch pinned comments (only when no cursor = first page)

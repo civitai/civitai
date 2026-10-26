@@ -241,6 +241,9 @@ export type ModEndpoint =
   | 'model/set-poi'
   | 'model/take-down'
   | 'model/unpublish'
+  | 'poi-flag/confirm'
+  | 'poi-flag/dismiss'
+  | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
@@ -250,6 +253,7 @@ export type ModEndpoint =
   | 'strike/void'
   | 'text-scan'
   | 'text-scan/csam-hold/resolve'
+  | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
@@ -406,7 +410,7 @@ export async function bulkCommentAction(input: {
   commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number }> {
+}): Promise<ActionResult & { affected?: number; retainedHidden?: number }> {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
@@ -437,8 +441,12 @@ export async function bulkCommentAction(input: {
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
       : nested('comment') + nested('commentV2');
 
+  // A delete keeps some comments hidden instead; the endpoint never says why, and neither does this.
+  const retainedHidden =
+    input.action === 'bulkDelete' ? countOf(result.body, ['retainedHidden']) : 0;
+
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0)
+  if (affected === 0 && retainedHidden === 0)
     return {
       ok: false,
       error:
@@ -447,9 +455,16 @@ export async function bulkCommentAction(input: {
           : 'Nothing changed — those comments may already be gone. Reload.',
     };
 
-  await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+  if (affected)
+    await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+  if (retainedHidden)
+    await logAction(
+      `comments:${input.action}:retainedHidden:${retainedHidden}`,
+      input.userId,
+      input.moderatorId
+    );
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected };
+  return { ok: true, affected, retainedHidden };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).

@@ -307,10 +307,10 @@ export function AppListingCard({
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
   // and returns `null` for an unmeasurable listing. That is deliberate: this
-  // component is covered only by the REPORT-ONLY browser project, while the pure
-  // view-model is covered by the node `unit` project that reddens a `main` push. A
-  // `card.openCount != null && …` written into the JSX below would put the rule in
-  // the one tier that never goes red on its own. All this line does is carry the
+  // component is covered only by the browser project, while the pure view-model is
+  // covered by the node `unit` project. A
+  // `card.openCount != null && …` written into the JSX below would put the rule
+  // out of reach of the node tier. All this line does is carry the
   // answer to the render, and all the render does is omit a `null`.
   const playCountLabel = getPlayCountLabel(card.openCount);
 

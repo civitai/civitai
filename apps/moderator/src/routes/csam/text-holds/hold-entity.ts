@@ -1,5 +1,12 @@
 import { shortAge } from '$lib/format';
-import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+import {
+  chatAuditChatUrl,
+  commentV2Url,
+  entityUrl,
+  modelCommentUrl,
+  userLookupUrl,
+  userUrl,
+} from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -55,7 +62,11 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
+/** A duplicate pending hold the one-hold-per-entity migration closed; nobody ruled on it. */
+export const SUPERSEDED_OUTCOME = 'Superseded by a newer scan';
+
 export function decisionLabel(hold: { status: string; decision: string | null }): string {
+  if (hold.decision === 'superseded') return SUPERSEDED_OUTCOME;
   const outcome =
     hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
       ? CSAM_HOLD_OUTCOMES[hold.decision as CsamHoldDecision]
@@ -179,13 +190,21 @@ export function holdTitle(hold: {
   }
 }
 
+/** A pending row shows the newest event: when its text was last replaced, else when it was held. */
 export function holdMeta(
-  hold: { status: string; createdAt: Date; decidedAt: Date | null },
+  hold: {
+    status: string;
+    createdAt: Date;
+    decidedAt: Date | null;
+    textUpdatedAt?: Date | string | null;
+  },
   now = Date.now()
 ): string {
-  return hold.status === 'Pending' || !hold.decidedAt
-    ? `held ${shortAge(hold.createdAt, now)}`
-    : `decided ${shortAge(hold.decidedAt, now)}`;
+  if (hold.status === 'Pending' || !hold.decidedAt)
+    return hold.textUpdatedAt
+      ? `text updated ${shortAge(hold.textUpdatedAt, now)}`
+      : `held ${shortAge(hold.createdAt, now)}`;
+  return `decided ${shortAge(hold.decidedAt, now)}`;
 }
 
 export function splitEmptyTypes<T extends string>(
@@ -204,14 +223,18 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
+  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment`: its deep link needs the model id,
- *  which the hold does not record. */
+/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'Comment':
+      return hold.commentModelId
+        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
+        : null;
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

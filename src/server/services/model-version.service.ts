@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { asResourceValue } from '~/shared/utils/resource.utils';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -28,6 +30,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
   preventModelVersionLag,
@@ -558,6 +561,18 @@ export function assertRecommendedSettingsForType(
     throw throwBadRequestError(
       `Turbo LoRAs are not supported for ${baseModel ?? 'this base model'}`
     );
+}
+
+/**
+ * Recommended-resource rows only write `strength`; spreading the row's settings JSON would
+ * clobber the resource's hydrated `settings`.
+ */
+export function withPairedStrength<T extends GenerationResource>(
+  resource: T,
+  row: unknown
+): T & { strength: number } {
+  const strength = (row as { strength?: number | null } | null | undefined)?.strength;
+  return asResourceValue(resource, strength);
 }
 
 /**
@@ -1631,7 +1646,12 @@ export const deleteVersionById = async ({
 export const updateModelVersionById = async ({
   id,
   data,
-}: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  enforceTakedown,
+}: GetByIdInput & {
+  data: Prisma.ModelVersionUpdateInput;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
+}) => {
   // Check if trying to publish a model version when model is marked as cannotPublish
   if (data.status === ModelStatus.Published) {
     const modelVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -1659,6 +1679,8 @@ export const updateModelVersionById = async ({
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
   const result = await dbWrite.$transaction(async (tx) => {
+    if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+      throw throwAuthorizationError('You are not authorized to publish this model version');
     const updated = await tx.modelVersion.update({ where: { id }, data: restData });
     if (publishedAt !== undefined) {
       const writeCount = await tx.$executeRaw`
@@ -1844,9 +1866,12 @@ export const publishModelVersionById = async ({
   publishedAt,
   meta,
   republishing,
+  enforceTakedown,
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
   republishing?: boolean;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
 }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -1919,6 +1944,11 @@ export const publishModelVersionById = async ({
 
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // Re-checked here, under a lock, because the caller's check ran before this transaction and
+      // a takedown can land in between.
+      if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
         // Materialize the timed gate's endsAt from the publish timestamp (see the EA publish path).
@@ -2230,6 +2260,9 @@ export const unpublishModelVersionById = async ({
 
   await updateModelLastVersionAt({ id: version.model.id });
   await bustMvCache(version.id, version.model.id);
+  // Its posts are unpublished with it, and one may hold the model's .com cover.
+  const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
+  await updateModelNsfwLevels([version.model.id]);
 
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
   // version stops resolving by-hash before the edge cache TTL expires.

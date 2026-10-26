@@ -2055,8 +2055,15 @@ SourceImageUploadMultiple.UrlDropzone = function UrlDropzone({
 SourceImageUploadMultiple.Image = function ImagePreview({
   className,
   index,
+  showDimensions = true,
+  fit = 'contain',
   ...previewItem
-}: ImagePreview & { className?: string; index: number }) {
+}: ImagePreview & {
+  className?: string;
+  index: number;
+  showDimensions?: boolean;
+  fit?: 'contain' | 'cover';
+}) {
   const {
     missingAiMetadata,
     removeItem,
@@ -2151,7 +2158,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewItem.url}
-                className="size-full object-contain"
+                className={clsx('size-full', fit === 'cover' ? 'object-cover' : 'object-contain')}
                 alt="image"
                 onError={handleError}
               />
@@ -2160,10 +2167,12 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                   <Loader size="sm" />
                 </div>
               ) : (
-                <SourceImageUploadMultiple.Dimensions
-                  width={previewItem.width}
-                  height={previewItem.height}
-                />
+                showDimensions && (
+                  <SourceImageUploadMultiple.Dimensions
+                    width={previewItem.width}
+                    height={previewItem.height}
+                  />
+                )
               )}
               {enableMetadataExtraction && (
                 <MetadataAction url={previewItem.url} apply={metadataApply} />

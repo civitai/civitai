@@ -1,4 +1,8 @@
-import type { AiToolkitTrainingInput, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  AiToolkitTrainingInput,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -13,7 +17,7 @@ import {
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
- * *wrapper* prepends `civitai`, but the raw `@civitai/client` call this app uses does not, so the
+ * *wrapper* prepends `civitai`, but the raw `@civitai/orchestration-client` call this app uses does not, so the
  * query must pass both explicitly. */
 export const TRAINING_TAG = 'training';
 export const CIVITAI_TAG = 'civitai';
@@ -156,7 +160,7 @@ type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
   /** SD-family only. */
   minSnrGamma?: number | null;
   /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
-  samples?: { prompts?: string[] };
+  samples?: { prompts?: string[]; sourceImages?: string[] };
   /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
   trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
@@ -479,6 +483,9 @@ export interface TrainingDetail {
   isVideo: boolean;
   /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
   prompts: string[];
+  /** The input images an edit run's samples were rendered from, index-aligned to `prompts`. Absent on
+   *  text-only runs. */
+  sourceImages?: string[];
   /** The requested checkpoint count, for a "N of M" progress readout while training. */
   plannedEpochs?: number;
   /** Overall step progress, 0–1 (the orchestrator's estimate) — the general "how far along" the run is. */
@@ -584,6 +591,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     media,
     isVideo: media === 'video',
     prompts,
+    ...(input.samples?.sourceImages?.length ? { sourceImages: input.samples.sourceImages } : {}),
     plannedEpochs: input.epochs ?? undefined,
     progress,
     liveTraceUrl,

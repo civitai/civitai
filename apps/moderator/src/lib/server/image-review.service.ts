@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
-import { getFlagClearHolds } from './csam-flag-clear';
+import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -35,6 +35,10 @@ export type ImageReviewItem = {
   postTitle: string | null;
   entityType: string | null;
   entityId: number | null;
+  mimeType: string | null;
+  /** Raw `metadata` text, for the placeholder of a file that cannot be shown. */
+  size: string | null;
+  duration: string | null;
   reviewTags: ReviewTag[];
 };
 
@@ -99,6 +103,9 @@ export async function getImageReviewQueue({
       'p.title as postTitle',
       'ic.entityType',
       'ic.entityId',
+      'i.mimeType',
+      sql<string | null>`i.metadata ->> 'size'`.as('size'),
+      sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
@@ -185,6 +192,10 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
+/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
+ *  the status is unknown rather than that this user is on a hold. */
+export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+
 export type CsamQueueUser = {
   userId: number;
   username: string | null;
@@ -196,8 +207,8 @@ export type CsamQueueUser = {
   reportSentAt: Date | null;
   /** Any CSAM report row for the user, sent or not. */
   reported: boolean;
-  /** A bulk clear of this user's flags would be refused. */
-  held: boolean;
+  /** Why a bulk clear of this user's flags would be refused; empty when it would not be. */
+  heldBy: CsamQueueHoldReason[];
 };
 
 /** The CSAM review queue as one row per owning user, most flagged first. Same rows and browsing-level
@@ -228,7 +239,7 @@ export async function getCsamQueueByUser({
   const userIds = page.map((g) => g.userId);
   if (!userIds.length) return { users: [], truncated };
 
-  const [users, reports, removed, holds] = await Promise.all([
+  const [users, reports, removed, holds, marker] = await Promise.all([
     dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
     dbRead
       .selectFrom('CsamReport')
@@ -245,7 +256,12 @@ export async function getCsamQueueByUser({
       .groupBy('userId')
       .execute(),
     getFlagClearHolds(userIds),
+    holdMarkerState(dbRead),
   ]);
+  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
+    marker === 'view'
+      ? legs
+      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
   const removedByUser = new Map(removed.map((r) => [r.userId, Number(r.count)]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r.reportSentAt]));
@@ -259,7 +275,7 @@ export async function getCsamQueueByUser({
       latestImageId: Number(g.latestImageId),
       reportSentAt: reportsByUser.get(g.userId) ?? null,
       reported: reportsByUser.has(g.userId),
-      held: holds.has(g.userId),
+      heldBy: reasons(holds.get(g.userId)),
     })),
     truncated,
   };

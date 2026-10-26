@@ -9,6 +9,7 @@ import {
   createMcpConnection,
   extraToolSet,
   McpConnectionClosedError,
+  mcpResultToText,
   namespacedToolName,
   type ChatMcpServer,
   type McpConnection,
@@ -80,7 +81,7 @@ export class AppSandbox {
   #connection: McpConnection | null = null;
   #closed = false;
   /** The one look at the user's apps after a refused call, shared by the calls refused together. */
-  #checking: Promise<'gone' | 'paused' | 'running'> | null = null;
+  #checking: Promise<'gone' | 'paused' | 'running' | 'starting'> | null = null;
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
@@ -141,8 +142,9 @@ export class AppSandbox {
       token: this.#deps.token,
     };
     const named = listed
-      // The tunnel only serves the live preview, which is page-only: not offered with nobody watching.
-      .filter((tool) => !PAGE_ONLY_TOOL.test(tool.name))
+      // The tunnel is the runner's to drive, inside `start_preview` and `stop_preview` (`preview.ts`):
+      // the assistant never gets it, so it cannot point the sandbox at a host civitai did not open.
+      .filter((tool) => !RUNNER_ONLY_TOOL.test(tool.name))
       .map((tool) => ({ name: namespacedToolName(SANDBOX_SERVER_ID, tool.name), tool }))
       .filter(({ name }) => /^[A-Za-z0-9_-]{1,64}$/.test(name));
     const tools = extraToolSet([{ server, connection, tools: named }], { taken: {} });
@@ -163,6 +165,25 @@ export class AppSandbox {
       } as typeof tool;
     }
     return tools;
+  }
+
+  /**
+   * Calls one of the sandbox's own tools for the runner itself (the tunnel's, for the preview), never
+   * for the assistant: its text, and whether the tool said it failed. Throws when the app has no
+   * connection (it is not running, or `create_app` opened another one meanwhile) or the call fails.
+   */
+  async call(
+    tool: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ text: string; isError: boolean }> {
+    const connection = this.#connection;
+    if (!connection || this.#closed) throw new Error('Your app is not running.');
+    const result = await connection.callTool(tool, args, {
+      ...(signal ? { signal } : {}),
+      timeoutMs: RUNNER_CALL_TIMEOUT_MS,
+    });
+    return { text: mcpResultToText(result, Infinity), isError: result.isError === true };
   }
 
   async close(): Promise<void> {
@@ -186,6 +207,12 @@ export class AppSandbox {
         retryable: true,
         note: LOST_NOTE,
       };
+    if (state === 'starting')
+      return {
+        error: `Your app is starting again, so the ${tool} call may have finished or may not have run.`,
+        retryable: true,
+        note: LOST_NOTE,
+      };
     // Still running: an error status (a proxy's 502, a pod restart) may have come after it ran.
     if (error instanceof StreamableHTTPError && (error.code ?? 0) >= 400)
       return {
@@ -201,8 +228,8 @@ export class AppSandbox {
    * is gone, still running (the refusal was a proxy's or a restart's), or paused. A paused app ends the
    * reply as interrupted, saying whether the user opened another app; it is never woken from here.
    */
-  #check(): Promise<'gone' | 'paused' | 'running'> {
-    this.#checking ??= (async (): Promise<'gone' | 'paused' | 'running'> => {
+  #check(): Promise<'gone' | 'paused' | 'running' | 'starting'> {
+    this.#checking ??= (async (): Promise<'gone' | 'paused' | 'running' | 'starting'> => {
       const app = this.#app;
       if (!app) return 'gone';
       let listed: Sandbox[];
@@ -217,7 +244,10 @@ export class AppSandbox {
       }
       const found = listed.find((sandbox) => sandbox.app === app);
       if (!found) return 'gone';
-      if (found.state === 'running') return 'running';
+      // Starting (a pod restart, or the user opening it again): neither asleep nor paused for another
+      // app, and the call may have run before the restart; reported as maybe finished, as a running
+      // app's error status is, and the reply goes on.
+      if (found.state !== 'suspended') return found.state === 'starting' ? 'starting' : 'running';
       this.#active = found;
       const other = listed.some((sandbox) => sandbox.app !== app && sandbox.state !== 'suspended');
       this.#deps.endReply?.(other ? PAUSED_BY_OTHER_APP : PAUSED_IDLE);
@@ -282,8 +312,10 @@ export class AppSandbox {
   }
 }
 
-/** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
-const PAGE_ONLY_TOOL = /^tunnel_/;
+/** The sandbox's own tools the runner keeps to itself: the tunnel, which only `start_preview` drives. */
+const RUNNER_ONLY_TOOL = /^tunnel_/;
+/** A tunnel call waits up to 20 s for sish (`tunnel_connect`); this bounds one the runner makes. */
+const RUNNER_CALL_TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

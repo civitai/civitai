@@ -1,11 +1,12 @@
 import {
-  REMOTE_NO_PREVIEW,
+  REMOTE_PREVIEW,
   TURN_LIMIT_REFUSAL,
+  isKeepLimitResult,
   assistantRules,
   assistantSubagentRules,
   assistantSubagentInstructions,
 } from '@civitai/app-assistant';
-import { REFUSED_BY_PAGE_NOTE } from '@civitai/components-chat/core';
+import { REFUSED_BY_PAGE_NOTE, buildSystemPrompt } from '@civitai/components-chat/core';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 import type { ModelMessage, ToolSet } from 'ai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,6 +76,13 @@ async function open(overrides: Partial<ToolContext> = {}) {
   return { tools, reported, ended, stop };
 }
 
+/** The runner's own reads as a reply opens (the SDK pin check): the assistant made none of them. */
+const RUNNER_READS = ['my-app/package.json', 'my-app/node_modules/@civitai/sdk/package.json'];
+/** Every `read_file` call but the runner's own SDK pin reads. */
+const assistantReads = () =>
+  fake.calls.filter((c) => c.tool === 'read_file' && !RUNNER_READS.includes(String(c.args.path)))
+    .length;
+
 const opensApps = () =>
   fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
 
@@ -97,7 +105,7 @@ async function passAll(tools: ToolSet) {
 }
 
 describe('App Assistant’s tools on the runner', () => {
-  it('offers the open app’s sandbox tools and the page tools the runner can run, never the preview', async () => {
+  it('offers the open app’s sandbox tools and the page tools the runner can run, the preview’s included', async () => {
     fake.add('my-app');
     const { tools } = await open();
     const names = Object.keys(tools.tools);
@@ -109,16 +117,23 @@ describe('App Assistant’s tools on the runner', () => {
         'create_app',
         'set_checklist',
         'report_ready',
+        'start_preview',
+        'stop_preview',
       ])
     );
-    expect(names).not.toContain('start_preview');
-    expect(names).not.toContain('stop_preview');
-    expect(tools.hostTools?.sort()).toEqual(['create_app', 'report_ready', 'set_checklist']);
+    expect(tools.hostTools?.sort()).toEqual([
+      'create_app',
+      'report_ready',
+      'set_checklist',
+      'start_preview',
+      'stop_preview',
+    ]);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
     expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${assistantRules('remote')}`);
-    expect(tools.instructions).toContain(REMOTE_NO_PREVIEW);
+    expect(tools.instructions).toContain(REMOTE_PREVIEW);
     expect(tools.instructions).toContain('sb-my-app-1');
-    expect(tools.instructions).not.toContain('call start_preview with');
+    // The runner does the tunnel steps itself: the assistant is never told to.
+    expect(tools.instructions).not.toMatch(/sandbox__tunnel_/);
   });
 
   it('asks the sandbox service and the MCP server with sandbox tokens only', async () => {
@@ -182,6 +197,21 @@ describe('App Assistant’s tools on the runner', () => {
     expect(ended).toEqual([PAUSED_IDLE]);
   });
 
+  it('an app found starting again (a pod restart) is not reported asleep: maybe finished, and the reply goes on', async () => {
+    const record = fake.add('my-app');
+    const { tools, ended } = await open();
+    record.state = 'starting';
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' })
+    ).toMatchObject({ error: expect.stringMatching(/may have finished/), retryable: true });
+    expect(ended).toEqual([]);
+    expect(opensApps()).toEqual([]);
+    // Control: a paused one does end the reply.
+    record.state = 'suspended';
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
+    expect(ended).toEqual([PAUSED_IDLE]);
+  });
+
   it('when the user opens another app mid-reply, leaves it running and ends the reply as paused', async () => {
     fake.add('my-app');
     const { tools, ended } = await open();
@@ -237,7 +267,7 @@ describe('App Assistant’s tools on the runner', () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it('does not offer the tunnel tools, which serve only the page’s preview', async () => {
+  it('does not offer the raw tunnel tools, which only the runner’s start_preview drives', async () => {
     fake.add('my-app');
     const { tools } = await open();
     expect(Object.keys(tools.tools).filter((name) => name.includes('tunnel'))).toEqual([]);
@@ -324,7 +354,7 @@ describe('App Assistant’s gate on the runner', () => {
     // The 150th was still the gate's ordinary refusal, not the end.
     expect(reported[149]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
-    expect(fake.callsTo('read_file')).toBe(0);
+    expect(assistantReads()).toBe(0);
   });
 
   it('keeps a subagent read-only: it cannot write or run commands', async () => {
@@ -345,7 +375,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(fake.callsTo('write_file')).toBe(0);
     expect(fake.callsTo('run_command')).toBe(0);
     // Control: the read it was allowed did run.
-    expect(fake.callsTo('read_file')).toBe(1);
+    expect(assistantReads()).toBe(1);
   });
 
   it('leaves a subagent’s calls out of the parent’s 150', async () => {
@@ -364,7 +394,7 @@ describe('App Assistant’s gate on the runner', () => {
     })) as { status: string };
     expect(dispatched.status).toBe('done');
     // All five ran though the parent's count stood at 149: a subagent has its own budget.
-    expect(fake.callsTo('read_file')).toBe(5);
+    expect(assistantReads()).toBe(5);
     expect(reported.filter((r) => r.subagent !== undefined)).toHaveLength(5);
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toMatchObject({
@@ -486,6 +516,16 @@ describe('the runner’s prompt', () => {
     'web_search',
     'run_step',
     'run_workflow',
+    // Named by the chat's own rules (`defaultRules`), which the runner's system prompt starts with.
+    'ask_choice',
+    'open_panel',
+    'update_panel',
+    'post_to_civitai',
+    'search_models',
+    'find_services',
+    'get_input_schema',
+    'caption_media',
+    'transcribe_audio',
   ];
 
   it('names only tools the runner offers', async () => {
@@ -493,9 +533,15 @@ describe('the runner’s prompt', () => {
     const child = scriptedModel(() => ({ text: 'ok' }));
     const { tools } = await open({ subagents: true, model: () => child });
     const offered = Object.keys(tools.tools);
-    const prompt = `${tools.rules?.('')}\n${tools.instructions}\n${assistantSubagentInstructions(
-      'remote'
-    )}`;
+    // The whole system prompt, built as the runner builds it: the chat's own rules first, then App
+    // Assistant's, then the reply's instructions and what its subagents are told.
+    const system = buildSystemPrompt({
+      now: new Date(),
+      tools: offered,
+      host: { tools: tools.hostTools ?? [], instructs: true },
+      ...(tools.rules ? { rules: tools.rules } : {}),
+    });
+    const prompt = `${system}\n${tools.instructions}\n${assistantSubagentInstructions('remote')}`;
     const named = new Set<string>();
     for (const name of KNOWN) if (new RegExp(`\\b${name}\\b`).test(prompt)) named.add(name);
     for (const match of prompt.matchAll(/\bsandbox__([a-z_]+)(\*)?/g))
@@ -509,6 +555,12 @@ describe('the runner’s prompt', () => {
     expect(missing).toEqual([]);
   });
 
+  it('the chat’s own rules do name ask_choice (the control: the check reads them)', () => {
+    expect(buildSystemPrompt({ now: new Date(), tools: ['sandbox__read_file'] })).toMatch(
+      /\bask_choice\b/
+    );
+  });
+
   it('the page’s prompt does name tools the runner lacks (the control)', async () => {
     const { buildAssistantSystemPromptWithSubagents, buildAssistantInstructions } = await import(
       '@civitai/app-assistant'
@@ -520,7 +572,6 @@ describe('the runner’s prompt', () => {
       previewHost: null,
     })}`;
     expect(page).toMatch(/sandbox__tunnel_\*/);
-    expect(page).toMatch(/\bstart_preview\b/);
   });
 });
 
@@ -538,6 +589,35 @@ describe('what the page is told of a call', () => {
       output: expect.stringMatching(/^exit_code: 0/),
     });
     expect((reported[1].output as string).length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('the kept-apps limit, as the page is told of it', () => {
+  it('a create_app refused at the cap reaches the page as the limit, in this reply and the next call', async () => {
+    fake.add('my-app');
+    fake.add('second-app', 'suspended');
+    fake.add('third-app', 'suspended');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    const before = opensApps().length;
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(2);
+    expect(creates.map(isKeepLimitResult)).toEqual([true, true]);
+    // The cap was asked once; the second call was refused by the gate.
+    expect(opensApps().length - before).toBe(1);
+  });
+
+  it('NEGATIVE CONTROL: under the cap, create_app is not reported as the limit', async () => {
+    fake.add('my-app');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    await call(tools.tools, 'create_app', { name: 'Fourth app' });
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(1);
+    expect(creates[0].isError).toBe(false);
+    expect(isKeepLimitResult(creates[0])).toBe(false);
   });
 });
 

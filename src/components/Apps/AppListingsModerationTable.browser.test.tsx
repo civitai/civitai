@@ -6,7 +6,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 post-approval mgmt (P2) — the unified moderator listings management table.
- * Browser-mode render test (report-only in Tekton): mixed-status/kind dataset →
+ * Browser-mode render test (`Component tests` in CI): mixed-status/kind dataset →
  * status sections; sort + server-side filter wiring; each inline action fires the
  * right mutation with the right args (reason forwarded, purge confirm-gated); the
  * kind-aware action visibility (off-site-only actions hidden on on-site rows); the
@@ -285,7 +285,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // visibility. That is exactly the gap the `messageAppOwner` comment below
         // warns about: it reports as a render failure rather than as the mock gap it is.
         // 50 tests across 2 files were failing in CI this way, invisibly, because this
-        // tier is report-only AND cannot run on the dev host.
+        // tier was report-only AND could not run on the dev host.
         setListingVisibilityAsModerator: { useMutation: mutation('setVisibilityAsModerator') },
         // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
         // composer's success handler reads, so it cannot use the shared `mutation`

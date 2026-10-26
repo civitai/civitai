@@ -31,5 +31,6 @@ export const load: LayoutServerLoad = async ({ url, params }) => {
     labels: ENTITY_QUEUE_LABELS[type],
     items: queue.items.map((r) => ({ ...r, subject: subjects.get(r.id) ?? null })),
     fullBleed: true,
+    headerInline: true,
   };
 };

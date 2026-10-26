@@ -124,6 +124,7 @@ export const appRouter = router({
     import('./purchasable-reward.router').then((m) => m.purchasableRewardRouter)
   ),
   vault: lazy(() => import('./vault.router').then((m) => m.vaultRouter)),
+  siteAlerts: lazy(() => import('./site-alert.router').then((m) => m.siteAlertRouter)),
   research: lazy(() => import('~/server/routers/research.router').then((m) => m.researchRouter)),
   redeemableCode: lazy(() =>
     import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)

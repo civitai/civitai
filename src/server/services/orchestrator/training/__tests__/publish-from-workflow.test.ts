@@ -38,7 +38,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   updateWorkflow: mockUpdateWorkflow,
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {
@@ -51,6 +51,7 @@ import {
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { trainingModelInfo } from '~/utils/training';
+import { trainingDetailsObj } from '~/server/schema/model-version.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindFirst = dbMock.dbWrite.model.findFirst;
@@ -150,6 +151,40 @@ describe('mapTrainingBaseModelToBaseModel', () => {
       steps: [{ $type: 'training', input: { ecosystem: 'wan', modelVariant: 'no-such-variant' } }],
     });
     expect(mapTrainingBaseModelToBaseModel(wf).info.aiToolkit?.ecosystem).toBe('wan');
+  });
+
+  // The exact step inputs Training Studio submits for its Studio-only bases.
+  it.each([
+    [
+      'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+      'mossImage',
+      'base',
+      'mossimage_base',
+      'MOSS Image',
+    ],
+    [
+      'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+      'mossImage',
+      'sft',
+      'mossimage_sft',
+      'MOSS Image',
+    ],
+    [
+      'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+      'flux3klein',
+      undefined,
+      'flux3klein',
+      'Flux.3 Klein-base',
+    ],
+  ])('resolves a Training Studio run on %s', (model, ecosystem, modelVariant, key, baseModel) => {
+    const wf = studioWorkflow({
+      steps: [
+        { $type: 'training', input: { engine: 'ai-toolkit', model, ecosystem, modelVariant } },
+      ],
+    });
+    const mapped = mapTrainingBaseModelToBaseModel(wf);
+    expect(mapped.trainingKey).toBe(key);
+    expect(mapped.baseModel).toBe(baseModel);
   });
 
   it('throws for a base outside trainingModelInfo instead of writing a malformed version', () => {
@@ -404,6 +439,29 @@ describe('createDraftModelFromWorkflow', () => {
       selectedEpochNumber: 1,
     });
     expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
+  });
+
+  it('writes a MOSS Image version whose trainingDetails base the schema accepts', async () => {
+    const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+    base.steps[0].input = {
+      ...base.steps[0].input,
+      ecosystem: 'mossImage',
+      modelVariant: 'base',
+      model: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: base as unknown as Workflow,
+      selectedEpochNumber: 1,
+    });
+    const version = mockUpsertModelVersion.mock.calls[0][0];
+    expect(version.baseModel).toBe('MOSS Image');
+    const { baseModel, baseModelType } = version.trainingDetails;
+    expect(
+      trainingDetailsObj
+        .pick({ baseModel: true, baseModelType: true })
+        .parse({ baseModel, baseModelType })
+    ).toEqual({ baseModel: 'mossimage_base', baseModelType: 'mossimage' });
   });
 
   it('falls back to the last available epoch when the selected number has no blob', async () => {

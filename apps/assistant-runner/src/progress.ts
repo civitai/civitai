@@ -1,7 +1,7 @@
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { hasEnded, savedTurn, withEnd, withProgress, type EndedReply } from './head';
+import { hasEnded, ownedBy, savedTurn, withEnd, withProgress, type EndedReply } from './head';
 import type { ConversationStore, Logger } from './interfaces';
 
 /** The waits between attempts at saving how a reply ended, after the first fails. */
@@ -25,7 +25,9 @@ export class ProgressWriter {
     private readonly userId: string,
     private readonly conversationId: string,
     private readonly seq: number,
-    private readonly log: Logger
+    private readonly log: Logger,
+    /** The run saving: once a retry of the same turn took the turn over, this run saves nothing more to it. */
+    private readonly runId?: string
   ) {}
 
   save(messages: ModelMessage[]): void {
@@ -103,8 +105,11 @@ export class ProgressWriter {
     let written = false;
     try {
       await this.store.update(this.userId, this.conversationId, (current) => {
-        // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it.
-        if (!current || hasEnded(savedTurn(current, this.seq))) return null;
+        // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it; and a
+        // turn a newer run of it owns is that run's alone.
+        const turn = current ? savedTurn(current, this.seq) : undefined;
+        if (!current || hasEnded(turn)) return null;
+        if (this.runId !== undefined && turn && !ownedBy(turn, this.runId)) return null;
         written = true;
         return change(current);
       });

@@ -31,7 +31,7 @@ import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { isOrchestratorUrl, maxVideoFileSize } from '~/server/common/constants';
 import { VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import { TimeSpan } from '@civitai/client';
+import { TimeSpan } from '@civitai/orchestration-client';
 import { trpc } from '~/utils/trpc';
 import { getVideoData } from '~/utils/media-preprocessors';
 import { formatBytes } from '~/utils/number-helpers';

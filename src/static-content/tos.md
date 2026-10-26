@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-10-06
+lastmod: 2026-10-22
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.red](https://civitai.red), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -49,7 +49,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.7 **Subscription Service.** You may be able to subscribe to certain channels or subscription-based plans offered by Creators or by us through the Service, with automatically recurring payments for periodic charges (“Subscription Service”). The “Subscription Billing Date” is the date when you purchase your first subscription to the Subscription Service. The Subscription Service will begin on the Subscription Billing Date and continue for the subscription period that you select (such period, the “Initial Subscription Period”), and will automatically renew for successive periods of the same duration as the Initial Subscription Period (the Initial Subscription Period and each such renewal period, each a “Subscription Period”) unless you cancel the Subscription Service, or the Creator or we terminate it. If you activate a Subscription Service, then you authorize Civitai or the Payment Processor to periodically charge, on a going-forward basis and until cancellation of the Subscription Service, all accrued sums (in Buzz or in another currency) on or before the payment due date. Your Account will be charged automatically on the Subscription Billing Date and thereafter on the renewal date of your Subscription Service for all applicable fees and taxes for the next Subscription Period. You must cancel your Subscription Service before it renews in order to avoid billing of the next periodic Subscription Fee to your account. Civitai or Payment Processor will bill the periodic Subscription Fee to the payment method associated with your Account or that you otherwise provide to us. You may cancel the Subscription Service by following the instructions in your Account or contacting us at support@civitai.com. YOUR CANCELLATION MUST BE RECEIVED BEFORE THE RENEWAL DATE IN ORDER TO AVOID CHARGE FOR THE NEXT SUBSCRIPTION PERIOD.
 
-- 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Civitai reserves the right to delete your account and any information or User Content (defined below) associated with your Account without any liability to you.
+- 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If a renewal Subscription Fee cannot be collected, your Subscription will end and fee-based features of the Service will stop. We will not delete your account or User Content because a renewal payment failed.
 
 6. **Licenses**
 
@@ -118,7 +118,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Depictions of human death, brutal violence, or graphic injuries.
   - Bestiality.
 
-- (d) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+- (d) The following, when depicted in sexual activity or in a context that insinuates or portrays sexual intent:
 
   - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).

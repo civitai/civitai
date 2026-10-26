@@ -719,7 +719,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
       another's scale.
 - [x] **Who last worked each queue, and how long ago** — **already built** (verified 2026-08-12):
       *Recently worked* (oldest first, so the untouched queue is the visible one) and *Queue sweeps*
-      off `Mods_TaskTimers`, including the front-page per-level rows.
+      off `Mods_TaskTimers`, including the front-page per-level rows. *Since 2026-10, Recently worked
+      lists newest first; untouched queues surface in Needs attention instead.*
 - [x] **An "Urgent Content (N)" banner** (2026-08-12). The data was already there — *Most reported* is
       pending reports from the last week with more than one reporter — but it sits below three screens
       of queue counts, and a pile-up on one item is a live incident rather than a long queue. A red
@@ -891,6 +892,9 @@ that reporter to that build.
       below the whole queue board; §8b's *Urgent content* banner was the same instinct, but the ask was
       for the table itself rather than a jump link to it. Verified in a browser: `Dashboard` (48px) →
       `Most reported` (136px) → the board (1087px).
+      **Superseded 2026-10:** *Needs attention*, *Working now* and *You today* now sit above *Most
+      reported*, which shows the top 5 with a "Show all (N)" toggle; the queue cards follow under
+      "All queues". The urgent banner still leads.
 - [x] 🔴 **Show the reporter count per row** — **it was already built, and wrong by one** (fixed
       2026-08-13). The table's first column *is* the count. But `fetchMostReported` derived it as
       `array_length(t."alsoReportedBy", 1)`, and `alsoReportedBy` **excludes the original reporter** —
@@ -909,8 +913,10 @@ that reporter to that build.
       **1** row where the corrected one returns **10+**, every one of them a genuine two-reporter
       pile-up that the board had never shown. Verified in a browser: the table now renders 10 rows
       reading 3, 2, 2, 2 … where it previously rendered one.
-- [ ] **Put *Recently worked* and *Queue sweeps* next to the queues they describe**, rather than in
-      their own blocks. Filed with *"might need a new table to track all of these queues, or
+- [ ] **Put *Recently worked* and *Queue sweeps* (now the *Catch-up checks* tab) next to the queues they describe**, rather than in
+      their own blocks. *Partly done 2026-10:* the sidebar and *Needs attention* carry each report
+      queue's last-actioned age (`lastActionedBadge`), and sweeps carry age badges; both blocks are
+      still separate. Filed with *"might need a new table to track all of these queues, or
       expand/revise `ModActivity`"* — **answer: no new table.** `Mods_TaskTimers` already carries the
       per-task timestamps and `getSweepAt`/`getSweepCounts` already read them; see §12d.
 
@@ -985,7 +991,7 @@ that reporter to that build.
       page**, which `docs/moderator-app/page-migration-checklist.md` already has a pattern for
       (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
       nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
-      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, under the **Models**
+      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, since renamed `{appeals,auto,needs-review}`, under the **Models**
       nav group); the old `/models/minor-hash-matches`, `/models/flag-appeals` and `/models/held-detections`
       URLs redirect (see `docs/features/moderator-model-flags.md`).
       **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns

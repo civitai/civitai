@@ -44,6 +44,61 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
+  // Reads the placement/sticker read family (packages/civitai-db-queries/src/placement.db.ts)
+  // through Kysely-over-pg instead of the Prisma query engine: the space resolution behind every
+  // placement surface, the price range, getCapTier, the free-placement display counts, the pending
+  // badge counts and the sticker listing/counts. DEFAULT-OFF, same semantics as
+  // KYSELY_IMAGE_REACTIONS above: boolean only, evaluated with no entityId.
+  //
+  // 🔴 Each read keeps its database: a `dbWrite` read (the target/owner lookup, the space rows and
+  // getCapTier, which decide whether a placement is allowed and what it costs) moves to
+  // `kyselyWrite` over the shared `pgDbWrite` pool; a `dbRead` read moves to `kyselyRead` over
+  // `pgDbRead`. The counts inside the free-placement claim transaction never switch — they decide
+  // under advisory locks on the Prisma `tx`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every image detail view's space resolution and every session's badge
+  // counts.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` AND `pgDbWrite`. Their acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), where
+  // Prisma's pool times out, so the environment must set a non-zero value before flipping. Failures
+  // surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer maps a pool
+  // timeout to TIMEOUT. The ON window also changes contention on both pg pools, the writer's
+  // included, not only query-engine CPU.
+  KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
+  // Reads two hot nested Prisma reads (packages/civitai-db-queries/src/hot-reads.db.ts) through
+  // Kysely-over-pg instead of the Prisma query engine, which fans each out into one query per
+  // relation: the model page's `modelWithDetailsSelect` read (`getModel`) and the creator card
+  // (`fetchUserCreator`); plus the image tags behind `imageTagsCache` and an image's comment-thread
+  // lookup (commentsv2.service). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above:
+  // boolean only, evaluated with no entityId.
+  //
+  // 🔴 Each read keeps its database: the model read takes `getKyselyWithoutLag('model', id)`, the
+  // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the image tags read the
+  // primary on a write-triggered refresh and the replica otherwise, as before; the creator card and
+  // the thread lookup read `kyselyRead`, as they read `dbRead`.
+  // Each read runs its statements one after another on ONE pooled connection (the model page up to
+  // four, the creator card two), and every VIEW ("UserStat", "ModelReportStat", "GenerationCoverage",
+  // "ImageTag") is filtered by its key as a parameter, never reached through a join.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every model page and every creator-card cache miss.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_2 = 'kysely-hot-reads-2',
+  // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
+  // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
+  // result no consumer reads. Evaluated without a user id on every call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  MODEL_VERSION_IMAGES_SKIP_TAGS = 'model-version-images-skip-tags',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -112,6 +167,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
+  // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
+  // no entity or context. See `responseWriteSerialize`.
+  TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -119,6 +179,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // The real-person counterpart of MINOR_HASH_AUTO_FLAG: the scan hook and the nightly sweep that
+  // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
+  // either can be thrown without the other.
+  POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
@@ -216,6 +280,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
+
+  // Submits a separate shadow audio-scan workflow for each ingested video. DEFAULT-OFF: leave it off
+  // until the ImageAudioScan migration is applied and the orchestrator owners OK the worker load.
+  // Evaluated with the imageId, so ramp by percentage or boolean. Never changes the visual verdict.
+  VIDEO_AUDIO_SCAN = 'video-audio-scan',
 
   // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
@@ -325,6 +394,7 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG,
   // Same shape: thrown when the duplicate-hash unpublish misfires, read once per model-file scan.
   FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK,
   // The stop button for a sweep that can permanently double production counters
@@ -417,6 +487,10 @@ export const getFliptCacheStats = flipt.getCacheStats;
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
 export const getFliptClientSync = flipt.getClientSync;
+// A `FLIPT_LOCAL_OVERRIDES` value for one flag (never set in production), for a gate that reads the
+// SDK client directly and would otherwise not see it.
+export const getFliptLocalOverride = (flag: string): string | undefined =>
+  flipt.config.localOverrides[flag];
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

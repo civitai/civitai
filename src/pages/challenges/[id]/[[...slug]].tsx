@@ -355,7 +355,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const handleRescan = () => {
     if (!challenge) return;
     // Only a live green user challenge is cancelled outright on an NSFW verdict
-    // (computeNsfwEscalation); everything else is just raised to R in place.
+    // (computeNsfwEscalation); everything else just has its rating raised in place.
     const warnOnNsfw =
       challenge.status === ChallengeStatus.Active &&
       challenge.source === ChallengeSource.User &&
@@ -480,9 +480,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   return (
     <Gated
-      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
-      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
-      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      // Gate on the challenge's allowed rating combined with the cover image's real level. On the
+      // green site the server already omits a cover above the site's ceiling.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
       // Yellow user challenges live on civitai.red regardless of rating — the server returns
       // them on green so this renders the redirect card instead of a 404 (inert on red).

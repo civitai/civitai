@@ -7,7 +7,7 @@ import {
   type MediaCaptioningStepTemplate,
   type WdTaggingStepTemplate,
   type WorkflowStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { AUTO_LABEL_TAG, CIVITAI_TAG } from '$lib/data/trainingRows';
 import type { Media } from '$lib/data/trainingModels';
 import { describeSubmitError, type OrchestratorClient } from './orchestrator-core';
@@ -60,6 +60,9 @@ export async function submitAutoLabel(
           mediaUrl: item.mediaUrl,
           temperature: CAPTION_TEMPERATURE,
           maxNewTokens: CAPTION_MAX_TOKENS,
+          // Training wants the caption itself, not the moderation-oriented transcript.
+          includeCaption: true,
+          prepareForModeration: false,
         },
         metadata,
       };

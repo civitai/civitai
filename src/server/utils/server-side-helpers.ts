@@ -23,9 +23,19 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
+import type { ShellRouteName } from '~/server/shell/shell-mode';
+import { shellRouteByName } from '~/server/shell/shell-mode';
+import {
+  applyShellBounceHeaders,
+  applyShellPrivateHeaders,
+  syncShellRouteCookie,
+} from '~/server/shell/shell-response';
+import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
+import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const getServerProxySSGHelpers = async (
-  ctx: GetServerSidePropsContext,
+  // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
+  ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
   session: Session | null,
   features: FeatureAccess
 ) => {
@@ -65,16 +75,74 @@ export const getServerProxySSGHelpers = async (
   return ssg;
 };
 
+type SsgHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
+
+/**
+ * `adsGated` from a resolver's declared rating. `.red` is exempt from the rating check — it serves
+ * direct ads, no GAM auction, no policy center.
+ */
+export function resolveAdsGated(
+  result: { gating?: AdGatingDeclaration; suppressAds?: boolean },
+  features: FeatureAccess
+) {
+  return (
+    !!result.suppressAds ||
+    (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating))
+  );
+}
+
+/**
+ * The `trpcState` a page hands the client.
+ *
+ * Success-only: an errored prefetch would put a TRPCError instance in the dehydrated state, and
+ * the devalue write (TRPC_WRITE_DEVALUE) throws on non-POJOs — turning one failed prefetch into a
+ * page-wide SSR 500. Dropping errored queries lets the client refetch instead.
+ *
+ * Seed the serialize-attribution ctx (kill-switch-independent — this is the once-per-render SSR
+ * path, not the hot tRPC batch path) with the route so a devalue-write fallback during dehydrate
+ * attributes to it (`ssr:dehydrate:<route>`) instead of `unknown`.
+ */
+export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
+  return runWithSerializeCtxAlways({ path: ssrDehydrateSerializePath(url), type: 'ssr' }, () =>
+    ssg.dehydrate({
+      shouldDehydrateQuery: (query) => query.state.status === 'success',
+    })
+  );
+}
+
 export function createServerSideProps<P>({
   resolver,
   useSSG,
   useSession = false,
   prefetch = 'once',
   requireModerator = false,
+  shell,
 }: CreateServerSidePropsProps<P>) {
   return async function (
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
+    // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
+    // or returned — no session, no flags, no prefetch. Ads stay gated until the page data's verdict.
+    const shellReq = context.req as {
+      [SHELL_REQ_KEY]?: string;
+      [SHELL_RENDERED_REQ_KEY]?: string;
+    };
+    if (shell && shellReq[SHELL_REQ_KEY] === shell) {
+      shellReq[SHELL_RENDERED_REQ_KEY] = shell;
+      applyShellPrivateHeaders(context.res);
+      return { props: { adsGated: true } as unknown as NonNullable<P> };
+    }
+    // 🔴 The route's canonical path (`~/server/shell/shell-canonical`) is never rendered: whatever
+    // reached it without the shell — refused, no valid original URL, a data request — is sent back
+    // to the URL it came from with `?civ-shell=0`, before this reads a session or prefetches. `_app`
+    // ran its full path first; the bounce headers drop any cookie or edge header it left.
+    if (shell && isCanonicalShellPath(shell, context.resolvedUrl)) {
+      applyShellBounceHeaders(context.res);
+      return {
+        redirect: { destination: shellBounceLocation(shell, context.req), permanent: false },
+      };
+    }
+
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     // `_app` seeds `req.session` from its own request, which carries this request's headers but not
     // its URL. With an Authorization header the seed holds that token's user but not its
@@ -107,6 +175,12 @@ export function createServerSideProps<P>({
     }
 
     const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    // This response is private, so it is where the viewer's shell rollout is read: the route cookie
+    // follows the flag, and only a request carrying it is ever considered for the shell.
+    if (shell) {
+      const enabled = !!session?.user && !!features[shellRouteByName(shell).flag];
+      syncShellRouteCookie(context.req, context.res, shell, enabled);
+    }
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
@@ -130,36 +204,13 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
-    // policy center.
-    const adsGated =
-      !!result.suppressAds ||
-      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
+    const adsGated = resolveAdsGated(result, features);
 
     return {
       props: {
         ...(props ?? {}),
         adsGated,
-        // Success-only: an errored prefetch would put a TRPCError instance in the
-        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
-        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
-        // errored queries lets the client refetch instead.
-        //
-        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
-        // once-per-render SSR path, not the hot tRPC batch path) with the page
-        // route so a devalue-write fallback during dehydrate attributes to the
-        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
-        ...(ssg
-          ? {
-              trpcState: runWithSerializeCtxAlways(
-                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
-                () =>
-                  ssg.dehydrate({
-                    shouldDehydrateQuery: (query) => query.state.status === 'success',
-                  })
-              ),
-            }
-          : {}),
+        ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
         session: jsonSafeSession(session),
       } as NonNullable<P>,
     };
@@ -190,6 +241,10 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
    *  Authorization header. Redirects everyone else before the resolver runs. */
   requireModerator?: boolean;
+  /** The page has a static shell (`~/server/shell/shell-mode`): answer a request `_app` marked for
+   *  it with the shell's props and headers, and keep the route's cookie in step with its flag on
+   *  every other response. */
+  shell?: ShellRouteName;
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {
         gating?: AdGatingDeclaration;

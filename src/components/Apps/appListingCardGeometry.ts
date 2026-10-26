@@ -23,26 +23,25 @@
  *
  * 🔴 WHAT "THE NODE TIER" ACTUALLY BUYS — READ THIS BEFORE QUOTING A SEVERITY.
  * THE CANONICAL STATEMENT FOR THIS COMPONENT; every other comment that mentions a
- * tier defers to it. The node `unit` project **blocks pushes to `main` and is
- * REPORT-ONLY on a pull request**: `.github/workflows/lint.yml` puts
- * `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
- * `unit` (line 405) and on `geometry` (line 830). The browser `component` project
- * never blocks anything.
+ * tier defers to it. The node `unit` project **is REPORT-ONLY on a pull request and
+ * gives a real verdict (a red `main` build) on a push to `main`**: `.github/workflows/lint.yml`
+ * puts `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
+ * the `unit` and `geometry` jobs. The browser `component` project
+ * runs as `Component tests` and, like every check here, blocks no merge.
  *
- * So on a PR the two tiers are **equally non-gating**, and the difference is WHEN
- * a regression is caught: node catches it on the next `main` push — after the
- * merge — while browser never does. Three comments in this arc, and a severity
- * call in the PR body, were written on the premise that node gates a PR and
- * browser does not. It does not. The guards built on that premise are still worth
- * having (catching a defect one push later beats never), but do not price them as
- * merge gates. `lint.yml:377` warns about the same trap from the other side: with
- * `continue-on-error` the JOB conclusion is `success` while the step underneath is
- * `failure`, so a branch-protection rule naming "Unit tests (N)" would be inert.
+ * Neither tier blocks a merge, but they do not report the same way. On a PR, `Component
+ * tests` goes red when a browser test fails, while `unit` stays green as a job with a red
+ * step underneath; on a push to `main` both give a real verdict. Three
+ * comments in this arc, and a severity call in the PR body, were written on the
+ * premise that node gates a PR and browser does not. Neither gates a merge. The guards built
+ * on that premise are still worth having, but do not price them as merge gates. The `unit` job's
+ * comment in `lint.yml` ("Two things to know before re-measuring") warns about the same trap from
+ * the other side: with `continue-on-error` the JOB conclusion is `success` while the step
+ * underneath is `failure`, so a branch-protection rule naming "Unit tests (N)" would be inert.
  *
  * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the one that can
- * run without a DOM (and, per the note above, the one that at least blocks `main`),
- * so a module with no DOM dependency is one it can assert about. The values that can
- * only be MEASURED — that a 36px control plus 10px of padding really renders a
+ * run without a DOM, so a module with no DOM dependency is one it can assert about. The values that
+ * can only be MEASURED — that a 36px control plus 10px of padding really renders a
  * 46px row in the app's own stylesheet cascade — are pinned in
  * `AppListingCard.browser.test.tsx`, which renders the card for real.
  *

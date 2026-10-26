@@ -91,6 +91,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
+  'src/server/services/storyline-caption.service.ts': 1,
   'src/server/services/storyline.service.ts': 2,
   'src/server/services/tag.service.ts': 1,
   // 4: the two writers below, plus the template path's alias scan — a batch call and
@@ -206,6 +207,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     upsertResourceReview: 1,
   },
   'src/server/services/sticker-placement.service.ts': { createStickerPlacement: 1 },
+  'src/server/services/storyline-caption.service.ts': { setStorylineImageCaption: 1 },
   'src/server/services/storyline.service.ts': { createStoryline: 1, updateStoryline: 1 },
   'src/server/services/tag.service.ts': { findOrCreateTagsByName: 1 },
   'src/server/services/user-hub.service.ts': {

@@ -23,6 +23,7 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  flux3VideoVersionIds,
   grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
@@ -388,6 +389,16 @@ export const workflowConfigs: WorkflowConfigs = {
     ],
     // Grok referenceToVideo is a v1.5-only operation.
     excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
+  },
+
+  'img2vid:keyframes': {
+    outputUses: OUTPUT_USES,
+    label: 'Keyframes to Video',
+    description: 'Generate video that passes through your images at chosen moments',
+    category: 'video',
+    ecosystemIds: [ECO.Flux3Video],
+    excludeModelVersionIds: [flux3VideoVersionIds['v3.0']],
+    isNew: true,
   },
 
   // ===========================================================================
@@ -876,7 +887,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'img2vid:keyframes'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
   { workflows: ['vid2vid:edit', 'vid2vid:extend'] },

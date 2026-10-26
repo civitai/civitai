@@ -2,8 +2,9 @@
 
 `Models → Model Flags` in the moderator app (`apps/moderator`, `/models/flags`) is where moderators decide
 the minor and real-person (`poi`) flags on models. It replaces three pages (Minor Hash Matches, Model
-Flag Appeals, Held Detections) with one section of three tabs on the shared triage shell: a list on the
-left, the open item and its evidence on the right, decisions in a bar at the bottom.
+Flag Appeals, Held Detections) with one section of three tabs (at the top of the list column) on the
+triage shell: a list on the left, the open model's header and preview in the middle, and the decisions in
+a compact bar pinned under a right sidebar.
 
 Related: [minor-model-hash-detection.md](minor-model-hash-detection.md) (the hash sweep and the
 auto-flag), [minor-detection-review.md](minor-detection-review.md) (text-scan holds and re-detections),
@@ -52,6 +53,16 @@ Notes on the tabs:
 - Writes go through the main app's `/api/mod/minor-flag/*` endpoints (`confirm`, `revert`, `set-minor`,
   `dismiss`, `resolve-appeal`, `resolve-redetection`, `rule`); the spoke reads the queues itself. The set-minor,
   dismiss, confirm and revert endpoints take a model id only.
+
+The preview (`ModelPreview`, shared with the model report queue) is one horizontally scrolling row of
+the model's images. A video is a still poster frame with a play icon. Each tile carries its
+browsing-level badge, and a "minor" or "acceptable minor" badge when the image scan tagged it.
+`/api/model-preview/[modelId]` serves it to `/reports/model` and the three Model Flags tabs.
+
+The file-match card is titled by what the match can show: "Same file as a flagged model" when a
+moderator-flagged model still shares the file (with what became of that model: unpublished, deleted,
+drafted), "Flagged by a moderator" for a manual minor flag, and "Hash match can't be verified" when
+no flagged model shares the file any more. The sweep records no seed, so the match is resolved live.
 
 ## Keyboard
 

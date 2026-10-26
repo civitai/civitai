@@ -32,6 +32,8 @@ import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
 import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
+import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 
@@ -169,19 +171,55 @@ export async function createCsamReport({
   const report = isInternalReport
     ? await dbWrite.csamReport.create({ data })
     : await dbWrite.$transaction(async (tx) => {
+        // A report a send run has claimed is being sent from the copy it read: evidence folded into
+        // it would never reach NCMEC, so the filing becomes a report of its own. An expired claim
+        // is a run that died or stalled; the fold clears it, so that run cannot mark the report sent.
+        const cutoff = csamSendClaimCutoff();
+        const unsentWhere = {
+          userId,
+          type,
+          reportSentAt: null,
+          ...trainingVersionFilter(type, details),
+        };
         const unsent = await tx.csamReport.findFirst({
-          where: { userId, type, reportSentAt: null, ...trainingVersionFilter(type, details) },
+          where: {
+            ...unsentWhere,
+            OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
+          },
           select: { id: true },
         });
-        if (!unsent) return tx.csamReport.create({ data });
+        const fileSeparately = async (claimedId?: number) => {
+          const created = await tx.csamReport.create({ data });
+          if (claimedId)
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'fold-skip-claimed',
+              message: `report ${claimedId} is being sent; filed as report ${created.id}`,
+              reportId: claimedId,
+              newReportId: created.id,
+            });
+          return created;
+        };
+        if (!unsent) {
+          const claimed = await tx.csamReport.findFirst({
+            where: unsentWhere,
+            select: { id: true },
+          });
+          return fileSeparately(claimed?.id);
+        }
 
-        // Locked and re-read, so two filings on the same report both land. A report sent since the
-        // lookup gets a new report instead.
-        const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
-          SELECT images, details FROM "CsamReport"
+        // Locked and re-read, so two filings on the same report both land, and a claim taken since
+        // the lookup is seen. A report sent since the lookup gets a new report instead.
+        const [locked] = await tx.$queryRaw<
+          Pick<CsamReport, 'images' | 'details' | 'sendClaimId' | 'sendClaimedAt'>[]
+        >`
+          SELECT images, details, "sendClaimId", "sendClaimedAt" FROM "CsamReport"
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
           FOR UPDATE`;
-        if (!locked) return tx.csamReport.create({ data });
+        if (!locked) return fileSeparately();
+        if (locked.sendClaimId && !(locked.sendClaimedAt && locked.sendClaimedAt < cutoff))
+          return fileSeparately(unsent.id);
 
         return tx.csamReport.update({
           where: { id: unsent.id },
@@ -189,6 +227,8 @@ export async function createCsamReport({
             ...data,
             images: foldImages(locked.images, data.images),
             details: foldDetails(locked.details, details),
+            sendClaimId: null,
+            sendClaimedAt: null,
           },
         });
       });

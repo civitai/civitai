@@ -7,10 +7,8 @@ import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 /**
  * The app must ship `viewport-fit=cover` in its ONE `<meta name="viewport">`.
  *
- * Node `unit` project — the GATING suite. The `.browser.test.tsx` component
- * suites run in CI only as the report-only `preview / component-tests` status,
- * and that tier is red on `main` independently of anything here, so a coupling
- * that must not silently revert is pinned in this tier.
+ * Node `unit` project. A coupling that must not silently revert is pinned in
+ * this tier as well as in the browser tier (`Component tests`).
  *
  * WHAT WAS BROKEN. The meta content was `initial-scale=1, width=device-width`.
  * Absent a `viewport-fit` token the UA defaults to `auto`, which lays the page
@@ -82,6 +80,9 @@ const INSET_CONSUMERS = [
   // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
   'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
+  // The phone account menu's sheet: starts under the header plus the top inset and pads its
+  // bottom by the home indicator's, because it is `fixed` and the page pads only `#__next`.
+  'src/components/AppLayout/AppHeader/UserMenuV2/UserMenuMobile.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
   'src/components/Consent/ConsentBanner.tsx',
@@ -244,6 +245,9 @@ describe('the viewport meta opts into the full display area', () => {
       // edge-anchored chrome, so opting it into the display cutout would push its
       // text under the notch and buy nothing.
       if (repoPath(file) === 'src/server/auth/login-error-page.ts') continue;
+      // Same shape: the email-unsubscribe confirm page is a standalone document an API route
+      // serves directly, a single centred column with no edge-anchored chrome.
+      if (repoPath(file) === 'src/pages/api/notifications/email-unsubscribe.ts') continue;
       // Comments only — strings are the subject here, so stripping them would
       // remove the very thing being looked for.
       const src = stripComments(fs.readFileSync(file, 'utf8'));
@@ -429,7 +433,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   });
 
   /**
-   * The eight global stylesheets `_app.tsx` loads, in its own order. Order
+   * The nine global stylesheets `_app.tsx` loads, in its own order. Order
    * matters and is asserted with them: globals.css is imported FIRST, which is
    * why the drawer rule needs a doubled class to win a same-layer source-order
    * tie against Mantine's own `top: 0`.
@@ -443,6 +447,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     '@mantine/nprogress/styles.layer.css',
     '@mantine/tiptap/styles.layer.css',
     'mantine-react-table/styles.css',
+    '@civitai/components/styles.css',
   ];
 
   /**
@@ -469,6 +474,9 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     ['@mantine/nprogress/styles.layer.css', 1, 0],
     ['@mantine/tiptap/styles.layer.css', 0, 1],
     ['mantine-react-table/styles.css', 1, 9],
+    // The package ships a REAL root `styles.css` (byte-identical to `dist/components.css`, which is
+    // what the `exports` alias resolves to), so the path under node_modules is the import spec.
+    ['@civitai/components/styles.css', 1, 0],
     ['draft-js/dist/Draft.css', 0, 0],
   ];
 

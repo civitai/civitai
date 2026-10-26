@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
-import type { WorkflowEvent } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -16,6 +16,7 @@ import {
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
+import { checkPoiHashOnScan } from '~/server/services/poi-hash.service';
 import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
@@ -290,6 +291,20 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
     ) {
       await checkMinorHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      (await isFlipt(FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG))
+    ) {
+      await checkPoiHashOnScan({
         fileId,
         modelId: scannedModelId,
         userId: scannedUserId,
@@ -582,7 +597,7 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *
  * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
  *
- *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *   AutoV3     arrives full-length (per @civitai/orchestration-client: "SHA256 of the file with safetensors
  *              header metadata stripped"). We store 12 chars, the width A1111 writes.
  *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
  *              which no other stored hash matches, so resource detection fails without it.

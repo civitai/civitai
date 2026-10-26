@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { SvelteMap } from 'svelte/reactivity';
   import {
     IconEyeOff,
     IconMessage,
@@ -9,7 +10,7 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
-  import { LINK_CLASS } from '$lib/format';
+  import { LINK_CLASS, plural } from '$lib/format';
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
@@ -18,6 +19,8 @@
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
   import CsamHoldFilters from './CsamHoldFilters.svelte';
+  import HoldGroupChip from './HoldGroupChip.svelte';
+  import type { AlsoResult } from './hold-author';
   import {
     decisionLabel,
     entityLabel,
@@ -62,20 +65,61 @@
     formActionHref(action, {
       ...csamHoldFilterParams(data.holdFilters, data.entityType),
       q: data.q || undefined,
+      author: data.author ?? undefined,
       page: data.page > 1 ? data.page : undefined,
       limit: page.url.searchParams.get('limit') ?? undefined,
     });
 
   const clearFiltersHref = $derived(
-    urlWith(page.url, { status: null, entityType: null, sort: null, q: null, page: null, hold: null })
+    urlWith(page.url, { status: null, entityType: null, sort: null, q: null, author: null, page: null, hold: null })
   );
   const filtersActive = $derived(
     data.entityType !== null ||
       data.q !== '' ||
+    data.author !== null ||
       Object.keys(csamHoldFilterParams(data.holdFilters)).length > 0
   );
   const grants = $derived({ canDecide, canStrike, canBan });
   const ondecision = (_row: unknown, index: number) => pressDecisionKey(index);
+
+  // Other holds this decision covered: dimmed until the reload shows them decided. The summary survives that
+  // reload and is dropped when filters, search or page change.
+  const alsoDecided = new SvelteMap<number, string>();
+  let alsoSummary = $state<{ done: number; failed: { holdId: number; error: string }[] } | null>(
+    null
+  );
+  $effect(() => {
+    void data.items;
+    alsoDecided.clear();
+  });
+  // Filters, search and page only: advancing to the next hold changes the URL too, and the summary of
+  // the decision just made has to outlive that.
+  const queueView = $derived(
+    JSON.stringify([csamHoldFilterParams(data.holdFilters, data.entityType), data.q, data.author, data.page])
+  );
+  $effect(() => {
+    void queueView;
+    alsoSummary = null;
+  });
+  const onothers = (decision: string, results: AlsoResult[]) => {
+    const verdict =
+      decision === 'dismiss' ? 'Dismissed with the same author’s hold' : 'Removed with the same author’s hold';
+    for (const result of results) if (result.ok) alsoDecided.set(result.holdId, verdict);
+    alsoSummary = {
+      done: results.filter((r) => r.ok).length,
+      failed: results.flatMap((r) => (r.ok ? [] : [{ holdId: r.holdId, error: r.error ?? 'Failed.' }])),
+    };
+  };
+
+  const authorHref = (userId: number, chat = false) =>
+    urlWith(page.url, {
+      q: null,
+      author: userId,
+      status: 'pending',
+      entityType: chat ? 'ChatMessage' : null,
+      page: null,
+      hold: null,
+    });
 
   const statusLabel = $derived(
     data.holdFilters.status === 'all'
@@ -90,12 +134,40 @@
   <div class="p-5 text-sm text-dark-0">
     <p class="m-0">
       No {statusLabel}{data.entityType ? `${entityLabel(data.entityType).toLowerCase()} ` : ''}CSAM text
-      holds{data.q ? ' match that search' : ''}.
+      holds{data.q || data.author !== null ? ' match that search' : ''}.
     </p>
     {#if filtersActive}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
     {/if}
   </div>
+{/snippet}
+
+{#snippet notice()}
+  {#if data.author !== null}
+    <p class="mx-6 mt-3 mb-0 text-[13px] text-dark-0" role="status">
+      Showing the holds written by user #{data.author}.
+      <a href={urlWith(page.url, { author: null, page: null, hold: null })} class={LINK_CLASS}>Show all</a>
+    </p>
+  {/if}
+  {#if alsoSummary}
+    <div class="mx-6 mt-3 flex items-start justify-between gap-3 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2.5 text-[13px] text-dark-0" role="status">
+      <div class="min-w-0">
+        <p class="m-0">
+          Applied to {plural(alsoSummary.done, 'other hold')} by the same author{alsoSummary.failed.length
+            ? `; ${alsoSummary.failed.length} not applied:`
+            : '.'}
+        </p>
+        {#if alsoSummary.failed.length}
+          <ul class="m-0 mt-1 list-none space-y-0.5 p-0 text-dark-0">
+            {#each alsoSummary.failed as f (f.holdId)}
+              <li><MetaChip tone="red">failed</MetaChip> Hold #{f.holdId}: {f.error}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+      <button type="button" class={LINK_CLASS} onclick={() => (alsoSummary = null)}>Dismiss</button>
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet listHeader()}
@@ -115,7 +187,8 @@
   selectionParam="hold"
   queueLabel="CSAM text holds queue"
   itemLabel="Hold"
-  decisionEnabled={(row) => holdDecisionEnabled(row, grants)}
+  settled={(row) => row.status !== 'Pending' || alsoDecided.has(row.id)}
+  decisionEnabled={(row) => (alsoDecided.has(row.id) ? [] : holdDecisionEnabled(row, grants))}
   {ondecision}
   pageNumber={data.page}
   hasMore={data.hasMore}
@@ -124,6 +197,7 @@
   {form}
   {listHeader}
   {empty}
+  {notice}
 >
   {#snippet listRow(row, state)}
     <TriageRow
@@ -132,9 +206,10 @@
       selected={state.selected}
       title={holdTitle(row)}
       coverUrl={row.coverImages[0]?.url}
+      coverType={row.coverImages[0]?.type}
       coverBlurred={!imageReveal.on}
       meta={holdMeta(row)}
-      verdict={state.verdict}
+      verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
       onselect={state.select}
     >
@@ -152,6 +227,25 @@
       {#snippet badges()}
         <span class="block w-full truncate text-xs text-dark-0">{row.reason}</span>
         <MetaChip>{entityLabel(row.entityType)}</MetaChip>
+        {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.cleanRescanAt && row.status === 'Pending'}<MetaChip tone="green">edited since</MetaChip>{/if}
+        {#if row.userId !== null && row.otherPendingByAuthor > 0}
+          <HoldGroupChip
+            href={authorHref(row.userId)}
+            title="Show this author’s pending holds"
+          >
+            same author ×{row.otherPendingByAuthor + 1}
+          </HoldGroupChip>
+        {/if}
+        {#if row.userId !== null && row.otherPendingInChat > 0}
+          <HoldGroupChip
+            href={authorHref(row.userId, true)}
+            title="Show this author’s pending holds in chats"
+            tone="violet"
+          >
+            same chat
+          </HoldGroupChip>
+        {/if}
         {#if row.status !== 'Pending'}
           <MetaChip tone={row.status === 'Dismissed' ? 'neutral' : 'red'}>{decisionLabel(row)}</MetaChip>
         {/if}
@@ -165,10 +259,11 @@
       {canDecide}
       {canStrike}
       {canBan}
-      verdict={state.verdict}
+      verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
       submit={state.submit}
       {actionHref}
+      {onothers}
     />
   {/snippet}
 </TriageShell>

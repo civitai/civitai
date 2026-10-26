@@ -243,6 +243,15 @@ export const updateListingPatchSchema = z
      */
     isBeta: z.boolean().optional(),
     betaMessage: z.string().max(BETA_MESSAGE_MAX).nullable().optional(),
+    /**
+     * AUTHOR OPT-IN: "Let others fork this app's source" (on-site listings only).
+     *
+     * 🔴 TRIVIAL, NOT MATERIAL — absent from `MATERIAL_LISTING_PATCH_FIELDS`, so it applies IN
+     * PLACE with no moderator review, like `isBeta`. It grants nothing a moderator approved: a
+     * fork is a separate app that passes its own publish review. Written to the LIVE listing
+     * only, never staged on a shadow revision (`updateRevisionDraft` refuses it).
+     */
+    forkable: z.boolean().optional(),
     // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications

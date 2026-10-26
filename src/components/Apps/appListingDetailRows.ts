@@ -4,8 +4,8 @@
  * The listing detail's right rail carries the model detail page's "Details" accordion:
  * a `.detailsPanel` of label/value rows (`ModelVersionDetails.module.scss`'s
  * `.detailRow` / `.detailLabel`). This module decides WHICH rows exist, in WHAT order,
- * and with WHAT values — so the correctness gate lives in the blocking node `unit`
- * project rather than in the report-only browser suite.
+ * and with WHAT values — so the correctness gate lives in the node `unit`
+ * project rather than in the browser suite.
  *
  * Two rules the renderer must not re-implement:
  *   1. A row whose underlying field is null/absent is OMITTED. A "Rating: —" row is

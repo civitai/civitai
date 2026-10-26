@@ -56,7 +56,7 @@ vi.mock('~/server/events', () => ({
   eventEngine: { processEngagement: vi.fn() },
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import {
   privateModelFromTrainingHandler,

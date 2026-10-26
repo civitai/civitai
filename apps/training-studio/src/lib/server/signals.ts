@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import type { WorkflowCallback } from '@civitai/client';
+import type { WorkflowCallback } from '@civitai/orchestration-client';
 import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
 
 function base(): string | undefined {

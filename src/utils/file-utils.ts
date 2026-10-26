@@ -41,9 +41,13 @@ export function blobToFile(
   return new File([blob], filename, { type });
 }
 
-export async function fetchBlobAsFile(src: string | Blob | File, filename?: string) {
+export async function fetchBlobAsFile(
+  src: string | Blob | File,
+  filename?: string,
+  options?: { requireOk?: boolean }
+) {
   if (src instanceof File) return src;
-  const blob = await fetchBlob(src);
+  const blob = await fetchBlob(src, undefined, options);
   if (!blob) return null;
   let type = blob.type;
 

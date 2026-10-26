@@ -616,7 +616,7 @@
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
-        await runAutoLabel(
+        const sent = await runAutoLabel(
           labelMode,
           media,
           items,
@@ -626,6 +626,8 @@
           },
           controller.signal
         );
+        // Every target was over the per-image cap: re-selecting them again would spin without end.
+        if (sent === 0) break;
         // In manual mode label only the pass the user asked for — draining uploads that settled
         // mid-run is the automatic behavior the toggle opts out of.
         if (autoLabel !== 'auto') break;

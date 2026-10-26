@@ -47,6 +47,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { pickCoverImageId } from '~/shared/utils/model-sfw-face';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
   return (
@@ -177,6 +179,10 @@ function ModelCardContent({ data }: Props) {
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
   const sale = salesByModelId?.[data.id] ?? ownSale;
 
+  const showSfwFace = useShowsSfwFace();
+  // Search hits carry both names; feed items arrive resolved.
+  const modelName = (showSfwFace && (data as { sfwName?: string | null }).sfwName) || data.name;
+
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -194,22 +200,30 @@ function ModelCardContent({ data }: Props) {
     () =>
       getModelUrl({
         modelId: data.id,
-        modelName: data.name,
+        modelName,
         modelVersionId: useModelVersionRedirect ? targetVersionId : null,
       }),
-    [data.id, data.name, targetVersionId, useModelVersionRedirect]
+    [data.id, modelName, targetVersionId, useModelVersionRedirect]
   );
 
   // The search doc carries images for the newest version of each base model, but
   // images[0] is always the latest version's cover — show the matched version's
   // cover instead when a base-model filter is active. The feed type omits
   // modelVersionId (its images are already the matched version's), so it falls back.
+  const coverId = activeBaseModels?.length
+    ? null
+    : pickCoverImageId(
+        data as { hasSfwFace?: boolean; coverImageId?: number; sfwCoverImageId?: number },
+        showSfwFace
+      );
   const image =
+    (coverId ? data.images.find((i) => i.id === coverId) : undefined) ??
     (activeBaseModels?.length
       ? data.images.find(
           (i) => (i as { modelVersionId?: number }).modelVersionId === targetVersionId
         )
-      : undefined) ?? data.images[0];
+      : undefined) ??
+    data.images[0];
 
   return (
     <AspectRatioImageCard
@@ -221,7 +235,7 @@ function ModelCardContent({ data }: Props) {
       contentType="model"
       contentId={data.id}
       image={image}
-      alt={data.name}
+      alt={modelName}
       onSite={!!data.version.trainingStatus}
       isRemix={!!image?.remixOfId}
       header={
@@ -296,7 +310,7 @@ function ModelCardContent({ data }: Props) {
 
             <CivitaiLinkManageButton
               modelId={data.id}
-              modelName={data.name}
+              modelName={modelName}
               modelType={data.type}
               hashes={data.hashes}
               noTooltip
@@ -322,7 +336,7 @@ function ModelCardContent({ data }: Props) {
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
           <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
-            {data.name}
+            {modelName}
           </Text>
           {data.rank && <ModelCardStats data={data} />}
         </div>

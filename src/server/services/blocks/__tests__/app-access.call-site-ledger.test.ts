@@ -381,6 +381,13 @@ const GATE_LEDGER: Record<string, string> = {
     'would hide a real relationship, and a mod bypass would show a moderator a card about ' +
     'an app they happen to own. The skip fails OPEN on an unresolvable owner (shows the ' +
     'row) because dropping rows is the wrong direction for a transparency surface.',
+  'src/server/services/apps/doc-store-owner-usage.service.ts':
+    'getMyDocStoreUsage reads the ownedIds half of resolveAccessibleAppBlockIds — the ' +
+    'canonical AppBlock.app.userId owner, never the denormalized AppListing.userId (D5). ' +
+    '🔴 DELIBERATELY NOT widened to ACCEPTED collaborators (editorIds is discarded) and ' +
+    'NO mod bypass: the figure is the app-wide document-store usage (every user’s data in ' +
+    'the app) measured against limits only the owner manages, so it is an owner-only read. ' +
+    'The router passes ctx.user.id and takes no input, so no other user’s set is reachable.',
 };
 
 /**

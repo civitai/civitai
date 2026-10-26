@@ -20,7 +20,16 @@ import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/t
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { isWebClient } from '~/server/utils/client-version-saturation';
+import {
+  clientNeedsUpdate,
+  peekFreshClientConfig,
+  peekSiteAlertsVersion,
+} from '~/server/utils/client-config';
+import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
+import { recordTrpcRouteRegionBlock } from '~/server/prom/trpc-proxy-skip.metrics';
 import {
   pinResponseWriteToSuperjson,
   responseWritesDevalue,
@@ -29,6 +38,7 @@ import {
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
+import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -45,6 +55,9 @@ export const config = {
     },
   },
 };
+
+// Bounds the `path` label of the fast-superjson write counter to procedures that exist.
+setTrpcProcedureRegistry(appRouter);
 
 const trpcHandler = createNextApiHandler({
   router: appRouter,
@@ -89,10 +102,21 @@ const trpcHandler = createNextApiHandler({
       pinResponseWriteToSuperjson();
     } else if (responseWritesDevalue() && !headers['Cache-Control']) {
       // A devalue body must never be stored by a shared cache: only a capable web bundle can
-      // read it. The proxy's api-cache middleware already sends this same private default on
-      // /api/trpc, but that lives outside this route and its matcher can change, so the route
-      // states it itself for every response it writes as devalue.
+      // read it. `applyApiRequestPolicy` (top of the handler) already sets this same private
+      // default, but a devalue response must never depend on that ordering, so it is stated
+      // here as well for every response written as devalue.
       headers['Cache-Control'] = PRIVATE_CACHE_CONTROL;
+    }
+
+    // Set here rather than in a middleware: on a streamed batch the head is written before any
+    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    if (isWebClient(ctx?.req?.headers)) {
+      // Never on a response the edge keeps: it would reach current bundles too.
+      const client = peekFreshClientConfig();
+      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+        headers['x-update-required'] = 'true';
+      const alertsVersion = peekSiteAlertsVersion();
+      if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
@@ -271,6 +295,15 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
+  // Region block (451), default response headers and the verified-crawler request header: what
+  // the proxy middlewares do on /api/trpc, applied here too so this route does not depend on the
+  // proxy matcher. Idempotent when the proxy already ran; see `applyApiRequestPolicy`.
+  if (applyApiRequestPolicy(req, res)) {
+    // Only reachable when the proxy did not already answer the 451, i.e. the flag soak.
+    recordTrpcRouteRegionBlock();
+    return;
+  }
+
   // Observe batch width BEFORE delegating, so the histogram sees widths that tRPC is about to
   // reject — those requests resolve zero procedures and would otherwise leave no trace at all.
   // The same call marks an over-cap request, which is what arms the onError log-skip above.

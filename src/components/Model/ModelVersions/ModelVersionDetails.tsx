@@ -50,9 +50,11 @@ import type { TRPCClientErrorBase } from '@trpc/client';
 import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useMemo, useRef, useState } from 'react';
+import { forwardRef, useMemo, useRef, useState } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DsTooltip } from '~/components/AppLayout/ShellDs/ContentDs';
+import { ShellButton } from '~/components/AppLayout/ShellDs/ShellDs';
 import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
 import { PublisherSubscriptionBanner } from '~/components/Apps/PublisherSubscriptionBanner';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -63,7 +65,6 @@ import {
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -86,6 +87,14 @@ import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpd
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import {
+  ModelBadge,
+  PageGroup,
+  PageStack,
+  PageText,
+  VersionDetailsCol,
+  VersionDetailsGrid,
+} from '~/components/Model/ModelPageDs/ModelPageDs';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
@@ -95,6 +104,7 @@ import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersio
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import {
+  toModelVersionPermissionData,
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
@@ -143,6 +153,7 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -186,7 +197,7 @@ export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
 }
 
-function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: Props) {
+function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds = false }: Props) {
   useMetricSubscription('ModelVersion', version.id);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -215,6 +226,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const adContainerRef = useRef<HTMLDivElement | null>(null);
   const [feeInfoOpened, feeInfoHandlers] = useDisclosure(false);
 
+  // The version is already on hand from model.getById: the permission hook and the children that call
+  // it read this instead of refetching modelVersion.getById.
+  const permissionData = toModelVersionPermissionData(model, version);
+
   const {
     isLoadingAccess,
     isDownloadable,
@@ -224,6 +239,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     generationRequiresPurchase,
   } = useModelVersionPermission({
     modelVersionId: version.id,
+    modelVersion: permissionData,
   });
   const mobile = useIsMobile();
 
@@ -394,7 +410,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
     dialogStore.trigger({
       component: ModelVersionEarlyAccessPurchase,
-      props: { modelVersionId: version.id, reason },
+      props: { modelVersionId: version.id, reason, modelVersion: permissionData },
     });
   };
   const { currentUserReview } = useQueryUserResourceReview({
@@ -613,11 +629,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   ) : null;
 
   return (
-    <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
+    <VersionDetailsGrid ds={ds}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid2.Col
-        span={{ base: 12, sm: 5, md: 4 }}
-        order={{ sm: 2 }}
+      <VersionDetailsCol
+        ds={ds}
+        side="sidebar"
         className={classes.sidebarSection}
         ref={adContainerRef}
       >
@@ -816,29 +832,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   ) : null}
                   {/* Action icon buttons row */}
                   <div className="flex gap-2">
-                    <Tooltip label="Share" position="top" withArrow>
+                    <ActionTooltip ds={ds} label="Share">
                       <div className="flex-1">
                         <ShareButton
                           url={router.asPath}
                           title={model.name}
                           collect={{ modelId: model.id, type: CollectionType.Model }}
                         >
-                          <Button
-                            color="gray"
-                            fullWidth
-                            style={{ paddingLeft: 0, paddingRight: 0 }}
-                            aria-label="Share"
-                          >
+                          <ActionButton ds={ds} color="gray" aria-label="Share">
                             <IconShare3 size={18} />
-                          </Button>
+                          </ActionButton>
                         </ShareButton>
                       </div>
-                    </Tooltip>
+                    </ActionTooltip>
                     {onFavoriteClick && (
-                      <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                      <ActionTooltip ds={ds} label={isFavorite ? 'Unlike' : 'Like'}>
                         <div className="flex-1" data-tour="model:like">
                           <LoginRedirect reason="favorite-model">
-                            <Button
+                            <ActionButton
+                              ds={ds}
                               onClick={() =>
                                 onFavoriteClick({
                                   versionId: version.id,
@@ -846,32 +858,29 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 })
                               }
                               color={isFavorite ? 'green' : 'gray'}
-                              fullWidth
-                              style={{ paddingLeft: 0, paddingRight: 0 }}
                               aria-label={isFavorite ? 'Unlike' : 'Like'}
                             >
                               <ThumbsUpIcon color="#fff" filled={isFavorite} size={18} />
-                            </Button>
+                            </ActionButton>
                           </LoginRedirect>
                         </div>
-                      </Tooltip>
+                      </ActionTooltip>
                     )}
                     {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
                       <ToggleVaultButton modelVersionId={version.id}>
                         {({ isLoading, isInVault, toggleVaultItem }) => (
-                          <Tooltip
+                          <ActionTooltip
+                            ds={ds}
                             label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
-                            position="top"
-                            withArrow
+                            className="flex-1"
                           >
-                            <Button
+                            <ActionButton
+                              ds={ds}
                               className="flex-1"
                               color={isInVault ? 'green' : 'gray'}
                               onClick={toggleVaultItem}
                               disabled={isLoading}
-                              variant={isInVault ? 'light' : undefined}
-                              fullWidth
-                              style={{ paddingLeft: 0, paddingRight: 0 }}
+                              light={isInVault}
                               aria-label={isInVault ? 'Remove from Vault' : 'Add to Vault'}
                             >
                               {isLoading ? (
@@ -881,8 +890,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               ) : (
                                 <IconCloudLock size={18} />
                               )}
-                            </Button>
-                          </Tooltip>
+                            </ActionButton>
+                          </ActionTooltip>
                         )}
                       </ToggleVaultButton>
                     )}
@@ -914,18 +923,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         )}
                       </CivitaiLinkManageButton>
                     )}
-                    <Tooltip
+                    <ActionTooltip
+                      ds={ds}
                       label={
                         isNotificationOn
                           ? 'Stop getting notifications for this model'
                           : 'Get notifications for this model'
                       }
-                      position="top"
-                      withArrow
                     >
                       <div className="flex-1">
                         <LoginRedirect reason="notify-model">
-                          <Button
+                          <ActionButton
+                            ds={ds}
                             color={isNotificationOn ? 'green' : 'gray'}
                             onClick={() => {
                               // F1: block the toggle until Notify/Mute membership is
@@ -949,8 +958,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               });
                             }}
                             loading={toggleNotifyModelMutation.isPending || !isNotifyKnown}
-                            fullWidth
-                            style={{ paddingLeft: 0, paddingRight: 0 }}
                             aria-label={
                               isNotificationOn
                                 ? 'Stop getting notifications for this model'
@@ -962,14 +969,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             ) : (
                               <IconBellPlus size={18} />
                             )}
-                          </Button>
+                          </ActionButton>
                         </LoginRedirect>
                       </div>
-                    </Tooltip>
-                    <Tooltip label="Add to collection" position="top" withArrow>
+                    </ActionTooltip>
+                    <ActionTooltip ds={ds} label="Add to collection">
                       <div className="flex-1">
                         <LoginRedirect reason="add-to-collection">
-                          <Button
+                          <ActionButton
+                            ds={ds}
                             color="gray"
                             onClick={() =>
                               openAddToCollectionModal({
@@ -979,15 +987,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 },
                               })
                             }
-                            fullWidth
-                            style={{ paddingLeft: 0, paddingRight: 0 }}
                             aria-label="Add to collection"
                           >
                             <IconBookmark size={18} />
-                          </Button>
+                          </ActionButton>
                         </LoginRedirect>
                       </div>
-                    </Tooltip>
+                    </ActionTooltip>
                     {features.auctions && !deleted && !isModelUnpublished && (
                       <BidModelButton
                         entityData={getEntityDataForBidModelButton({
@@ -1006,10 +1012,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       />
                     )}
                     {(!user || !isOwner || user.isModerator) && (
-                      <Tooltip label="Report" position="top" withArrow>
+                      <ActionTooltip ds={ds} label="Report">
                         <div className="flex-1">
                           <LoginRedirect reason="report-model">
-                            <Button
+                            <ActionButton
+                              ds={ds}
                               color="gray"
                               onClick={() =>
                                 openReportModal({
@@ -1017,15 +1024,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   entityId: model.id,
                                 })
                               }
-                              fullWidth
-                              style={{ paddingLeft: 0, paddingRight: 0 }}
                               aria-label="Report"
                             >
                               <IconFlag size={18} />
-                            </Button>
+                            </ActionButton>
                           </LoginRedirect>
                         </div>
-                      </Tooltip>
+                      </ActionTooltip>
                     )}
                   </div>
                 </Stack>
@@ -1456,31 +1461,31 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Group>
               </Accordion.Control>
               <Accordion.Panel p={0}>
-                <Stack gap={0} className={classes.detailsPanel}>
+                <PageStack ds={ds} gap={0} className={classes.detailsPanel}>
                   {/* Type */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Type</span>
-                    <Group gap={6}>
-                      <Badge size="sm" radius="xl" variant="filled" color="gray">
+                    <PageGroup ds={ds} gap={6}>
+                      <ModelBadge ds={ds} size="sm" radius="xl" variant="filled" color="gray">
                         {getDisplayName(model.type)} {model.checkpointType}
-                      </Badge>
+                      </ModelBadge>
                       {version.status !== ModelStatus.Published ? (
-                        <Badge size="sm" radius="xl" color="yellow" variant="light">
+                        <ModelBadge ds={ds} size="sm" radius="xl" color="yellow" variant="light">
                           {version.status}
-                        </Badge>
+                        </ModelBadge>
                       ) : (
                         <HowToUseModel type={model.type} />
                       )}
-                    </Group>
+                    </PageGroup>
                   </div>
                   {/* Stats */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Stats</span>
-                    <Group gap={12}>
+                    <PageGroup ds={ds} gap={12}>
                       {!downloadsDisabled && (
-                        <Group gap={4}>
+                        <PageGroup ds={ds} gap={4}>
                           <IconDownload size={16} style={styleIconOpacity} />
-                          <Text size="sm">
+                          <PageText ds={ds} size="sm">
                             {version.hiddenMetrics?.downloads ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
@@ -1490,13 +1495,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 resetKey={version.id}
                               />
                             )}
-                          </Text>
-                        </Group>
+                          </PageText>
+                        </PageGroup>
                       )}
                       {(canGenerate || version.hiddenMetrics?.generations) && (
-                        <Group gap={4}>
+                        <PageGroup ds={ds} gap={4}>
                           <IconBrush size={16} style={styleIconOpacity} />
-                          <Text size="sm">
+                          <PageText ds={ds} size="sm">
                             {version.hiddenMetrics?.generations ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
@@ -1505,13 +1510,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 resetKey={version.id}
                               />
                             )}
-                          </Text>
-                        </Group>
+                          </PageText>
+                        </PageGroup>
                       )}
                       {(!!liveMetrics.earnedAmount || version.hiddenMetrics?.buzz) && (
-                        <Group gap={4}>
+                        <PageGroup ds={ds} gap={4}>
                           <IconBolt size={16} style={styleIconOpacity} />
-                          <Text size="sm">
+                          <PageText ds={ds} size="sm">
                             {version.hiddenMetrics?.buzz ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
@@ -1520,10 +1525,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 resetKey={version.id}
                               />
                             )}
-                          </Text>
-                        </Group>
+                          </PageText>
+                        </PageGroup>
                       )}
-                    </Group>
+                    </PageGroup>
                   </div>
                   {/* Generation License Fee */}
                   {Number(version.licensingFee ?? 0) > 0 && (
@@ -1581,75 +1586,78 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         ? 'Published'
                         : 'Uploaded'}
                     </span>
-                    <Text size="sm">
+                    <PageText ds={ds} size="sm">
                       {formatDate(
                         version.status === 'Published' && version.publishedAt
                           ? version.publishedAt
                           : version.createdAt
                       )}
-                    </Text>
+                    </PageText>
                   </div>
                   {/* Base Model */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Base Model</span>
-                    <Text size="sm">
-                      {ecosystemSeoPage ? (
-                        <Anchor
-                          component={Link}
-                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
-                          inherit
-                        >
-                          {version.baseModel}
-                        </Anchor>
-                      ) : (
-                        version.baseModel
-                      )}{' '}
-                      {version.baseModelType && version.baseModelType !== 'Standard'
-                        ? version.baseModelType
-                        : ''}
-                    </Text>
+                    <PageGroup ds={ds} gap={6} nowrap>
+                      <PageText ds={ds} size="sm">
+                        {ecosystemSeoPage ? (
+                          <Anchor
+                            component={Link}
+                            href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                            inherit
+                          >
+                            {version.baseModel}
+                          </Anchor>
+                        ) : (
+                          version.baseModel
+                        )}{' '}
+                        {version.baseModelType && version.baseModelType !== 'Standard'
+                          ? version.baseModelType
+                          : ''}
+                      </PageText>
+                      <SfwOnlyBadge baseModel={version.baseModel} />
+                    </PageGroup>
                   </div>
                   {/* Training */}
                   {(!!version.steps || !!version.epochs) && (
                     <div className={classes.detailRow}>
                       <span className={classes.detailLabel}>Training</span>
-                      <Group gap={4}>
+                      <PageGroup ds={ds} gap={4}>
                         {!!version.steps && (
-                          <Badge size="sm" radius="sm" color="teal">
+                          <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
                             Steps: {version.steps.toLocaleString()}
-                          </Badge>
+                          </ModelBadge>
                         )}
                         {!!version.epochs && (
-                          <Badge size="sm" radius="sm" color="teal">
+                          <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
                             Epochs: {version.epochs.toLocaleString()}
-                          </Badge>
+                          </ModelBadge>
                         )}
-                      </Group>
+                      </PageGroup>
                     </div>
                   )}
                   {/* Usage Tips */}
                   {(isDefined(version.clipSkip) || isDefined(version.settings?.strength)) && (
                     <div className={classes.detailRow}>
                       <span className={classes.detailLabel}>Usage Tips</span>
-                      <Group gap={4}>
+                      <PageGroup ds={ds} gap={4}>
                         {isDefined(version.clipSkip) && (
-                          <Badge size="sm" radius="sm" color="cyan">
+                          <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
                             Clip Skip: {version.clipSkip}
-                          </Badge>
+                          </ModelBadge>
                         )}
                         {isDefined(version.settings?.strength) && (
-                          <Badge size="sm" radius="sm" color="cyan">
+                          <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
                             {`Strength: ${version.settings.strength}`}
-                          </Badge>
+                          </ModelBadge>
                         )}
-                      </Group>
+                      </PageGroup>
                     </div>
                   )}
                   {/* Hash */}
                   {!!hashes.length && (
                     <div className={classes.detailRowPlain}>
                       <span className={classes.detailLabel}>Hash</span>
-                      <ModelHash hashes={hashes} />
+                      <ModelHash hashes={hashes} ds={ds} />
                     </div>
                   )}
                   {/* Trigger Words */}
@@ -1660,16 +1668,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         trainedWords={version.trainedWords}
                         files={version.files}
                         type={model.type}
+                        ds={ds}
                       />
                     </div>
                   )}
                   {/* AIR */}
                   {features.air && (
                     <div className={classes.detailRowTop}>
-                      <Group gap="xs">
+                      <PageGroup ds={ds} gap="xs">
                         <span className={classes.detailLabel}>AIR</span>
                         <URNExplanation size={16} />
-                      </Group>
+                      </PageGroup>
                       <ModelURN
                         baseModel={version.baseModel}
                         type={model.type}
@@ -1677,10 +1686,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         modelVersionId={version.id}
                         fileId={activeFile?.id}
                         fileType={activeFile?.type}
+                        ds={ds}
                       />
                     </div>
                   )}
-                </Stack>
+                </PageStack>
               </Accordion.Panel>
             </Accordion.Item>
             {isDownloadable && modelFilesVisible.length > 0 && (
@@ -1845,7 +1855,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </UserResourceReviewComposite>
           )}
 
-          <ModelVersionDonationGoal modelVersionId={version.id} />
+          <ModelVersionDonationGoal modelVersionId={version.id} modelVersion={permissionData} />
 
           {deferBelowFold ? (
             <div data-deferred-section="creator-card" className={classes.deferredCreatorCard} />
@@ -1950,13 +1960,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           {model.poi && <PoiAlert />}
           {!model.poi && <AdUnitSide_2 />}
         </Stack>
-      </ContainerGrid2.Col>
+      </VersionDetailsCol>
 
-      <ContainerGrid2.Col
-        span={{ base: 12, sm: 7, md: 8 }}
-        order={{ sm: 1 }}
-        className={classes.mainSection}
-      >
+      <VersionDetailsCol ds={ds} side="main" className={classes.mainSection}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && !mobile && (
             <ModelCarousel
@@ -1973,8 +1979,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </ContentClamp>
           ) : null}
         </Stack>
-      </ContainerGrid2.Col>
-    </ContainerGrid2>
+      </VersionDetailsCol>
+    </VersionDetailsGrid>
   );
 }
 
@@ -1983,6 +1989,8 @@ type Props = {
   model: ModelById;
   image: ImagesInfiniteModel | undefined;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
+  /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
+  ds?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {
@@ -1993,3 +2001,80 @@ function VersionDescriptionModal({ description }: { description: string }) {
     </Modal>
   );
 }
+
+function ActionTooltip({
+  ds,
+  label,
+  className,
+  children,
+}: {
+  ds: boolean;
+  label: string;
+  /** ON only: the design-system wrapper is the row's flex item, so it carries the item's class. */
+  className?: string;
+  children: React.ReactElement;
+}) {
+  if (ds)
+    return (
+      <DsTooltip label={label} className={className ?? 'flex-1'}>
+        {children}
+      </DsTooltip>
+    );
+  return (
+    <Tooltip label={label} position="top" withArrow>
+      {children}
+    </Tooltip>
+  );
+}
+
+type ActionButtonProps = {
+  ds: boolean;
+  color: 'gray' | 'green';
+  light?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  className?: string;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  'aria-label': string;
+  children: React.ReactNode;
+};
+
+/**
+ * A full-width icon button in the action row. A loading or disabled one stays a Mantine `Button`
+ * whatever the flag says: the design-system markup has no loader overlay or disabled colours.
+ */
+const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(function ActionButton(
+  { ds, color, light, loading, disabled, ...rest },
+  ref
+) {
+  if (ds && !loading && !disabled)
+    return (
+      <ShellButton
+        ref={ref}
+        variant={
+          light
+            ? color === 'green'
+              ? 'light-green'
+              : 'light-gray'
+            : color === 'green'
+            ? 'filled-green'
+            : 'filled-gray'
+        }
+        fullWidth
+        style={{ paddingLeft: 0, paddingRight: 0 }}
+        {...rest}
+      />
+    );
+  return (
+    <Button
+      ref={ref}
+      color={color}
+      variant={light ? 'light' : undefined}
+      loading={loading}
+      disabled={disabled}
+      fullWidth
+      style={{ paddingLeft: 0, paddingRight: 0 }}
+      {...rest}
+    />
+  );
+});

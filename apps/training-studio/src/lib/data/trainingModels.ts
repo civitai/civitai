@@ -37,8 +37,9 @@ import type {
  * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
  * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
- * `flux3klein` (2026-10-15) is the one card with NO source entry — Flux.3 Klein
- * trains in the Training Studio only. `mossimage` (2026-10-16) likewise.
+ * `flux3klein` (2026-10-15) and `mossimage` (2026-10-16) train in the Training Studio
+ * only: their source entries are `disabled: true`, there so the main app can publish
+ * their runs, so a re-mirror must keep them here.
  */
 
 export type LabelType = 'tag' | 'caption';
@@ -228,7 +229,7 @@ export const MODEL_CARDS: ModelCard[] = [
       {
         key: 'flux3klein',
         label: 'Base',
-        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/client` ships no
+        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/orchestration-client` ships no
         // Flux3Klein training input yet, so the ecosystem literal is unchecked.
         air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
         baseModel: 'Flux.3 Klein-base',
@@ -1469,6 +1470,13 @@ export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
  *  decides: the same ecosystem the submit check sees. */
 export const allowsCustomBase = (card: ModelCard): boolean =>
   ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
+
+/** Ecosystems whose training samples can be rendered from an input image (`samples.sourceImages`).
+ *  Add one only after a real run shows its samples follow the input — otherwise uploads are ignored. */
+const SAMPLE_SOURCE_IMAGE_ECOSYSTEMS: ReadonlySet<string> = new Set(['flux2klein']);
+
+export const ecosystemTakesSampleImages = (ecosystem: string): boolean =>
+  SAMPLE_SOURCE_IMAGE_ECOSYSTEMS.has(ecosystem);
 
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =

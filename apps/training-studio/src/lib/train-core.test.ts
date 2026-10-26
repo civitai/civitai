@@ -12,10 +12,10 @@ import {
 const submitWorkflow = vi.fn();
 const getWorkflow = vi.fn();
 const getResource = vi.fn();
-// Hand-listed rather than spread over importOriginal: @civitai/client's dist imports a directory,
+// Hand-listed rather than spread over importOriginal: @civitai/orchestration-client's dist imports a directory,
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   Air: {
     isAir: () => false,
     stringify: (p: Record<string, string>) =>
@@ -233,6 +233,17 @@ describe('keep-training base model pin', () => {
     await continueTraining(client, opts, { checkText });
     expect('model' in submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input).toBe(false);
   });
+
+  it("keeps an edit run's sample input images paired with its prompts", async () => {
+    const samples = {
+      prompts: ['ohwx, make it night'],
+      sourceImages: ['https://orch.example/blobs/a.png'],
+    };
+    getWorkflow.mockResolvedValue(source({ ecosystem: 'flux2klein', samples }));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, opts, { checkText });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples).toEqual(samples);
+  });
 });
 
 describe('keep-training checkpoint reference', () => {
@@ -318,5 +329,47 @@ describe('retired base', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
     await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
+  });
+});
+
+describe('sample input images', () => {
+  const kleinRun = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'flux2klein',
+    modelVariant: '9b',
+    prompts: ['ohwx, make it night', 'ohwx, add snow'],
+  });
+  const images = ['https://orch.example/blobs/a.png', 'https://orch.example/blobs/b.png'];
+
+  it('sends them on the samples, beside the prompts they pair with', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-edit' } });
+    await submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: images }], { checkText });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples).toEqual({
+      prompts: ['ohwx, make it night', 'ohwx, add snow'],
+      sourceImages: images,
+    });
+  });
+
+  it('sends no sourceImages key on a text-only run', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-text' } });
+    await submitTraining(client, kleinRun());
+    const samples = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples;
+    expect('sourceImages' in samples).toBe(false);
+  });
+
+  it('refuses images a run cannot use, or that do not pair one-to-one, before submitting', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), sourceImages: [images[0]!] }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages are not supported for this model/);
+    await expect(
+      submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: [images[0]!] }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages must have one image per sample prompt/);
+    await expect(
+      submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: [images[0]!, ''] }], {
+        checkText,
+      })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages must be an array of image URLs/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });

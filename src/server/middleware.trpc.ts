@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { pack } from 'msgpackr';
+import superjson from 'superjson';
 import { isDev, isPreview, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
+import { hSetWithTTL, sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -339,6 +340,83 @@ export const itemHolderInFlightLimit = inFlightLimit({
   errorMessage: ITEM_HOLDER_BUSY_MESSAGE,
 });
 
+const EDGE_TAG_SET_CAP = 100;
+// Per-tag caps, matched by tag prefix, for a tag whose legitimate URL count approaches the default.
+const EDGE_TAG_SET_CAPS: Record<string, number> = {};
+export function edgeTagSetCap(tag: string) {
+  for (const [prefix, cap] of Object.entries(EDGE_TAG_SET_CAPS))
+    if (tag.startsWith(prefix)) return cap;
+  return EDGE_TAG_SET_CAP;
+}
+
+const encodeTrpcQuery = (input: unknown) =>
+  `input=${encodeURIComponent(JSON.stringify(superjson.serialize(input)))}`;
+
+/**
+ * Exactly a URL the site's tRPC client sends for this parsed input, and no other form of it. The
+ * client spreads every object input and adds `authed: true` when signed in (see
+ * `authedCacheBypassLink` in `src/utils/trpc.ts`), so no input arrives as `{}`.
+ */
+export function isCanonicalTrpcGetUrl(url: string, input: unknown) {
+  const q = url.indexOf('?');
+  if (q === -1) return false;
+  const query = url.slice(q + 1);
+  const sent = input === undefined ? {} : input;
+  if (query === encodeTrpcQuery(sent)) return true;
+  return (
+    typeof sent === 'object' &&
+    sent !== null &&
+    !Array.isArray(sent) &&
+    query === encodeTrpcQuery({ ...sent, authed: true })
+  );
+}
+
+const capLoggedTags = new Set<string>();
+
+/**
+ * A purge can only refresh URLs recorded under the tag, so a tagged response is edge-cached only
+ * when its URL was recorded. Bounded per tag; past the bound the response is served uncached.
+ */
+/** @returns how long the response may be cached (seconds), 0 when it must not be. */
+async function recordTaggedUrl(
+  url: string,
+  input: unknown,
+  tags: string[],
+  ttl: number,
+  path: string
+) {
+  if (!isCanonicalTrpcGetUrl(url, input)) return 0;
+  try {
+    const recorded = await Promise.all(
+      tags.map((tag) =>
+        sAddCappedWithExpireGe(
+          redis,
+          `${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}`,
+          url,
+          ttl,
+          edgeTagSetCap(tag)
+        )
+      )
+    );
+    tags.forEach((tag, i) => {
+      if (recorded[i] > 0 || capLoggedTags.has(tag) || capLoggedTags.size >= 1000) return;
+      capLoggedTags.add(tag);
+      logToAxiom(
+        // Only a URL in the client's own form reaches this point, so `url` is one the site requests.
+        { name: 'edge-cache-tag-cap', type: 'warn', tag, cap: edgeTagSetCap(tag), path, url },
+        'civitai-prod'
+      ).catch(() => undefined);
+    });
+    return Math.min(...recorded);
+  } catch (error) {
+    logToAxiom(
+      { name: 'edge-cache-record-failed', type: 'error', message: (error as Error).message, tags },
+      'civitai-prod'
+    ).catch(() => undefined);
+    return 0;
+  }
+}
+
 export type EdgeCacheItProps = {
   ttl?: number;
   expireAt?: () => Date;
@@ -379,23 +457,21 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     // `middleware.trpc.edge-cache-precedence.test.ts`.
     if (ctx.cache?.skip) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
+      const cacheTags = tags?.(input).map((x) => slugit(x));
+      if (cacheTags && ctx.req?.url && reqTTL > 0) {
+        const recordedFor = await recordTaggedUrl(ctx.req.url, input, cacheTags, ttl, path);
+        if (!recordedFor) {
+          ctx.cache.canCache = false;
+          ctx.cache.edgeTTL = 0;
+          ctx.cache.browserTTL = 0;
+          return result;
+        }
+        reqTTL = Math.min(reqTTL, recordedFor);
+      }
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;
       ctx.cache.staleWhileRevalidate = 30;
-      const cacheTags = tags?.(input).map((x) => slugit(x));
-      if (cacheTags) {
-        if (ctx.req?.url) {
-          await Promise.all(
-            cacheTags
-              .map((tag) => {
-                const key = `${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}` as const;
-                return [redis.sAdd(key, ctx.req.url!), redis.expire(key, ttl)];
-              })
-              .flat()
-          );
-        }
-        ctx.cache.tags = cacheTags;
-      }
+      if (cacheTags) ctx.cache.tags = cacheTags;
     }
 
     return result;
@@ -403,9 +479,17 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
 }
 
 export function purgeOnSuccess(tags: string[]) {
-  return middleware(async ({ next }) => {
+  return middleware(async ({ next, path }) => {
     const result = await next();
-    if (result.ok) await purgeCache({ tags });
+    // Not awaited: the save returns while the edge refresh runs. If the refresh fails, the
+    // cached response stays until its TTL runs out.
+    if (result.ok)
+      purgeCache({ tags }).catch((error: Error) =>
+        logToAxiom(
+          { name: 'edge-purge-failed', type: 'error', message: error.message, tags, path },
+          'civitai-prod'
+        ).catch(() => undefined)
+      );
 
     return result;
   });

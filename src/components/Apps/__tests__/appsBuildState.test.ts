@@ -190,20 +190,18 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
  * paragraph explaining that these rows block nothing. A summary line is what a hurried reader
  * takes away, so it was the worst surviving copy of the claim. Nothing here blocks; see below.)
  *
- * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
- * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
- * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
- * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
- * `preview / component-tests`.
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF WAS OBSERVED NOWHERE. `/apps/build`'s
+ * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project, which CI
+ * did not run at the time.
  *
  * ⚠️ THESE ROWS DO NOT "BLOCK" ANYTHING EITHER, AND SAYING THEY DID WAS THIS FILE'S OWN
  * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a
  * regression", two lines under the criterion "a guard that can only report is not a guard
  * against the next PR" — which this suite then failed. `unit` is `continue-on-error` on a
- * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
- * this repository prevents a merge. What these rows buy is that `unit` DOES run on
- * `push: [main]` without that flag, so the regression reds the `main` build after it lands
- * rather than going unobserved. Weaker than blocking, stronger than the browser tier, and
+ * pull request (the `unit` job's `continue-on-error` in `lint.yml`) and `main` requires no status
+ * checks at all, so no check in this repository prevents a merge. What these rows buy is that
+ * `unit` DOES run on `push: [main]` without that flag, so the regression reds the `main` build
+ * after it lands rather than going unobserved. Weaker than blocking, and
  * worth having on those terms — not on the ones first written here.
  *
  * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an

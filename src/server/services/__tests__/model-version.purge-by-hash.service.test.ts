@@ -273,7 +273,7 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
   it('resolves the version hashes and purges the by-hash URL(s) on publish', async () => {
     stubPublish();
 
-    await publishModelVersionById({ id: VERSION_ID });
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
       where: { file: { modelVersionId: VERSION_ID } },
@@ -293,7 +293,7 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
     stubPublish();
     mockPurgeCache.mockRejectedValue(new Error('cloudflare down'));
 
-    const result = await publishModelVersionById({ id: VERSION_ID });
+    const result = await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false });
 
     expect(result).toMatchObject({ id: VERSION_ID });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);

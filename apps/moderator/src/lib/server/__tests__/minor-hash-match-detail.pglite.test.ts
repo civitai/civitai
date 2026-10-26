@@ -33,7 +33,7 @@ const SCHEMA = `
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
 CREATE TABLE "Model" (
   id INTEGER PRIMARY KEY, "userId" INTEGER, status TEXT NOT NULL DEFAULT 'Published',
-  "createdAt" TIMESTAMP(3) DEFAULT now(), "deletedAt" TIMESTAMP(3)
+  "createdAt" TIMESTAMP(3) DEFAULT now(), "deletedAt" TIMESTAMP(3), mode TEXT, meta JSONB DEFAULT '{}'
 );
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER);
 CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "modelVersionId" INTEGER);
@@ -91,4 +91,19 @@ describe('getMinorHashMatchDetail on a seed flagged more than once', () => {
       expect(detail?.minorFlaggedByUsername).toBe('latest-mod');
     }
   );
+});
+
+describe('getMinorHashMatchDetail for a real-person seed', () => {
+  it("names who set the seed's own label, not the other label's latest setter", async () => {
+    await pg.query(
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt") VALUES
+        (2, 'setPoi', 'model', $1, '2026-01-01T00:00:00Z'),
+        (3, 'setMinor', 'model', $1, '2026-06-01T00:00:00Z')`,
+      [SEED]
+    );
+    const poi = await getMinorHashMatchDetail({ modelId: MATCH, minorModelId: SEED, label: 'poi' });
+    expect(poi?.minorFlaggedByUsername).toBe('first-mod');
+    const minor = await getMinorHashMatchDetail({ modelId: MATCH, minorModelId: SEED });
+    expect(minor?.minorFlaggedByUsername).toBe('latest-mod');
+  });
 });

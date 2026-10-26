@@ -19,7 +19,11 @@ const {
   mockLoadGrantTextHash,
   mockStampModeratorTextScanRuling,
   mockSettleFlagAppeals,
+  mockConfirmPoiHashAutoFlag,
+  mockRevertPoiHashAutoFlag,
 } = vi.hoisted(() => ({
+  mockConfirmPoiHashAutoFlag: vi.fn(),
+  mockRevertPoiHashAutoFlag: vi.fn(),
   mockSetModelMinor: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
@@ -38,6 +42,10 @@ const {
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
+}));
+vi.mock('~/server/services/poi-hash.service', () => ({
+  confirmPoiHashAutoFlag: mockConfirmPoiHashAutoFlag,
+  revertPoiHashAutoFlag: mockRevertPoiHashAutoFlag,
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 
@@ -1905,6 +1913,57 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ status: AppealStatus.Approved })
     );
+  });
+
+  describe('a real-person flag the hash match applied', () => {
+    const hashed = { poiFlagSnapshot: { at: 'x', source: 'auto' } };
+
+    it('is overturned by reverting it, without the appeal being settled underneath', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({ minor: false, poi: true, meta: hashed });
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+      expect(mockRevertPoiHashAutoFlag).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        fromAppeal: true,
+      });
+      expect(mockLoadGrantTextHash).not.toHaveBeenCalled();
+      expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ status: AppealStatus.Approved })
+      );
+    });
+
+    it('is upheld by confirming it', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({ minor: false, poi: true, meta: hashed });
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
+      expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ status: AppealStatus.Rejected })
+      );
+    });
+
+    it('with a text-scan flag too, the grant lifts it rather than the hash revert', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({
+        minor: false,
+        poi: true,
+        meta: { ...hashed, textScanFlags: { poi: { workflowId: 'wf-1', textHash: 'h-1' } } },
+      });
+      mockLoadGrantTextHash.mockResolvedValue('h-text');
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+      expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        grantHash: 'h-text',
+      });
+      expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses a per-label decision on a label that is not flagged', async () => {

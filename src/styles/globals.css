@@ -308,6 +308,11 @@ textarea {
                                        further down, because this package
                                        ships UNLAYERED CSS and a layered rule
                                        loses to it no matter how specific.
+     · `@civitai/components`           1 fixed (`toast-region`, `bottom/right:
+                                       16px`) — 0 call sites: the app renders
+                                       only its `button` markup (the
+                                       `shellDesignSystemMarkup` shell). 0
+                                       sticky. All in `@layer civitai.components`.
 
    One more entry point exists and is not in `_app.tsx`:
    `draft-js/dist/Draft.css`, imported by `TrainingImagesCaptionViewer`. 0
@@ -653,7 +658,8 @@ textarea {
 /* Mantine overrides */
 
 .mantine-Badge-label *,
-.mantine-Button-label * {
+.mantine-Button-label *,
+[data-badge-label] * {
   font-size: inherit;
   font-weight: inherit;
   font-family: inherit;

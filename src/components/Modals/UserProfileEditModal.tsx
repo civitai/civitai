@@ -48,6 +48,7 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
+import { dedupeBadgesByImage, getBadgeImageUrl } from '~/shared/utils/badge-visibility';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -213,25 +214,14 @@ export default function UserProfileEditModal() {
   const badges = useMemo(
     () =>
       user
-        ? owned
-            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
-            .filter((item, index, self) => {
-              const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              // Keep only the first occurrence of each unique URL
-              return (
-                url &&
-                self.findIndex((b) => {
-                  const bData = (b.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-                  return (bData.url ?? '') === url;
-                }) === index
-              );
-            })
-            .map(({ cosmetic, cosmeticId, ...c }) => ({
-              ...c,
-              ...cosmetic,
-              data: cosmetic.data as BadgeCosmetic['data'],
-            }))
+        ? dedupeBadgesByImage(
+            owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge),
+            (item) => getBadgeImageUrl(item.cosmetic)
+          ).map(({ cosmetic, cosmeticId, ...c }) => ({
+            ...c,
+            ...cosmetic,
+            data: cosmetic.data as BadgeCosmetic['data'],
+          }))
         : [],
     [user, owned]
   );

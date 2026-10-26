@@ -466,6 +466,11 @@ describe('the advisory locks have exactly one call site', () => {
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
   // ingestion lock, so an article removal serialises with a recompute. The only lock in its transaction.
+  // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
+  // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
+  // transaction, for a decision's final update. The only lock in either transaction.
+  // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
+  // form) around the open-hold check and the hold write. The only lock in its transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -479,6 +484,8 @@ describe('the advisory locks have exactly one call site', () => {
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/support-membership-code.service.ts',
+    'services/text-scan/actions/csam-hold.ts',
+    'services/text-scan/actions/model-rules-hold.ts',
     'services/text-scan/csam-hold-decision.ts',
     'services/text-scan/prompt.ts',
   ];

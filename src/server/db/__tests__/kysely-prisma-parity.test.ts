@@ -79,6 +79,11 @@ const PORTED_QUERIES: Array<
 // compared to the Prisma row in the "the raw row matches Prisma" cases of
 // src/server/services/__tests__/image-generation-data.kysely-parity.test.ts. It selects no array
 // column today. If one is added with a non-empty fixture value, that comparison is what fails.
+// Also not listed: the placement read family (@civitai/db-queries/placement). Its ports join, alias
+// and select expressions, all outside `selectedColumns`. Every column they select is scalar or JSONB
+// (no array type), and their rows are compared to Prisma's, `toStrictEqual`, in
+// src/server/services/__tests__/placement-reads.kysely-parity.test.ts — opt-in like this suite, so
+// it does NOT run in CI.
 
 /**
  * The (table, column) pairs a compiled single-table SELECT reads.

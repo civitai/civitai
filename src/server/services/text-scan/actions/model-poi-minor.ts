@@ -594,7 +594,7 @@ async function notifyModelOwner({
   await createNotification({
     userId,
     type: 'model-text-scan-flagged',
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     key: `model-text-scan-flagged:${modelId}:${label}:${workflowId}`,
     details: { modelId, modelName, label },
   });
@@ -687,7 +687,8 @@ export async function grantModelTextScanPoi({
   );
   if (!after) return false;
 
-  const { applyModelFlagSideEffects } = await loadModelService();
+  const { applyModelFlagSideEffects, clearPoiHashMeta } = await loadModelService();
+  await clearPoiHashMeta(modelId);
   await applyModelFlagSideEffects({ before, after });
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);

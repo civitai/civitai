@@ -14,6 +14,8 @@ import type { TransformedModel } from '~/shared/search/models-transform';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 
 export function TopRightIcons({
   setFlipped,
@@ -25,6 +27,7 @@ export function TopRightIcons({
   imageId?: number;
 }) {
   const currentUser = useCurrentUser();
+  const showSfwFace = useShowsSfwFace();
 
   let contextMenuItems: React.ReactNode[] = [];
 
@@ -104,7 +107,7 @@ export function TopRightIcons({
         )}
         <CivitaiLinkManageButton
           modelId={data.id}
-          modelName={data.name}
+          modelName={searchHitName(data, showSfwFace)}
           modelType={data.type}
           hashes={data.hashes}
           noTooltip

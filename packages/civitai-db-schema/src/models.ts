@@ -106,9 +106,9 @@ export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHas
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
-export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
+export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -184,7 +184,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -573,6 +573,7 @@ export interface User {
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
+  emailOptOuts?: UserEmailNotificationOptOut[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -994,6 +995,10 @@ export interface Model {
   scannedAt: Date | null;
   sfwOnly: boolean;
   isOfficial: boolean;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -1620,6 +1625,7 @@ export interface Post {
   reports?: PostReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
+  storylinePendingChapter?: StorylinePendingChapter | null;
 }
 
 export interface PostMetric {
@@ -1726,6 +1732,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  caption?: ImageCaption | null;
 }
 
 export interface ImageTagForReview {
@@ -2142,6 +2149,8 @@ export interface ApiKey {
   clientId: string | null;
   client?: OauthClient | null;
   buzzLimit: JsonValue | null;
+  workerDeviceId: number | null;
+  workerDevice?: WorkerDevice | null;
 }
 
 export interface OauthClient {
@@ -2170,6 +2179,32 @@ export interface OauthClient {
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
+  workerClient?: WorkerClient | null;
+  workerDevices?: WorkerDevice[];
+}
+
+export interface WorkerClient {
+  clientId: string;
+  client?: OauthClient;
+  provider: string;
+  subjectTokenTypes: string[];
+  saladContainerGroupIds: string[];
+  createdAt: Date;
+}
+
+export interface WorkerDevice {
+  id: number;
+  clientId: string;
+  client?: OauthClient;
+  issuer: string;
+  subject: string;
+  status: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  lastIp: string | null;
+  blockedAt: Date | null;
+  blockedReason: string | null;
+  tokens?: ApiKey[];
 }
 
 export interface UserRole {
@@ -2901,6 +2936,13 @@ export interface UserPushSetting {
   createdAt: Date;
 }
 
+export interface UserEmailNotificationOptOut {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
+}
+
 export interface Webhook {
   id: number;
   url: string;
@@ -3037,6 +3079,8 @@ export interface Thread {
   appListing?: AppListing | null;
   crucibleId: number | null;
   crucible?: Crucible | null;
+  storylineId: number | null;
+  storyline?: Storyline | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -3437,6 +3481,7 @@ export interface CosmeticShopItem {
   listed: boolean;
   itemDefinitionId: number | null;
   itemDefinition?: ItemDefinition | null;
+  eventTags: string[];
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
@@ -4028,6 +4073,8 @@ export interface CsamReport {
   details: JsonValue;
   images: JsonValue;
   type: CsamReportType;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
 }
 
 export interface CsamReportAudit {
@@ -4045,6 +4092,17 @@ export interface CsamReportAudit {
   changedBy: string;
 }
 
+export interface CsamFlagRelease {
+  id: number;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  overriddenLegs: JsonValue;
+  imageCount: number;
+  createdAt: Date;
+}
+
 export interface CsamReportArchiveObject {
   id: number;
   csamReportId: number;
@@ -4055,6 +4113,49 @@ export interface CsamReportArchiveObject {
   namedExpected: number | null;
   namedMissing: number | null;
   uploadedAt: Date;
+}
+
+export interface EvidenceHold {
+  id: number;
+  userId: number;
+  csamReportId: number | null;
+  role: string;
+  reportSentAt: Date | null;
+  releaseAt: Date | null;
+  extendedUntil: Date | null;
+  extensionRequestedBy: string | null;
+  extensionReference: string | null;
+  reason: string;
+  createdAt: Date;
+  createdById: number | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  releaseReason: string | null;
+}
+
+export interface EvidenceHoldImage {
+  imageId: number;
+  userId: number;
+  postId: number | null;
+  keptAt: Date;
+}
+
+export interface EvidenceHoldPost {
+  postId: number;
+  userId: number;
+  title: string | null;
+  detail: string | null;
+  createdAt: Date | null;
+  publishedAt: Date | null;
+  modelVersionId: number | null;
+  collectionId: number | null;
+  metadata: JsonValue | null;
+  keptAt: Date;
+}
+
+export interface EvidenceHeldUser {
+  userId: number;
+  heldUntil: Date | null;
 }
 
 export interface Link {
@@ -4325,6 +4426,16 @@ export interface ChatMessage {
   referenceMessage?: ChatMessage | null;
   referenceMessages?: ChatMessage[];
   lastViewedMessages?: ChatMember[];
+  edits?: ChatMessageEdit[];
+}
+
+export interface ChatMessageEdit {
+  id: number;
+  messageId: number;
+  editorId: number;
+  previousContent: string;
+  createdAt: Date;
+  message?: ChatMessage;
 }
 
 export interface BuildGuide {
@@ -4670,6 +4781,19 @@ export interface ScanLabelFlag {
   createdAt: Date;
 }
 
+export interface ImageAudioScan {
+  imageId: number;
+  workflowId: string;
+  status: string;
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: JsonValue | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
@@ -4678,12 +4802,14 @@ export interface ScanLabelVote {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Date;
+  claimToken: string | null;
 }
 
 export interface ScanLabelClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;
+  token: string | null;
 }
 
 export interface ScanLabelCopyObject {
@@ -6429,8 +6555,10 @@ export interface Storyline {
   heroImage?: Image | null;
   heroImagePosition: number;
   chapters?: StorylineChapter[];
+  pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
+  thread?: Thread | null;
 }
 
 export interface StorylineChapter {
@@ -6449,6 +6577,18 @@ export interface StorylineChapter {
   branchChoicesFrom?: StorylineBranchChoice[];
   branchChoicesTo?: StorylineBranchChoice[];
   createClicks?: StorylineCreateClick[];
+  pendingContinuations?: StorylinePendingChapter[];
+}
+
+export interface StorylinePendingChapter {
+  postId: number;
+  post?: Post;
+  storylineId: number;
+  storyline?: Storyline;
+  parentChapterId: number | null;
+  parentChapter?: StorylineChapter | null;
+  userId: number;
+  createdAt: Date;
 }
 
 export interface StorylineChapterEdge {
@@ -6459,6 +6599,17 @@ export interface StorylineChapterEdge {
   parentChapter?: StorylineChapter;
   canon: boolean;
   createdAt: Date;
+}
+
+export interface ImageCaption {
+  imageId: number;
+  image?: Image;
+  userId: number;
+  content: string;
+  refused: boolean;
+  nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface StorylineCollaborator {
@@ -6521,6 +6672,7 @@ export interface ServiceOffering {
   removedDetails: string | null;
   removedAt: Date | null;
   removedById: number | null;
+  sellerAffirmation: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
@@ -6610,6 +6762,10 @@ export interface ServiceDealFile {
   processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
+  malwareScanWorkflowId: string | null;
+  malwareScanStartedAt: Date | null;
+  malwareScanSubmittedAt: Date | null;
+  malwareScanAttempts: number;
   unpackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;
@@ -6751,6 +6907,7 @@ export interface Crucible {
   scannedAt: Date | null;
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
+  eventTags: string[];
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

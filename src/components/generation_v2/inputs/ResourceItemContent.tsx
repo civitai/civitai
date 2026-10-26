@@ -14,10 +14,13 @@
 import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { defaultStrength } from '~/shared/utils/resource.utils';
+import { strengthSliderBounds } from '~/shared/constants/generation.constants';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
+import { getResourceSfwOnlyMessage } from '~/components/SfwOnlyBadge/sfw-only.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { isPreviewVisible } from '~/shared/utils/resource-preview';
@@ -32,7 +35,7 @@ import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResid
 export interface ResourceItemContentProps {
   /** The resource to display */
   resource: GenerationResource;
-  /** Current strength value (may differ from resource.strength if user changed it) */
+  /** The chosen weight; the resource's default shows until set. */
   strengthValue?: number;
   /** Called when strength changes */
   onStrengthChange?: (strength: number) => void;
@@ -174,7 +177,7 @@ export function ResourceItemContent({
   const isPrivate = status === 'private';
   const isUnavailable = status === 'unavailable';
   const isDisabled = isResourceDisabled(status);
-  const isSfwOnly = !domain.green && (resource.model.sfwOnly || resource.model.minor);
+  const sfwOnlyMessage = domain.green ? undefined : getResourceSfwOnlyMessage(resource);
   const epochDetails = resource.epochDetails;
 
   // Don't show strength slider for disabled resources
@@ -183,7 +186,7 @@ export function ResourceItemContent({
     !isDisabled &&
     ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type) &&
     onStrengthChange;
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
+  const strengthBounds = strengthSliderBounds(resource.settings?.strength);
 
   const modelUrl = getModelUrl({
     modelId: resource.model.id,
@@ -245,7 +248,7 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
-            {isSfwOnly && (
+            {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
                   <ThemeIcon size={18} color="green.5" variant="filled" className="shrink-0">
@@ -253,7 +256,7 @@ export function ResourceItemContent({
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                  <Text size="sm">{sfwOnlyMessage}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
@@ -326,10 +329,10 @@ export function ResourceItemContent({
         <div className="flex w-full items-center gap-2">
           <NumberSlider
             className="flex-1"
-            value={strengthValue ?? resource.strength ?? 1}
+            value={strengthValue ?? defaultStrength(resource)}
             onChange={(strength) => onStrengthChange(strength ?? 1)}
-            min={!isSameMinMaxStrength ? resource.minStrength : -1}
-            max={!isSameMinMaxStrength ? resource.maxStrength : 2}
+            min={strengthBounds.min}
+            max={strengthBounds.max}
             step={0.05}
             disabled={disabled}
           />

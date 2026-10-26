@@ -6,7 +6,7 @@ import type {
   TrainingOutput,
   TrainingStep,
   Workflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
@@ -87,7 +87,7 @@ export function getTrainingStep(workflow: Workflow) {
   return { step: first, stepType };
 }
 
-// A typed literal rather than the client's runtime enum object: `@civitai/client` is mocked in the
+// A typed literal rather than the client's runtime enum object: `@civitai/orchestration-client` is mocked in the
 // unit test setup, so a value import from it is undefined there.
 const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
   ImageResouceTrainingModerationStatus;
@@ -95,20 +95,35 @@ const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerat
 const TRAINING_NOT_APPROVED_MESSAGE =
   "This training run's dataset has not been approved, so a model can't be created or published from it.";
 
+export type PublishRefusalReason = 'not-approved' | 'unsupported-base' | 'no-checkpoint';
+
 /**
- * The `cause` on every refusal from the training moderation gate, so a caller that must handle the
- * refusal differently from other errors (the from-orchestrator page) can tell it apart without
- * matching on message text.
+ * The `cause` on a refusal the user can act on, so the from-orchestrator page can explain it by
+ * `reason` without matching on message text (or showing the message, which may name internals).
  */
-export class TrainingNotApprovedError extends Error {
-  constructor(message: string) {
+export class PublishRefusalError extends Error {
+  constructor(readonly reason: PublishRefusalReason, message: string) {
     super(message);
+    this.name = 'PublishRefusalError';
+  }
+}
+
+/** The `cause` on every refusal from the training moderation gate. */
+export class TrainingNotApprovedError extends PublishRefusalError {
+  constructor(message: string) {
+    super('not-approved', message);
     this.name = 'TrainingNotApprovedError';
   }
 }
 
 export function isTrainingNotApprovedRefusal(error: unknown): boolean {
   return error instanceof TRPCError && error.cause instanceof TrainingNotApprovedError;
+}
+
+export function getPublishRefusalReason(error: unknown): PublishRefusalReason | null {
+  return error instanceof TRPCError && error.cause instanceof PublishRefusalError
+    ? error.cause.reason
+    : null;
 }
 
 function refuse(message: string): never {
@@ -162,10 +177,11 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   if (!match && input.ecosystem)
     match = entries.find(([, info]) => info.aiToolkit?.ecosystem === input.ecosystem);
 
-  if (!match)
-    throw throwBadRequestError(
-      'This training run uses a base model that can no longer be published from Training Studio.'
-    );
+  if (!match) {
+    const message =
+      'This training run uses a base model that can no longer be published from Training Studio.';
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
 
   const [trainingKey, info] = match;
   return {
@@ -314,8 +330,10 @@ export async function createDraftModelFromWorkflow({
     };
   }
 
-  if (!selectedEpoch?.modelUrl)
-    throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
+  if (!selectedEpoch?.modelUrl) {
+    const message = 'This training run has no downloadable checkpoint to publish.';
+    throw throwBadRequestError(message, new PublishRefusalError('no-checkpoint', message));
+  }
 
   const {
     baseModel,

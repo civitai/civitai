@@ -1,4 +1,4 @@
-import { IconAward, IconScreenShare } from '@tabler/icons-react';
+import { IconAward, IconScreenShare, IconSwords, IconTrophy } from '@tabler/icons-react';
 import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
 import { useGetMenuItems } from '~/components/AppLayout/AppHeader/hooks';
 import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
@@ -32,6 +32,21 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
     color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
     label: 'Prizes',
     badge: unclaimedPrizes,
+  };
+  // The site pages, as the nav bar links them; `challenges` is "Your Challenges".
+  registry['browse-challenges'] = {
+    href: '/challenges',
+    visible: features.challengePlatform,
+    icon: IconTrophy,
+    color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+    label: 'Challenges',
+  };
+  registry.crucibles = {
+    href: '/crucibles',
+    visible: features.crucible,
+    icon: IconSwords,
+    color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+    label: 'Crucibles',
   };
   registry['civitai-link'] = {
     visible: !!currentUser && features.buzzSpendPop,

@@ -21,9 +21,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  BadgeMuteCtx,
+  canMuteBadge,
+  isMuteKey,
   isPinKey,
   MenuItemLabel,
+  MuteGlyph,
   PinGlyph,
+  PROFILE_PIN,
   pinMoveDirection,
   useDragClickGuard,
   usePinActions,
@@ -53,7 +58,7 @@ export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellP
       withinPortal
     >
       <Menu.Target>{trigger}</Menu.Target>
-      <Menu.Dropdown className="flex flex-col p-0">
+      <Menu.Dropdown className="flex max-h-[calc(100dvh-var(--header-height)-16px)] flex-col p-0">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           {switching ? (
             <AccountSwitcher onAccountClick={() => setSwitching(false)} />
@@ -76,22 +81,30 @@ function DesktopBody({ pins }: { pins: Pins }) {
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
     opened: true,
     pins: pins.pins,
+    muted: pins.mutedBadges,
   });
-  const { toggle, announce, region } = usePinActions(pins);
+  const { toggle, toggleMute, announce, region } = usePinActions(pins);
 
   return (
-    <div className="p-1">
-      {region}
-      {currentUser && <DesktopHeaderRows />}
-      {events.map((item, i) => (
-        <DesktopItem key={`event-${i}`} item={item} />
-      ))}
-      {currentUser && (
-        <PinnedList pinned={pinned} pins={pins} onToggle={toggle} announce={announce} />
-      )}
-      <Menu.Divider />
-      <DesktopNodes nodes={nodes} pins={pins} onToggle={signedIn ? toggle : undefined} />
-    </div>
+    <BadgeMuteCtx.Provider value={signedIn ? toggleMute : undefined}>
+      <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
+        {region}
+        {currentUser && (
+          <DesktopHeaderRows
+            pinned={pins.pins.includes(PROFILE_PIN.id)}
+            onTogglePin={signedIn ? () => toggle(PROFILE_PIN) : undefined}
+          />
+        )}
+        {events.map((item, i) => (
+          <DesktopItem key={`event-${i}`} item={item} />
+        ))}
+        {currentUser && (
+          <PinnedList pinned={pinned} pins={pins} onToggle={toggle} announce={announce} />
+        )}
+        <Menu.Divider />
+        <DesktopNodes nodes={nodes} pins={pins} onToggle={signedIn ? toggle : undefined} />
+      </div>
+    </BadgeMuteCtx.Provider>
   );
 }
 
@@ -195,7 +208,7 @@ function SortablePinnedItem({
   );
 }
 
-function DesktopNodes({
+export function DesktopNodes({
   nodes,
   pins,
   onToggle,
@@ -204,6 +217,9 @@ function DesktopNodes({
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
 }) {
+  // One flyout per level: opening a group closes its siblings at once, instead of each on its own timer.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+
   return (
     <>
       {nodes.map((node) =>
@@ -215,7 +231,16 @@ function DesktopNodes({
             onToggle={onToggle}
           />
         ) : (
-          <DesktopGroup key={node.id} node={node} pins={pins} onToggle={onToggle} />
+          <DesktopGroup
+            key={node.id}
+            node={node}
+            pins={pins}
+            onToggle={onToggle}
+            opened={openGroup === node.id}
+            setOpened={(next) =>
+              setOpenGroup((current) => (next ? node.id : current === node.id ? null : current))
+            }
+          />
         )
       )}
     </>
@@ -242,12 +267,15 @@ function DesktopGroup({
   node,
   pins,
   onToggle,
+  opened,
+  setOpened,
 }: {
   node: Extract<ResolvedMenuNode, { kind: 'group' }>;
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
+  opened: boolean;
+  setOpened: (opened: boolean) => void;
 }) {
-  const [opened, setOpened] = useState(false);
   const timer = useRef<number>();
   const row = useRef<HTMLButtonElement>(null);
   const dropdown = useRef<HTMLDivElement>(null);
@@ -355,35 +383,60 @@ export function DesktopItem({
   const { handleClose } = useContext(UserMenuCtx);
   const flyout = useContext(FlyoutCtx);
   const trackOpen = useTrackMenuOpen('desktop');
+  const toggleMute = useContext(BadgeMuteCtx);
   const id = item.id;
   const canPin = !!onToggle && !!id && isPinnable(id);
+  const canMute = canMuteBadge(item, toggleMute);
   const toggle = () => canPin && onToggle({ ...item, id });
+  const mute = () => canMute && id && toggleMute?.({ ...item, id });
 
   const common = {
     ref: rowRef,
     ...rowProps,
     className: 'group',
     leftSection: <item.icon size={18} stroke={1.5} color={item.color} />,
-    rightSection: canPin ? (
-      <span
-        // Not its own tab stop: the row is the menu item, and `P` pins it from the keyboard.
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          toggle();
-        }}
-        className="flex cursor-pointer items-center p-0.5"
-        title={pinned ? 'Unpin' : 'Pin'}
-      >
-        <PinGlyph pinned={pinned} />
-      </span>
-    ) : undefined,
-    'aria-keyshortcuts': canPin ? 'P' : undefined,
+    rightSection:
+      canPin || canMute ? (
+        <span className="flex items-center">
+          {canMute && (
+            <span
+              // Not its own tab stop either: `M` mutes the count from the keyboard.
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                mute();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={item.badgeMuted ? 'Unmute count' : 'Mute count'}
+            >
+              <MuteGlyph muted={!!item.badgeMuted} />
+            </span>
+          )}
+          {canPin && (
+            <span
+              // Not its own tab stop: the row is the menu item, and `P` pins it from the keyboard.
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggle();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={pinned ? 'Unpin' : 'Pin'}
+            >
+              <PinGlyph pinned={pinned} />
+            </span>
+          )}
+        </span>
+      ) : undefined,
+    'aria-keyshortcuts': [canPin && 'P', canMute && 'M'].filter(Boolean).join(' ') || undefined,
     onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
       rowProps?.onKeyDown?.(event);
       if (canPin && isPinKey(event)) {
         event.preventDefault();
         toggle();
+      } else if (canMute && isMuteKey(event)) {
+        event.preventDefault();
+        mute();
       } else if (flyout && event.key === 'ArrowLeft') {
         event.preventDefault();
         event.stopPropagation();
@@ -417,7 +470,13 @@ export function DesktopItem({
   return <Menu.Item {...common} />;
 }
 
-export function DesktopHeaderRows() {
+export function DesktopHeaderRows({
+  pinned = false,
+  onTogglePin,
+}: {
+  pinned?: boolean;
+  onTogglePin?: () => void;
+}) {
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
   const trackHeader = useTrackHeaderOpen('desktop');
@@ -428,6 +487,29 @@ export function DesktopHeaderRows() {
       <Menu.Item
         component={NextLink}
         href={`/user/${currentUser.username}`}
+        className="group"
+        aria-keyshortcuts={onTogglePin ? 'P' : undefined}
+        rightSection={
+          onTogglePin ? (
+            <span
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onTogglePin();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={pinned ? 'Unpin' : 'Pin'}
+            >
+              <PinGlyph pinned={pinned} />
+            </span>
+          ) : undefined
+        }
+        onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+          if (onTogglePin && isPinKey(event)) {
+            event.preventDefault();
+            onTogglePin();
+          }
+        }}
         onClick={() => trackHeader('profile')}
       >
         <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />

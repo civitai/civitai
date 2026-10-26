@@ -11,13 +11,18 @@ import {
   countCsamHoldsByType,
   countPendingCsamHolds,
   csamHoldSearch,
+  decideAuthorHolds,
   decideCsamHold,
+  getCleanRescans,
   getHoldCoverImages,
   listCsamHolds,
   type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
-import { int4Id, parseForm, parseQuery } from '$lib/server/query';
+import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
+import { ALSO_MAX } from './hold-author';
+import type { HoldContext } from './hold-context';
+import { getHoldContexts } from './hold-context.server';
 import {
   CSAM_HOLD_DECISION_GRANTS,
   CSAM_HOLD_DECISIONS,
@@ -32,19 +37,20 @@ const querySchema = z.object({
   status: z.enum(CSAM_HOLD_STATUSES).catch(DEFAULT_CSAM_HOLD_FILTERS.status),
   sort: z.enum(CSAM_HOLD_SORTS).catch(DEFAULT_CSAM_HOLD_FILTERS.sort),
   q: z.string().trim().max(100).catch(''),
+  author: int4Id.optional().catch(undefined),
 });
 
 // The page grant only decides who sees the nav entry and badge; the held text is for csam filers.
 export const load: PageServerLoad = async ({ url, locals }) => {
   if (!locals.grants['csam.report.file']) error(403, denied('csam.report.file'));
-  const { limit, page, entityType, status, sort, q } = parseQuery(url, querySchema);
+  const { limit, page, entityType, status, sort, q, author } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
   const search = csamHoldSearch(q);
   const holdFilters: CsamHoldFilters = { status, sort };
   const [queue, byType, pendingCount] = await Promise.all([
-    listCsamHolds({ limit, offset, entityType, status, sort, search }),
+    listCsamHolds({ limit, offset, entityType, status, sort, search, author }),
     // The chip counts and the footer's "of N" are decoration; a failure here must not take the list down with it.
-    countCsamHoldsByType({ status, search }).catch((err) => {
+    countCsamHoldsByType({ status, search, author }).catch((err) => {
       console.error('CSAM hold counts failed', err);
       return null;
     }),
@@ -59,10 +65,23 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     console.error('CSAM hold images failed', err);
     return new Map<number, CsamHoldCovers>();
   });
+  // Profile and comment-parent context is decoration too; its loader already degrades per kind.
+  const contexts = await getHoldContexts(queue.items).catch((err) => {
+    console.error('CSAM hold context failed', err);
+    return new Map<number, HoldContext>();
+  });
+  // Also decoration: a failed read just leaves the "edited since" line off.
+  const cleanRescans = await getCleanRescans(queue.items).catch((err) => {
+    console.error('CSAM hold rescans failed', err);
+    return new Map<number, Date>();
+  });
   const items = queue.items.map((hold) => ({
     ...hold,
+    cleanRescanAt: cleanRescans.get(hold.id) ?? null,
     coverImages: covers.get(hold.id)?.images ?? [],
     imageTotal: covers.get(hold.id)?.total ?? 0,
+    profile: contexts.get(hold.id)?.profile ?? null,
+    parent: contexts.get(hold.id)?.parent ?? null,
   }));
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,
@@ -74,6 +93,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     page,
     offset,
     q,
+    author: author ?? null,
     entityType: entityType ?? null,
     holdFilters,
     typeCounts,
@@ -86,9 +106,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   };
 };
 
+const alsoSchema = z
+  .array(z.object({ holdId: int4Id, textHash: z.string().min(1).max(200) }))
+  .max(ALSO_MAX);
+
 const decideSchema = z.object({
   holdId: int4Id,
+  textHash: z.string().min(1).max(200),
   decision: z.enum(CSAM_HOLD_DECISIONS),
+  also: jsonField(alsoSchema).optional(),
   note: z
     .string()
     .trim()
@@ -106,8 +132,24 @@ export const actions: Actions = {
     if (needed && !locals.grants[needed])
       return fail(403, { scope: 'denied' as const, error: denied(needed), key: input.holdId });
 
-    const result = await decideCsamHold(input);
+    const { also, ...primary } = input;
+    const result = await decideCsamHold(primary);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
-    return { success: true, key: input.holdId };
+    const others = also?.length
+      ? await decideAuthorHolds({
+          holdId: input.holdId,
+          also,
+          decision: input.decision,
+          note: input.note,
+        }).catch((err) => {
+          console.error('CSAM hold bulk decision failed', err);
+          return also.map(({ holdId }) => ({
+            holdId,
+            ok: false,
+            error: 'Could not apply the decision to this hold.',
+          }));
+        })
+      : undefined;
+    return { success: true, key: input.holdId, ...(others ? { others } : {}) };
   }),
 };

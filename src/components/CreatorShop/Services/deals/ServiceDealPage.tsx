@@ -30,6 +30,8 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { pluralize } from '~/shared/utils/pluralize';
 import { formatDate } from '~/utils/date-helpers';
 
 const DATE = 'MMM D, YYYY h:mm A';
@@ -105,13 +107,25 @@ function DisputeWindow({ deal, until }: { deal: ServiceDealView; until: Date }) 
 }
 
 export function ServiceDealPage({ dealId }: { dealId: number }) {
-  const { deal, isLoading } = useServiceDeal(dealId);
-  const state = dealPageState({ isLoading, hasDeal: !!deal });
+  const { deal, isLoading, error, refetch } = useServiceDeal(dealId);
+  const features = useFeatureFlags();
+  const state = dealPageState({ isLoading, hasDeal: !!deal, error });
 
   if (state.kind === 'loading')
     return (
       <Center py="xl">
         <Loader />
+      </Center>
+    );
+  if (state.kind === 'error')
+    return (
+      <Center py="xl">
+        <Stack align="center" gap="sm">
+          <Text>This deal could not be loaded.</Text>
+          <Button variant="default" onClick={() => refetch()}>
+            Try again
+          </Button>
+        </Stack>
       </Center>
     );
   if (state.kind === 'notFound' || !deal) return <NotFound />;
@@ -130,6 +144,25 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
             <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
               {deal.seller.username}&apos;s shop
             </Anchor>
+            {/* With Services off, the list and the manage tab are gone; the deal page stays. */}
+            {features.creatorServices && deal.viewerRole !== 'moderator' && (
+              <>
+                {' · '}
+                <Anchor
+                  component={NextLink}
+                  href={
+                    deal.viewerRole === 'buyer'
+                      ? '/services/deals'
+                      : `/user/${deal.seller.username}/shop/manage?tab=services`
+                  }
+                  inherit
+                >
+                  {deal.viewerRole === 'buyer'
+                    ? 'See all your requests'
+                    : 'See all requests to you'}
+                </Anchor>
+              </>
+            )}
           </Text>
           <Group gap="sm" wrap="wrap">
             <Title order={1} size="h2">
@@ -146,8 +179,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
             <Anchor component={NextLink} href={`/user/${counterparty.username}`} inherit>
               {counterparty.username}
             </Anchor>{' '}
-            · requested {formatDate(deal.requestedAt, DATE)} · ~{deal.deliveryDays} days ·{' '}
-            {deal.revisionsUsed}/{deal.revisionsIncluded} revisions used
+            · requested {formatDate(deal.requestedAt, DATE)} · ~
+            {pluralize(deal.deliveryDays, 'day')} · {deal.revisionsUsed}/{deal.revisionsIncluded}{' '}
+            revisions used
           </Text>
         </Stack>
 

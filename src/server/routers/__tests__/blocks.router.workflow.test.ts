@@ -603,6 +603,10 @@ import {
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import {
+  buildStarterTxt2imgGraph,
+  starterComfyTxt2imgRecipe,
+} from '~/server/services/blocks/recipes/starter-comfy-txt2img.recipe';
 import { resolveDevBuzzBudget } from '~/server/services/blocks/dev-scoped-mint.service';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
@@ -5410,7 +5414,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
   // strings) can't be asserted here — the global test setup mocks
-  // `@civitai/client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
+  // `@civitai/orchestration-client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
   // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
   // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
   // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
@@ -5503,7 +5507,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // ---- viewer-picked accountType (money page blocks) ----------------------
   // The exact reordered orchestrator currency VALUES can't be asserted here
-  // (the global @civitai/client mock nulls out BuzzClientAccount, so
+  // (the global @civitai/orchestration-client mock nulls out BuzzClientAccount, so
   // toOrchestratorType yields non-comparable values — the ORDERING is asserted
   // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
   // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
@@ -7148,8 +7152,13 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       return {
         kind: 'customComfy' as const,
         mode: 'inline' as const,
+        // No loader input holds a model filename: a filename makes a graph
+        // unrunnable, and the runnability describe below refuses it.
         workflow: {
-          '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd_xl.safetensors' } },
+          '1': {
+            class_type: 'EmptyLatentImage',
+            inputs: { width: 512, height: 512, batch_size: 1 },
+          },
           '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a serene lake', clip: ['1', 1] } },
         },
         resources: [],
@@ -7433,6 +7442,206 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
       // …and the inline belt was NOT consulted for a recipe body.
       expect(mockGetResourceData).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 RUNNABILITY (civitai-app-starters#774). A graph that is certain to fail
+    // on the worker is refused by the estimate AND the submit with a failed
+    // snapshot carrying `errorCode`, before any quote, reservation, orchestrator
+    // token or submit. The codes are `checkComfyGraph`'s from
+    // `@civitai/app-sdk/blocks`: `not-api-format` (an editor graph) and
+    // `model-filenames` (a loader input naming a file the worker cannot load).
+    // Custom nodes are advisory on the host and NOT refused.
+    //
+    // The refusal cases are red on the pre-change code: a UI graph was refused by
+    // the wire schema with a thrown BAD_REQUEST (no snapshot, no code), and a
+    // filename graph was quoted and submitted like any other.
+    // ─────────────────────────────────────────────────────────────────────────
+    describe('🔴 runnability — an unrunnable graph is refused before any spend', () => {
+      /** A ComfyUI editor (UI-format) export: what posted workflow files contain. */
+      const UI_GRAPH = {
+        last_node_id: 3,
+        last_link_id: 1,
+        nodes: [
+          {
+            id: 1,
+            type: 'CheckpointLoaderSimple',
+            widgets_values: ['sd_xl_base_1.0.safetensors'],
+            properties: { cnr_id: 'comfy-core' },
+          },
+          { id: 2, type: 'CLIPTextEncode', widgets_values: ['a serene lake'] },
+          { id: 3, type: 'ImageResizeKJ', properties: { cnr_id: 'comfyui-kjnodes' } },
+        ],
+        links: [[1, 1, 1, 2, 0, 'CLIP']],
+        groups: [],
+        config: {},
+        extra: {},
+        version: 0.4,
+      };
+
+      /** The server's own starter recipe graph: core nodes, models named by AIR. */
+      const AIR_GRAPH = buildStarterTxt2imgGraph({ prompt: 'a serene lake', seed: 7 });
+      const AIR_RESOURCES = [...starterComfyTxt2imgRecipe.resourceAllowlist.staticAirs];
+
+      /** The same graph with its diffusion model named by local filename. */
+      const FILENAME = 'flux1-dev-fp8.safetensors';
+      const FILENAME_GRAPH = {
+        ...AIR_GRAPH,
+        '1': { class_type: 'UNETLoader', inputs: { unet_name: FILENAME, weight_dtype: 'default' } },
+      };
+
+      /** The AIR graph plus one custom node (a KJNodes resize after the decode). */
+      const CUSTOM_NODE_GRAPH = {
+        ...AIR_GRAPH,
+        '11': {
+          class_type: 'ImageResizeKJ',
+          inputs: { image: ['9', 0], width: 768, height: 768, upscale_method: 'lanczos' },
+        },
+      };
+
+      function expectNothingSpent() {
+        expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+        expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+        expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+      }
+
+      it('estimate: a UI graph is refused with not-api-format, uncosted, and nothing is called', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyUser();
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: UI_GRAPH, maxBuzz: 77 }),
+        });
+        expect(result.snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          error: expect.stringContaining('not a ComfyUI API-format graph (detected: ui)'),
+          errorCode: 'not-api-format',
+        });
+        // An API export carries `_meta` on every node, which the strict node schema
+        // rejects, so the advice must say to strip it.
+        expect(result.snapshot.error).toContain('`_meta`');
+        expectNothingSpent();
+      });
+
+      it('submit: a UI graph is refused with not-api-format, and nothing is reserved or submitted', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyInline();
+        const result = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: UI_GRAPH, maxBuzz: 90 }),
+        });
+        expect(result.snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          error: expect.stringContaining('not a ComfyUI API-format graph (detected: ui)'),
+          errorCode: 'not-api-format',
+        });
+        expectNothingSpent();
+        // Refused before the other inline gates: no entitlement read, no audit.
+        expect(mockGetResourceData).not.toHaveBeenCalled();
+        expect(mockAuditPromptServer).not.toHaveBeenCalled();
+      });
+
+      it('an API-shaped graph whose node lacks `inputs` is not API format either (detected: unknown)', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyUser();
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: { '1': { class_type: 'KSampler' } } }),
+        });
+        expect(result.snapshot.errorCode).toBe('not-api-format');
+        expect(result.snapshot.error).toContain('(detected: unknown)');
+        expectNothingSpent();
+      });
+
+      it('estimate: a model filename in a loader input is refused with model-filenames, naming the input', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyUser();
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: FILENAME_GRAPH, resources: AIR_RESOURCES, maxBuzz: 77 }),
+        });
+        expect(result.snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          error: expect.stringContaining(`node 1 (UNETLoader) unet_name = '${FILENAME}'`),
+          errorCode: 'model-filenames',
+        });
+        // Only the filename input is named; the AIR-valued loaders are not.
+        expect(result.snapshot.error).not.toContain('clip_name');
+        expect(result.snapshot.error).not.toContain('vae_name');
+        expectNothingSpent();
+      });
+
+      it('submit: a model filename in a loader input is refused with model-filenames before any spend', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyInline();
+        const result = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: FILENAME_GRAPH, resources: AIR_RESOURCES, maxBuzz: 90 }),
+        });
+        expect(result.snapshot).toMatchObject({
+          workflowId: 'failed',
+          status: 'failed',
+          errorCode: 'model-filenames',
+        });
+        expect(result.snapshot.error).toContain(FILENAME);
+        expect(result.snapshot).not.toHaveProperty('cost');
+        expectNothingSpent();
+      });
+
+      // INVARIANT GUARD, not regression coverage: green before and after. It pins
+      // that the check does not refuse the graph shape the platform's own recipe
+      // sends, at both ends.
+      it('a core API graph that names models by AIR is still quoted and submitted', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyInline();
+        const estimate = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: AIR_GRAPH, resources: AIR_RESOURCES, maxBuzz: 77 }),
+        });
+        expect(estimate.snapshot).toEqual({
+          workflowId: 'wf_estimate',
+          status: 'pending',
+          cost: { total: 77 },
+        });
+        await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: AIR_GRAPH, resources: AIR_RESOURCES, maxBuzz: 90 }),
+        });
+        expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+        expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+        const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+        expect(input.workflow).toEqual(AIR_GRAPH);
+        expect(input.resources).toEqual(AIR_RESOURCES);
+      });
+
+      // INVARIANT GUARD: custom nodes stay ADVISORY on the host. The SDK reports
+      // `custom-nodes` for this graph; the host must not refuse on it, because the
+      // worker image, not the pinned core list, decides which nodes exist.
+      it('an API graph with a custom node is NOT refused, at estimate or submit', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+        happyInline();
+        const estimate = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: CUSTOM_NODE_GRAPH, resources: AIR_RESOURCES, maxBuzz: 77 }),
+        });
+        expect(estimate.snapshot).toEqual({
+          workflowId: 'wf_estimate',
+          status: 'pending',
+          cost: { total: 77 },
+        });
+        await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ workflow: CUSTOM_NODE_GRAPH, resources: AIR_RESOURCES, maxBuzz: 90 }),
+        });
+        expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+        const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+        expect(input.workflow['11'].class_type).toBe('ImageResizeKJ');
+      });
     });
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ Default resolution 1024x1024 (2K capable). Bilingual (CN/EN) text rendering.
 
 ## BLOCKERS (must clear before generation works end-to-end)
 
-1. **No `@civitai/client` types for Boogu.** Checked installed (`0.2.0-beta.71`), `latest` tag (`0.1.1-beta.0`), newest `beta` (`0.2.0-beta.72`) — zero `boogu`. ZImage types exist there; Boogu does not. **The orchestrator team must add a Boogu engine and publish typed inputs** (`BooguBaseCreateImageGenInput` / `BooguTurboCreateImageGenInput` / `BooguEditImageGenInput`, names TBD) before the handler can be strictly typed and before whatIf/generation actually succeeds. Until then we can scaffold the graph + UI and a handler with generic `ImageGenStepTemplate` + `as` casts, but it won't run.
+1. **No `@civitai/orchestration-client` types for Boogu.** Checked installed (`0.2.0-beta.71`), `latest` tag (`0.1.1-beta.0`), newest `beta` (`0.2.0-beta.72`) — zero `boogu`. ZImage types exist there; Boogu does not. **The orchestrator team must add a Boogu engine and publish typed inputs** (`BooguBaseCreateImageGenInput` / `BooguTurboCreateImageGenInput` / `BooguEditImageGenInput`, names TBD) before the handler can be strictly typed and before whatIf/generation actually succeeds. Until then we can scaffold the graph + UI and a handler with generic `ImageGenStepTemplate` + `as` casts, but it won't run.
 2. **Civitai model version IDs — RESOLVED.** The 3 CivitaiOfficial draft checkpoints + their v0.1 version IDs (graph discriminator + `ecosystemSettings.defaults.model.id`):
 
    | Variant | Model ID | Version ID |
@@ -158,7 +158,7 @@ The image-upload control renders automatically: the Edit subgraph's `images` nod
 
 ## Execution order (once blockers clear)
 
-1. Orchestrator ships Boogu engine + publishes `@civitai/client` with Boogu types. → `pnpm add @civitai/client@<ver>`
+1. Orchestrator ships Boogu engine + publishes `@civitai/orchestration-client` with Boogu types. → `pnpm add @civitai/orchestration-client@<ver>`
 2. Get the 3 Civitai model version IDs from Justin.
 3. Confirm engine string + edit contract + LoRA support with orchestrator.
 4. Make edits 1-7 in one pass; typecheck.

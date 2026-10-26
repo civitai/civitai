@@ -627,3 +627,25 @@ describe('createSubscribeSession — an upgrade that is not paid', () => {
     expect(mockSubscriptionsUpdate.mock.calls[0][1].payment_behavior).toBe('default_incomplete');
   });
 });
+
+describe('createSubscribeSession — membership checkout takes cards only', () => {
+  it('offers only card in a new-membership Checkout, so no bank debit can start one', async () => {
+    // Without this the account's default payment methods apply, bank debit included: the
+    // membership goes active at once and the debit bounces days later. Do not add 'link'
+    // here — Link can pay from a bank account and reopens the same hole.
+    stubStripe({ customerCurrency: null });
+
+    await subscribe();
+
+    expect(mockCheckoutSessionsCreate.mock.calls[0][0].payment_method_types).toEqual(['card']);
+  });
+
+  it('changes an existing plan in place, without a Checkout session', async () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+
+    await subscribe();
+
+    expect(mockSubscriptionsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockCheckoutSessionsCreate).not.toHaveBeenCalled();
+  });
+});

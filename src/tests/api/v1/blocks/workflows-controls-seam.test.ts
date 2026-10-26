@@ -698,6 +698,112 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 });
 
 /**
+ * 🔴 AN UNRUNNABLE INLINE GRAPH IS REFUSED ON THE WIRE WITH ITS CODE
+ * (civitai-app-starters#774). The inline `customComfy` estimate and submit refuse
+ * a graph that is certain to fail with a failed snapshot carrying `errorCode`
+ * (`not-api-format`, `model-filenames`, the codes of `checkComfyGraph` in
+ * `@civitai/app-sdk/blocks`). Through REST that must arrive as a 200 carrying the
+ * snapshot, so an app reads the same `errorCode` it would read over the bridge,
+ * and nothing may reach the orchestrator or the spend reservation.
+ *
+ * Red on the pre-change code: the wire schema refused a UI graph, which this route
+ * answers as `400 Invalid request body` with no code, and a filename graph was
+ * quoted like any other.
+ */
+describe('an unrunnable inline customComfy graph is refused on the wire with its errorCode', () => {
+  const UI_GRAPH = {
+    last_node_id: 2,
+    last_link_id: 1,
+    nodes: [
+      { id: 1, type: 'CheckpointLoaderSimple', widgets_values: ['sd_xl_base_1.0.safetensors'] },
+      { id: 2, type: 'CLIPTextEncode', widgets_values: ['a brass astrolabe on slate'] },
+    ],
+    links: [[1, 1, 1, 2, 0, 'CLIP']],
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  };
+  const FILENAME_GRAPH = {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: 'sd_xl_base_1.0.safetensors' },
+    },
+    '2': { class_type: 'CLIPTextEncode', inputs: { clip: ['1', 1], text: 'a brass astrolabe' } },
+  };
+
+  function inlineBody(workflow: unknown) {
+    return { kind: 'customComfy', mode: 'inline', workflow, resources: [], maxBuzz: 40 };
+  }
+
+  function expectNoOrchestratorOrSpend() {
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+  }
+
+  it('estimate: a UI graph is a 200 failed snapshot with errorCode not-api-format', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(UI_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a UI graph is a 200 failed snapshot with errorCode not-api-format, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(UI_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('estimate: a model filename is a 200 failed snapshot with errorCode model-filenames', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(FILENAME_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'model-filenames',
+    });
+    expect(out.json.snapshot.error).toContain("ckpt_name = 'sd_xl_base_1.0.safetensors'");
+    expect(out.json.snapshot).not.toHaveProperty('cost');
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a model filename is a 200 failed snapshot with errorCode model-filenames, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(FILENAME_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({ status: 'failed', errorCode: 'model-filenames' });
+    expectNoOrchestratorOrSpend();
+  });
+});
+
+/**
  * 🔴 THE TRUST BOUNDARY ON `/workflows/query`, PROVED END TO END.
  *
  * The app scope on this read is a HOST-FORCED positive tag filter, built inside

@@ -11,6 +11,7 @@
     meta,
     metaClass = 'text-dark-2',
     coverUrl,
+    coverType,
     coverBlurred = false,
     cover = true,
     coverIcon,
@@ -28,6 +29,8 @@
     /** Colour of the meta text, e.g. amber for someone waiting. */
     metaClass?: string;
     coverUrl?: string | undefined;
+    /** `video` shows the poster frame; anything else, or none, is an image. */
+    coverType?: string | null | undefined;
     coverBlurred?: boolean;
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
@@ -61,7 +64,8 @@
         {#if coverUrl}
           <EdgeMedia
             src={coverUrl}
-            type="image"
+            type={coverType === 'video' ? 'video' : 'image'}
+            anim={coverType === 'video' ? false : undefined}
             width={96}
             class={cn('size-full object-cover', coverBlurred && 'scale-125 blur-md')}
           />

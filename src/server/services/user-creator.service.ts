@@ -1,93 +1,29 @@
 import { purgeCache } from '~/server/cloudflare/client';
-import { CacheTTL, constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { CacheTTL } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
-import { profileImageSelect } from '~/server/selectors/image.selector';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readUserCreatorViaKysely,
+  readUserCreatorViaPrisma,
+  type UserCreatorWhere,
+} from '~/server/services/user-creator.reads';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import { withSpan } from '~/server/utils/otel-helpers';
 
 /**
  * The creator card read behind `user.getCreator`, uncached. `getUserCreator` in user.service is the
  * entry point; it serves an id-only lookup from `userCreatorCache` below and passes every other shape
  * (a username, or both) straight here.
  */
-export async function fetchUserCreator(where: { username?: string; id?: number }) {
-  const user = await withSpan('user:getCreator:findUser', () =>
-    dbRead.user.findFirst({
-      where: {
-        ...where,
-        deletedAt: null,
-        AND: [
-          { id: { not: constants.system.user.id } },
-          { username: { not: constants.system.user.username } },
-        ],
-      },
-      select: {
-        id: true,
-        image: true,
-        username: true,
-        muted: true,
-        bannedAt: true,
-        deletedAt: true,
-        createdAt: true,
-        publicSettings: true,
-        settings: true,
-        excludeFromLeaderboards: true,
-        links: {
-          select: {
-            url: true,
-            type: true,
-          },
-        },
-        stats: {
-          select: {
-            downloadCountAllTime: true,
-            thumbsUpCountAllTime: true,
-            followerCountAllTime: true,
-            reactionCountAllTime: true,
-            uploadCountAllTime: true,
-            generationCountAllTime: true,
-          },
-        },
-        rank: {
-          select: {
-            leaderboardRank: true,
-            leaderboardId: true,
-            leaderboardTitle: true,
-            leaderboardCosmetic: true,
-          },
-        },
-        cosmetics: {
-          where: { equippedAt: { not: null }, equippedToId: null },
-          select: {
-            data: true,
-            cosmetic: {
-              select: simpleCosmeticSelect,
-            },
-          },
-        },
-        profilePicture: {
-          select: profileImageSelect,
-        },
-      },
-    })
-  );
-  if (!user) return null;
-
-  /**
-   * TODO: seems to be deprecated, we are getting model count from the stats
-   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
-   */
-  const modelCount = await withSpan('user:getCreator:countModels', () =>
-    dbRead.model.count({
-      where: {
-        userId: user?.id,
-        status: 'Published',
-      },
-    })
-  );
+export async function fetchUserCreator(where: UserCreatorWhere) {
+  // `kysely-hot-reads-2` on: the same two reads in one Kysely statement, on the replica as before.
+  const found = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
+    ? await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where)
+    : await readUserCreatorViaPrisma(dbRead, where);
+  if (!found) return null;
+  const { user, modelCount } = found;
 
   // Expose only whether the shop is public — never leak the raw settings blob.
   const { settings, ...rest } = user;
@@ -204,6 +140,11 @@ export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creat
  * Drop both copies of these users' creator card: the Redis entry first, then the edge cache. Never
  * throws.
  *
+ * Responses are tagged by id and by username, so the purge covers both: the current username is read
+ * from the primary (call this after the write commits, so a rename purges the new name too), plus any
+ * `usernames` the caller passes, e.g. the name before a rename. If that read fails the id tags are
+ * still purged.
+ *
  * The Redis bust is always awaited. The edge purge is dispatched without being awaited, which is
  * right for a single user's write. A BULK caller looping over chunks must pass `awaitPurge: true`:
  * `purgeCache` reads one Redis set per tag and paces its dispatch to the CDN's rate limit, and that
@@ -211,11 +152,18 @@ export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creat
  */
 export async function bustUserCreator(
   userIds: number | number[],
-  { awaitPurge = false }: { awaitPurge?: boolean } = {}
+  { awaitPurge = false, usernames = [] }: { awaitPurge?: boolean; usernames?: string[] } = {}
 ) {
   const ids = [...new Set([userIds].flat())];
   if (!ids.length) return;
   await bustUserCreatorCache(ids);
-  const purge = purgeCache({ tags: ids.map(userCreatorEdgeTag) }).catch(() => undefined);
+  const purge = dbWrite.user
+    .findMany({ where: { id: { in: ids } }, select: { username: true } })
+    .then((rows) => rows.flatMap((row) => (row.username ? [row.username] : [])))
+    .catch(() => [] as string[])
+    .then((current) =>
+      purgeCache({ tags: [...ids, ...current, ...usernames].map(userCreatorEdgeTag) })
+    )
+    .catch(() => undefined);
   if (awaitPurge) await purge;
 }

@@ -29,6 +29,7 @@ CREATE TABLE "Image" (
   "width" INTEGER,
   "height" INTEGER,
   "type" TEXT NOT NULL DEFAULT 'image',
+  "mimeType" TEXT,
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -58,12 +59,15 @@ let db: PGlite;
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
-  // 101: three flagged (one removed), reported twice, newest sent 2026-02-01.
+  // 101: three flagged (one removed), reported twice, newest sent 2026-02-01, banned for a reason
+  // that holds, and its removed image listed on a report.
   // 102: one flagged, report filed but never sent. 103: one flagged, no report.
   // 104: flagged in another queue only. 105: CSAM flag on an errored image only.
   await db.exec(`
     INSERT INTO "User" ("id", "username") VALUES
-      (101, 'a'), (102, 'b'), (103, 'c'), (104, 'd'), (105, 'e');
+      (101, 'a'), (102, 'b'), (103, 'c'), (104, 'd'), (105, 'e'), (106, 'f');
+    UPDATE "User" SET "bannedAt" = '2026-01-01',
+      "meta" = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = 101;
     INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel") VALUES
       (1, 101, 'csam', 'Scanned', 4),
       (2, 101, 'csam', 'Blocked', 32),
@@ -72,9 +76,12 @@ beforeAll(async () => {
       (5, 103, 'csam', 'Blocked', 32),
       (6, 104, 'minor', 'Scanned', 4),
       (7, 105, 'csam', 'Error', 4),
-      (8, 101, NULL, 'Scanned', 4);
-    INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES
-      (101, '2026-01-01'), (101, '2026-02-01'), (102, NULL);
+      (8, 101, NULL, 'Scanned', 4),
+      (9, 106, 'csam', 'Blocked', 32);
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
+      (101, '2026-01-01', '[{"id": 2}]'), (101, '2026-02-01', '[]'), (102, NULL, '[]');
+    -- Names nobody here; 106 is its secondary user.
+    INSERT INTO "CsamReport" ("userId", "details") VALUES (-1, '{"secondaryUserId": "106"}');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -94,6 +101,7 @@ describe('the CSAM queue by user', () => {
       { userId: 101, flagged: 3, latestImageId: 3 },
       { userId: 102, flagged: 1, latestImageId: 4 },
       { userId: 103, flagged: 1, latestImageId: 5 },
+      { userId: 106, flagged: 1, latestImageId: 9 },
     ]);
   });
 
@@ -109,17 +117,23 @@ describe('the CSAM queue by user', () => {
       { userId: 101, reported: true, sent: '2026-02-01' },
       { userId: 102, reported: true, sent: null },
       { userId: 103, reported: false, sent: null },
+      // Secondary on a report is not a report about them.
+      { userId: 106, reported: false, sent: null },
     ]);
   });
 
   it('says what a bulk clear would take, whatever the level filter, and whom it would refuse', async () => {
     const { users } = await getCsamQueueByUser({ browsingLevel: 4 });
-    expect(users.map(({ userId, removed, held }) => ({ userId, removed, held }))).toEqual([
-      { userId: 101, removed: 1, held: true },
-      { userId: 102, removed: 0, held: true },
+    expect(users.map(({ userId, removed, heldBy }) => ({ userId, removed, heldBy }))).toEqual([
+      { userId: 101, removed: 1, heldBy: ['csamReport', 'ban', 'reportedImage'] },
+      { userId: 102, removed: 0, heldBy: ['csamReport'] },
     ]);
     const all = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
-    expect(all.users.find((u) => u.userId === 103)).toMatchObject({ removed: 1, held: false });
+    expect(all.users.find((u) => u.userId === 103)).toMatchObject({ removed: 1, heldBy: [] });
+    expect(all.users.find((u) => u.userId === 106)).toMatchObject({
+      removed: 1,
+      heldBy: ['csamReportSecondary'],
+    });
   });
 
   it('applies the browsing-level filter the flat queue applies', async () => {
@@ -128,6 +142,33 @@ describe('the CSAM queue by user', () => {
       { userId: 101, flagged: 2 },
       { userId: 102, flagged: 1 },
     ]);
+  });
+});
+
+describe('an evidence hold in the CSAM queue by user', () => {
+  afterAll(async () => {
+    await db.exec(`DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold"`);
+  });
+
+  const heldBy = async (userId: number) =>
+    (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find((u) => u.userId === userId)
+      ?.heldBy;
+
+  it('names the hold for a user the marker view holds, and only that user', async () => {
+    await db.exec(`
+      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
+      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
+      INSERT INTO "EvidenceHold" ("userId") VALUES (103);
+    `);
+    expect(await heldBy(103)).toEqual(['evidenceHold']);
+    expect(await heldBy(106)).toEqual(['csamReportSecondary']);
+  });
+
+  // Without the view every user reads as held, so no user may be told they are on a hold.
+  it('says the status is unknown while the table exists without its view', async () => {
+    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
+    expect(await heldBy(103)).toEqual(['evidenceHoldUnknown']);
+    expect(await heldBy(106)).toEqual(['csamReportSecondary', 'evidenceHoldUnknown']);
   });
 });
 

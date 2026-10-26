@@ -8,11 +8,26 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
+  excludeDeletedShopListing,
+  recordShopTakedownLabel,
+  recordShopVerdict,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
+import {
   revokeCosmeticsFromUsers,
   unequipWithheldCosmetic,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
+import {
+  claimBoxRefundsForCosmetic,
+  listOwedBoxRefunds,
+  markBoxRefundPaid,
+  pullCosmeticFromBoxes,
+  type OwedBoxRefund,
+} from '~/server/services/mystery-box-takedown.service';
+import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { constants } from '~/server/common/constants';
@@ -27,10 +42,12 @@ import {
   patchCosmeticData,
   recordedDisplayVerdict,
   shopItemDisplayMeta,
+  shopItemReviewVersion,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import {
   refundWithdrawnShopItem,
+  reversePurchase,
   withShopItemRefundLock,
 } from '~/server/services/creator-shop-withdrawn-refund.service';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -80,6 +97,7 @@ import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
 import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
+import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -112,7 +130,6 @@ import {
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
-  computeCreatorShopSplit,
 } from '~/server/schema/creator-shop.schema';
 import type {
   AutoCheck,
@@ -933,6 +950,13 @@ export const updateCreatorShopItem = async ({
   if (price != null) recordChange('price', existing.unitAmount, price);
   if (availableQuantity !== undefined)
     recordChange('quantity', existing.availableQuantity, availableQuantity);
+  const yesNo = (value?: boolean) => (value ? 'yes' : 'no');
+  if (acceptsBlueBuzz !== undefined)
+    recordChange('acceptsBlueBuzz', yesNo(meta.acceptsBlueBuzz), yesNo(acceptsBlueBuzz));
+  if (resaleChanged) {
+    recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
+    recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
+  }
 
   const reviewNote = !backToReview
     ? undefined
@@ -995,19 +1019,14 @@ export const updateCreatorShopItem = async ({
 
   const cosmeticId = existing.cosmeticId;
   const updated = await dbWrite.$transaction(async (tx) => {
-    // Everything above was derived from `existing`, and `meta` is written back whole: a verdict
-    // committed since the read would be erased with its history entry and `displayApproved`.
-    // NO KEY: still serialises with verdicts, without holding up a purchase's foreign-key insert.
-    await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR NO KEY UPDATE`;
-    const current = await tx.cosmeticShopItem.findUnique({
-      where: { id },
-      select: { status: true, meta: true },
-    });
+    // Everything above was derived from `existing`: a verdict committed since the read would be
+    // erased with its history entry and `displayApproved`.
+    const current = await lockShopItem(tx, id);
     // Every sale bumps `purchases` in SQL (countShopItemSale): carried from the locked row, not
     // compared, so a sale mid-edit is neither a conflict nor rolled back by this write.
-    const { purchases, ...currentMeta } = (current?.meta ?? {}) as CosmeticShopItemMeta;
+    const { purchases, ...currentMeta } = (current.meta ?? {}) as CosmeticShopItemMeta;
     const { purchases: _readPurchases, ...readMeta } = meta;
-    if (current?.status !== existing.status || !isEqual(currentMeta, readMeta))
+    if (current.status !== existing.status || !isEqual(currentMeta, readMeta))
       throw throwConflictError(
         'This item changed while you were editing it. Reload and try again.'
       );
@@ -1121,48 +1140,52 @@ export const archiveCreatorShopItem = async ({
   // A creator's mystery pack has its own withdraw, which keeps its review and live count in step.
   if (!isModerator && existing.itemDefinitionId != null)
     throw throwBadRequestError('Withdraw a mystery pack instead of archiving its listing');
-  if (existing.status === CosmeticShopItemStatus.Archived)
-    throw throwBadRequestError('Item is already archived');
-  // Archiving is how a rejection used to be laundered: Archived overwrites the
-  // status, and restoring re-enters review with the verdict cleared.
-  if (existing.status === CosmeticShopItemStatus.Rejected)
-    throw throwBadRequestError(REJECTED_IS_FINAL);
   if (!isModerator && existing.cosmeticId != null && existing.addedById != null)
     await assertNotInLiveMysteryPack({
       cosmeticId: existing.cosmeticId,
       sellerId: existing.addedById,
     });
-  // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
-  // are refunded and the creator pays: payouts are reversed even into a negative balance.
-  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
-  const withheld =
-    existing.cosmeticId != null &&
-    !isListingDisplayable({
-      status: existing.status,
-      meta,
-      rejectionReason: existing.rejectionReason,
+  const { updated, withheld } = await dbWrite.$transaction(async (tx) => {
+    const current = await lockShopItem(tx, id);
+    if (current.status === CosmeticShopItemStatus.Archived)
+      throw throwBadRequestError('Item is already archived');
+    // Archiving is how a rejection used to be laundered: Archived overwrites the
+    // status, and restoring re-enters review with the verdict cleared.
+    if (current.status === CosmeticShopItemStatus.Rejected)
+      throw throwBadRequestError(REJECTED_IS_FINAL);
+    // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
+    // are refunded and the creator pays: payouts are reversed even into a negative balance.
+    const meta = (current.meta ?? {}) as CosmeticShopItemMeta;
+    const withheld =
+      existing.cosmeticId != null &&
+      !isListingDisplayable({
+        status: current.status,
+        meta,
+        rejectionReason: current.rejectionReason,
+      });
+    const updated = await tx.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        status: CosmeticShopItemStatus.Archived,
+        archivedAt: now,
+        ...(withheld
+          ? {
+              meta: {
+                ...meta,
+                withdrawnRefund: {
+                  trigger: 'archive',
+                  clawback: true,
+                  userId,
+                  at: now.toISOString(),
+                },
+              } as Prisma.InputJsonValue,
+            }
+          : {}),
+      },
+      select: creatorShopItemSelect,
     });
-  const updated = await dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      status: CosmeticShopItemStatus.Archived,
-      archivedAt: now,
-      ...(withheld
-        ? {
-            meta: {
-              ...meta,
-              withdrawnRefund: {
-                trigger: 'archive',
-                clawback: true,
-                userId,
-                at: now.toISOString(),
-              },
-            } as Prisma.InputJsonValue,
-          }
-        : {}),
-    },
-    select: creatorShopItemSelect,
+    return { updated, withheld };
   });
   if (withheld) await startWithdrawnRefund(id);
 
@@ -1212,35 +1235,39 @@ export const setCreatorShopItemListed = async ({
   // The storefront would show it as a pack; a box is sold only through its own surface.
   if (existing.itemDefinitionId != null)
     throw throwBadRequestError('Mystery box listings stay unlisted');
-  if (existing.status === CosmeticShopItemStatus.Archived)
-    throw throwBadRequestError('Restore this item before changing its listing');
-  // Listing resets an item to PendingReview and clears the verdict, so without
-  // this a rejected item is one call away from being back in the queue unedited.
-  if (existing.status === CosmeticShopItemStatus.Rejected)
-    throw throwBadRequestError(REJECTED_IS_FINAL);
 
-  const updated = await dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      listed,
-      ...(listed
-        ? {
-            status: CosmeticShopItemStatus.PendingReview,
-            rejectionReason: null,
-            reviewedById: null,
-            reviewedAt: null,
-            meta: {
-              ...(existing.meta as CosmeticShopItemMeta | null),
-              displayApproved: recordedDisplayVerdict({
-                status: existing.status,
-                meta: existing.meta as CosmeticShopItemMeta | null,
-                rejectionReason: existing.rejectionReason,
-              }),
-            } as Prisma.InputJsonValue,
-          }
-        : {}),
-    },
-    select: creatorShopItemSelect,
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const current = await lockShopItem(tx, id);
+    if (current.status === CosmeticShopItemStatus.Archived)
+      throw throwBadRequestError('Restore this item before changing its listing');
+    // Listing resets an item to PendingReview and clears the verdict, so without
+    // this a rejected item is one call away from being back in the queue unedited.
+    if (current.status === CosmeticShopItemStatus.Rejected)
+      throw throwBadRequestError(REJECTED_IS_FINAL);
+    const meta = current.meta as CosmeticShopItemMeta | null;
+    return tx.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        listed,
+        ...(listed
+          ? {
+              status: CosmeticShopItemStatus.PendingReview,
+              rejectionReason: null,
+              reviewedById: null,
+              reviewedAt: null,
+              meta: {
+                ...meta,
+                displayApproved: recordedDisplayVerdict({
+                  status: current.status,
+                  meta,
+                  rejectionReason: current.rejectionReason,
+                }),
+              } as Prisma.InputJsonValue,
+            }
+          : {}),
+      },
+      select: creatorShopItemSelect,
+    });
   });
 
   if (!listed) await endResaleListings({ shopItemId: id, title: existing.title });
@@ -1271,48 +1298,51 @@ export const unarchiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (!isModerator && existing.itemDefinitionId != null)
     throw throwBadRequestError("A withdrawn mystery pack can't be restored");
-  if (existing.status !== CosmeticShopItemStatus.Archived)
-    throw throwBadRequestError('Only archived items can be restored');
-  // `preArchiveStatus` is a leftover from when restoring returned an item to
-  // where it was; it now re-enters review either way, so drop any stored value.
-  // A refund owed for the archive stops here: buyers whose refund had not begun keep the cosmetic.
-  const { preArchiveStatus, withdrawnRefund, ...meta } = (existing.meta ??
-    {}) as CosmeticShopItemMeta & {
-    preArchiveStatus?: CosmeticShopItemStatus;
-  };
-  if (meta.takedown)
-    throw throwBadRequestError('This item was taken down and cannot be restored to sale');
-  // Items archived while rejected predate the block on archiving them, and restoring one would
-  // clear its verdict. Refund history entries only follow newer archives, so on those older items
-  // a recorded verdict is still the last one and cannot have aged out of the cap.
-  //
-  // An item old enough to have no history at all leaves only `rejectionReason`,
-  // which a change request sets too. That is not enough to convict, so it is
-  // refused for the creator (who must never be able to resubmit a rejection) and
-  // left to a moderator, who can read the reason and decide.
-  const rejectionUnprovable = !meta.history?.length && !!existing.rejectionReason;
-  if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
-    throw throwBadRequestError(REJECTED_IS_FINAL);
-  return dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      // Same rule as re-listing: archiving ended this item's resale listings, so
-      // bringing it back is a fresh submission, not an undo.
-      status: CosmeticShopItemStatus.PendingReview,
-      archivedAt: null,
-      rejectionReason: null,
-      reviewedById: null,
-      reviewedAt: null,
-      meta: {
-        ...meta,
-        displayApproved: recordedDisplayVerdict({
-          status: existing.status,
-          meta,
-          rejectionReason: existing.rejectionReason,
-        }),
-      } as Prisma.InputJsonValue,
-    },
-    select: creatorShopItemSelect,
+  return dbWrite.$transaction(async (tx) => {
+    const current = await lockShopItem(tx, id);
+    if (current.status !== CosmeticShopItemStatus.Archived)
+      throw throwBadRequestError('Only archived items can be restored');
+    // `preArchiveStatus` is a leftover from when restoring returned an item to
+    // where it was; it now re-enters review either way, so drop any stored value.
+    // A refund owed for the archive stops here: buyers whose refund had not begun keep the cosmetic.
+    const { preArchiveStatus, withdrawnRefund, ...meta } = (current.meta ??
+      {}) as CosmeticShopItemMeta & {
+      preArchiveStatus?: CosmeticShopItemStatus;
+    };
+    if (meta.takedown)
+      throw throwBadRequestError('This item was taken down and cannot be restored to sale');
+    // Items archived while rejected predate the block on archiving them, and restoring one would
+    // clear its verdict. Refund history entries only follow newer archives, so on those older items
+    // a recorded verdict is still the last one and cannot have aged out of the cap.
+    //
+    // An item old enough to have no history at all leaves only `rejectionReason`,
+    // which a change request sets too. That is not enough to convict, so it is
+    // refused for the creator (who must never be able to resubmit a rejection) and
+    // left to a moderator, who can read the reason and decide.
+    const rejectionUnprovable = !meta.history?.length && !!current.rejectionReason;
+    if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
+      throw throwBadRequestError(REJECTED_IS_FINAL);
+    return tx.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        // Same rule as re-listing: archiving ended this item's resale listings, so
+        // bringing it back is a fresh submission, not an undo.
+        status: CosmeticShopItemStatus.PendingReview,
+        archivedAt: null,
+        rejectionReason: null,
+        reviewedById: null,
+        reviewedAt: null,
+        meta: {
+          ...meta,
+          displayApproved: recordedDisplayVerdict({
+            status: current.status,
+            meta,
+            rejectionReason: current.rejectionReason,
+          }),
+        } as Prisma.InputJsonValue,
+      },
+      select: creatorShopItemSelect,
+    });
   });
 };
 
@@ -1352,7 +1382,10 @@ export const deleteCreatorShopItem = async ({
   // official-shop section links, and other creators' resale listings. Buyers
   // keep what they bought: UserCosmetic is keyed by cosmeticId and the Cosmetic
   // row is intentionally left in place.
-  await dbWrite.cosmeticShopItem.delete({ where: { id } });
+  await dbWrite.$transaction(async (tx) => {
+    await tx.cosmeticShopItem.delete({ where: { id } });
+    await excludeDeletedShopListing(tx, id);
+  }, SHOP_VERDICT_TRANSACTION);
   if (keepWithheld) await unequipWithheldCosmetic(existing.cosmeticId);
 
   // Free its featured slot.
@@ -2157,16 +2190,15 @@ export const reviewCreatorShopItem = async ({
   action,
   rejectionReason,
   boxRevisionId,
+  reviewedVersion,
   stickersEnabled,
 }: ReviewCreatorShopItemInput & { reviewerId: number; stickersEnabled: boolean }) => {
-  const item = await dbRead.cosmeticShopItem.findUnique({
+  const item = await dbWrite.cosmeticShopItem.findUnique({
     where: { id },
     select: {
       id: true,
       cosmeticId: true,
-      unitAmount: true,
       status: true,
-      meta: true,
       title: true,
       addedById: true,
       itemDefinition: { select: { id: true, sellerId: true } },
@@ -2198,14 +2230,14 @@ export const reviewCreatorShopItem = async ({
       select: creatorShopItemSelect,
     });
   }
-  // Rejected is deliberately NOT blocked here: this procedure is
-  // moderatorProcedure, so a second verdict is the one way back from a mistaken
-  // rejection, and it stays out of the creator's hands. Every path a creator can
-  // reach — edit, list, archive, restore — refuses a rejected item.
-  if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
-    throw throwBadRequestError('Only published items can be reverted to pending review');
+  if (reviewedVersion === undefined)
+    await logToAxiom({
+      level: 'warn',
+      name: 'creator-shop-verdict-unpinned',
+      message: 'Shop verdict sent without the version it reviewed',
+      data: { shopItemId: id, reviewerId, action },
+    }).catch(() => undefined);
 
-  const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
   const nextStatus =
@@ -2225,7 +2257,7 @@ export const reviewCreatorShopItem = async ({
     action === 'reject' && item.cosmeticId != null
       ? { trigger: 'reject', clawback: true, userId: reviewerId, at: now.toISOString() }
       : undefined;
-  const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
+  const reviewedMeta = (meta: CosmeticShopItemMeta, extra: Partial<CosmeticShopItemMeta>) =>
     appendItemHistory(
       { ...meta, ...extra, withdrawnRefund },
       {
@@ -2238,33 +2270,63 @@ export const reviewCreatorShopItem = async ({
       }
     ) as Prisma.InputJsonValue;
 
-  const updated =
-    action === 'approve'
-      ? // Publish + record the approved price. Payout is wired at purchase time
-        // from cosmetic.createdById — no paidToUserIds needed.
-        await dbWrite.cosmeticShopItem.update({
-          where: { id },
-          data: {
-            ...reviewFields,
-            status: nextStatus,
-            rejectionReason: null,
-            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
-          },
-          select: creatorShopItemSelect,
-        })
-      : // reject = terminal; request-changes = creator can edit & resubmit;
-        // revert = unpublish back into the review queue. The note is kept on
-        // rejectionReason so both the queue and the creator see why.
-        await dbWrite.cosmeticShopItem.update({
-          where: { id },
-          data: {
-            ...reviewFields,
-            status: nextStatus,
-            rejectionReason: rejectionReason ?? null,
-            meta: reviewedMeta({ displayApproved: false }),
-          },
-          select: creatorShopItemSelect,
-        });
+  // The unequip sweep reads the verdict from the database, so it must run after this commits.
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const current = await lockShopItem(tx, id);
+    if (current.status === CosmeticShopItemStatus.Archived)
+      throw throwBadRequestError('Archived items cannot be reviewed');
+    // Rejected is deliberately NOT blocked here: this procedure is
+    // moderatorProcedure, so a second verdict is the one way back from a mistaken
+    // rejection, and it stays out of the creator's hands. Every path a creator can
+    // reach — edit, list, archive, restore — refuses a rejected item.
+    if (action === 'revert' && current.status !== CosmeticShopItemStatus.Published)
+      throw throwBadRequestError('Only published items can be reverted to pending review');
+    const meta = (current.meta ?? {}) as CosmeticShopItemMeta;
+    // The verdict covers what the moderator saw, not whatever the creator uploaded since.
+    if (reviewedVersion !== undefined && reviewedVersion !== shopItemReviewVersion(meta))
+      throw throwConflictError(
+        'This item changed since you opened it. Reload to review the current version.'
+      );
+    const written =
+      action === 'approve'
+        ? // Publish + record the approved price. Payout is wired at purchase time
+          // from cosmetic.createdById — no paidToUserIds needed.
+          await tx.cosmeticShopItem.update({
+            where: { id },
+            data: {
+              ...reviewFields,
+              status: nextStatus,
+              rejectionReason: null,
+              meta: reviewedMeta(meta, {
+                lastApprovedAmount: current.unitAmount,
+                displayApproved: true,
+              }),
+            },
+            select: creatorShopItemSelect,
+          })
+        : // reject = terminal; request-changes = creator can edit & resubmit;
+          // revert = unpublish back into the review queue. The note is kept on
+          // rejectionReason so both the queue and the creator see why.
+          await tx.cosmeticShopItem.update({
+            where: { id },
+            data: {
+              ...reviewFields,
+              status: nextStatus,
+              rejectionReason: rejectionReason ?? null,
+              meta: reviewedMeta(meta, { displayApproved: false }),
+            },
+            select: creatorShopItemSelect,
+          });
+    await recordShopVerdict(tx, id, {
+      action,
+      moderatorId: reviewerId,
+      at: now.toISOString(),
+      note: rejectionReason,
+      statusBefore: current.status,
+      statusAfter: nextStatus,
+    });
+    return written;
+  }, SHOP_VERDICT_TRANSACTION);
 
   // On approval, grant the creator their own cosmetic (idempotent). A pack has
   // none of its own, and its members were granted when they were approved.
@@ -2327,9 +2389,12 @@ export const reviewCreatorShopItem = async ({
 };
 
 type TakedownFailure = {
-  stage: 'refund' | 'clawback';
+  /** `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. */
+  stage: 'refund' | 'clawback' | 'box';
+  /** 0 for a box that could not be pulled, or a payout whose key names no recipient. */
   userId: number;
   amount?: number;
+  boxId?: number;
   error: string;
 };
 
@@ -2344,6 +2409,50 @@ const TAKEDOWN_RETRY_DELAY_MS = 1000;
 
 const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
   withRetries(fn, TAKEDOWN_MONEY_RETRIES, TAKEDOWN_RETRY_DELAY_MS);
+
+type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+
+/**
+ * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
+ * run that died before recording it, makes the prefix refund answer 409 and reverse nothing, so
+ * every retry would read a refunded buyer as owed. Reports every leg now reversed, as the plain
+ * refund does, for the payout reversal that follows. Throws rather than report none: a purchase row
+ * exists only once its charge did.
+ */
+async function refundPurchasePrefix(input: {
+  externalTransactionIdPrefix: string;
+  description: string;
+}) {
+  try {
+    const refund = await refundMultiAccountTransaction(input);
+    if (!refund.refundedTransactions.length)
+      throw new Error(`Buzz lists no charge under ${input.externalTransactionIdPrefix}`);
+    return refund;
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+  }
+  await refundAllLegsByPrefix(input);
+  // Read back rather than trusting its counts: a 404 there returns zeros, and a single leg's 409 is
+  // counted done without a refund on the ledger. Flagged refunded, a leg left charged is lost.
+  const { reversed, missing } = await getPrefixRefundState(input.externalTransactionIdPrefix);
+  if (!reversed.length || missing.length)
+    throw new Error(
+      `Refund of ${input.externalTransactionIdPrefix} left ${missing.length} of ${
+        reversed.length + missing.length
+      } transactions unreversed`
+    );
+  return {
+    refundedTransactions: reversed.map((leg) => ({
+      originalTransactionId: leg.transactionId,
+      refundTransactionId: `refund-${leg.transactionId}`,
+      accountType: leg.accountType,
+      amount: leg.amount,
+      originalExternalTransactionId: leg.externalTransactionId,
+    })),
+    totalRefunded: reversed.reduce((sum, leg) => sum + leg.amount, 0),
+    externalTransactionIdPrefix: input.externalTransactionIdPrefix,
+  } satisfies PrefixRefund;
+}
 
 const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
   logToAxiom({ level, name: 'cosmetic-takedown', message, data }).catch(() => undefined);
@@ -2371,7 +2480,7 @@ export const takedownCosmeticShopItem = async ({
       id: true,
       cosmeticId: true,
       title: true,
-      meta: true,
+      status: true,
       addedById: true,
       itemDefinitionId: true,
       cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
@@ -2383,38 +2492,43 @@ export const takedownCosmeticShopItem = async ({
   if (item.itemDefinitionId != null)
     throw throwBadRequestError('Mystery box listings cannot be taken down here');
 
-  const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
 
+  let retried = false;
+  let note = reason;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
-    // Read again from the primary: the refund this waited on appends its own history entry, and
-    // writing back the copy read before the wait would erase it.
-    const current = await dbWrite.cosmeticShopItem.findUnique({
-      where: { id },
-      select: { meta: true },
-    });
-    const updated = await dbWrite.cosmeticShopItem.update({
-      where: { id },
-      data: {
-        status: CosmeticShopItemStatus.Archived,
-        listed: false,
-        archivedAt: now,
-        meta: appendItemHistory(
-          {
-            ...((current?.meta ?? meta) as CosmeticShopItemMeta),
-            takedown: { reason, moderatorId, at: now.toISOString() },
-          },
-          {
-            at: now.toISOString(),
-            userId: moderatorId,
-            kind: 'takedown',
-            status: CosmeticShopItemStatus.Archived,
-            note: reason,
-          }
-        ) as Prisma.InputJsonValue,
-      },
-      select: creatorShopItemSelect,
+    // Under the row lock, not from the read above: the refund this waited on, or an edit, appends
+    // its own history entry, and writing back an earlier copy would erase it.
+    const updated = await dbWrite.$transaction(async (tx) => {
+      const currentMeta = ((await lockShopItem(tx, id)).meta ?? {}) as CosmeticShopItemMeta;
+      // A retry finishes the first takedown: its record and archive date stand.
+      retried = !!currentMeta.takedown;
+      note = retried ? `Retried: ${reason}` : reason;
+      return tx.cosmeticShopItem.update({
+        where: { id },
+        data: {
+          status: CosmeticShopItemStatus.Archived,
+          listed: false,
+          ...(retried ? {} : { archivedAt: now }),
+          // Event tags place the item in tagged sections, as the rows deleted below do by hand.
+          eventTags: [],
+          meta: appendItemHistory(
+            {
+              ...currentMeta,
+              takedown: currentMeta.takedown ?? { reason, moderatorId, at: now.toISOString() },
+            },
+            {
+              at: now.toISOString(),
+              userId: moderatorId,
+              kind: 'takedown',
+              status: CosmeticShopItemStatus.Archived,
+              note,
+            }
+          ) as Prisma.InputJsonValue,
+        },
+        select: creatorShopItemSelect,
+      });
     });
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
@@ -2457,19 +2571,26 @@ export const takedownCosmeticShopItem = async ({
   const isPack = item.cosmeticId == null;
   // A pack's author is its lister; it has no cosmetic creator of its own.
   const creatorId = item.cosmetic?.createdById ?? item.addedById;
-  let unrecoveredResellerShare = 0;
-  // Kept separate from the reseller slice: for a single item that counter means
-  // "the part we couldn't claw back because we don't know who took it", and the
-  // creator's own slice WAS recovered. For a pack nothing is recovered, so
-  // folding the two together would make a total loss read like a partial one.
-  let unrecoveredPackPool = 0;
+  // Payouts of the shelf purchases, reversed with each purchase from its ledger.
+  let owedFromLedger = 0;
+  let clawedBackFromLedger = 0;
   let refundedValue = 0;
   let reversedWithPurchase = 0;
   const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
+  let boxesPulled: Awaited<ReturnType<typeof pullCosmeticFromBoxes>> = { pulled: [], failed: [] };
+
   const archiveAndRefundBuyers = async () => {
     updated = await archive();
+    // Boxes stop drawing it too, before anything is refunded: openers are found after this, so none
+    // can draw it in between and keep it unrefunded.
+    // Never thrown: the buyers below are still owed their refunds.
+    if (item.cosmeticId != null)
+      boxesPulled = await pullCosmeticFromBoxes({
+        cosmeticId: item.cosmeticId,
+        userId: moderatorId,
+      }).catch((error) => ({ pulled: [], failed: [{ boxId: 0, error: errorMessage(error) }] }));
     // Primary, not the replica: a sale made seconds ago may not have replicated
     // yet, and missing it would strip that buyer's cosmetic without refunding it.
     purchases = await dbWrite.userCosmeticShopPurchases.findMany({
@@ -2497,12 +2618,32 @@ export const takedownCosmeticShopItem = async ({
   }
   if (!updated) throw throwNotFoundError('Shop item not found');
 
+  /** `reversed`: transaction ids the purchase's own refund already reversed. */
+  function reverseRecordedPayouts(
+    recordedPayouts: NonNullable<CosmeticPurchaseMeta['payouts']>,
+    reversed: Set<string>
+  ) {
+    // Payouts are keyed under the purchase prefix, so the refund may have reversed them.
+    for (const payout of recordedPayouts) {
+      if (payout.amount <= 0) continue;
+      if (payout.transactionId && reversed.has(payout.transactionId))
+        reversedWithPurchase += payout.amount;
+      else if (payout.transactionId)
+        refundablePayouts.push({
+          userId: payout.userId,
+          amount: payout.amount,
+          transactionId: payout.transactionId,
+        });
+      else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
+    }
+  }
+
   async function refundTakedownPurchases() {
     // Checked above; a hoisted declaration does not keep that narrowing.
     if (!item) return;
     for (const purchase of purchases) {
-      // A withdrawn-item refund has begun on this one, and may have reversed some of its legs; a
-      // prefix refund over those is refused whole. That run finishes it (`refundWithdrawnShopItem`).
+      // A withdrawn-item refund has begun on this one under its own terms. That run finishes it,
+      // as a takedown would now that the item is taken down (`refundWithdrawnShopItem`).
       if ((purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund) {
         leftToWithdrawnRefund.push(purchase.buzzTransactionId);
         continue;
@@ -2532,20 +2673,20 @@ export const takedownCosmeticShopItem = async ({
         refundedUserIds.push(purchase.userId);
         continue;
       }
-      let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
-      try {
-        refund = await takedownMoneyMove(() =>
-          refundMultiAccountTransaction({
-            externalTransactionIdPrefix: purchase.buzzTransactionId,
-            description: `Cosmetic removed - ${item.title}`,
-          })
-        );
-      } catch (error) {
+      // The ledger, not `meta.payouts`, says what was paid: that write can fail after the payouts
+      // land, and older sales stored the buyer charge's own id, under which the prefix lists only
+      // the payout. The buyer is refunded first; then every payout.
+      const outcome = await reversePurchase(purchase, {
+        clawback: true,
+        trigger: 'reject',
+        description: `Cosmetic removed - ${item.title}`,
+      });
+      if (outcome.status === 'failed') {
         failures.push({
           stage: 'refund',
           userId: purchase.userId,
-          amount: price,
-          error: errorMessage(error),
+          amount: price - (outcome.refunded ?? 0),
+          error: outcome.error,
         });
         // The buyer loses the cosmetic below regardless, so an unrefunded sale is
         // money owed to a real person — loud, and with the ids needed to finish it.
@@ -2553,8 +2694,8 @@ export const takedownCosmeticShopItem = async ({
           shopItemId: id,
           userId: purchase.userId,
           buzzTransactionId: purchase.buzzTransactionId,
-          amount: price,
-          error: errorMessage(error),
+          amount: price - (outcome.refunded ?? 0),
+          error: outcome.error,
         });
         continue;
       }
@@ -2565,94 +2706,143 @@ export const takedownCosmeticShopItem = async ({
       });
       refundedUserIds.push(purchase.userId);
       refundedValue += price;
+      clawedBackFromLedger += outcome.clawedBack;
+      owedFromLedger += outcome.clawedBack;
 
-      // Sales made since the payout-recording migration carry exactly who was paid
-      // what, in which color — reverse those verbatim, refunding the payout
-      // transaction itself where its id was recorded.
-      // An empty list is a record too: a creator restocking their own sticker is
-      // paid nothing, and must not be charged back a re-derived share.
-      const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-      if (recordedPayouts) {
-        // Payouts are keyed under the purchase prefix, so the refund above may have reversed them.
-        const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
-        for (const payout of recordedPayouts) {
-          if (payout.amount <= 0) continue;
-          if (payout.transactionId && reversed.has(payout.transactionId))
-            reversedWithPurchase += payout.amount;
-          else if (payout.transactionId)
-            refundablePayouts.push({
-              userId: payout.userId,
-              amount: payout.amount,
-              transactionId: payout.transactionId,
-            });
-          else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
-        }
-        continue;
-      }
-
-      // A pack has no single creator to re-derive a split from: its payout is
-      // spread across each member's creator and their resellers, in proportions
-      // only the recorded payouts know. Charging the pack's lister for the whole
-      // creator pool would bill the wrong person for money they never received —
-      // so it goes to `failures` for a moderator to settle by hand instead.
-      if (isPack) {
-        // A pack listing carries no sellerShare; the pool is the whole 70%.
-        const { creatorPool } = computeCreatorShopSplit(price);
-        // Counted as unrecovered rather than left out of the summary: the whole
-        // pool really is unrecovered, and a report that only says so in `failures`
-        // reads as a smaller loss than it was.
-        // An upper bound, not the exact figure: scaling or a skipped sub-1 basis
-        // means less was actually paid, and this branch only runs when the record
-        // that would say so is missing. Over-stating a loss is the safe direction.
-        unrecoveredPackPool += creatorPool;
+      // The buyer is whole; what is left is the payout, filed as that leg for a person to finish.
+      // A legacy payout keyed by the purchase id alone went to the creator, a reseller or a listed
+      // payee, and the ledger does not say which: user 0 rather than a guess someone gets billed on.
+      for (const failure of outcome.payoutFailures) {
+        owedFromLedger += failure.amount;
         failures.push({
           stage: 'clawback',
-          userId: item.addedById ?? 0,
-          amount: creatorPool,
-          error: `Pack purchase ${purchase.buzzTransactionId} has no recorded payouts; the split cannot be re-derived`,
+          userId: failure.recipientId ?? 0,
+          amount: failure.amount,
+          error: `Payout ${failure.transactionId} not reversed${
+            failure.recipientId === undefined ? ' (recipient not on its key)' : ''
+          }: ${failure.error}`,
         });
-        continue;
-      }
-
-      // Legacy rows (pre-migration): the split has to be re-derived from the item.
-      const bluePaid = refund.refundedTransactions
-        .filter((t) => t.accountType === 'blue')
-        .reduce((sum, t) => sum + t.amount, 0);
-      const domainColor = (refund.refundedTransactions.find((t) => t.accountType !== 'blue')
-        ?.accountType ?? 'yellow') as BuzzSpendType;
-
-      const { creatorPool, creatorAmount, sellerAmount } = computeCreatorShopSplit(
-        price,
-        meta.sellerShare ?? 0
-      );
-      let recipients: { userId: number; amount: number }[];
-      if (creatorId) {
-        // Without a payout record there's no way to tell whether another creator's
-        // storefront or the platform took the seller share, so a resellable item
-        // only claws back what the creator is certain to have received. A
-        // creator's own restock paid them nothing.
-        recipients =
-          purchase.userId === item.cosmetic?.createdById
-            ? []
-            : [{ userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool }];
-        if (meta.sellableByOthers) unrecoveredResellerShare += sellerAmount;
-      } else {
-        const paidToUserIds = meta.paidToUserIds ?? [];
-        recipients = paidToUserIds.map((uid) => ({
-          userId: uid,
-          amount: Math.floor(price / paidToUserIds.length),
-        }));
-      }
-
-      for (const recipient of recipients) {
-        const blue = price > 0 ? Math.floor((recipient.amount * bluePaid) / price) : 0;
-        addClawback(recipient.userId, 'blue', blue);
-        addClawback(recipient.userId, domainColor, recipient.amount - blue);
+        await logTakedown('error', 'Payout refund failed', {
+          shopItemId: id,
+          userId: failure.recipientId ?? 0,
+          buzzTransactionId: purchase.buzzTransactionId,
+          payoutTransactionId: failure.transactionId,
+          amount: failure.amount,
+          error: failure.error,
+        });
       }
     }
   }
 
-  let clawedBack = reversedWithPurchase;
+  for (const { boxId, error } of boxesPulled.failed) {
+    // Box 0: the boxes holding it could not be read, so any may still hold it.
+    failures.push({ stage: 'box', userId: 0, boxId, error: `Box still holds it: ${error}` });
+    await logTakedown('error', 'Box pull failed', { shopItemId: id, boxId, error });
+  }
+
+  // Openers lose what they drew with everyone else below, so each is paid back the box's price
+  // (Justin, 2026-10-21). A box no one paid for is marked refunded and returns nothing.
+  const boxRefundedUserIds: number[] = [];
+  let boxRefundedValue = 0;
+  if (item.cosmeticId != null) {
+    const cosmeticId = item.cosmeticId;
+    const boxClaims = await claimBoxRefundsForCosmetic({ cosmeticId, shopItemId: id }).catch(
+      (error) => ({
+        openings: 0,
+        failed: [{ userId: 0, boxItemId: 'any', error: errorMessage(error) }],
+      })
+    );
+    for (const { userId, boxItemId, error } of boxClaims.failed) {
+      failures.push({
+        stage: 'box',
+        userId,
+        error: `Opening ${boxItemId} left unrefunded: ${error}`,
+      });
+      await logTakedown('error', 'Box opening refund claim failed', {
+        shopItemId: id,
+        userId,
+        boxItemId,
+        error,
+      });
+    }
+
+    // Every purchase claimed, by this run or an earlier one, carries `meta.takedownRefund` until it
+    // is paid, so a run that dies past here is finished by running the takedown again.
+    let owed: OwedBoxRefund[] = [];
+    try {
+      owed = await listOwedBoxRefunds({ cosmeticId, shopItemId: id });
+    } catch (error) {
+      failures.push({
+        stage: 'box',
+        userId: 0,
+        error: `Box refunds not read: ${errorMessage(error)}`,
+      });
+      await logTakedown('error', 'Box refunds not read', {
+        shopItemId: id,
+        error: errorMessage(error),
+      });
+    }
+    for (const purchase of owed) {
+      let refund: PrefixRefund | undefined;
+      try {
+        if (purchase.unitAmount > 0)
+          refund = await takedownMoneyMove(() =>
+            refundPurchasePrefix({
+              externalTransactionIdPrefix: purchase.buzzTransactionId,
+              description: `Cosmetic removed - ${item.title}`,
+            })
+          );
+      } catch (error) {
+        // Still owed: "Retry takedown" pays it. Paying it by hand instead must also set
+        // meta.takedownRefund.paidAt on the purchase, or a later retry pays it again.
+        failures.push({
+          stage: 'refund',
+          userId: purchase.userId,
+          amount: purchase.unitAmount,
+          boxId: purchase.boxDefinitionId,
+          error: errorMessage(error),
+        });
+        await logTakedown('error', 'Box buyer refund failed', {
+          shopItemId: id,
+          userId: purchase.userId,
+          buzzTransactionId: purchase.buzzTransactionId,
+          amount: purchase.unitAmount,
+          error: errorMessage(error),
+        });
+        continue;
+      }
+      // The Buzz is back; a failed mark only means a re-run asks the prefix again and finds it done.
+      await markBoxRefundPaid(purchase.buzzTransactionId).catch((error) =>
+        logTakedown('error', 'Box refund paid but not marked', {
+          shopItemId: id,
+          buzzTransactionId: purchase.buzzTransactionId,
+          error: errorMessage(error),
+        })
+      );
+      if (!refund) continue;
+      boxRefundedUserIds.push(purchase.userId);
+      boxRefundedValue += purchase.unitAmount;
+
+      const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
+      if (recordedPayouts?.length)
+        reverseRecordedPayouts(
+          recordedPayouts,
+          new Set(refund.refundedTransactions.map((t) => t.originalTransactionId))
+        );
+      // A platform box paid only the bank. A creator's box paid its creator, in a split only the
+      // record knows, so like a pack it is left to a moderator.
+      else if (!recordedPayouts && purchase.sellerId !== null)
+        failures.push({
+          stage: 'clawback',
+          userId: purchase.sellerId,
+          amount: purchase.unitAmount,
+          boxId: purchase.boxDefinitionId,
+          error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
+        });
+    }
+  }
+
+  let clawedBack = clawedBackFromLedger + reversedWithPurchase;
   // Refunding the payout transaction is the cleanest reversal: the Buzz service
   // ties it to the original, so it can't double-apply and needs no external id of
   // our own.
@@ -2849,7 +3039,7 @@ export const takedownCosmeticShopItem = async ({
       ...placementsRemoved,
     });
 
-  if (creatorId) {
+  if (creatorId && !retried) {
     await createNotification({
       type: 'creator-shop-item-taken-down',
       userId: creatorId,
@@ -2858,7 +3048,7 @@ export const takedownCosmeticShopItem = async ({
       details: { title: item.title, reason },
     });
   }
-  for (const userId of new Set(refundedUserIds)) {
+  for (const userId of new Set([...refundedUserIds, ...boxRefundedUserIds])) {
     await createNotification({
       type: 'cosmetic-shop-item-taken-down',
       userId,
@@ -2869,6 +3059,7 @@ export const takedownCosmeticShopItem = async ({
   }
 
   const owedBack =
+    owedFromLedger +
     reversedWithPurchase +
     refundablePayouts.reduce((sum, p) => sum + p.amount, 0) +
     [...clawback.values()].reduce((sum, amount) => sum + amount, 0);
@@ -2883,12 +3074,21 @@ export const takedownCosmeticShopItem = async ({
     refundedValue,
     owedBack,
     clawedBack,
-    unrecoveredResellerShare,
-    unrecoveredPackPool,
     revokedFrom: revoked,
     placementsRemoved,
+    boxesPulled: boxesPulled.pulled,
+    boxOpeningsRefunded: boxRefundedUserIds.length,
+    boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
+  });
+
+  await recordShopTakedownLabel(id, {
+    moderatorId,
+    at: now.toISOString(),
+    note,
+    statusBefore: item.status,
+    statusAfter: CosmeticShopItemStatus.Archived,
   });
 
   return {
@@ -2902,10 +3102,12 @@ export const takedownCosmeticShopItem = async ({
     owedBack,
     clawedBack,
     clawedBackPct: refundedValue > 0 ? Math.round((owedBack / refundedValue) * 100) : 0,
-    unrecoveredResellerShare,
-    unrecoveredPackPool,
     revokedFrom: revoked,
     placementsRemoved,
+    boxesPulled: boxesPulled.pulled.length,
+    // Openers paid back the price of the box that drew it; not counted in `refunded`.
+    boxOpeningsRefunded: boxRefundedUserIds.length,
+    boxRefundedValue,
     failures,
   };
 };

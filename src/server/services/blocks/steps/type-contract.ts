@@ -12,7 +12,7 @@ import type {
   ConvertImageOutput,
   ConvertImageStep,
   ImageBlob,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type * as z from 'zod';
 import type {
   ChatCompletionChoiceOutputLike,
@@ -227,7 +227,7 @@ type _RequiresCanonicalOutput = Expect<
 // paired with a sample that also encodes `output.images`. Both register cleanly.
 //
 // The assertions below close that for `convert-image` specifically, by making
-// `@civitai/client`'s generated types — which Civitai does not hand-write — the
+// `@civitai/orchestration-client`'s generated types — which Civitai does not hand-write — the
 // authority for the shape the extractor reads.
 //
 // 🔴 HONEST LIMIT: this does NOT make clause 8 a general guard. A FUTURE entry
@@ -238,7 +238,7 @@ type _RequiresCanonicalOutput = Expect<
 // convention held by review, not by the type system. What is anchored is the
 // registered entries that chose to. Making the anchoring REQUIRED for
 // every entry needs a `$type` → generated-step-type mapping the registry can
-// consult at the type level; `@civitai/client` exports no discriminated union of
+// consult at the type level; `@civitai/orchestration-client` exports no discriminated union of
 // all step types (only the individual `<Name>Step` aliases), so that map would
 // itself be hand-written — which is why it is proposed rather than built here.
 // ─────────────────────────────────────────────────────────────────────────────

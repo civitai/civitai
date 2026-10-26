@@ -163,3 +163,38 @@ describe('a tool call runs only once its start is saved', () => {
     expect(head.turns[0]!.assistant).toMatchObject({ status: 'done' });
   });
 });
+
+describe('a turn belongs to the run that started it last', () => {
+  /** The turn as run `owner` started it (a retry of the same turn starts it again, for its own run). */
+  async function ownedBy(owner: string) {
+    const store = new MemoryConversationStore();
+    await store.update('u1', 'c1', () =>
+      startTurn(null, {
+        conversationId: 'c1',
+        seq: 1,
+        user: { content: 'go', attachments: [] },
+        now: new Date(),
+        runId: owner,
+      } as Parameters<typeof startTurn>[1])
+    );
+    return store;
+  }
+
+  it('an older run of the turn saves nothing to it, its end included, once a retry took it over', async () => {
+    const memory = await ownedBy('run-B');
+    const before = await memory.load('u1', 'c1');
+    const stale = new ProgressWriter(memory, 'u1', 'c1', 1, log, 'run-A');
+    stale.save(callStarted('a-call'));
+    await stale.end({ messages: [], status: 'error', error: 'The reply stopped unexpectedly.' });
+    expect(await memory.load('u1', 'c1')).toEqual(before);
+  });
+
+  it('the run that owns it saves its progress and its end (the control)', async () => {
+    const memory = await ownedBy('run-B');
+    const own = new ProgressWriter(memory, 'u1', 'c1', 1, log, 'run-B');
+    own.save(callStarted('b-call'));
+    await own.end({ messages: callStarted('b-call'), status: 'done' });
+    const head = (await memory.load('u1', 'c1')) as StoredConversationMetadata;
+    expect(head.turns[0]!.assistant).toMatchObject({ status: 'done' });
+  });
+});

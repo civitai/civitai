@@ -65,7 +65,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';

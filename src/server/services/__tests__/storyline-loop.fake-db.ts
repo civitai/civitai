@@ -43,6 +43,10 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   storylineChapterEdge: {
     chapter: { kind: 'one', model: 'storylineChapter', from: 'chapterId', to: 'id' },
   },
+  storylinePendingChapter: {
+    storyline: { kind: 'one', model: 'storyline', from: 'storylineId', to: 'id' },
+    parentChapter: { kind: 'one', model: 'storylineChapter', from: 'parentChapterId', to: 'id' },
+  },
 };
 
 type Unique = { columns: string[]; where?: (row: Row) => boolean };
@@ -65,6 +69,11 @@ const UNIQUES: Record<string, Unique[]> = {
     { columns: ['parentChapterId'], where: (row) => row.canon === true },
   ],
   storylineCollaborator: [{ columns: ['storylineId', 'userId'] }],
+  storylinePendingChapter: [
+    { columns: ['postId'] },
+    // StorylinePendingChapter_storylineId_root_key: one chapter-1 draft per storyline.
+    { columns: ['storylineId'], where: (row) => row.parentChapterId == null },
+  ],
   placementSpace: [{ columns: ['surface', 'entityType', 'entityId'] }],
   placementSuspension: [{ columns: ['userId'] }],
 };
@@ -112,6 +121,7 @@ const DEFAULTS: Record<string, () => Row> = {
     removedAt: null,
   }),
   storylineChapterEdge: () => ({ canon: false, createdAt: new Date() }),
+  storylinePendingChapter: () => ({ parentChapterId: null, createdAt: new Date() }),
 };
 
 const MODELS = [
@@ -123,6 +133,7 @@ const MODELS = [
   'storylineChapter',
   'storylineChapterEdge',
   'storylineCollaborator',
+  'storylinePendingChapter',
   'placement',
   'placementTransaction',
   'placementSpace',
@@ -316,7 +327,8 @@ export function createFakeDb() {
 
   const insert = (model: string, data: Row) => {
     const row: Row = { ...(DEFAULTS[model]?.() ?? {}), ...structuredClone(data) };
-    if (row.id == null && model !== 'storylineChapterEdge') row.id = nextId[model]++;
+    if (row.id == null && !['storylineChapterEdge', 'storylinePendingChapter'].includes(model))
+      row.id = nextId[model]++;
     if (model === 'storylineChapterEdge') {
       beforeEdgeCreate.splice(0).forEach((fn) => fn());
       assertEdge(row);
@@ -400,6 +412,21 @@ export function createFakeDb() {
       for (const row of rows) applyData(row, args.data);
       return { count: rows.length };
     },
+    delete: async (args: { where: Where }) => {
+      const index = tables[model].findIndex((r) => matches(model, r, args.where));
+      if (index < 0)
+        throw new Prisma.PrismaClientKnownRequestError('Record to delete does not exist', {
+          code: 'P2025',
+          clientVersion: 'fake',
+        });
+      const [row] = tables[model].splice(index, 1);
+      return structuredClone(row);
+    },
+    deleteMany: async (args: { where?: Where } = {}) => {
+      const before = tables[model].length;
+      tables[model] = tables[model].filter((row) => !matches(model, row, args.where));
+      return { count: before - tables[model].length };
+    },
     upsert: async (args: { where: Where; create: Row; update: Row }) => {
       const row = tables[model].find((r) => matches(model, r, args.where));
       if (row) {
@@ -429,10 +456,25 @@ export function createFakeDb() {
       return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
+    if (text.includes('FROM "StorylinePendingChapter"') && text.includes('WHERE "postId" =')) {
+      // The link a promotion reads, which it must lock: two writers then take turns on it.
+      // Modelled only while the statement locks, so one that drops the lock is refused.
+      if (!/FOR UPDATE\s*$/.test(text.trim()))
+        throw new Error(`fake db: pending-chapter read is not locked: ${text}`);
+      const [postId] = v as [number];
+      return tables.storylinePendingChapter
+        .filter((row) => same(row.postId, postId))
+        .map(({ storylineId, parentChapterId, userId }) => ({
+          storylineId,
+          parentChapterId,
+          userId,
+        }));
+    }
     // Storyline images (first images, chosen covers): this loop seeds no images, and which
     // images a reader may see is storyline.service.test's subject, not this one's.
     if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
+    if (text.includes('FROM "Storyline"') && /FOR SHARE( OF st)?$/.test(text.trim())) return [];
     if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
       // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
       // while the statement carries both its filters, so one that drops either is refused.

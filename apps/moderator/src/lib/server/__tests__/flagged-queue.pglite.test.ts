@@ -26,6 +26,7 @@ const {
   getFlaggedModels,
   getFlaggedSourceCounts,
   getHeldDetectionModelCount,
+  getModelAppealState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   reviewDaysLeft,
@@ -58,7 +59,8 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -266,13 +268,16 @@ describe('Needs review: held detections', () => {
     const { items } = await needsReview({ limit: 10 });
     const covers = (id: number) =>
       items.find((r) => r.modelId === id)?.coverImages.map((c) => c.url);
-    expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
+    expect(covers(1)).toEqual(['published.jpg', 'clip.mp4', 'draft.jpg']);
     expect(covers(7)).toEqual(['only-draft.jpg']);
     expect(covers(2)).toEqual([]);
     expect(items.find((r) => r.modelId === 1)?.coverImages[0]).toEqual({
       id: 11,
       url: 'published.jpg',
       nsfwLevel: 1,
+      type: 'image',
+      minor: false,
+      acceptableMinor: false,
     });
   });
 
@@ -505,6 +510,34 @@ describe('Auto-flagged: hash auto-flags', () => {
     });
   });
 
+  it('reads the appeal state the Auto-flagged ruling routes on, ignoring site-form appeals', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 20, 'Pending', 1, NULL), (2, 'Model', 21, 'Pending', 1, 'Model')`);
+    expect(await getModelAppealState(20)).toMatchObject({ pendingAppeal: true, minor: true });
+    expect(await getModelAppealState(21)).toMatchObject({ pendingAppeal: false });
+  });
+
+  it('counts poi as flagged only with an open text-scan poi flag, as the appeal resolver does', async () => {
+    await seedModel(40, 1, {});
+    await seedModel(41, 1, { poi: { workflowId: 'wf', textHash: 'a' } });
+    await seedModel(42, 1, { poi: { workflowId: 'wf', textHash: 'a', appealGranted: grant } });
+    await pg.exec(`UPDATE "Model" SET minor = TRUE, poi = TRUE WHERE id IN (40, 41, 42)`);
+    expect(await getModelAppealState(40)).toMatchObject({ minor: true, poi: false });
+    expect(await getModelAppealState(41)).toMatchObject({ minor: true, poi: true });
+    expect(await getModelAppealState(42)).toMatchObject({ minor: true, poi: false });
+  });
+
+  it('reads the text each text-scan flag is bound to, and any newer held text', async () => {
+    await seedModel(43, 1, {
+      minor: { workflowId: 'wf', textHash: 'a', redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { workflowId: 'wf', textHash: 'a' },
+    });
+    expect((await getModelAppealState(43)).textScan).toEqual({
+      minor: { textHash: 'a', redetectedTextHash: 'new' },
+      poi: { textHash: 'a', redetectedTextHash: null },
+    });
+  });
+
   it('carries the rulings kept on the minor entry and the model facts for a hash row', async () => {
     await pg.exec(`
       UPDATE "Model" SET meta = meta || '{"textScanFlags":{"minor":{"rulings":[{"decision":"appealUpheld","by":5}]}}}'
@@ -526,6 +559,107 @@ describe('Auto-flagged: hash auto-flags', () => {
     expect(await getFlaggedCount({ flag: 'poi' })).toBe(0);
     expect(await getFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(1);
     expect(await getFlaggedCount({ search: { text: 'other' } })).toBe(1);
+  });
+});
+
+describe('Auto-flagged: real-person hash flags', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const poiSnapshot = (source: string, at: string, extra: object = {}) => ({
+    poiFlagSnapshot: { source, at, prevNsfw: false, prevGalleryLevel: 2, ...extra },
+  });
+  const seed = (id: number, meta: object, { poi = true, minor = false } = {}) =>
+    pg.query(
+      `INSERT INTO "Model" (id, name, "userId", poi, minor, meta) VALUES ($1, $2, 1, $3, $4, $5)`,
+      [id, `model ${id}`, poi, minor, JSON.stringify(meta)]
+    );
+  const keys = async (filters?: Parameters<typeof getFlaggedModels>[0]['filters']) =>
+    flagKeys((await getFlaggedModels({ limit: 20, filters })).items);
+
+  beforeEach(async () => {
+    await seed(30, poiSnapshot('auto', daysAgo(3)));
+    // Out of the queue: confirmed, set by hand since, and lifted.
+    await seed(32, poiSnapshot('manual', daysAgo(3), { confirmedFrom: 'auto' }));
+    await seed(33, poiSnapshot('auto', daysAgo(5)));
+    await pg.query(
+      `INSERT INTO "ModActivity" ("entityType", "entityId", activity, "createdAt")
+       VALUES ('model', 33, 'setPoi', $1)`,
+      [daysAgo(1)]
+    );
+    await seed(34, poiSnapshot('auto', daysAgo(3)), { poi: false });
+  });
+
+  it('lists the hash flag the main app applied, under the real-person label', async () => {
+    expect(await keys()).toEqual(['30:poi:hash']);
+    const [row] = (await getFlaggedModels({ limit: 20 })).items;
+    expect(row.flags[0]).toMatchObject({ daysLeft: null, prevNsfw: false, prevGalleryLevel: 2 });
+  });
+
+  it('follows the label filter: real person keeps it, minor drops it', async () => {
+    expect(await keys({ source: 'hash', flag: 'poi', sort: 'oldest' })).toEqual(['30:poi:hash']);
+    expect(await keys({ source: 'all', flag: 'minor', sort: 'oldest' })).toEqual([]);
+    expect(await keys({ source: 'text-scan', flag: 'all', sort: 'oldest' })).toEqual([]);
+  });
+
+  it('a minor setMinor does not count as signing off the real-person flag', async () => {
+    await pg.query(
+      `INSERT INTO "ModActivity" ("entityType", "entityId", activity, "createdAt")
+       VALUES ('model', 30, 'setMinor', $1)`,
+      [daysAgo(1)]
+    );
+    expect(await keys()).toEqual(['30:poi:hash']);
+  });
+
+  it('carries both labels on one row when both were hash-flagged', async () => {
+    await seed(
+      35,
+      {
+        ...poiSnapshot('auto', daysAgo(2)),
+        minorFlagSnapshot: { source: 'auto', at: daysAgo(4) },
+      },
+      { minor: true }
+    );
+    // Oldest flag first: 35's minor flag (4 d) is older than 30's.
+    expect(await keys()).toEqual(['35:minor:hash', '35:poi:hash', '30:poi:hash']);
+    expect(await getFlaggedCount()).toBe(2);
+    expect(await getFlaggedSourceCounts()).toEqual({ all: 2, hash: 2, 'text-scan': 0 });
+  });
+
+  it('says Needs review also lists a hash-flagged model with a queued real-person match', async () => {
+    // Minor hash-flagged and not poi, so a real-person match on it waits in Needs review.
+    await seed(37, { minorFlagSnapshot: { source: 'auto', at: daysAgo(2) } }, { poi: false });
+    const also = async () =>
+      Object.fromEntries(
+        (await getFlaggedModels({ limit: 20 })).items.map((r) => [r.modelId, r.alsoInNeedsReview])
+      );
+    expect(await also()).toEqual({ 30: false, 37: false });
+    await pg.query(`UPDATE "Model" SET meta = meta || $1::jsonb WHERE id = 37`, [
+      JSON.stringify({ poiHashMatch: { at: daysAgo(1), hash: 'X' } }),
+    ]);
+    expect(await also()).toEqual({ 30: false, 37: true });
+  });
+
+  it('says Auto-flagged also lists a Needs review model carrying a real-person hash flag', async () => {
+    await pg.query(`UPDATE "Model" SET meta = meta || $1::jsonb WHERE id IN (30, 32)`, [
+      JSON.stringify({ textScanFlags: { minor: { redetected: redetected(daysAgo(1)) } } }),
+    ]);
+    const { items } = await needsReview({ limit: 20 });
+    // 32's flag was confirmed, so Auto-flagged no longer lists it.
+    expect(Object.fromEntries(items.map((r) => [r.modelId, r.alsoInAutoFlagged]))).toEqual({
+      30: true,
+      32: false,
+    });
+  });
+
+  it('keeps an unreviewed flag past the minor review window: nothing presumes it correct', async () => {
+    await seed(31, poiSnapshot('auto', daysAgo(40)));
+    expect(await keys()).toEqual(['31:poi:hash', '30:poi:hash']);
+    expect(await getFlaggedCount()).toBe(2);
+  });
+
+  it('counts the hash flag as a real-person flag in force, as the appeal resolver does', async () => {
+    expect(await getModelAppealState(30)).toMatchObject({ poi: true });
+    expect(await getModelAppealState(32)).toMatchObject({ poi: true });
+    expect(await getModelAppealState(34)).toMatchObject({ poi: false });
   });
 });
 

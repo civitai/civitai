@@ -311,14 +311,15 @@ export const stickerBalanceLabel = (remaining: number | null | undefined) =>
  * A completed token is not a query: `:fire:` has its closing colon, and the
  * slug pattern excludes `:`, so the match ends before it. The token also has to
  * open at a word boundary, or every `http://` and `12:30` in a message would
- * start suggesting.
+ * start suggesting. It also needs two characters: emoticons like `:D`, `:P` and
+ * `:3` are one, and Enter with the list open would swap them for `:dog:`.
  */
 export function stickerQueryAtCaret(
   text: string,
   caret: number
 ): { query: string; start: number } | null {
   const before = text.slice(0, Math.max(0, caret));
-  const match = /(?:^|\s):([a-zA-Z0-9_]+)$/.exec(before);
+  const match = /(?:^|\s):([a-zA-Z0-9_]{2,})$/.exec(before);
   if (!match) return null;
 
   return { query: match[1].toLowerCase(), start: before.length - match[1].length - 1 };

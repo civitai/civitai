@@ -10,7 +10,7 @@ import type {
   PromptEnhancementInput,
   PromptEnhancementOutput,
   PromptEnhancementStep,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { useEffect, useMemo, useRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';

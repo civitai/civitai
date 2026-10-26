@@ -1,4 +1,5 @@
-import type { NsfwLevel, WorkflowCost } from '@civitai/client';
+import type { NsfwLevel, WorkflowCost } from '@civitai/orchestration-client';
+import { isGlbFormat } from '~/shared/orchestrator/model3d-output';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,
@@ -103,14 +104,21 @@ export function isNeverRatedVideoStep(
 }
 
 /**
- * An image or video reported available before it is rated. Audio is never rated, and a 3D mesh
- * takes its rating from its preview images, so neither counts.
+ * An output reported available before it is rated. Audio is never rated. A GLB mesh takes its
+ * rating from its preview render; a non-GLB mesh (Tripo quad FBX) has no preview render, so it
+ * counts as unrated until its auto-thumbnail's rating reaches it.
  */
 export function isUnratedOutput(
-  output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>,
+  output: Pick<
+    NormalizedWorkflowStepOutput,
+    'type' | 'available' | 'nsfwLevel' | 'blockedReason'
+  > & {
+    format?: string;
+  },
   neverRatedVideoStep = false
 ) {
-  if (output.type !== 'image' && output.type !== 'video') return false;
+  if (output.type === 'model3d' && isGlbFormat(output.format)) return false;
+  if (output.type === 'audio') return false;
   if (output.type === 'video' && neverRatedVideoStep) return false;
   if (!output.available || output.nsfwLevel != null) return false;
   return !output.blockedReason || output.blockedReason === 'none';

@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { reportHolds, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  reportHolds,
+  userNamedOnHoldingReportSql,
+  userUnderLegalHoldSql,
+} from '~/server/utils/legal-hold';
 
 /** What a moderator is told. Never says which hold applies. */
 export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
@@ -64,8 +68,9 @@ const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 function holdLegsSql(id: Prisma.Sql) {
   return {
     report: userNamedOnHoldingReportSql(id),
+    // Aliased, so `id` may be a column of an outer unaliased "Image" without being captured here.
     'image-review': Prisma.sql`EXISTS (
-      SELECT 1 FROM "Image" WHERE "userId" = ${id} AND "needsReview" = 'csam'
+      SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
     // A blocked image counts as reported only when a sent report naming them lists it.
     'image-blocked': Prisma.sql`EXISTS (
@@ -105,14 +110,57 @@ const markerAppearedSql = Prisma.raw(
   `(to_regclass('"${HOLD_MARKER_VIEW}"') IS NOT NULL OR to_regclass('"${HOLD_MARKER_TABLE}"') IS NOT NULL)`
 );
 
+/** The hold-marker leg of `accountHoldSql` alone. */
+export function holdMarkerSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return markerView ? markerSql(id) : markerAppearedSql;
+}
+
 /**
  * Every hold on the account `id` (an int SQL expression) as one condition, for a statement that must
  * not touch a held account's rows even when a hold lands after the check. `markerView` is what
  * `assertAccountNotUnderLegalHold` returned.
  */
 export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
-  const legs = [...Object.values(holdLegsSql(id)), markerView ? markerSql(id) : markerAppearedSql];
+  const legs = [...Object.values(holdLegsSql(id)), holdMarkerSql(id, markerView)];
   return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
+}
+
+/**
+ * The `markerView` for `accountHoldSql` in a statement over many accounts' rows, where there is no
+ * single account to check first. Without the view, `accountHoldSql` holds every row if either marker
+ * object exists, so a view that is missing while its table is not still holds.
+ */
+export async function holdMarkerViewExists(): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS present
+  `;
+  return row?.present === true;
+}
+
+/** Whether the marker table exists. Without its view, `accountHoldSql` holds every account. */
+export async function holdMarkerTableExists(): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS present
+  `;
+  return row?.present === true;
+}
+
+/**
+ * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
+ * goes no further than here. An author with no hold of their own had a row kept for a held reply
+ * below it.
+ */
+export async function logHoldRetained(action: string, userIds: number[]) {
+  for (const userId of new Set(userIds)) {
+    const hold = await holdOrNull(userId);
+    logToAxiom({
+      type: 'info',
+      name: 'account-legal-hold',
+      message:
+        hold?.legs.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
+      details: { userId, legs: hold?.legs ?? null },
+    });
+  }
 }
 
 export type AccountLegalHold = {
@@ -171,6 +219,38 @@ export async function assertAccountNotUnderLegalHold(
     name: 'account-legal-hold',
     message: 'Account deletion refused',
     details: { userId, legs: hold.legs },
+  });
+  throw new LegalHoldError();
+}
+
+/**
+ * For moving content between owners: the hold the purge jobs read (`userUnderLegalHoldSql`, which
+ * includes the placeholder owner) and every account hold, whose image legs follow the images moved.
+ * Throws `LegalHoldError` when any of `userIds` is held, `LegalHoldUnconfirmedError` when that cannot
+ * be read. Names the marker view, so it needs its migration.
+ */
+export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
+  const owner = Prisma.raw('o."userId"');
+  const rows = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
+    SELECT o."userId", (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)}) AS held
+    FROM unnest(${userIds}::int[]) AS o("userId")
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+    return null;
+  });
+  if (!rows || rows.length !== userIds.length) throw new LegalHoldUnconfirmedError();
+  const held = rows.filter((r) => r.held !== false).map((r) => r.userId);
+  if (!held.length) return;
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: 'Owner change refused',
+    details: { userIds: held },
   });
   throw new LegalHoldError();
 }

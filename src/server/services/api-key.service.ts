@@ -13,7 +13,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 
@@ -154,12 +154,18 @@ export async function getTemporaryUserApiKey(
  * ApiKey write in the repo and fails when one is added.
  */
 export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
-  const rows = await dbWrite.apiKey.findMany({ where, select: { id: true, key: true } });
+  const rows = await dbWrite.apiKey.findMany({
+    where,
+    select: { id: true, key: true, userId: true },
+  });
   if (!rows.length) return { count: 0 };
   const result = await dbWrite.apiKey.deleteMany({
     where: { AND: [where, { id: { in: rows.map((row) => row.id) } }] },
   });
   await evictCachedApiKeys(rows.map((row) => row.key));
+  // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
+  const userIds = [...new Set(rows.map((row) => row.userId))];
+  await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
   return result;
 }
 
@@ -177,11 +183,6 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         error: safeError(err),
       }).catch(() => {});
     });
-
-    // Expire the deleted key in the orchestrator: it caches the user's API
-    // keys for auth, so without this the key keeps working until the cache
-    // TTL lapses. invalidateCivitaiUser swallows its own errors.
-    await invalidateCivitaiUser({ userId });
   }
 
   return result;

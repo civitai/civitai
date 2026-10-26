@@ -19,7 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   5. AiNotVerified and vanished rows are still swept out of the queue;
 //   6. a non-prod database is never mass-deleted;
 //   7. an image under a pending appeal is held until the appeal is resolved;
-//   8. an image flagged for CSAM review is held until the flag is resolved.
+//   8. an image flagged for CSAM review is held until the flag is resolved;
+//   9. an image whose owner is under a hold marker is held.
 
 const DAY = 24 * 60 * 60 * 1000;
 const EXPIRED = new Date(Date.now() - 8 * DAY); // past BLOCKED_IMAGE_RETENTION_DAYS (7)
@@ -78,7 +79,11 @@ const {
   holdLookup,
   appealedIds,
   csamFlaggedIds,
+  evidenceHeldUserIds,
+  accountHeldIds,
+  markerView,
   withoutModActivity,
+  goneIds,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
@@ -88,8 +93,16 @@ const {
   const holdLookup = { error: null as Error | null };
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
+  // Owners under a hold marker.
+  const evidenceHeldUserIds: number[] = [];
+  // Blocked images of accounts under any other account hold.
+  const accountHeldIds: number[] = [];
+  // Whether the database has the hold marker's view.
+  const markerView = { present: true };
   // Images whose block has no moderator takedown on record, so they take the non-retracting call.
   const withoutModActivity: number[] = [];
+  // Images deleted by someone else between the batch read and this job's delete.
+  const goneIds: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -122,10 +135,15 @@ const {
       ? flatten(first.strings, first.values)
       : flatten(first, rawValues);
     sqlLog.push(sql);
+    if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
+    // Routed before the report lookup below: the account hold reads "CsamReport" too.
+    if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
     if (sql.includes('FROM "CsamReport"')) {
       if (holdLookup.error) throw holdLookup.error;
       return heldUsers;
     }
+    if (sql.includes('FROM "EvidenceHeldUser"'))
+      return evidenceHeldUserIds.map((userId) => ({ userId }));
     // Answers with whichever review flags the query actually names, so dropping one from the
     // SQL is what stops that population being held.
     const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
@@ -140,9 +158,20 @@ const {
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
       const ids = (values[0] as number[]) ?? [];
-      return MOD_ACTIVITY.filter(
+      const extraActivity = extraQueue.map((q) => ({
+        entityId: q.entityId,
+        lastActedAt: new Date(q.createdAt.getTime() + 1000),
+      }));
+      return [...MOD_ACTIVITY, ...extraActivity].filter(
         (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
       );
+    }
+    // The existence check on images the delete did not return.
+    if (sql.includes('SELECT id FROM "Image" WHERE id = ANY')) {
+      const ids = (values.find(Array.isArray) as number[]) ?? [];
+      return allImages()
+        .filter((i) => ids.includes(i.id) && !goneIds.includes(i.id))
+        .map((i) => ({ id: i.id }));
     }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
@@ -163,7 +192,11 @@ const {
     holdLookup,
     appealedIds,
     csamFlaggedIds,
+    evidenceHeldUserIds,
+    accountHeldIds,
+    markerView,
     withoutModActivity,
+    goneIds,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -193,7 +226,8 @@ const {
     mockDeleteImages: vi.fn(async (ids: number[], ..._rest: unknown[]) =>
       ids.map((id) => ({ id }))
     ),
-    mockLogToAxiom: vi.fn(),
+    // Async like the real logger: the sweep chains `.catch` on it.
+    mockLogToAxiom: vi.fn(async (_data: Record<string, unknown>) => undefined),
   };
 });
 
@@ -206,10 +240,31 @@ vi.mock('~/server/services/image.service', () => ({
   deleteImages: mockDeleteImages,
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(async () => []) }));
+// Hand-listed for the same reason: the takedown sync loads the CDN and edge-url clients, which
+// this file's env and logging stubs cannot boot. The job imports only this from it.
+const { mockPersistDeletedTakedowns, mockReserve, mockSettle } = vi.hoisted(() => ({
+  mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[], _opts?: unknown) => ({
+    sent: 0,
+    queued: 0,
+    skipped: 0,
+    unqueued: [] as number[],
+  })),
+  mockReserve: vi.fn(async (_rows: { id: number; url?: string | null }[]) => 'reservation'),
+  mockSettle: vi.fn(async (_ids: number[], _reservation: string) => undefined),
+}));
+vi.mock('~/server/services/cdn-access.service', () => ({
+  persistDeletedTakedowns: mockPersistDeletedTakedowns,
+  reserveTakedownRetractions: mockReserve,
+  settleTakedownReservations: mockSettle,
+}));
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import { purgeHoldGuard, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import {
+  accountHeldBlockedImagesSql,
+  purgeHoldGuard,
+  removeBlockedImages,
+} from '~/server/jobs/image-ingestion';
 import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
 
 const TRAINING_ENV = {
@@ -222,6 +277,31 @@ const TRAINING_ENV = {
   APPEAL_OWNER_HASH_KEY: 'o',
 };
 
+// The default fixture with image 7's account held and a marker on HELD_USER: 5, 6 and 10 are
+// legal-held (5 and 10 marker-held too), 7 leaves the batch, 2 is inside retention, 3 and 4 are
+// stale, and 1 and 8 are deleted as takedowns.
+const EXPECTED_SUMMARY = {
+  name: 'remove-blocked-images',
+  deleted: 2,
+  heldAtDelete: 0,
+  retracted: 2,
+  deletedWithoutRetraction: 0,
+  staleRemoved: 2,
+  waitingForRetention: 1,
+  csamHeld: 3,
+  appealHeld: 0,
+  csamReviewHeld: 0,
+  evidenceHeld: 2,
+  accountHeld: 1,
+};
+// Every queued image held one way or another, so the batch is empty.
+const EXPECTED_QUIET_SUMMARY = {
+  name: 'remove-blocked-images',
+  processed: 0,
+  csamHeld: 3,
+  accountHeld: 6,
+};
+
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 async function runJob() {
   return (await removeBlockedImages.run(ctx).result) as Partial<{
@@ -232,6 +312,10 @@ async function runJob() {
     csamHeld: number;
     appealHeld: number;
     csamReviewHeld: number;
+    evidenceHeld: number;
+    accountHeld: number;
+    processed: number;
+    retractionDeferred: number;
     skipped: string;
   }>;
 }
@@ -269,7 +353,11 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
+  evidenceHeldUserIds.length = 0;
+  accountHeldIds.length = 0;
+  markerView.present = true;
   withoutModActivity.length = 0;
+  goneIds.length = 0;
   extraImages.length = 0;
   extraQueue.length = 0;
   holdLookup.error = null;
@@ -282,6 +370,9 @@ beforeEach(() => {
   mockDbWrite.$executeRaw.mockClear();
   mockDeleteImages.mockClear();
   mockLogToAxiom.mockClear();
+  mockPersistDeletedTakedowns.mockClear();
+  mockReserve.mockReset().mockResolvedValue('reservation');
+  mockSettle.mockClear();
 });
 
 describe('remove-blocked-images retention clock', () => {
@@ -313,6 +404,14 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
     expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
+    // And persists exactly the rows it deleted, after deleting them.
+    expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
+      await mockDeleteImages.mock.results.at(-1)?.value,
+      { reservation: 'reservation' }
+    );
+    expect(mockPersistDeletedTakedowns.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      mockDeleteImages.mock.invocationCallOrder.at(-1) as number
+    );
   });
 
   // The option is the third argument; `updatePosts` is the second and must keep its value.
@@ -341,7 +440,11 @@ describe('remove-blocked-images retention clock', () => {
     const holdCalls = (calls: unknown[][]) =>
       calls.filter((c) => sqlText(c[0]).includes('FROM "CsamReport"'));
     expect(holdCalls(mockDbRead.$queryRaw.mock.calls)).toEqual([]);
-    expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([[legalHoldUserIdsSql]]);
+    // The account hold reads "CsamReport" too, from the batch exclusion.
+    expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([
+      [legalHoldUserIdsSql],
+      [accountHeldBlockedImagesSql],
+    ]);
   });
 
   // An id that is not a number names no user, so it is dropped rather than failing every run.
@@ -373,6 +476,93 @@ describe('remove-blocked-images retention clock', () => {
     expect(deletedIds()).not.toContain(6);
     expect(batchWhere()?.entityId?.notIn).toContain(6);
     expect(queuePruneIds()).not.toContain(6);
+  });
+
+  it('keeps an image whose owner is under a hold marker', async () => {
+    evidenceHeldUserIds.push(PLAIN_USER);
+    await runJob();
+
+    expect(deletedIds()).not.toContain(1);
+    expect(batchWhere()?.entityId?.notIn).toContain(1);
+    expect(queuePruneIds()).not.toContain(1);
+    // Read off the primary: a marker written within replica lag must still hold this run.
+    expect(
+      // The legal-hold lookup passes a `Prisma.sql` object, not a template.
+      mockDbWrite.$queryRaw.mock.calls.some(([first]) =>
+        ('strings' in first ? first.strings : first).join('?').includes('"EvidenceHeldUser"')
+      )
+    ).toBe(true);
+  });
+
+  it('deletes nothing, and runs nothing that names the marker view, on a database without it', async () => {
+    markerView.present = false;
+    const result = await runJob();
+
+    expect(result.skipped).toBe('hold-marker-view-missing');
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(execLog.map((e) => e.sql)).not.toContain('SELECT evidence_hold_purge_unheld()');
+    // The existence check passes the name as a value, so any match here is a statement naming it.
+    expect(sqlLog.filter((sql) => sql.includes('EvidenceHeldUser'))).toEqual([]);
+  });
+
+  // What the post-deploy check reads: the job runner itself logs only that a run succeeded.
+  const summaryLog = () =>
+    mockLogToAxiom.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((a) => a.message === 'finished');
+
+  it("logs the run's counts", async () => {
+    accountHeldIds.push(7);
+    evidenceHeldUserIds.push(HELD_USER);
+    await runJob();
+
+    expect(summaryLog()).toMatchObject(EXPECTED_SUMMARY);
+    expect(Number.isFinite(summaryLog()?.durationMs)).toBe(true);
+  });
+
+  it("logs a quiet run's counts", async () => {
+    accountHeldIds.push(1, 2, 3, 4, 7, 8);
+    await runJob();
+
+    expect(summaryLog()).toMatchObject(EXPECTED_QUIET_SUMMARY);
+  });
+
+  it('keeps every Blocked image of an account under any other account hold out of the batch', async () => {
+    accountHeldIds.push(1);
+    await runJob();
+
+    expect(deletedIds()).not.toContain(1);
+    expect(batchWhere()?.entityId?.notIn).toContain(1);
+  });
+
+  // A hold that ends by its date writes nothing, so this run is what clears what it kept; the
+  // function itself is pinned in remove-blocked-images-hold-guard.behavior.test.ts.
+  it('sweeps what ended holds kept', async () => {
+    await runJob();
+
+    expect(execLog.map((e) => e.sql)).toContain('SELECT evidence_hold_purge_unheld()');
+  });
+
+  // e.g. the function not there yet while the hand-applied migration lags the deploy.
+  it('still deletes when the sweep fails', async () => {
+    const recordOnly = mockDbWrite.$executeRaw.getMockImplementation()!;
+    mockDbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join('?').includes('evidence_hold_purge_unheld'))
+          throw new Error('function evidence_hold_purge_unheld() does not exist');
+        return recordOnly(strings, ...values);
+      }
+    );
+    try {
+      await runJob();
+    } finally {
+      mockDbWrite.$executeRaw.mockImplementation(recordOnly);
+    }
+
+    expect(deletedIds()).toContain(1);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'evidence hold sweep failed' })
+    );
   });
 
   it("holds the placeholder owner's media", async () => {
@@ -567,5 +757,175 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(mockDeleteImages.mock.calls[1]?.[0]).toEqual([1]);
     expect(result).toMatchObject({ deletedWithoutRetraction: 0, heldAtDelete: 1 });
+  });
+});
+
+describe('remove-blocked-images retraction load', () => {
+  // 60 more moderator takedowns past retention, so the takedowns span several chunks.
+  const addTakedowns = () => {
+    for (let id = 100; id < 160; id++) {
+      extraImages.push({ id, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({ entityId: id, createdAt: EXPIRED });
+    }
+  };
+  const retractingCalls = () =>
+    mockDeleteImages.mock.calls.filter(
+      (c) => (c[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs === true
+    );
+
+  it('stops starting retracting deletes after a 429 and leaves the rest queued', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id) => ({ id, url: `key-${id}`, retraction: 'busy' as const }))
+    );
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    const started = retractingCalls()[0][0] as number[];
+    expect(started.length).toBeGreaterThan(0);
+    expect(started.length).toBeLessThan(60);
+    const deferred = [...Array(60).keys()]
+      .map((i) => 100 + i)
+      .filter((id) => !started.includes(id));
+    expect(deferred.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ retractionDeferred: deferred.length });
+    for (const id of deferred) expect(queuePruneIds()).not.toContain(id);
+    for (const id of started) expect(queuePruneIds()).toContain(id);
+    // Deferred, not held: they were never handed to the delete.
+    expect(result).toMatchObject({ heldAtDelete: 0 });
+  });
+
+  it('keeps going while the service answers, in chunks', async () => {
+    addTakedowns();
+    const result = await runJob();
+
+    const chunks = retractingCalls().map((c) => c[0] as number[]);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.flat().sort((a, b) => a - b)).toEqual(
+      [1, 7, 8, ...[...Array(60).keys()].map((i) => 100 + i)].sort((a, b) => a - b)
+    );
+    expect(result).toMatchObject({ retractionDeferred: 0 });
+  });
+
+  it('stops starting retracting deletes once its time budget is spent', async () => {
+    addTakedowns();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      mockDeleteImages.mockImplementationOnce(async (ids: number[]) => {
+        vi.setSystemTime(Date.now() + 9 * 60 * 1000);
+        return ids.map((id) => ({ id }));
+      });
+      const result = await runJob();
+
+      expect(retractingCalls()).toHaveLength(1);
+      expect(result.retractionDeferred).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("queues each chunk's retractions before deleting it, so a crash after the delete leaves them", async () => {
+    addTakedowns();
+    mockPersistDeletedTakedowns.mockRejectedValueOnce(new Error('process died'));
+    await expect(runJob()).rejects.toThrow('process died');
+
+    expect(retractingCalls()).toHaveLength(1);
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockReserve).toHaveBeenCalledTimes(1);
+    expect(mockReserve.mock.calls[0][0].map((r) => r.id)).toEqual(chunkIds);
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteImages.mock.invocationCallOrder[0]
+    );
+    // Nothing settled them, so they stay queued for the retry.
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  // Whether the retry was WRITTEN decides it, not the retraction's outcome: a written retry already
+  // released the reservation, and an unwritten one leaves the reservation as the only record.
+  it('keeps the reservation only where the retry could not be written', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id, i) => ({
+        id,
+        retraction: i === 0 ? ('unconfirmed' as const) : ('confirmed' as const),
+      }))
+    );
+    mockPersistDeletedTakedowns.mockImplementationOnce(async (rows: { id: number }[]) => ({
+      sent: 0,
+      queued: 2,
+      skipped: 0,
+      // The first row's retry was written; the second's (a failed persist) was not.
+      unqueued: [rows[1].id],
+    }));
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockSettle.mock.calls[0]).toEqual([
+      chunkIds.filter((id) => id !== chunkIds[1]),
+      'reservation',
+    ]);
+  });
+
+  it('keeps the reservation of an image deleted by someone else before this delete', async () => {
+    addTakedowns();
+    goneIds.push(8);
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 8).map((id) => ({ id, retraction: 'confirmed' as const }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(chunkIds).toContain(8);
+    expect(mockSettle.mock.calls[0][0]).toEqual(chunkIds.filter((id) => id !== 8));
+  });
+
+  it('releases the reservation of an image the delete kept, so a held image gets no retraction', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 7).map((id) => ({ id, retraction: 'confirmed' as const }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(chunkIds).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toEqual(chunkIds);
+  });
+
+  it('deletes no takedown when their retractions cannot be queued', async () => {
+    addTakedowns();
+    mockReserve.mockRejectedValue(new Error('invalid input value for enum'));
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(0);
+    expect(result).toMatchObject({ retractionDeferred: 63 });
+    for (const id of [1, 7, 8, 100, 159]) expect(queuePruneIds()).not.toContain(id);
+  });
+
+  it('stops starting retracting deletes after a timeout trips the run gate', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[], _u, opts) => {
+      (opts as { retractionGate: { busy: boolean } }).retractionGate.busy = true;
+      return ids.map((id) => ({ id, retraction: 'unconfirmed' as const }));
+    });
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    expect(result.retractionDeferred).toBeGreaterThan(0);
+  });
+
+  it('deletes the takedowns that have waited longest first', async () => {
+    // Queued in the opposite order to the image rows the job reads.
+    for (let i = 0; i < 40; i++) {
+      extraImages.push({ id: 200 + i, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({
+        entityId: 200 + i,
+        createdAt: new Date(EXPIRED.getTime() - (40 - i) * DAY),
+      });
+    }
+    await runJob();
+
+    const first = retractingCalls()[0][0] as number[];
+    expect([...first].sort((a, b) => a - b)).toEqual([...Array(25).keys()].map((i) => 200 + i));
   });
 });

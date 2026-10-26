@@ -1,6 +1,6 @@
 {
   "name": "@civitai/training-studio-app",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,11 +19,10 @@
     "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
     "@civitai/buzz": "workspace:*",
-    "@civitai/client": "0.2.0-beta.94",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
-    "@civitai/orchestration-client": "0.2.0-beta.124",
+    "@civitai/orchestration-client": "0.2.0-beta.125",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@civitai/ui": "workspace:*",

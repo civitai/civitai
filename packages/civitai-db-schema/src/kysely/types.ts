@@ -304,6 +304,10 @@ export type ApiKey = {
   lastUsedAt: Timestamp | null;
   clientId: string | null;
   buzzLimit: unknown | null;
+  /**
+   * Set on `Worker` tokens only: the device the token was issued to.
+   */
+  workerDeviceId: number | null;
 };
 export type AppBlock = {
   id: string;
@@ -2172,6 +2176,16 @@ export type ChatMessage = {
   editedAt: Timestamp | null;
   deletedAt: Timestamp | null;
 };
+export type ChatMessageEdit = {
+  id: Generated<number>;
+  messageId: number;
+  /**
+   * No relation: a deleted editor must neither block nor erase the history.
+   */
+  editorId: number;
+  previousContent: string;
+  createdAt: Generated<Timestamp>;
+};
 export type ChatReport = {
   chatId: number;
   reportId: number;
@@ -2677,6 +2691,7 @@ export type CosmeticShopItem = {
   rejectionReason: string | null;
   listed: Generated<boolean>;
   itemDefinitionId: number | null;
+  eventTags: Generated<string[]>;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;
@@ -2828,6 +2843,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2888,6 +2904,19 @@ export type CryptoWallet = {
   smartAccount: string | null;
   payCurrency: Generated<string>;
 };
+export type CsamFlagRelease = {
+  id: Generated<number>;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  /**
+   * The hold legs the release overrode.
+   */
+  overriddenLegs: unknown;
+  imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
 export type CsamReport = {
   id: Generated<number>;
   userId: number | null;
@@ -2900,6 +2929,11 @@ export type CsamReport = {
   details: Generated<unknown>;
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
+  /**
+   * The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+   */
+  sendClaimId: string | null;
+  sendClaimedAt: Timestamp | null;
 };
 export type CsamReportArchiveObject = {
   id: Generated<number>;
@@ -3067,6 +3101,54 @@ export type EventCosmeticScoreDaily = {
   modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
+};
+export type EvidenceHeldUser = {
+  userId: number;
+  heldUntil: Timestamp | null;
+};
+export type EvidenceHold = {
+  id: Generated<number>;
+  userId: number;
+  csamReportId: number | null;
+  /**
+   * subject | secondary | manual
+   */
+  role: string;
+  reportSentAt: Timestamp | null;
+  /**
+   * NULL holds until released.
+   */
+  releaseAt: Timestamp | null;
+  extendedUntil: Timestamp | null;
+  /**
+   * Who asked for the extension, and their reference.
+   */
+  extensionRequestedBy: string | null;
+  extensionReference: string | null;
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+  releaseReason: string | null;
+};
+export type EvidenceHoldImage = {
+  imageId: number;
+  userId: number;
+  postId: number | null;
+  keptAt: Generated<Timestamp>;
+};
+export type EvidenceHoldPost = {
+  postId: number;
+  userId: number;
+  title: string | null;
+  detail: string | null;
+  createdAt: Timestamp | null;
+  publishedAt: Timestamp | null;
+  modelVersionId: number | null;
+  collectionId: number | null;
+  metadata: unknown | null;
+  keptAt: Generated<Timestamp>;
 };
 export type FeaturedModelVersion = {
   id: Generated<number>;
@@ -3295,6 +3377,42 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+};
+export type ImageAudioScan = {
+  imageId: number;
+  workflowId: string;
+  /**
+   * Pending | Succeeded | Failed
+   */
+  status: Generated<string>;
+  /**
+   * null when the video has no audio or the scan failed: unknown, never "clean"
+   */
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: unknown | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Generated<Timestamp>;
+  completedAt: Timestamp | null;
+};
+export type ImageCaption = {
+  imageId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+   */
+  userId: number;
+  content: string;
+  /**
+   * The text scan refused it: never shown to readers. Set and cleared only by the scan.
+   */
+  refused: Generated<boolean>;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+   */
+  nsfwLevel: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ImageCdnAccess = {
   url: string;
@@ -3648,6 +3766,10 @@ export type Model = {
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
   isOfficial: Generated<boolean>;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -4865,6 +4987,7 @@ export type ScanLabelClaim = {
   itemId: number;
   userId: number;
   expiresAt: Timestamp;
+  token: Generated<string | null>;
 };
 export type ScanLabelCopyObject = {
   key: string;
@@ -4924,6 +5047,7 @@ export type ScanLabelVote = {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Generated<Timestamp>;
+  claimToken: string | null;
 };
 export type ScannerContentSnapshot = {
   contentHash: string;
@@ -5045,9 +5169,19 @@ export type ServiceDealFile = {
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   /**
-   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has.
    */
   malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+   */
+  malwareScanWorkflowId: string | null;
+  /**
+   * When the file was first handed to the scan; the give-up window runs from here.
+   */
+  malwareScanStartedAt: Timestamp | null;
+  malwareScanSubmittedAt: Timestamp | null;
+  malwareScanAttempts: Generated<number>;
   /**
    * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
    */
@@ -5118,6 +5252,11 @@ export type ServiceOffering = {
   removedDetails: string | null;
   removedAt: Timestamp | null;
   removedById: number | null;
+  /**
+   * The seller's agreement to the services terms when they published: userId, offeringId,
+   * affirmedAt, version and the statement verbatim. Null until first published.
+   */
+  sellerAffirmation: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5290,6 +5429,20 @@ export type StorylineEarlyAccessSignup = {
    * Where they signed up from, for context only.
    */
   storylineId: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylinePendingChapter = {
+  postId: number;
+  storylineId: number;
+  /**
+   * null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+   * migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+   */
+  parentChapterId: number | null;
+  /**
+   * The draft's author when it was linked. Not a relation, as on StorylineChapter.
+   */
+  userId: number;
   createdAt: Generated<Timestamp>;
 };
 export type StorylineReport = {
@@ -5544,6 +5697,7 @@ export type Thread = {
   model3dReviewId: number | null;
   appListingId: number | null;
   crucibleId: number | null;
+  storylineId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -5671,6 +5825,11 @@ export type UserCreatorMilestone = {
   milestoneKey: string;
   achievedAt: Generated<Timestamp>;
   seenAt: Timestamp | null;
+};
+export type UserEmailNotificationOptOut = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
 };
 export type UserEngagement = {
   userId: number;
@@ -5970,6 +6129,40 @@ export type WildcardSetCategory = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type WorkerClient = {
+  clientId: string;
+  /**
+   * The orchestrator provider this pool's workers register as.
+   */
+  provider: string;
+  /**
+   * The `subject_token_type` URNs this client may exchange.
+   */
+  subjectTokenTypes: Generated<string[]>;
+  /**
+   * Salad container groups whose IMDS tokens this client accepts.
+   */
+  saladContainerGroupIds: Generated<string[]>;
+  createdAt: Generated<Timestamp>;
+};
+export type WorkerDevice = {
+  id: Generated<number>;
+  clientId: string;
+  /**
+   * `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+   */
+  issuer: string;
+  subject: string;
+  /**
+   * `active` or `blocked`.
+   */
+  status: Generated<string>;
+  firstSeenAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastIp: string | null;
+  blockedAt: Timestamp | null;
+  blockedReason: string | null;
+};
 export type DB = {
   _LicenseToModel: LicenseToModel;
   Account: Account;
@@ -6071,6 +6264,7 @@ export type DB = {
   Chat: Chat;
   ChatMember: ChatMember;
   ChatMessage: ChatMessage;
+  ChatMessageEdit: ChatMessageEdit;
   ChatReport: ChatReport;
   Club: Club;
   ClubAdmin: ClubAdmin;
@@ -6136,6 +6330,7 @@ export type DB = {
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
+  CsamFlagRelease: CsamFlagRelease;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
@@ -6151,6 +6346,10 @@ export type DB = {
   EntityModeration: EntityModeration;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EvidenceHeldUser: EvidenceHeldUser;
+  EvidenceHold: EvidenceHold;
+  EvidenceHoldImage: EvidenceHoldImage;
+  EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
@@ -6165,6 +6364,8 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageAudioScan: ImageAudioScan;
+  ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
@@ -6316,6 +6517,7 @@ export type DB = {
   StorylineCollaborator: StorylineCollaborator;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;
   TagEngagement: TagEngagement;
@@ -6351,6 +6553,7 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserCreatorMilestone: UserCreatorMilestone;
+  UserEmailNotificationOptOut: UserEmailNotificationOptOut;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;
@@ -6380,4 +6583,6 @@ export type DB = {
   Webhook: Webhook;
   WildcardSet: WildcardSet;
   WildcardSetCategory: WildcardSetCategory;
+  WorkerClient: WorkerClient;
+  WorkerDevice: WorkerDevice;
 };

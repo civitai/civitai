@@ -1,7 +1,11 @@
 import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import type { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -74,11 +78,24 @@ export const CSAM_HOLD_DECISION_GRANTS: Partial<
 
 type DecideArgs = {
   holdId: number;
+  /**
+   * The text hash the moderator reviewed; a rescan may have replaced the held text since. Optional while a
+   * client built before the guard rolls out: without it the decision is guarded against the hash read here.
+   */
+  textHash?: string;
   decision: CsamHoldDecision;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
+  /** Decided along with another hold of the author, without the moderator opening this one. */
+  batched?: boolean;
 };
+
+/** The label-store reason of a batched decision, so training can tell it from a reviewed one. */
+export const CSAM_HOLD_BATCH_REASON = 'batch_apply';
+
+export const STALE_HOLD_MESSAGE =
+  'This hold changed after you opened it (the author edited the content). Reload to review the new text.';
 
 type HeldRow = {
   id: number;
@@ -227,7 +244,7 @@ const subjectTypeOf = (entityType: string) =>
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
-  const { holdId, decision, note, actor } = args;
+  const { holdId, textHash, decision, note, actor, batched } = args;
   const plan = PLAN[decision];
 
   const hold = await dbWrite.textScanHold.findFirst({
@@ -239,11 +256,15 @@ export async function decideCsamHold(args: DecideArgs) {
       entityId: true,
       userId: true,
       text: true,
+      textHash: true,
       meta: true,
     },
   });
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
+  if (textHash !== undefined && hold.textHash !== textHash)
+    throw throwConflictError(STALE_HOLD_MESSAGE);
+  const expectedHash = textHash ?? hold.textHash;
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(
@@ -257,14 +278,15 @@ export async function decideCsamHold(args: DecideArgs) {
     UPDATE "TextScanHold"
     SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
       || jsonb_build_object('decisionClaim', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
-    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending'
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${expectedHash}
       AND ("meta"->'decisionClaim' IS NULL
         OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
     RETURNING "meta"->'decisionClaim'->>'at' AS "at"
   `;
-  if (!claimed.length) throw throwConflictError('Hold already decided or missing.');
+  // The claim also checks the hash, so a rescan landing after the read above fails here as stale.
+  if (!claimed.length) throw throwConflictError('Hold already decided, changed or missing.');
 
-  const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
+  const status: 'Dismissed' | 'Confirmed' = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
   try {
     if (plan.remove) await removeContent(hold, args);
     if (plan.strike) await strikeAuthor(hold, args);
@@ -273,8 +295,10 @@ export async function decideCsamHold(args: DecideArgs) {
     const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
     const decidedAt = new Date();
     await dbWrite.$transaction(async (tx) => {
+      // Same lock a new detection takes, so the two never interleave.
+      if (hold.entityType !== 'ChatMessage') await lockCsamHold(tx, hold.entityType, hold.entityId);
       const { count } = await tx.textScanHold.updateMany({
-        where: { id: holdId, label: 'csam', status: 'Pending' },
+        where: { id: holdId, label: 'csam', status: 'Pending', textHash: expectedHash },
         data: {
           status,
           decidedAt,
@@ -302,7 +326,7 @@ export async function decideCsamHold(args: DecideArgs) {
           p_source_ref => ${`TextScanHold:${holdId}`},
           p_labelled_at => ${decidedAt}::timestamptz,
           p_labeller_user_id => ${actor.id}::int,
-          p_reason => ${decision},
+          p_reason => ${batched ? CSAM_HOLD_BATCH_REASON : decision},
           p_reason_note => ${note || null},
           p_snapshot => ${JSON.stringify({ text: hold.text })}::jsonb,
           p_owner_user_id => ${hold.userId}::int
@@ -319,4 +343,114 @@ export async function decideCsamHold(args: DecideArgs) {
   }
 
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
+}
+
+export const CSAM_HOLD_BATCH_MAX = 50;
+/** A strike or ban belongs to the author once, with the hold the moderator is on, never per hold. */
+const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
+
+const holdId = z.coerce.number().int().positive().max(2147483647);
+const textHash = z.string().min(1).max(200);
+const note = z.string().trim().max(500).optional();
+
+export const resolveCsamHoldInput = z
+  .object({
+    holdId: holdId.optional().describe('The hold to decide. Give this or `holds`, not both.'),
+    // Optional for the rollout only: make it required once the moderator release that sends it is live.
+    textHash: textHash
+      .optional()
+      .describe(
+        'The text hash of the hold as the moderator saw it; a hold whose text changed since is refused. Omitted only by clients that predate the guard, which then decide against the text as stored now.'
+      ),
+    holds: z
+      .array(z.object({ holdId, textHash }))
+      .min(1)
+      .max(CSAM_HOLD_BATCH_MAX)
+      .optional()
+      .describe(
+        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50.'
+      ),
+    decision: z.enum(CSAM_HOLD_DECISIONS),
+    note: note.describe('Moderator-only note recorded on the hold.'),
+  })
+  .superRefine((input, ctx) => {
+    if ((input.holdId === undefined) === (input.holds === undefined))
+      ctx.addIssue({ code: 'custom', message: 'Give exactly one of `holdId` and `holds`.' });
+    if (input.holds && !(BATCH_DECISIONS as readonly string[]).includes(input.decision))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['decision'],
+        message: 'A batch can only remove or dismiss.',
+      });
+    if (input.holds && input.textHash !== undefined)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['textHash'],
+        message: 'Each hold of a batch carries its own `textHash`.',
+      });
+  });
+
+export type CsamHoldBatchResult =
+  | {
+      holdId: number;
+      ok: true;
+      status: 'Dismissed' | 'Confirmed';
+      entityType: string;
+      entityId: number;
+      userId: number | null;
+    }
+  | { holdId: number; ok: false; stale: boolean; error: string };
+
+/** Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest. */
+export async function decideCsamHoldBatch({
+  holds,
+  decision,
+  note,
+  actor,
+  tracker,
+  decide = decideCsamHold,
+}: {
+  holds: { holdId: number; textHash: string }[];
+  decision: CsamHoldDecision;
+  note?: string;
+  actor: { id: number; ip?: string };
+  tracker: Tracker;
+  /** Overridable so the loop can be tested without the removal services behind a decision. */
+  decide?: typeof decideCsamHold;
+}): Promise<CsamHoldBatchResult[]> {
+  const results: CsamHoldBatchResult[] = [];
+  for (const hold of new Map(holds.map((h) => [h.holdId, h])).values()) {
+    try {
+      const decided = await decide({
+        holdId: hold.holdId,
+        textHash: hold.textHash,
+        decision,
+        note,
+        actor,
+        tracker,
+        batched: true,
+      });
+      results.push({ holdId: hold.holdId, ok: true, ...decided });
+    } catch (error) {
+      // Only our own refusals carry text safe to show.
+      const refusal = error instanceof TRPCError ? error : null;
+      if (!refusal)
+        // Code and name only: a Prisma message can echo the arguments, which here are the held text.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'csam hold batch decision failed',
+          holdId: hold.holdId,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorCode: (error as { code?: unknown } | null | undefined)?.code,
+        }).catch(() => null);
+      results.push({
+        holdId: hold.holdId,
+        ok: false,
+        stale: refusal?.message === STALE_HOLD_MESSAGE,
+        error: refusal?.message ?? 'Could not apply the decision to this hold.',
+      });
+    }
+  }
+  return results;
 }

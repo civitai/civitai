@@ -30,9 +30,11 @@ import {
   type RunnerDeps,
 } from '../runner';
 import { createTokenVerifier } from '../tokens';
+import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
 import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
 import { signGrant, testKeys } from '../test-support/keys';
+import { MemoryModelCalls } from '../test-support/memory-model-calls';
 import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
 import { scriptedModel, toolResults } from '../test-support/scripted-model';
 import { readEvents, type ReadEntry } from '../test-support/sse';
@@ -68,7 +70,22 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return how;
     },
   });
+  /** What `echo` was asked with: every user message's words, per request. */
+  const echoed: string[][] = [];
   const scripts: Record<string, () => ReturnType<typeof scriptedModel>> = {
+    // Says back the latest message's own words (the turn's context goes before them).
+    echo: () =>
+      scriptedModel((prompt) => {
+        const users = prompt
+          .filter((message) => message.role === 'user')
+          .map((message) =>
+            (Array.isArray(message.content) ? message.content : [])
+              .map((part: { text?: string }) => part.text ?? '')
+              .join('')
+          );
+        echoed.push(users);
+        return { text: `Heard: ${users.at(-1)!.split('\n\n').at(-1)}` };
+      }),
     long: () => scriptedModel(() => ({ text: LONG_TEXT }), { chunkDelayMs: 1 }),
     tools: () =>
       scriptedModel((prompt) =>
@@ -186,10 +203,24 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return new Response('', { status: 500 });
     },
   });
+  /**
+   * The real model provider against a fake orchestration chat (`FakeChatOrchestration`), keeping its
+   * calls in a ledger: what a Stop does to the orchestration workflow of a model call in flight.
+   */
+  const chat = new FakeChatOrchestration();
+  const chatModels = new OrchestrationModels({
+    baseUrl: 'https://orchestration.example',
+    orchestration: new OrchestrationClient('https://orchestration.example', chat.fetch),
+    tokens: (runId) => credentials.forRun(runId),
+    fetch: chat.fetch,
+    calls: new MemoryModelCalls(),
+  } as ConstructorParameters<typeof OrchestrationModels>[0]);
   const models: ModelProvider = {
+    settle: (runId) => (chatModels as ModelProvider).settle?.(runId) ?? Promise.resolve(),
     languageModel: (context) => {
       const { model, runId } = context;
       if (model === 'refused-mint') return refusingModels.languageModel(context);
+      if (model === 'orchestration') return chatModels.languageModel(context);
       if (model === 'mint') {
         // As a real provider does: the token is minted inside the request, from the run's grant.
         const scripted = scriptedModel(() => ({ text: 'Minted.' }));
@@ -541,6 +572,31 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(await runner.lookup(user, 'c-stop')).toBeNull();
   });
 
+  it('Stop cancels the orchestration workflow of the model call in flight, before the run ends', async () => {
+    const user = 'u-stop-model';
+    const workflowId = 'wf-3d8f60-stopped';
+    chat.next(workflowId, { text: 'Never finished.' }, { hold: true });
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-stop-model', model: 'orchestration', tier: 'paid' })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    const deadline = Date.now() + 20_000;
+    while (!chat.order.includes(`read ${workflowId}`)) {
+      if (Date.now() > deadline) throw new Error('the model call was never sent');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+    expect(ended(await events(runId, user)).status).toBe('stopped');
+    // Cancelled before the run journaled its end (so while its grant could still mint).
+    expect(chat.puts).toEqual([{ id: workflowId, body: { status: 'canceled' } }]);
+    expect(chat.workflows.get(workflowId)!.status).toBe('canceled');
+    expect(chat.posts.map((p) => p.id)).toEqual([workflowId]);
+  });
+
   it('a stop by key that arrives before its start makes that start end at once, stopped, without asking the model', async () => {
     const user = 'u-stopkey';
     const key = randomUUID();
@@ -638,7 +694,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       await fetch(`${base}/runs?conversationId=c-lookup`, { headers: as('u-lookup-other') }).then(
         (response) => response.json()
       )
-    ).toEqual({ v: 1, run: null });
+    ).toEqual({ v: 1, run: null, features: ['edit'] });
     expect(
       (await fetch(`${base}/runs/${runId}/events`, { headers: as('u-lookup-other') })).status
     ).toBe(404);
@@ -653,7 +709,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       await fetch(`${base}/runs?conversationId=c-lookup`, { headers: as(user) }).then((response) =>
         response.json()
       )
-    ).toEqual({ v: 1, run: null });
+    ).toEqual({ v: 1, run: null, features: ['edit'] });
   });
 
   it('a retry of a failed turn carries on from its finished steps without running their tools again', async () => {
@@ -682,6 +738,202 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const started = entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>;
     expect(started.parts).toMatchObject([{ kind: 'tool', toolName: 'record', state: 'done' }]);
     expect(rebuild(entries).at(-1)).toEqual({ kind: 'text', text: 'Recovered.' });
+  });
+
+  it('an edit replaces the latest message and drops its reply; the model hears only the edited words', async () => {
+    const user = 'u-edit';
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit', model: 'echo', content: 'Tell me about otters.' })
+    );
+    expect(first.body).toMatchObject({ features: ['edit'] });
+    expect(ended(await events(first.body!.runId as string, user)).status).toBe('done');
+    const asked = echoed.length;
+
+    const body = startBody({
+      conversationId: 'c-edit',
+      model: 'echo',
+      content: 'Tell me about beavers.',
+    });
+    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    expect(edit.status).toBe(201);
+    expect(edit.body).toMatchObject({ seq: 1, features: ['edit'] });
+    const entries = await events(edit.body!.runId as string, user);
+    const started = entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>;
+    expect(started).toMatchObject({
+      seq: 1,
+      user: { content: 'Tell me about beavers.' },
+      parts: [],
+    });
+    expect(ended(entries).status).toBe('done');
+    expect(rebuild(entries)).toEqual([{ kind: 'text', text: 'Heard: Tell me about beavers.' }]);
+    // Asked once, with one user message: the edited one, and nothing of the old exchange.
+    expect(echoed.slice(asked)).toHaveLength(1);
+    expect(echoed.at(-1)).toHaveLength(1);
+    expect(echoed.at(-1)![0]).toContain('Tell me about beavers.');
+    expect(JSON.stringify(echoed.at(-1))).not.toContain('otters');
+
+    const head = await store.load(user, 'c-edit');
+    expect(head).toMatchObject({
+      v: 2,
+      title: 'Tell me about beavers.',
+      titleSource: 'first-message',
+    });
+    expect(head!.turns).toHaveLength(1);
+    expect(head!.turns[0]).toMatchObject({
+      seq: 1,
+      user: { content: 'Tell me about beavers.', attachments: [] },
+      assistant: { status: 'done' },
+    });
+    expect(head!.turns[0]!.assistant!.messages).toEqual(ended(entries).messages);
+    expect(JSON.stringify(head)).not.toContain('otters');
+  });
+
+  it('an edit of a failed reply starts the turn afresh: nothing carries on from its saved steps', async () => {
+    const user = 'u-edit-failed';
+    flaky.failNext = true;
+    const recordsBefore = calls.record;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-failed', model: 'flaky', content: 'Record it.' })
+    );
+    expect(ended(await events(first.body!.runId as string, user))).toMatchObject({
+      status: 'error',
+      resumable: true,
+      steps: 1,
+    });
+    expect(calls.record).toBe(recordsBefore + 1);
+
+    const body = startBody({
+      conversationId: 'c-edit-failed',
+      model: 'flaky',
+      content: 'Record it twice.',
+    });
+    // `retry` beside `edit` changes nothing: an edit is never a retry.
+    const edit = await post('/runs', as(user), {
+      ...body,
+      turn: { ...body.turn, edit: true, retry: true },
+    });
+    expect(edit.status).toBe(201);
+    const entries = await events(edit.body!.runId as string, user);
+    // A retry would show the saved step and not run it again; an edit shows none and runs it anew.
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toEqual([]);
+    expect(ended(entries).status).toBe('done');
+    expect(calls.record).toBe(recordsBefore + 2);
+    const head = await store.load(user, 'c-edit-failed');
+    expect(
+      head!.turns.map((turn) => [turn.seq, turn.user.content, turn.assistant?.status])
+    ).toEqual([[1, 'Record it twice.', 'done']]);
+  });
+
+  it('a retry after an edit whose run was cancelled never carries on from the old message’s reply', async () => {
+    const user = 'u-edit-cancelled';
+    flaky.failNext = true;
+    const recordsBefore = calls.record;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-cancelled', model: 'flaky', content: 'Record it.' })
+    );
+    // The old message's reply failed with a step it could carry on from.
+    expect(ended(await events(first.body!.runId as string, user))).toMatchObject({
+      status: 'error',
+      resumable: true,
+    });
+
+    const body = startBody({
+      conversationId: 'c-edit-cancelled',
+      model: 'hang',
+      content: 'Wait instead.',
+    });
+    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    const editRun = edit.body!.runId as string;
+    await events(editRun, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+    // The edit's run ends without SUCCESS, so the newest SUCCESS run of this seq is the old message's.
+    await DBOS.cancelWorkflow(editRun);
+    await events(editRun, user);
+
+    const retry = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-edit-cancelled',
+        model: 'flaky',
+        content: 'Wait instead.',
+        retry: true,
+      })
+    );
+    expect(retry.status).toBe(201);
+    const entries = await events(retry.body!.runId as string, user);
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toEqual([]);
+    expect(ended(entries).status).toBe('done');
+    // The old reply's step is not carried on: its tool runs again for the edited message.
+    expect(calls.record).toBe(recordsBefore + 2);
+    const head = await store.load(user, 'c-edit-cancelled');
+    expect(head!.turns.map((turn) => [turn.user.content, turn.assistant?.status])).toEqual([
+      ['Wait instead.', 'done'],
+    ]);
+  });
+
+  it('refuses a retry that carries another message than the head holds, and saves nothing', async () => {
+    const user = 'u-retry-other';
+    flaky.failNext = true;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-retry-other', model: 'flaky', content: 'Record it.' })
+    );
+    expect(ended(await events(first.body!.runId as string, user)).status).toBe('error');
+    const before = await store.load(user, 'c-retry-other');
+
+    const other = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record something else.',
+        retry: true,
+      })
+    );
+    expect(other).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+    expect(await store.load(user, 'c-retry-other')).toEqual(before);
+    // The same message asked again is the ordinary retry (the control).
+    const same = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record it.',
+        retry: true,
+      })
+    );
+    expect(same.status).toBe(201);
+    expect(ended(await events(same.body!.runId as string, user)).status).toBe('done');
+  });
+
+  it('refuses an edit of a turn that is not the latest', async () => {
+    const user = 'u-edit-stale';
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'One.' })
+    );
+    await events(first.body!.runId as string, user);
+    const second = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'Two.', seq: 2 })
+    );
+    await events(second.body!.runId as string, user);
+    const body = startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'Uno.' });
+    const stale = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    expect(stale).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+    const head = await store.load(user, 'c-edit-stale');
+    expect(head!.turns.map((turn) => turn.user.content)).toEqual(['One.', 'Two.']);
   });
 
   it('writes a patch into the head', async () => {
@@ -782,6 +1034,54 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     );
     return runId;
   }
+
+  it('an old run’s end, written late by a stale reader, never lands on a newer retry of its turn', async () => {
+    const user = 'u-stale-end';
+    const conversationId = 'c-stale-end';
+    // Run A ended without journaling run-ended (here: ERROR) while nobody read its stream.
+    const runA = await parkedRun(user, conversationId, 'ERROR');
+    const recordsBefore = calls.record;
+    // Run B, a retry of the same turn from another tab; its save recording its call is held back.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const real = deps.store;
+    deps.store = {
+      load: (userId, id) => real.load(userId, id),
+      update: async (userId, id, change) => {
+        const next = change(await real.load(userId, id));
+        if (userId === user && JSON.stringify(next).includes('"toolName":"record"')) await held;
+        return real.update(userId, id, change);
+      },
+    };
+    try {
+      const retry = await post(
+        '/runs',
+        as(user),
+        // The message the head holds: a retry asks again for the reply to it.
+        startBody({ conversationId, model: 'tools', retry: true, content: 'Parked.' })
+      );
+      expect(retry.status).toBe(201);
+      const runB = retry.body!.runId as string;
+      expect(runB).not.toBe(runA);
+      await events(runB, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+
+      // The first tab wakes and reads A's stream: A's end is built from its status, not written over B.
+      expect(ended(await events(runA, user)).status).toBe('error');
+      const during = await store.load(user, conversationId);
+      expect(during!.turns[0]!.assistant).toMatchObject({ status: 'running' });
+
+      // B's saves and its end still land: its call runs, and the head ends with B's reply.
+      release();
+      expect(ended(await events(runB, user))).toMatchObject({ status: 'done' });
+      expect(calls.record).toBe(recordsBefore + 1);
+      const head = await store.load(user, conversationId);
+      expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(head!.turns[0]!.assistant)).toContain('Recorded.');
+    } finally {
+      release();
+      deps.store = real;
+    }
+  });
 
   it('a run DBOS cancelled at its deadline ends ran_out, in its stream and its head', async () => {
     const runId = await parkedRun('u-timed-out', 'c-timed-out', 'CANCELLED', true);
@@ -985,7 +1285,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const retry = await post(
       '/runs',
       as(user),
-      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true })
+      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true, content: 'Old run.' })
     );
     expect(retry.status).toBe(201);
     const entries = await events(retry.body!.runId as string, user);
@@ -1204,6 +1504,65 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       expect(await grants.forRun(runId)).toBeNull();
     } finally {
       deps.store = real;
+    }
+  });
+
+  it('a workflow handed off after its end was kept for repair never writes over it; the repair lands it', async () => {
+    const user = 'u-end-pending-handoff';
+    const conversationId = 'c-end-pending-handoff';
+    const real = deps.store;
+    // The reply's end fails every attempt (its retries included), then the store comes back.
+    let refuseEnds = true;
+    deps.store = {
+      load: (userId, id) => real.load(userId, id),
+      update: (userId, id, change) =>
+        real.update(userId, id, (current) => {
+          const next = change(current);
+          const reply = next?.turns.find((turn) => turn.seq === 1)?.assistant;
+          if (userId === user && reply && reply.status !== 'running' && refuseEnds)
+            throw new Error('orchestration is down');
+          return next;
+        }),
+    };
+    // The repair loop an earlier test started must not land the end before the assertion.
+    const pendingEnds = grants.pendingEnds.bind(grants);
+    grants.pendingEnds = async () => [];
+    // Once the end is kept for repair, the store is back and the workflow's ownership is taken away
+    // as a recovery re-enqueue does (no cancel): its next DBOS write fails with a conflict.
+    const markEndPending = grants.markEndPending.bind(grants);
+    let kept: string | undefined;
+    grants.markEndPending = async (runId, seq, reply) => {
+      await markEndPending(runId, seq, reply);
+      refuseEnds = false;
+      await sql(`update dbos.workflow_status set owner_xid = null where workflow_uuid = $1`, [
+        runId,
+      ]);
+      kept = runId;
+    };
+    let runId: string | undefined;
+    try {
+      const start = await post('/runs', as(user), startBody({ conversationId, model: 'tools' }));
+      runId = start.body!.runId as string;
+      const deadline = Date.now() + 45_000;
+      while (kept !== runId && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(kept).toBe(runId);
+      // Long enough for the conflict to reach the workflow's catch.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // Nothing wrote over the turn: the kept end is still waiting for its repair.
+      const waiting = (await store.load(user, conversationId))!.turns[0]!.assistant;
+      expect(waiting?.status, JSON.stringify(waiting)).toBe('running');
+
+      grants.pendingEnds = pendingEnds;
+      await runner.repairPendingEnds();
+      const reply = (await store.load(user, conversationId))!.turns[0]!.assistant;
+      expect(reply).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(reply)).toContain('Recorded.');
+    } finally {
+      grants.pendingEnds = pendingEnds;
+      grants.markEndPending = markEndPending;
+      deps.store = real;
+      if (runId) await DBOS.cancelWorkflow(runId).catch(() => undefined);
     }
   });
 

@@ -219,9 +219,26 @@ const buildFlagOn = async () => {
   return isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_BUILD);
 };
 
+/**
+ * Test/wait support: each database-reading gauge's `refresh` (see cachedRead), by metric name.
+ * Stored only, never called here, so it starts no read. Filled when this module graph creates the
+ * gauges; a graph that got another graph's gauges back has none.
+ */
+const gaugeRefresh = new Map<string, () => Promise<void>>();
+
+/**
+ * Test/wait support: resolves when the named database-reading gauge's read has finished. Returns
+ * the read in flight (as a scrape starts one), or starts one if none is.
+ */
+export function waitForTagIndexGaugeRead(name: string): Promise<void> {
+  const refresh = gaugeRefresh.get(name);
+  if (!refresh) throw new Error(`no database-reading tag-index gauge ${name} in this module graph`);
+  return refresh();
+}
+
 // Keyed on the first of the two gauges: a second graph finds it and creates neither.
 registerInstrumentationMetric(TAG_INDEX_METRICS.buildLastSuccess, () => {
-  const { gauges } = createTagIndexHeartbeatGauges(
+  const { gauges, refresh } = createTagIndexHeartbeatGauges(
     async () => {
       // Lazy, so importing this module (the metrics route does) does not load the DB graph.
       const [{ dbRead }, { readTagIndexHeartbeats }] = await Promise.all([
@@ -233,22 +250,24 @@ registerInstrumentationMetric(TAG_INDEX_METRICS.buildLastSuccess, () => {
     buildFlagOn,
     instrumentationRegistry
   );
+  gaugeRefresh.set(TAG_INDEX_METRICS.buildLastSuccess, refresh);
+  gaugeRefresh.set(TAG_INDEX_METRICS.retentionLastSuccess, refresh);
   return gauges[0];
 });
 
-registerInstrumentationMetric(
-  TAG_INDEX_METRICS.newestReadyCreated,
-  () =>
-    createNewestReadyGauge(
-      async () => {
-        const [{ dbRead }, { readNewestReadyCreatedAt }, { coocSqlOf }] = await Promise.all([
-          import('~/server/db/client'),
-          import('~/server/services/resource-intent-tags/heartbeat'),
-          import('~/server/services/resource-intent-cooc/store'),
-        ]);
-        return readNewestReadyCreatedAt(coocSqlOf(dbRead));
-      },
-      buildFlagOn,
-      instrumentationRegistry
-    ).gauge
-);
+registerInstrumentationMetric(TAG_INDEX_METRICS.newestReadyCreated, () => {
+  const { gauge, refresh } = createNewestReadyGauge(
+    async () => {
+      const [{ dbRead }, { readNewestReadyCreatedAt }, { coocSqlOf }] = await Promise.all([
+        import('~/server/db/client'),
+        import('~/server/services/resource-intent-tags/heartbeat'),
+        import('~/server/services/resource-intent-cooc/store'),
+      ]);
+      return readNewestReadyCreatedAt(coocSqlOf(dbRead));
+    },
+    buildFlagOn,
+    instrumentationRegistry
+  );
+  gaugeRefresh.set(TAG_INDEX_METRICS.newestReadyCreated, refresh);
+  return gauge;
+});

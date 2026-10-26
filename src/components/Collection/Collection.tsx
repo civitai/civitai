@@ -4,6 +4,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
+import { DsBadge } from '~/components/AppLayout/ShellDs/ContentDs';
 
 export function Collection<T>({
   items,
@@ -12,6 +13,7 @@ export function Collection<T>({
   spacing = 4,
   grouped = false,
   badgeProps,
+  ds,
 }: Props<T>) {
   const [opened, { open, close }] = useDisclosure();
 
@@ -35,6 +37,30 @@ export function Collection<T>({
           ))
         : null}
       {collapsedItems.length > 0 &&
+        ds &&
+        (!opened ? (
+          <DsBadge
+            component="button"
+            color="gray"
+            size="sm"
+            onClick={open}
+            style={{ cursor: 'pointer' }}
+          >
+            + {collapsedItems.length}
+          </DsBadge>
+        ) : (
+          <DsBadge
+            component="button"
+            color="gray"
+            size="sm"
+            onClick={close}
+            style={{ cursor: 'pointer' }}
+          >
+            - Hide
+          </DsBadge>
+        ))}
+      {collapsedItems.length > 0 &&
+        !ds &&
         (!opened ? (
           <Badge
             component="button"
@@ -71,6 +97,8 @@ type Props<T> = {
   spacing?: MantineSpacing;
   grouped?: boolean;
   badgeProps?: Omit<BadgeProps, 'children'>;
+  /** `@civitai/components` markup for the show/hide toggle (`modelPageDesignSystemMarkup`). Ignores `badgeProps`; needs `grouped` off. */
+  ds?: boolean;
 };
 
 // supposedly ~5.5x faster than createElement without the memo

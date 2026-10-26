@@ -37,7 +37,13 @@ import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
-import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
+import {
+  articleMetrics,
+  modelCollectionMetrics,
+  modelMetrics,
+  postMetrics,
+  userMetrics,
+} from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
@@ -2352,6 +2358,12 @@ async function bulkUnpublishModelsForBannedUser({
   };
 }
 
+export class AlreadyBannedError extends Error {
+  constructor(id: number) {
+    super(`User ${id} is already banned`);
+  }
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -2364,19 +2376,33 @@ export const toggleBan = async ({
   removeModels,
   removeComments,
   mediaBlockedByCaller,
+  keepProfileLinks,
+  onlyBan,
+  banActivity,
 }: ToggleBanUser & {
   userId: number;
   isModerator?: boolean;
   force?: boolean;
   /** Server-only, never in the input schema: the caller blocks the media itself, more strictly. */
   mediaBlockedByCaller?: boolean;
+  /** Server-only: a ban an unban may need to undo leaves the profile links, which no unban restores. */
+  keepProfileLinks?: boolean;
+  /**
+   * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
+   * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
+   * already banned rather than unbanning it, or replacing a ban that lands before the write.
+   */
+  onlyBan?: boolean;
+  /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
+  banActivity?: string;
 }) => {
   // Get user with username for search index deletion
-  const user = await getUserById({
-    id,
-    select: { bannedAt: true, meta: true, username: true, email: true },
-  });
+  const select = { bannedAt: true, meta: true, username: true, email: true } as const;
+  const user = onlyBan
+    ? await dbWrite.user.findUnique({ where: { id }, select })
+    : await getUserById({ id, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -2395,15 +2421,32 @@ export const toggleBan = async ({
         },
       };
 
-  const updatedUser = await updateUserById({
-    id,
-    data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
-    updateSource: 'toggleBan',
-  });
+  const data = { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta };
+  const updatedUser = onlyBan
+    ? await dbWrite.$transaction(async (tx) => {
+        const { count } = await tx.user.updateMany({ where: { id, bannedAt: null }, data });
+        if (!count) throw new AlreadyBannedError(id);
+        if (banActivity) {
+          await tx.modActivity.create({
+            data: { userId, entityType: 'user', entityId: id, activity: banActivity },
+          });
+        }
+        return tx.user.findUniqueOrThrow({ where: { id } });
+      })
+    : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
 
-  await invalidateSession(id, 'ban');
+  // The ban has committed: a throw here would skip every step below and fail an action that took.
+  await invalidateSession(id, 'ban').catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-invalidate-session',
+      userId: id,
+      message: (error as Error).message,
+      error,
+    })
+  );
 
   if (!bannedAt) {
     // Run cleanup operations in parallel groups
@@ -2428,13 +2471,15 @@ export const toggleBan = async ({
 
       // Wipe public-profile UserLink rows so banned users' off-site links
       // disappear immediately (replaces a manual Retool DELETE step).
-      dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-delete-user-links',
-          message: (error as Error).message,
-        })
-      ),
+      keepProfileLinks
+        ? Promise.resolve()
+        : dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-delete-user-links',
+              message: (error as Error).message,
+            })
+          ),
 
       // Revoke every live App Block instance of every block this user PUBLISHES.
       // `invalidateSession` above ends their own browser sessions; it does not touch
@@ -2831,7 +2876,8 @@ const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | 
   ((
     {
       [CollectionType.Article]: articleMetrics,
-      [CollectionType.Model]: modelMetrics,
+      // Model collectedCount is its own job; modelMetrics' queue never reached it.
+      [CollectionType.Model]: modelCollectionMetrics,
       [CollectionType.Post]: postMetrics,
     } as Partial<Record<CollectionType, typeof articleMetrics>>
   )[type]);
@@ -2910,7 +2956,9 @@ export const toggleBookmarked = async ({
     // ON CONFLICT DO NOTHING, so the race resolves at the DB with no throw. The return value isn't
     // used (the function returns `!exists`).
     await dbWrite.collectionItem.createMany({
-      data: [{ collectionId: collection.id, [entityProp]: entityId }],
+      // addedById is what the CDC handler attributes the collectedCount event to; without it the
+      // event is dropped and the bookmark never counts.
+      data: [{ collectionId: collection.id, [entityProp]: entityId, addedById: userId }],
       skipDuplicates: true,
     });
   }
