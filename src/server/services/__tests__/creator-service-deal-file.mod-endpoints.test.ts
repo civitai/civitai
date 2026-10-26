@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const service = vi.hoisted(() => ({
   listServiceDealFiles: vi.fn(),
   listServiceDealFileAccess: vi.fn(),
+  getServiceDealFileAccessRecordedSince: vi.fn(),
   resolveServiceDealFileDownload: vi.fn(),
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
@@ -30,6 +31,7 @@ beforeEach(() => {
   service.listServiceDealFiles.mockReset();
   service.listServiceDealFileAccess.mockReset();
   service.listServiceDealFileAccess.mockResolvedValue([]);
+  service.getServiceDealFileAccessRecordedSince.mockResolvedValue(null);
   service.resolveServiceDealFileDownload.mockReset();
   service.getServiceDealFileDownloadUrl.mockReset();
   service.listServiceDealFiles.mockImplementation(async ({ dealId }: { dealId: number }) => [
@@ -41,6 +43,7 @@ describe('deal-files', () => {
   it('lists one deal, tagging each row with its deal, as a moderator', async () => {
     expect(await files.handler({ dealId: 4 }, actor)).toEqual({
       items: [{ dealId: 4, id: 40, kind: 'Final', access: [] }],
+      accessRecordedSince: null,
     });
     expect(service.listServiceDealFiles).toHaveBeenCalledWith({
       dealId: 4,
@@ -77,6 +80,15 @@ describe('deal-files', () => {
       [50, ['Buyer:1']],
       [70, []],
     ]);
+  });
+
+  it('still lists the files when the access log cannot be read, with no access on them', async () => {
+    service.listServiceDealFileAccess.mockRejectedValue(new Error('relation does not exist'));
+    const result = await files.handler({ dealId: 4 }, actor);
+    expect(result).toEqual({
+      items: [{ dealId: 4, id: 40, kind: 'Final' }],
+      accessRecordedSince: null,
+    });
   });
 
   it('lists a page of deals in one call, each row carrying its own dealId', async () => {
@@ -141,7 +153,6 @@ describe('deal-file-url', () => {
       fileId: 12,
       userId: 99,
       isModerator: true,
-      // Recorded as a moderator fetch, so it can never read as the buyer having downloaded.
       moderatorFetch: true,
     });
   });

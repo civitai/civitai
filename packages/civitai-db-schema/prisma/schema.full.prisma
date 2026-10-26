@@ -10561,6 +10561,7 @@ enum ServiceDealAccessRole {
 
 enum ServiceDealAccessKind {
   Download
+  /// Reserved: nothing records it yet.
   PreviewView
   ModeratorFetch
 }
@@ -10772,8 +10773,8 @@ model ServiceDealFile {
   @@index([dealId, round, kind])
 }
 
-/// One row each time a deal file's download link is handed out: evidence for a dispute. No foreign
-/// keys, so a row outlives the file it names and can never block a delete.
+/// One row per download link handed out. No foreign keys on purpose: a row must outlive its deleted
+/// file, and must not block the delete.
 model ServiceDealFileAccess {
   id        Int                   @id @default(autoincrement())
   dealId    Int
@@ -10784,7 +10785,6 @@ model ServiceDealFileAccess {
   createdAt DateTime              @default(now())
 
   @@index([dealId, role, createdAt])
-  @@index([fileId])
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip

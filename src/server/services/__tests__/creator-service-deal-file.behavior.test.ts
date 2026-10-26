@@ -860,6 +860,10 @@ describe('who can download what', () => {
       target!.key,
       expect.objectContaining({ expiresIn: 300, fileName: 'result.zip' })
     );
+    // Let the unawaited access record land before the next test truncates.
+    await vi.waitFor(async () =>
+      expect(await q(`SELECT 1 FROM "ServiceDealFileAccess"`)).toHaveLength(1)
+    );
   });
 
   it.each(['Pending', 'Failed'] as const)(
@@ -1452,11 +1456,31 @@ describe('recording who took a file', () => {
 
   it("records the buyer's download of a final", async () => {
     const { dealId, finalId } = await completedDeal();
+    expect(await files.getServiceDealFileAccessRecordedSince()).toBeNull();
     await take(await download(finalId, BUYER));
     await vi.waitFor(async () =>
       expect(await accesses()).toEqual([
         { dealId, fileId: finalId, userId: BUYER, role: 'Buyer', kind: 'Download' },
       ])
+    );
+    expect(await files.getServiceDealFileAccessRecordedSince()).toBeInstanceOf(Date);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-service-file-access' })
+    );
+  });
+
+  it('records a moderator who is the buyer, fetching through the dispute tool, as the buyer', async () => {
+    const { finalId } = await completedDeal();
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: BUYER,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    await vi.waitFor(async () =>
+      expect((await accesses()).map((a) => [a.role, a.kind])).toEqual([['Buyer', 'ModeratorFetch']])
     );
   });
 

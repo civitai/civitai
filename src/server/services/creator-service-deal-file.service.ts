@@ -620,7 +620,8 @@ export async function resolveServiceDealFileDownload({
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
-  /** The moderator dispute tool, recorded apart from a party's own download even on their own deal. */
+  /** The moderator dispute tool. Recorded under the caller's own role on the deal, so a moderator
+   *  who is the buyer still reads as the buyer having the file. */
   moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
@@ -668,11 +669,7 @@ export async function resolveServiceDealFileDownload({
     else if (fileExtension(row.fileName) === 'zip') return null;
   }
   const role: ServiceDealAccessRole =
-    moderatorFetch || (row.sellerId !== userId && row.buyerId !== userId)
-      ? 'Moderator'
-      : row.sellerId === userId
-      ? 'Seller'
-      : 'Buyer';
+    row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   return {
     bucket: await getBucket(),
     key,
@@ -687,8 +684,7 @@ export async function resolveServiceDealFileDownload({
   };
 }
 
-/** Signs the link and records who took it. The record is dispute evidence but never worth a failed
- *  or slower download, so it is not awaited and a failure is only logged. */
+/** The access record is deliberately not awaited: a slow or failed write must never fail a download. */
 export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
   const { url } = await getGetUrlByKey(target.key, {
     bucket: target.bucket,
@@ -736,6 +732,13 @@ export async function listServiceDealFileAccess(dealIds: number[]) {
     WHERE "dealId" = ANY(${dealIds}::int[])
     GROUP BY "dealId", "fileId", "role", "kind"
     ORDER BY "dealId", "fileId", "role", "kind"`;
+}
+
+/** When the first access was recorded, or null if none has been: nothing before it was recorded. */
+export async function getServiceDealFileAccessRecordedSince() {
+  const [row] = await dbWrite.$queryRaw<{ createdAt: Date }[]>`
+    SELECT "createdAt" FROM "ServiceDealFileAccess" ORDER BY "id" LIMIT 1`;
+  return row?.createdAt ?? null;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -25,10 +25,11 @@ const entry = (
   lastAt = firstAt
 ): DealFileAccess => ({ role, kind, count, firstAt, lastAt });
 
-const DISPUTED = '2026-10-10T00:00:00Z';
+const RECORDING = '2026-10-01T00:00:00Z';
+const deal = { completedAt: '2026-10-02T00:00:00Z', disputeOpenedAt: '2026-10-10T00:00:00Z' };
 
 describe('buyerFinalDownloads', () => {
-  it('sums the buyer downloads across finals, with the first and last time', () => {
+  it('sums the buyer takes across finals, with the first and last time', () => {
     expect(
       buyerFinalDownloads(
         [
@@ -37,15 +38,26 @@ describe('buyerFinalDownloads', () => {
           ]),
           file(2, 'Final', [entry('Buyer', 'Download', 1, '2026-10-03T00:00:00Z')]),
         ],
-        DISPUTED
+        deal,
+        RECORDING
       )
     ).toEqual({
-      downloaded: true,
+      state: 'yes',
       count: 3,
       firstAt: '2026-10-03T00:00:00Z',
       lastAt: '2026-10-12T00:00:00Z',
       beforeDispute: true,
+      partial: false,
     });
+  });
+
+  it('counts a buyer who fetched through the dispute tool as the buyer', () => {
+    const result = buyerFinalDownloads(
+      [file(1, 'Final', [entry('Buyer', 'ModeratorFetch', 1, '2026-10-03T00:00:00Z')])],
+      deal,
+      RECORDING
+    );
+    expect(result).toMatchObject({ state: 'yes', count: 1 });
   });
 
   it('is never when only the seller, a moderator or a preview was taken', () => {
@@ -53,26 +65,56 @@ describe('buyerFinalDownloads', () => {
       buyerFinalDownloads(
         [
           file(1, 'Final', [
-            entry('Seller', 'Download', 4, '2026-10-01T00:00:00Z'),
-            entry('Moderator', 'ModeratorFetch', 2, '2026-10-01T00:00:00Z'),
-            entry('Moderator', 'Download', 1, '2026-10-01T00:00:00Z'),
+            entry('Seller', 'Download', 4, '2026-10-03T00:00:00Z'),
+            entry('Moderator', 'ModeratorFetch', 2, '2026-10-03T00:00:00Z'),
+            entry('Moderator', 'Download', 1, '2026-10-03T00:00:00Z'),
           ]),
-          file(2, 'Preview', [entry('Buyer', 'Download', 1, '2026-10-01T00:00:00Z')]),
+          file(2, 'Preview', [entry('Buyer', 'Download', 1, '2026-10-03T00:00:00Z')]),
         ],
-        DISPUTED
+        deal,
+        RECORDING
       )
-    ).toEqual({ downloaded: false });
+    ).toEqual({ state: 'never' });
   });
 
-  it('marks a first download after the dispute opened as not before it', () => {
+  it('is unknown, not never, for a deal completed before recording began', () => {
+    const early = { ...deal, completedAt: '2026-09-20T00:00:00Z' };
+    expect(buyerFinalDownloads([file(1, 'Final', [])], early, RECORDING)).toEqual({
+      state: 'unknown',
+      reason: 'before-recording',
+    });
+    expect(buyerFinalDownloads([file(1, 'Final', [])], deal, null)).toEqual({
+      state: 'unknown',
+      reason: 'before-recording',
+    });
+    // Never paid for: the buyer could not have downloaded, so "never" holds.
+    expect(
+      buyerFinalDownloads([file(1, 'Final', [])], { ...deal, completedAt: null }, null)
+    ).toEqual({ state: 'never' });
+  });
+
+  it('does not claim a download came after the dispute when earlier ones may be missing', () => {
+    const early = { ...deal, completedAt: '2026-09-20T00:00:00Z' };
     const result = buyerFinalDownloads(
       [file(1, 'Final', [entry('Buyer', 'Download', 1, '2026-10-11T00:00:00Z')])],
-      DISPUTED
+      early,
+      RECORDING
     );
-    expect(result).toMatchObject({ downloaded: true, beforeDispute: false });
+    expect(result).toMatchObject({ state: 'yes', beforeDispute: null, partial: true });
+    expect(
+      buyerFinalDownloads(
+        [file(1, 'Final', [entry('Buyer', 'Download', 1, '2026-10-11T00:00:00Z')])],
+        deal,
+        RECORDING
+      )
+    ).toMatchObject({ state: 'yes', beforeDispute: false, partial: false });
   });
 
-  it('is unknown, not never, when a final carries no access list', () => {
-    expect(buyerFinalDownloads([file(1, 'Final')], DISPUTED)).toEqual({ downloaded: null });
+  it('is unknown when a final carries no access list, and absent with no finals', () => {
+    expect(buyerFinalDownloads([file(1, 'Final')], deal, RECORDING)).toEqual({
+      state: 'unknown',
+      reason: 'not-reported',
+    });
+    expect(buyerFinalDownloads([file(1, 'Preview', [])], deal, RECORDING)).toBeNull();
   });
 });
