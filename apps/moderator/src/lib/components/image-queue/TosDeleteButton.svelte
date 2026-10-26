@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
+  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -13,6 +14,7 @@
     hidden,
     label = 'Remove',
     size = 'sm',
+    tip,
   }: {
     action: string;
     submit: SubmitFunction;
@@ -20,6 +22,8 @@
     hidden: Record<string, string | number>;
     label?: string;
     size?: 'sm' | 'default';
+    /** Hover text. Set it inside a `SelectionBar`. */
+    tip?: string;
   } = $props();
 
   let open = $state(false);
@@ -39,7 +43,7 @@
   };
 </script>
 
-<Popover.Root bind:open>
+{#snippet popoverTrigger()}
   <Popover.Trigger>
     {#snippet child({ props })}
       <Button {...props} variant="outline" {size} class="text-red-400 hover:text-red-300">
@@ -47,6 +51,25 @@
       </Button>
     {/snippet}
   </Popover.Trigger>
+{/snippet}
+
+<Popover.Root bind:open>
+  {#if tip}
+    <!-- The tooltip hangs off a wrapper, not the button: both primitives set `id`, `data-state` and
+         `aria-*` on their trigger, and on one element the tooltip's would overwrite the popover's. -->
+    <Tooltip.Provider delayDuration={300}>
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <span {...props} tabindex="-1" class="inline-flex">{@render popoverTrigger()}</span>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content class="max-w-xs">{tip}</Tooltip.Content>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  {:else}
+    {@render popoverTrigger()}
+  {/if}
   <Popover.Content align="end" class="w-72">
     <form method="POST" {action} use:enhance={close} class="flex flex-col gap-2">
       {#each Object.entries(hidden) as [name, value] (name)}

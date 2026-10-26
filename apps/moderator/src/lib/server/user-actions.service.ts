@@ -481,6 +481,9 @@ export async function bulkCommentAction(input: {
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
+// The main app's review endpoints reject more than 500 ids in one call.
+const REVIEW_BATCH = 500;
+
 export async function bulkReviewAction(input: {
   action: 'delete' | 'setExclude';
   reviewIds: number[];
@@ -490,17 +493,29 @@ export async function bulkReviewAction(input: {
 }): Promise<ActionResult> {
   if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
 
-  const body: Record<string, unknown> = { reviewIds: input.reviewIds };
-  if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
+  let affected = 0;
+  for (let i = 0; i < input.reviewIds.length; i += REVIEW_BATCH) {
+    const body: Record<string, unknown> = {
+      reviewIds: input.reviewIds.slice(i, i + REVIEW_BATCH),
+    };
+    if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
 
-  const result = await callModEndpoint(
-    input.action === 'delete' ? 'review/delete' : 'review/set-exclude',
-    body,
-    input.action === 'delete' ? 'Review delete' : 'Review exclude'
-  );
-  if (!result.ok) return result;
+    const result = await callModEndpoint(
+      input.action === 'delete' ? 'review/delete' : 'review/set-exclude',
+      body,
+      input.action === 'delete' ? 'Review delete' : 'Review exclude'
+    );
+    if (!result.ok) {
+      if (!affected) return result;
+      await logAction(`reviews:${input.action}:${affected}`, input.userId, input.moderatorId);
+      return {
+        ok: false,
+        error: `${affected} of ${input.reviewIds.length} went through, then: ${result.error} Reload.`,
+      };
+    }
+    affected += countOf(result.body, ['count']);
+  }
 
-  const affected = countOf(result.body, ['count']);
   if (affected === 0)
     return { ok: false, error: 'Nothing changed — those reviews may already be gone. Reload.' };
 

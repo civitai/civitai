@@ -49,7 +49,7 @@ describe('the /api/user-account bundle', () => {
     // The negative assertions above are satisfied by an empty file. This is what stops the guard
     // passing over an endpoint someone gutted.
     const source = bundleSource();
-    for (const fn of ['getReviews', 'getComments', 'getCosmetics', 'getShopPurchases'])
+    for (const fn of ['getReceivedReviews', 'getComments', 'getCosmetics', 'getShopPurchases'])
       expect(source).toContain(fn);
   });
 });
@@ -60,6 +60,7 @@ describe('the reads that were pulled out', () => {
     // feature, which is the other way to make a slow panel fast.
     expect(read('routes/api/user-reactions/[userId]/+server.ts')).toContain('getReactionTargets');
     expect(read('routes/api/user-buzz-balance/[userId]/+server.ts')).toContain('getBuzzBalance');
+    expect(read('routes/api/user-reviews/[userId]/+server.ts')).toContain('getReviews');
     expect(read('routes/api/user-review-image-counts/[userId]/+server.ts')).toContain(
       'getReviewImageCounts'
     );
@@ -70,6 +71,7 @@ describe('the reads that were pulled out', () => {
       'routes/api/user-reactions/[userId]/+server.ts',
       'routes/api/user-buzz-balance/[userId]/+server.ts',
       'routes/api/user-review-image-counts/[userId]/+server.ts',
+      'routes/api/user-reviews/[userId]/+server.ts',
     ]) {
       const source = read(route);
       expect(source).toContain('requireUserIdParam');
