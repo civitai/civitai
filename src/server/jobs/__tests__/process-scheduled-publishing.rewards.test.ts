@@ -201,17 +201,24 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockApply.mock.calls).toEqual([[{ postId: 1, posterId: 11 }]]);
   });
 
-  // The UPDATE's rows mean nothing once the transaction rolls back. Keep them the transaction's
-  // return value: catching this failure to carry on must not pay for posts that never published.
-  it('runs no post side effects when the publishing transaction fails', async () => {
+  // Guards a future edit, not today's code: an uncaught rollback already stops the run. The UPDATE's
+  // rows mean nothing once the transaction rolls back, so they stay its return value; a later catch
+  // added to carry the run on must not pay for, index or scan posts that never published.
+  it('keeps rolled-back posts out of the side effects even if the failure is caught', async () => {
     stubReads({ scheduled: [{ id: 1, userId: 10 }] });
     const txImpl = mockDbWrite.$transaction.getMockImplementation()!;
+    let flippedInTx: unknown;
     mockDbWrite.$transaction.mockImplementation(async (...args: unknown[]) => {
-      await (txImpl as (...a: unknown[]) => Promise<unknown>)(...args);
+      flippedInTx = await (txImpl as (...a: unknown[]) => Promise<unknown>)(...args);
       throw new Error('could not serialize access');
     });
     await runJob().catch(() => undefined);
+    // The UPDATE really returned the post inside the transaction, so its absence below is the rollback.
+    expect(flippedInTx).toEqual([{ id: 1, userId: 10 }]);
     expect(mockApply).not.toHaveBeenCalled();
+    expect(mockProcessEngagement).not.toHaveBeenCalled();
+    expect(mockDbWrite.image.findMany).not.toHaveBeenCalled();
+    expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();
     expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 
