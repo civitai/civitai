@@ -343,7 +343,10 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 type CreateReportProps = CreateReportInput & {
   userId: number;
   isModerator?: boolean;
-  /** The reporter may not vote on tags yet (see `requiresEmailVerification`). */
+  /**
+   * The reporter may not vote on tags yet (see `requiresEmailVerification`), so an NSFW report
+   * records no tag votes or rating request.
+   */
   emailVerificationRequired?: boolean;
   /**
    * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
@@ -546,9 +549,9 @@ export const createReport = async ({
             }
           }
 
-          await Promise.all([
-            createImageRatingRequest(),
-            !emailVerificationRequired &&
+          if (!emailVerificationRequired)
+            await Promise.all([
+              createImageRatingRequest(),
               addTagVotes({
                 userId,
                 type: type,
@@ -557,7 +560,7 @@ export const createReport = async ({
                 isModerator,
                 vote: 1,
               }),
-          ]);
+            ]);
 
           break;
         case ReportEntity.Article:
