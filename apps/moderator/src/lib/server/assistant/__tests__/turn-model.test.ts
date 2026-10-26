@@ -37,7 +37,7 @@ vi.mock('../store', () => ({
 }));
 
 const { executeTurn } = await import('../turn.service');
-const { TURN_TOKEN_BUDGET } = await import('../loop');
+const { BUDGET_NOTICE, TURN_TOKEN_BUDGET } = await import('../loop');
 
 const ask = (model: string | null, allowance = { spentUsd: 0, capUsd: 1, usedTokens: 0 }) =>
   executeTurn({
@@ -127,6 +127,16 @@ describe('executeTurn', () => {
       process.env.ASSISTANT_TURN_TOKEN_BUDGET = '40000';
       await ask(null);
       expect(system()).toContain('about 40,000 tokens');
+      // ...and the loop stops at that same number, not at the default the prompt no longer states.
+      complete.mockResolvedValueOnce({
+        message: {
+          content: null,
+          tool_calls: [{ id: 'c1', type: 'function', function: { name: 'none', arguments: '{}' } }],
+        },
+        finishReason: 'tool_calls',
+        usage: { prompt: 41_000, completion: 0 },
+      });
+      expect((await ask(null)).answer).toContain(BUDGET_NOTICE);
       delete process.env.ASSISTANT_TURN_TOKEN_BUDGET;
       await ask(null);
       expect(system()).toContain(`about ${TURN_TOKEN_BUDGET.toLocaleString('en-US')} tokens`);
