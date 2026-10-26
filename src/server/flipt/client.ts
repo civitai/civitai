@@ -19,6 +19,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
+  // The image feed without Meilisearch: every website and REST image-feed request goes to the feed
+  // service, whatever the three flags above say, and what the feed cannot serve is answered without
+  // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
+  // of falling back. Off or missing, the flags above decide as before.
+  FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
