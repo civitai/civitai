@@ -12,9 +12,14 @@ import type {
   StudioAutoLabelPollInput,
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { assertSafeMediaUrls, toOrchestratorError } from '~/server/services/training.service';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwNotFoundError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 
 /**
  * The Training Studio's auto-label, run on the system token: it is free to the user, and a workflow
@@ -27,6 +32,9 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 const WD_THRESHOLD = 0.35;
 const CAPTION_MAX_TOKENS = 300;
 const CAPTION_TEMPERATURE = 0.7;
+/** Items one user may auto-label per UTC day: p99 of per-user-day auto-label items over 14 days
+ *  (1,133 on 2026-10-26), rounded up. */
+export const STUDIO_AUTO_LABEL_DAILY_ITEMS = 1200;
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 type StudioAutoLabelMetadata = { kind: 'studio-auto-label'; userId: number };
@@ -45,6 +53,7 @@ export async function submitStudioAutoLabel({
   items,
 }: StudioAutoLabelSubmitInput & { userId: number }) {
   assertSafeMediaUrls(items.map((i) => i.mediaUrl));
+  const release = await reserveDailyItems(userId, items.length);
 
   const steps: WorkflowStepTemplate[] = items.map((item, i) => {
     const metadata = { key: item.key };
@@ -86,10 +95,35 @@ export async function submitStudioAutoLabel({
     client: internalOrchestratorClient,
     body: { tags: ['civitai', 'training-studio', 'auto-label'], metadata, steps, currencies: [] },
     query: { wait: 0 },
+  }).catch(async (e: unknown) => {
+    await release();
+    throw e;
   });
-  if (!data) toOrchestratorError(error);
-  if (!data.id) throw throwBadRequestError('Workflow submission returned no ID');
+  if (!data?.id) {
+    await release();
+    if (!data) toOrchestratorError(error);
+    throw throwBadRequestError('Workflow submission returned no ID');
+  }
   return { workflowId: data.id };
+}
+
+/** Counts `count` items against the user's UTC-day quota, refusing past it. Fails closed: if the
+ *  counter can't be read, nothing is submitted. Returns a release for a submit that didn't happen. */
+async function reserveDailyItems(userId: number, count: number) {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
+  const total = await sysRedis.incrBy(key, count);
+  if (total === count) await sysRedis.expire(key, 2 * 24 * 60 * 60);
+  const release = async () => {
+    await sysRedis.decrBy(key, count).catch(() => undefined);
+  };
+  if (total > STUDIO_AUTO_LABEL_DAILY_ITEMS) {
+    await release();
+    throw throwRateLimitError(
+      `You've reached today's auto-label limit (${STUDIO_AUTO_LABEL_DAILY_ITEMS} items). It resets at midnight UTC.`
+    );
+  }
+  return release;
 }
 
 export async function pollStudioAutoLabel({

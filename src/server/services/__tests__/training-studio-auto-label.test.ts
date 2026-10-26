@@ -12,10 +12,17 @@ vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: { system: true },
 }));
 
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import {
   pollStudioAutoLabel,
+  STUDIO_AUTO_LABEL_DAILY_ITEMS,
   submitStudioAutoLabel,
 } from '~/server/services/training-studio-auto-label.service';
+
+const counters = new Map<string, number>();
+const quotaKey = () =>
+  `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:7:${new Date().toISOString().slice(0, 10)}`;
 
 const items = [{ mediaUrl: 'https://image.example.com/a.png', key: 'a.png' }];
 
@@ -23,6 +30,15 @@ describe('Training Studio auto-label', () => {
   beforeEach(() => {
     orch.submitWorkflow.mockReset().mockResolvedValue({ data: { id: 'wf-1' } });
     orch.getWorkflow.mockReset();
+    counters.clear();
+    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) => {
+      counters.set(k, (counters.get(k) ?? 0) + n);
+      return counters.get(k)!;
+    });
+    redisMock.sysRedis.decrBy.mockImplementation(async (k: string, n: number) => {
+      counters.set(k, (counters.get(k) ?? 0) - n);
+      return counters.get(k)!;
+    });
   });
 
   it('submits with the system client and stamps the submitting user', async () => {
@@ -76,5 +92,29 @@ describe('Training Studio auto-label', () => {
       done: true,
       results: [{ key: 'a.png', status: 'succeeded', tags: ['dog', 'cat'] }],
     });
+  });
+
+  it("refuses a batch past the user's daily item quota, and doesn't count it", async () => {
+    counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
+    const two = [
+      { mediaUrl: 'https://image.example.com/a.png', key: 'a' },
+      { mediaUrl: 'https://image.example.com/b.png', key: 'b' },
+    ];
+    await expect(
+      submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items: two })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(orch.submitWorkflow).not.toHaveBeenCalled();
+    expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
+    // One more item still fits.
+    await submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items });
+    expect(orch.submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the items back when the submit fails', async () => {
+    orch.submitWorkflow.mockResolvedValue({ data: undefined, error: { status: 500 } });
+    await expect(
+      submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items })
+    ).rejects.toBeDefined();
+    expect(counters.get(quotaKey())).toBe(0);
   });
 });
