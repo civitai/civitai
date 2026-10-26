@@ -24,6 +24,8 @@ const SCANNED = 10; // live on the site
 const TOS = 11; // already blocked by a moderator
 const GRACED = 12; // blocked by an account-deletion grace block, prior state in metadata
 const UNHELD = 13;
+const HIDDEN = 14; // a live image the grace block hid
+const POST = 500;
 
 // The tables the hold migration's triggers attach to, as far as these cases need them.
 const BASE_SCHEMA = `
@@ -97,13 +99,18 @@ beforeAll(async () => {
   await db.exec(readFileSync(PRIOR_STATE_MIGRATION, 'utf8'));
   await db.exec(`
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${HELD_USER}, 'manual', 'test');
-    INSERT INTO "Image" (id, "userId", "nsfwLevel", ingestion, "blockedFor", metadata) VALUES
-      (${SCANNED}, ${HELD_USER}, 4, 'Scanned', NULL, '{}'),
-      (${TOS}, ${HELD_USER}, 16, 'Blocked', 'tos', '{}'),
-      (${GRACED}, ${HELD_USER}, 32, 'Blocked', 'moderated',
-        '{"accountDeletionPriorIngestion": "Pending", "accountDeletionPriorBlockedFor": "AiNotVerified"}'),
-      (${UNHELD}, ${PLAIN_USER}, 4, 'Scanned', NULL, '{}');
-    DELETE FROM "Image" WHERE id IN (${SCANNED}, ${TOS}, ${GRACED}, ${UNHELD});
+    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "blockedFor", metadata) VALUES
+      (${SCANNED}, ${HELD_USER}, ${POST}, 4, 'Scanned', NULL, '{}'),
+      (${TOS}, ${HELD_USER}, NULL, 16, 'Blocked', 'tos', '{}'),
+      -- The grace block's two shapes (remove-deleted-user-images.ts): a repointed AiNotVerified
+      -- block keeps its nsfwLevel; a hidden live image is set to the blocked level, its block
+      -- reason unrecorded.
+      (${GRACED}, ${HELD_USER}, NULL, 8, 'Blocked', 'moderated',
+        '{"accountDeletionPriorIngestion": "Blocked", "accountDeletionPriorBlockedFor": "AiNotVerified"}'),
+      (${HIDDEN}, ${HELD_USER}, NULL, 32, 'Blocked', 'moderated',
+        '{"accountDeletionPriorIngestion": "Scanned"}'),
+      (${UNHELD}, ${PLAIN_USER}, NULL, 4, 'Scanned', NULL, '{}');
+    DELETE FROM "Image" WHERE id IN (${SCANNED}, ${TOS}, ${GRACED}, ${HIDDEN}, ${UNHELD});
   `);
 });
 
@@ -115,9 +122,15 @@ describe('a kept image records what it was', () => {
       priorNsfwLevel: 4,
     });
     const { rows } = await db.query(
-      `SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = ${SCANNED}`
+      `SELECT ingestion, "blockedFor", "nsfwLevel", "postId" FROM "Image" WHERE id = ${SCANNED}`
     );
-    expect(rows).toEqual([{ ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 }]);
+    expect(rows).toEqual([
+      { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32, postId: null },
+    ]);
+    const kept = await db.query(
+      `SELECT "postId" FROM "EvidenceHoldImage" WHERE "imageId" = ${SCANNED}`
+    );
+    expect(kept.rows).toEqual([{ postId: POST }]);
   });
 
   it('an image a moderator already blocked: that block', async () => {
@@ -128,10 +141,18 @@ describe('a kept image records what it was', () => {
     });
   });
 
-  it('an account-deletion grace block: the state the grace block recorded', async () => {
+  it('a repointed grace block: the block the grace block recorded', async () => {
     expect(await priorOf(GRACED)).toEqual({
-      priorIngestion: 'Pending',
+      priorIngestion: 'Blocked',
       priorBlockedFor: 'AiNotVerified',
+      priorNsfwLevel: 8,
+    });
+  });
+
+  it('an image the grace block hid: its ingestion, and no block reason', async () => {
+    expect(await priorOf(HIDDEN)).toEqual({
+      priorIngestion: 'Scanned',
+      priorBlockedFor: null,
       priorNsfwLevel: 32,
     });
   });

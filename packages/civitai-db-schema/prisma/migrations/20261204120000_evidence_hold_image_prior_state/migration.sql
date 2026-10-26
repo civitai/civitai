@@ -10,8 +10,8 @@ ALTER TABLE "EvidenceHoldImage"
 
 -- As in 20261019220000_evidence_hold, plus the prior values. An account-deletion grace block had
 -- already blocked the row and kept its prior ingestion and block reason in metadata, which this
--- trigger removes, so those are recorded instead; its nsfwLevel was not kept, so the blocked level
--- is what is recorded for it.
+-- trigger removes, so those are recorded instead. Where it hid a live image it set the blocked
+-- nsfwLevel without keeping the old one, so the blocked level is what is recorded there.
 CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
 DECLARE
   graced BOOLEAN := (OLD."metadata" -> 'accountDeletionPriorIngestion') IS NOT NULL;
