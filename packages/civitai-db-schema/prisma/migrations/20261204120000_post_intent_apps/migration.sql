@@ -4,6 +4,8 @@
 -- with the tables missing, app mode is refused and open mode is unaffected.
 -- The per-app approval rows are data, not schema, and are inserted separately by a reviewer.
 
+SET lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS "app_post_intents" (
   "listing_id"     TEXT        NOT NULL PRIMARY KEY REFERENCES "app_listings"("id") ON DELETE CASCADE,
   "host"           TEXT        NOT NULL,
@@ -31,5 +33,9 @@ CREATE TABLE IF NOT EXISTS "post_intent_manifests" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "post_intent_manifests_manifest_url_key"
   ON "post_intent_manifests" ("manifest_url");
-CREATE INDEX IF NOT EXISTS "post_intent_manifests_unposted_expiry_idx"
-  ON "post_intent_manifests" ("claim_expires_at") WHERE "posted_at" IS NULL;
+CREATE INDEX IF NOT EXISTS "post_intent_manifests_claim_expires_at_idx"
+  ON "post_intent_manifests" ("claim_expires_at");
+CREATE INDEX IF NOT EXISTS "post_intent_manifests_user_id_idx"
+  ON "post_intent_manifests" ("user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "app_post_intents_host_path_prefix_key"
+  ON "app_post_intents" ("host", "path_prefix");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppPostIntentRecord } from '~/server/services/post-intent/post-intent.logic';
 import {
+  canonicalManifestUrl,
   checkManifest,
   isUnderAppPrefix,
   matchAppRecord,
@@ -107,7 +108,31 @@ describe('sniffIntentMedia', () => {
     expect(sniffIntentMedia(b)?.mimeType).toBe(mimeType);
   });
 
+  it('does not take a HEIC still for an MP4 video', () => {
+    expect(sniffIntentMedia(bytes(0, 0, 0, 0x18, ...Buffer.from('ftypheic')))).toBeNull();
+  });
+
   it('refuses html served under an image name', () => {
     expect(sniffIntentMedia(new TextEncoder().encode('<!doctype html><html></html>'))).toBeNull();
+  });
+});
+
+describe('canonicalManifestUrl', () => {
+  const canonical = 'https://games.civitai.com/api/share/sh_1.json';
+  it.each([
+    canonical,
+    `${canonical}#again`,
+    'https://GAMES.Civitai.com/api/share/sh_1.json',
+    'https://games.civitai.com:443/api/share/sh_1.json',
+  ])('maps %s to one key', (raw) => {
+    expect(canonicalManifestUrl(raw)).toBe(canonical);
+  });
+
+  it.each([
+    `${canonical}?a=1`,
+    'https://games.civitai.com/api/share/sh%5F1.json',
+    'https://games.civitai.com/api/share/%25.json',
+  ])('refuses %s', (raw) => {
+    expect(canonicalManifestUrl(raw)).toBeNull();
   });
 });

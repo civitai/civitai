@@ -79,6 +79,8 @@ export type SafeFetchOptions = {
   maxRedirects?: number;
   /** Deadline for the TLS connection to be established, within `timeoutMs`. */
   connectTimeoutMs?: number;
+  /** A tighter cap chosen from the body's first bytes (e.g. by file type), applied as it streams. */
+  capFromHead?: { headBytes: number; maxBytes: (head: Buffer) => number };
 };
 
 export type SafeFetchResult = {
@@ -242,9 +244,11 @@ function mapTransportError(err: unknown): SafeFetchError {
 function readCappedBody(
   stream: IncomingMessage,
   contentLength: string | undefined,
-  maxBytes: number,
-  signal: AbortSignal
+  initialMaxBytes: number,
+  signal: AbortSignal,
+  capFromHead?: SafeFetchOptions['capFromHead']
 ): Promise<Buffer> {
+  let maxBytes = initialMaxBytes;
   const declared = Number(contentLength);
   if (Number.isFinite(declared) && declared > maxBytes) {
     stream.destroy();
@@ -272,9 +276,14 @@ function readCappedBody(
       reject(e);
     };
     const onAbort = () => fail(new SafeFetchError('timeout', 'request timed out'));
+    let headChecked = !capFromHead;
     const onData = (chunk: Buffer) => {
       if (settled) return;
       total += chunk.byteLength;
+      if (!headChecked && capFromHead && total >= capFromHead.headBytes) {
+        headChecked = true;
+        maxBytes = Math.min(maxBytes, capFromHead.maxBytes(Buffer.concat([...chunks, chunk])));
+      }
       if (total > maxBytes) {
         fail(new SafeFetchError('too_large', `body exceeds cap ${maxBytes}`));
         return;
@@ -371,7 +380,8 @@ export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<Sa
         res.stream,
         headerValue(res.headers, 'content-length'),
         opts.maxBytes,
-        controller.signal
+        controller.signal,
+        opts.capFromHead
       );
       return { finalUrl: parsed.toString(), contentType, bytes };
     } finally {

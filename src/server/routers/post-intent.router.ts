@@ -12,7 +12,7 @@ const manifestInput = z.object({ manifestUrl: z.url() });
 function toTrpcError(err: unknown): never {
   if (err instanceof PostIntentRefusal) {
     const code =
-      err.code === 'rate-limited'
+      err.code === 'rate-limited' || err.code === 'busy'
         ? 'TOO_MANY_REQUESTS'
         : err.code === 'already-posted' || err.code === 'claimed'
         ? 'CONFLICT'

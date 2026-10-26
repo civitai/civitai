@@ -10,7 +10,9 @@ import type {
 } from '~/server/services/post-intent/post-intent.logic';
 import {
   buildIntentExternalMeta,
+  canonicalManifestUrl,
   checkManifest,
+  isHeifBrand,
   matchAppRecord,
   maxBytesFor,
   POST_INTENT_CLAIM_TTL_MS,
@@ -22,11 +24,12 @@ import {
   sniffIntentMedia,
 } from '~/server/services/post-intent/post-intent.logic';
 import { findOrCreateTagsByName } from '~/server/services/tag.service';
-import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
+import { getToolByDomain } from '~/server/services/tool.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { SafeFetchError, safeFetch } from '~/server/utils/safe-fetch';
 import { constants } from '~/server/common/constants';
+import { plainTextToPostHtml } from '~/shared/utils/post-intent';
 import { EntityType, JobQueueType, MediaType } from '~/shared/utils/prisma/enums';
 import {
   deleteManyObjects,
@@ -38,6 +41,8 @@ const APPROVED = 'approved';
 
 export const POST_INTENT_USER_STAGE_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 export const POST_INTENT_APP_STAGE_LIMIT = { max: 2000, windowSeconds: 60 * 60 };
+const STAGE_LOCK_SECONDS = 15 * 60;
+const SWEEP_BUDGET_MS = 4 * 60 * 1000;
 
 export type StagedIntentMedia = {
   key: string;
@@ -111,7 +116,30 @@ async function checkStageRateLimit(key: string, limit: { max: number; windowSeco
     throw new PostIntentRefusal('rate-limited', 'Too many shares right now. Try again later.');
 }
 
-async function fetchFromApp(url: string, maxBytes: number, allowedContentTypes: string[]) {
+/** Holds `key` for one staging at a time; returns a release function, or null if it is held. */
+async function acquireStageLock(key: string): Promise<(() => Promise<void>) | null> {
+  const redisKey = `${REDIS_KEYS.POST_INTENT.RATE_LIMIT}:lock:${key}` as never;
+  const acquired = await redis
+    .set(redisKey, '1', { NX: true, EX: STAGE_LOCK_SECONDS })
+    .catch(() => null);
+  if (!acquired) return null;
+  return async () => {
+    await redis.del(redisKey).catch(() => null);
+  };
+}
+
+function toCanonical(manifestUrl: string) {
+  const canonical = canonicalManifestUrl(manifestUrl);
+  if (!canonical) throw new PostIntentRefusal('bad-manifest', 'The share link is not valid.');
+  return canonical;
+}
+
+async function fetchFromApp(
+  url: string,
+  maxBytes: number,
+  allowedContentTypes: string[],
+  capFromHead?: Parameters<typeof safeFetch>[1]['capFromHead']
+) {
   try {
     return await safeFetch(url, {
       maxBytes,
@@ -119,6 +147,7 @@ async function fetchFromApp(url: string, maxBytes: number, allowedContentTypes: 
       maxRedirects: 0,
       timeoutMs: POST_INTENT_ITEM_TIMEOUT_MS,
       connectTimeoutMs: POST_INTENT_CONNECT_TIMEOUT_MS,
+      capFromHead,
     });
   } catch (err) {
     if (err instanceof SafeFetchError && err.code === 'too_large')
@@ -127,8 +156,8 @@ async function fetchFromApp(url: string, maxBytes: number, allowedContentTypes: 
   }
 }
 
-async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]) {
-  if (!staged.length) return;
+async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]): Promise<boolean> {
+  if (!staged.length) return true;
   try {
     const { s3, bucket } = await getImageUploadBackend();
     await deleteManyObjects(
@@ -136,6 +165,7 @@ async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]) {
       staged.map((s) => s.key),
       s3
     );
+    return true;
   } catch (err) {
     logToAxiom({
       name: 'post-intent',
@@ -143,13 +173,22 @@ async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]) {
       message: 'failed to delete staged objects',
       error: err instanceof Error ? err.message : String(err),
     }).catch(() => null);
+    return false;
   }
 }
 
 async function stageMediaItem(
   item: PostIntentManifest['media'][number]
 ): Promise<StagedIntentMedia> {
-  const { bytes } = await fetchFromApp(item.url, POST_INTENT_VIDEO_MAX_BYTES, ['']);
+  const { bytes } = await fetchFromApp(item.url, POST_INTENT_VIDEO_MAX_BYTES, [''], {
+    headBytes: 16,
+    maxBytes: (head) => maxBytesFor(sniffIntentMedia(head)?.type ?? 'image'),
+  });
+  if (isHeifBrand(bytes))
+    throw new PostIntentRefusal(
+      'unsupported-media',
+      'HEIC and AVIF images are not supported. Share JPEG, PNG, WebP or GIF.'
+    );
   const sniffed = sniffIntentMedia(bytes);
   if (!sniffed)
     throw new PostIntentRefusal('unsupported-media', 'A shared file is not a supported type.');
@@ -222,7 +261,7 @@ function toStagedIntent(
  * this user. Nothing is visible on the site until {@link publishIntent} creates the post.
  */
 export async function stageIntent({
-  manifestUrl,
+  manifestUrl: rawManifestUrl,
   userId,
   now = new Date(),
 }: {
@@ -230,30 +269,76 @@ export async function stageIntent({
   userId: number;
   now?: Date;
 }): Promise<StagedIntent> {
+  const manifestUrl = toCanonical(rawManifestUrl);
   const record = await resolveAppForManifestUrl(manifestUrl);
   if (!record)
     throw new PostIntentRefusal('not-approved', 'This share link is not from an approved app.');
 
   const existing = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
   if (existing) {
-    if (existing.postedAt)
-      throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
-    const live = existing.claimExpiresAt.getTime() > now.getTime();
-    if (live && existing.userId !== userId)
-      throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
-    if (live)
-      return toStagedIntent(
-        manifestUrl,
-        record,
-        existing.manifest as PostIntentManifest,
-        existing.staged as StagedIntentMedia[]
-      );
+    const resumed = resumeClaim(existing, manifestUrl, userId, now, record);
+    if (resumed) return resumed;
     await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]);
   }
 
   await checkStageRateLimit(`user:${userId}`, POST_INTENT_USER_STAGE_LIMIT);
-  await checkStageRateLimit(`app:${record.appId}`, POST_INTENT_APP_STAGE_LIMIT);
 
+  const releaseUser = await acquireStageLock(`user:${userId}`);
+  if (!releaseUser)
+    throw new PostIntentRefusal('busy', 'Another share is still loading. Try again in a moment.');
+  const releaseUrl = await acquireStageLock(`url:${manifestUrl}`);
+  try {
+    if (!releaseUrl)
+      throw new PostIntentRefusal('busy', 'This share is still loading. Try again in a moment.');
+    return await fetchAndStage({ manifestUrl, record, userId, now });
+  } finally {
+    await releaseUser();
+    await releaseUrl?.();
+  }
+}
+
+type ManifestRow = {
+  id: number;
+  userId: number;
+  postedAt: Date | null;
+  claimExpiresAt: Date;
+  manifest: unknown;
+  staged: unknown;
+};
+
+/** The staged intent to hand back when `userId` reopens a live claim of their own. */
+function resumeClaim(
+  row: ManifestRow,
+  manifestUrl: string,
+  userId: number,
+  now: Date,
+  record: AppPostIntentRecord
+): StagedIntent | null {
+  if (row.postedAt)
+    throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+  const live = row.claimExpiresAt.getTime() > now.getTime();
+  if (live && row.userId !== userId)
+    throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
+  if (!live) return null;
+  return toStagedIntent(
+    manifestUrl,
+    record,
+    row.manifest as PostIntentManifest,
+    row.staged as StagedIntentMedia[]
+  );
+}
+
+async function fetchAndStage({
+  manifestUrl,
+  record,
+  userId,
+  now,
+}: {
+  manifestUrl: string;
+  record: AppPostIntentRecord;
+  userId: number;
+  now: Date;
+}): Promise<StagedIntent> {
   const { bytes } = await fetchFromApp(manifestUrl, POST_INTENT_MANIFEST_MAX_BYTES, [
     'application/json',
   ]);
@@ -264,6 +349,7 @@ export async function stageIntent({
     throw new PostIntentRefusal('bad-manifest', 'The share link is not valid.');
   }
   const manifest = checkManifest(json, record, now);
+  await checkStageRateLimit(`app:${record.appId}`, POST_INTENT_APP_STAGE_LIMIT);
 
   const staged: StagedIntentMedia[] = [];
   try {
@@ -281,25 +367,34 @@ export async function stageIntent({
     });
   } catch (err) {
     await deleteStagedObjects(staged);
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const winner = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
+      const resumed = winner && resumeClaim(winner, manifestUrl, userId, now, record);
+      if (resumed) return resumed;
       throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
+    }
     throw err;
   }
   return toStagedIntent(manifestUrl, record, manifest, staged);
 }
 
+/**
+ * Release an unposted claim: mark it released so it can no longer be published, delete its stored
+ * files, then delete the row. The row stays (released) if the files could not be deleted, so the
+ * sweep retries rather than orphaning them.
+ */
 async function releaseClaim(id: number, staged: StagedIntentMedia[]) {
-  const { count } = await dbWrite.postIntentManifest.deleteMany({
+  const { count } = await dbWrite.postIntentManifest.updateMany({
     where: { id, postedAt: null },
+    data: { claimExpiresAt: new Date(0) },
   });
-  if (count) await deleteStagedObjects(staged);
+  if (!count) return;
+  if (!(await deleteStagedObjects(staged))) return;
+  await dbWrite.postIntentManifest.deleteMany({ where: { id, postedAt: null } });
 }
 
 async function resolveToolId(record: AppPostIntentRecord) {
-  return (
-    (await getToolByName(record.listingName))?.id ??
-    (await getToolByDomain(`https://${record.host}/`))?.id
-  );
+  return (await getToolByDomain(`https://${record.host}/`))?.id;
 }
 
 /**
@@ -307,7 +402,7 @@ async function resolveToolId(record: AppPostIntentRecord) {
  * creates the same post as a draft for the editor. The manifest URL can produce one post only.
  */
 export async function publishIntent({
-  manifestUrl,
+  manifestUrl: rawManifestUrl,
   userId,
   title,
   description,
@@ -323,6 +418,7 @@ export async function publishIntent({
   publish: boolean;
   now?: Date;
 }): Promise<{ postId: number; returnUrl?: string }> {
+  const manifestUrl = toCanonical(rawManifestUrl);
   const claim = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
   if (claim?.postedAt)
     throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
@@ -343,61 +439,71 @@ export async function publishIntent({
     ? Object.values(await findOrCreateTagsByName(tags)).filter((t): t is number => t !== undefined)
     : [];
 
+  const detail = description ? plainTextToPostHtml(description) : null;
   const { createImage } = await import('~/server/services/image.service');
   const imageIds: number[] = [];
-  for (const item of staged) {
-    const image = await createImage({
-      url: item.key,
-      type: item.type === 'video' ? MediaType.video : MediaType.image,
-      mimeType: item.mimeType,
-      width: item.width,
-      height: item.height,
-      metadata: { size: item.size },
-      meta: { external } as never,
-      toolIds: toolId ? [toolId] : undefined,
-      userId,
-    });
-    imageIds.push(image.id);
-  }
-
-  const publishedAt = publish ? now : null;
-  const post = await dbWrite.$transaction(async (tx) => {
-    const created = await tx.post.create({
-      data: {
+  let post: { id: number };
+  try {
+    for (const item of staged) {
+      const image = await createImage({
+        url: item.key,
+        type: item.type === 'video' ? MediaType.video : MediaType.image,
+        mimeType: item.mimeType,
+        width: item.width,
+        height: item.height,
+        metadata: { size: item.size },
+        meta: { external } as never,
+        toolIds: toolId ? [toolId] : undefined,
         userId,
-        title: title || null,
-        detail: description || null,
-        publishedAt,
-        metadata: { [BLOCK_POST_APP_ID_META_KEY]: record.appId },
-        tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
-      },
-      select: { id: true },
-    });
-
-    for (let index = 0; index < imageIds.length; index++) {
-      const adopted = await tx.image.updateMany({
-        where: { id: imageIds[index], userId, postId: null },
-        data: { postId: created.id, index },
       });
-      if (adopted.count !== 1)
-        throw new PostIntentRefusal('not-staged', 'Open the share link again to continue.');
+      imageIds.push(image.id);
     }
 
-    const marked = await tx.postIntentManifest.updateMany({
-      where: { id: claim.id, userId, postedAt: null },
-      data: { postId: created.id, postedAt: now },
-    });
-    if (marked.count !== 1)
-      throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+    const publishedAt = publish ? now : null;
+    post = await dbWrite.$transaction(async (tx) => {
+      const created = await tx.post.create({
+        data: {
+          userId,
+          title: title || null,
+          detail,
+          publishedAt,
+          metadata: { [BLOCK_POST_APP_ID_META_KEY]: record.appId },
+          tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
+        },
+        select: { id: true },
+      });
 
-    if (publish)
-      await tx.$executeRaw`
-        INSERT INTO "JobQueue" ("entityId", "entityType", "type")
-        VALUES (${created.id}::integer, ${EntityType.Post}::"EntityType", ${JobQueueType.UpdateNsfwLevel}::"JobQueueType")
-        ON CONFLICT DO NOTHING
-      `;
-    return created;
-  });
+      for (let index = 0; index < imageIds.length; index++) {
+        const adopted = await tx.image.updateMany({
+          where: { id: imageIds[index], userId, postId: null },
+          data: { postId: created.id, index },
+        });
+        if (adopted.count !== 1)
+          throw new PostIntentRefusal('not-staged', 'Open the share link again to continue.');
+      }
+
+      const marked = await tx.postIntentManifest.updateMany({
+        where: { id: claim.id, userId, postedAt: null, claimExpiresAt: { gt: new Date() } },
+        data: { postId: created.id, postedAt: now },
+      });
+      if (marked.count !== 1)
+        throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
+
+      if (publish)
+        await tx.$executeRaw`
+          INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+          VALUES (${created.id}::integer, ${EntityType.Post}::"EntityType", ${JobQueueType.UpdateNsfwLevel}::"JobQueueType")
+          ON CONFLICT DO NOTHING
+        `;
+      return created;
+    });
+  } catch (err) {
+    if (imageIds.length)
+      await dbWrite.image
+        .deleteMany({ where: { id: { in: imageIds }, userId, postId: null } })
+        .catch(() => null);
+    throw err;
+  }
 
   if (publish) {
     if (title || description) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
@@ -424,13 +530,28 @@ export async function publishIntent({
   return { postId: post.id, returnUrl: publish ? manifest.returnUrl : undefined };
 }
 
-/** Release unposted claims whose time has run out and delete their stored files. */
+/** Release unposted claims whose time has run out, in batches, within a time budget. */
 export async function sweepExpiredIntentClaims(now = new Date(), batch = 200) {
-  const expired = await dbWrite.postIntentManifest.findMany({
-    where: { postedAt: null, claimExpiresAt: { lt: now } },
-    select: { id: true, staged: true },
-    take: batch,
-  });
-  for (const row of expired) await releaseClaim(row.id, row.staged as StagedIntentMedia[]);
-  return expired.length;
+  const deadline = Date.now() + SWEEP_BUDGET_MS;
+  let released = 0;
+  let lastId = 0;
+  while (Date.now() < deadline) {
+    let expired;
+    try {
+      expired = await dbWrite.postIntentManifest.findMany({
+        where: { id: { gt: lastId }, postedAt: null, claimExpiresAt: { lt: now } },
+        select: { id: true, staged: true },
+        orderBy: { id: 'asc' },
+        take: batch,
+      });
+    } catch (err) {
+      if (isMissingTable(err)) return released;
+      throw err;
+    }
+    for (const row of expired) await releaseClaim(row.id, row.staged as StagedIntentMedia[]);
+    released += expired.length;
+    if (expired.length < batch) break;
+    lastId = expired[expired.length - 1].id;
+  }
+  return released;
 }

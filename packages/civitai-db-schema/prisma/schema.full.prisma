@@ -3578,6 +3578,7 @@ model AppPostIntent {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  @@unique([host, pathPrefix], map: "app_post_intents_host_path_prefix_key")
   @@map("app_post_intents")
 }
 
@@ -3595,7 +3596,8 @@ model PostIntentManifest {
   postedAt       DateTime? @map("posted_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([claimExpiresAt], map: "post_intent_manifests_unposted_expiry_idx")
+  @@index([claimExpiresAt], map: "post_intent_manifests_claim_expires_at_idx")
+  @@index([userId], map: "post_intent_manifests_user_id_idx")
   @@map("post_intent_manifests")
 }
 

@@ -25,6 +25,7 @@ export type PostIntentRefusalCode =
   | 'too-large'
   | 'video-limits'
   | 'rate-limited'
+  | 'busy'
   | 'not-staged';
 
 export class PostIntentRefusal extends Error {
@@ -53,8 +54,8 @@ function parseHttpsUrl(raw: string): URL | null {
   return url;
 }
 
-/** Percent-encoded separators or dots could be decoded into a different path by the app's server. */
-const ENCODED_PATH_TRICK = /%(2e|2f|5c)/i;
+/** An app's server may decode percent-encoding into a different path, so none is accepted. */
+const hasPercentEncoding = (pathname: string) => pathname.includes('%');
 
 export function isUnderAppPrefix(
   raw: string,
@@ -63,10 +64,21 @@ export function isUnderAppPrefix(
   const url = parseHttpsUrl(raw);
   if (!url) return false;
   if (url.hostname !== record.host) return false;
-  if (ENCODED_PATH_TRICK.test(url.pathname) || url.pathname.includes('\\')) return false;
+  if (hasPercentEncoding(url.pathname) || url.pathname.includes('\\')) return false;
   return (
     url.pathname.startsWith(record.pathPrefix) && url.pathname.length > record.pathPrefix.length
   );
+}
+
+/**
+ * The one form a manifest URL is looked up and stored under, so variants of the same file (a
+ * fragment, host case) cannot claim or post it again. Null when the URL has a query or encoding.
+ */
+export function canonicalManifestUrl(raw: string): string | null {
+  const url = parseHttpsUrl(raw);
+  if (!url || url.search || hasPercentEncoding(url.pathname) || url.pathname.includes('\\'))
+    return null;
+  return `https://${url.hostname}${url.pathname}`;
 }
 
 export function isOnAppHost(raw: string, record: Pick<AppPostIntentRecord, 'host'>) {
@@ -141,8 +153,7 @@ export function sniffIntentMedia(bytes: Uint8Array): SniffedIntentMedia | null {
     minLength: 12,
   });
   if (image) return { type: 'image', mimeType: IMAGE_MIME[image] };
-  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp')
-    return { type: 'video', mimeType: 'video/mp4' };
+  if (isoBrand(bytes) && !isHeifBrand(bytes)) return { type: 'video', mimeType: 'video/mp4' };
   if (
     bytes.length >= 4 &&
     bytes[0] === 0x1a &&
@@ -152,6 +163,32 @@ export function sniffIntentMedia(bytes: Uint8Array): SniffedIntentMedia | null {
   )
     return { type: 'video', mimeType: 'video/webm' };
   return null;
+}
+
+const HEIF_BRANDS = new Set([
+  'heic',
+  'heix',
+  'hevc',
+  'hevx',
+  'heim',
+  'heis',
+  'hevm',
+  'hevs',
+  'mif1',
+  'msf1',
+  'avif',
+  'avis',
+]);
+
+function isoBrand(bytes: Uint8Array): string | null {
+  if (bytes.length < 12 || String.fromCharCode(...bytes.subarray(4, 8)) !== 'ftyp') return null;
+  return String.fromCharCode(...bytes.subarray(8, 12));
+}
+
+/** HEIC and AVIF stills share the MP4 container signature; they are images the site cannot take. */
+export function isHeifBrand(bytes: Uint8Array) {
+  const brand = isoBrand(bytes);
+  return !!brand && HEIF_BRANDS.has(brand);
 }
 
 export function maxBytesFor(type: SniffedIntentMedia['type']) {

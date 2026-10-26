@@ -52,6 +52,14 @@ export function appendSourceLink(description: string | undefined, link: string |
   return description ? `${description}\n${source}` : source;
 }
 
+/** Plain text typed in the compose sheet, as post detail HTML: escaped, one paragraph per line. */
+export function plainTextToPostHtml(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join('');
+}
+
 export function withPostedParam(returnUrl: string, postId: number) {
   const url = new URL(returnUrl);
   url.searchParams.set('posted', String(postId));

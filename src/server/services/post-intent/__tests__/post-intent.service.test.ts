@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -275,6 +276,93 @@ describe('stageIntent', () => {
   });
 });
 
+describe('stageIntent: one manifest, one key', () => {
+  const postedOnlyForCanonical = () =>
+    dbMock.dbWrite.postIntentManifest.findUnique.mockImplementation(async (args: any) =>
+      args.where.manifestUrl === MANIFEST_URL
+        ? { id: 1, userId: 7, postedAt: now, claimExpiresAt: now, manifest: {}, staged: [] }
+        : null
+    );
+
+  it.each([
+    ['a fragment', `${MANIFEST_URL}#again`],
+    ['an upper-case host', MANIFEST_URL.replace('games.civitai.com', 'GAMES.Civitai.COM')],
+  ])('treats %s as the same manifest', async (_label, variant) => {
+    postedOnlyForCanonical();
+    const requested = serve({ body: manifestJson() });
+    await expect(stageIntent({ manifestUrl: variant, userId: 8, now })).rejects.toMatchObject({
+      code: 'already-posted',
+    });
+    expect(requested).toEqual([]);
+  });
+
+  it.each([
+    ['a query', `${MANIFEST_URL}?a=1`],
+    ['percent-encoding', MANIFEST_URL.replace('sh_1', 'sh%5F1')],
+  ])('refuses a manifest link with %s', async (_label, variant) => {
+    const requested = serve({ body: manifestJson() });
+    await expect(stageIntent({ manifestUrl: variant, userId: 7, now })).rejects.toMatchObject({
+      code: 'bad-manifest',
+    });
+    expect(requested).toEqual([]);
+  });
+
+  it('stores only the canonical form', async () => {
+    serve({ headers: { 'content-type': 'application/json' }, body: manifestJson() }, { body: PNG });
+    await stageIntent({ manifestUrl: `${MANIFEST_URL}#x`, userId: 7, now });
+    expect(dbMock.dbWrite.postIntentManifest.create.mock.calls[0][0].data.manifestUrl).toBe(
+      MANIFEST_URL
+    );
+  });
+
+  it('refuses while another staging for the user is in flight, before any fetch', async () => {
+    redisMock.redis.set.mockResolvedValueOnce(null);
+    const requested = serve({ body: manifestJson() });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'busy',
+    });
+    expect(requested).toEqual([]);
+  });
+
+  it("does not spend the app's quota on a manifest that fails validation", async () => {
+    serve({ headers: { 'content-type': 'application/json' }, body: manifestJson({ app: 'x' }) });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'app-mismatch',
+    });
+    const keys = redisMock.redis.incrBy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(keys.some((k: string) => k.includes(':app:'))).toBe(false);
+  });
+
+  it('returns the existing claim when the same user wins a concurrent staging', async () => {
+    serve({ headers: { 'content-type': 'application/json' }, body: manifestJson() }, { body: PNG });
+    dbMock.dbWrite.postIntentManifest.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' })
+    );
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 4,
+      userId: 7,
+      postedAt: null,
+      claimExpiresAt: new Date(now.getTime() + 60_000),
+      manifest: JSON.parse(manifestJson()),
+      staged: [{ key: 'key-other', sourceUrl: MEDIA_URL, type: 'image' }],
+    });
+    const staged = await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now });
+    expect(staged.media).toEqual([{ url: MEDIA_URL, type: 'image' }]);
+    expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-1'], {});
+  });
+
+  it('refuses HEIC with a message that names the format', async () => {
+    const HEIC = Buffer.from([0, 0, 0, 0x18, ...Buffer.from('ftypheic'), ...new Array(16).fill(0)]);
+    serve(
+      { headers: { 'content-type': 'application/json' }, body: manifestJson() },
+      { body: HEIC }
+    );
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toThrow(
+      /HEIC and AVIF/
+    );
+  });
+});
+
 describe('publishIntent', () => {
   const claim = (over: Record<string, unknown> = {}) => ({
     id: 1,
@@ -295,6 +383,7 @@ describe('publishIntent', () => {
     dbMock.dbWrite.post.create.mockResolvedValue({ id: 9001 });
     dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 });
     dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.image.deleteMany.mockResolvedValue({ count: 1 });
   });
 
   it('stamps the post with the app id recorded for the host and returns to the app', async () => {
@@ -333,11 +422,69 @@ describe('publishIntent', () => {
     expect(dbMock.dbWrite.post.create).not.toHaveBeenCalled();
   });
 
-  it('rolls back when a concurrent publish marked the manifest first', async () => {
+  it('rolls back when a concurrent publish marked the manifest first, leaving no image rows', async () => {
     dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 0 });
     await expect(
       publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
     ).rejects.toMatchObject({ code: 'already-posted' });
+    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [501] }, userId: 7, postId: null },
+    });
+  });
+
+  it('deletes the image rows it made when a later item fails', async () => {
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValue(
+      claim({
+        staged: [1, 2, 3].map((i) => ({ key: `key-${i}`, type: 'image', mimeType: 'image/png' })),
+      })
+    );
+    createImageMock
+      .mockResolvedValueOnce({ id: 601 })
+      .mockRejectedValueOnce(new Error('ingest down'));
+    await expect(
+      publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
+    ).rejects.toThrow('ingest down');
+    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [601] }, userId: 7, postId: null },
+    });
+    expect(dbMock.dbWrite.post.create).not.toHaveBeenCalled();
+  });
+
+  it('adopts only post-less images owned by the user', async () => {
+    await publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now });
+    expect(dbMock.dbWrite.image.updateMany.mock.calls[0][0].where).toEqual({
+      id: 501,
+      userId: 7,
+      postId: null,
+    });
+  });
+
+  it('only marks a claim that is still live at commit', async () => {
+    await publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now });
+    expect(dbMock.dbWrite.postIntentManifest.updateMany.mock.calls[0][0].where).toMatchObject({
+      postedAt: null,
+      claimExpiresAt: { gt: expect.any(Date) },
+    });
+  });
+
+  it('looks up a fragment variant under the canonical URL', async () => {
+    await publishIntent({ manifestUrl: `${MANIFEST_URL}#2`, userId: 7, publish: true, now });
+    expect(dbMock.dbWrite.postIntentManifest.findUnique).toHaveBeenCalledWith({
+      where: { manifestUrl: MANIFEST_URL },
+    });
+  });
+
+  it('stores the description as escaped paragraphs', async () => {
+    await publishIntent({
+      manifestUrl: MANIFEST_URL,
+      userId: 7,
+      description: 'line one\n<b>two</b>',
+      publish: true,
+      now,
+    });
+    expect(dbMock.dbWrite.post.create.mock.calls[0][0].data.detail).toBe(
+      '<p>line one</p><p>&lt;b&gt;two&lt;/b&gt;</p>'
+    );
   });
 
   it("refuses to publish another user's claim", async () => {
@@ -360,21 +507,65 @@ describe('publishIntent', () => {
 });
 
 describe('sweepExpiredIntentClaims', () => {
-  it('only touches unposted, expired claims and deletes their stored files', async () => {
-    dbMock.dbWrite.postIntentManifest.findMany.mockResolvedValue([
+  beforeEach(() => {
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.postIntentManifest.deleteMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('releases an expired claim: mark, delete its files, then delete the row', async () => {
+    dbMock.dbWrite.postIntentManifest.findMany.mockResolvedValueOnce([
       { id: 3, staged: [{ key: 'key-a' }, { key: 'key-b' }] },
     ]);
-    dbMock.dbWrite.postIntentManifest.deleteMany.mockResolvedValue({ count: 1 });
-
     await sweepExpiredIntentClaims(now);
 
     expect(dbMock.dbWrite.postIntentManifest.findMany.mock.calls[0][0].where).toEqual({
+      id: { gt: 0 },
       postedAt: null,
       claimExpiresAt: { lt: now },
     });
+    expect(dbMock.dbWrite.postIntentManifest.updateMany).toHaveBeenCalledWith({
+      where: { id: 3, postedAt: null },
+      data: { claimExpiresAt: new Date(0) },
+    });
+    expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-a', 'key-b'], {});
     expect(dbMock.dbWrite.postIntentManifest.deleteMany).toHaveBeenCalledWith({
       where: { id: 3, postedAt: null },
     });
-    expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-a', 'key-b'], {});
+  });
+
+  it('keeps the row when its files could not be deleted, so a later sweep retries', async () => {
+    dbMock.dbWrite.postIntentManifest.findMany.mockResolvedValueOnce([
+      { id: 3, staged: [{ key: 'key-a' }] },
+    ]);
+    deleteManyMock.mockRejectedValueOnce(new Error('s3 down'));
+    await sweepExpiredIntentClaims(now);
+    expect(dbMock.dbWrite.postIntentManifest.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves the files alone when the claim was posted in the meantime', async () => {
+    dbMock.dbWrite.postIntentManifest.findMany.mockResolvedValueOnce([
+      { id: 3, staged: [{ key: 'key-a' }] },
+    ]);
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValueOnce({ count: 0 });
+    await sweepExpiredIntentClaims(now);
+    expect(deleteManyMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps sweeping full batches until the backlog is clear', async () => {
+    const rows = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: from + i, staged: [] }));
+    dbMock.dbWrite.postIntentManifest.findMany
+      .mockResolvedValueOnce(rows(1, 2))
+      .mockResolvedValueOnce(rows(3, 2))
+      .mockResolvedValueOnce(rows(5, 1));
+    expect(await sweepExpiredIntentClaims(now, 2)).toBe(5);
+    expect(dbMock.dbWrite.postIntentManifest.findMany).toHaveBeenCalledTimes(3);
+  });
+
+  it('does nothing before the migration is applied', async () => {
+    dbMock.dbWrite.postIntentManifest.findMany.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('missing', { code: 'P2021', clientVersion: 'x' })
+    );
+    await expect(sweepExpiredIntentClaims(now)).resolves.toBe(0);
   });
 });
