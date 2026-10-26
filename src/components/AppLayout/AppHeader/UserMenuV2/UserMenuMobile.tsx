@@ -22,24 +22,29 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconGripVertical,
+  IconPlus,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   AccountSwitcher,
-  BuzzMenuItem,
+  BuzzBalances,
   MenuItemButton,
   MenuItemLink,
   UserMenuCtx,
   UserMenuFooter,
 } from '~/components/AppLayout/AppHeader/UserMenu';
+import { MembershipTierBadge } from '~/components/Account/MembershipTierBadge';
 import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
   BadgeMuteCtx,
@@ -308,6 +313,7 @@ function TopLevel({
   );
 }
 
+/** The viewer's card at the top of the phone menu: who they are, their Buzz, and Buy Buzz. */
 export function MobileHeaderRows({
   pinned = false,
   onTogglePin,
@@ -317,41 +323,84 @@ export function MobileHeaderRows({
 }) {
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
+  const features = useFeatureFlags();
+  const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useContext(UserMenuCtx);
   const trackHeader = useTrackHeaderOpen('mobile');
   if (!currentUser) return null;
 
   return (
-    <div className="flex items-center gap-1 pr-1">
-      <MenuItemLink
-        href={`/user/${currentUser.username}`}
-        className="min-w-0 rounded-lg !pr-2"
-        onClick={() => {
-          trackHeader('profile');
-          handleClose();
-        }}
-        data-panel-row
-      >
-        {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
-        <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </div>
-      </MenuItemLink>
-      <div className="ml-auto">
-        <BuzzMenuItem compact onOpen={() => trackHeader('buzz-dashboard')} />
-      </div>
-      {onTogglePin && (
-        <LegacyActionIcon
-          size="lg"
-          variant="subtle"
-          color="gray"
-          className="shrink-0"
-          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
-          aria-pressed={pinned}
-          onClick={onTogglePin}
+    <div className="m-1 flex flex-col gap-3 rounded-xl border border-gray-3 bg-gray-0 p-2 dark:border-dark-4 dark:bg-dark-6">
+      <div className="flex items-center gap-1">
+        <MenuItemLink
+          href={`/user/${currentUser.username}`}
+          className="min-w-0 flex-1 rounded-lg"
+          onClick={() => {
+            trackHeader('profile');
+            handleClose();
+          }}
+          data-panel-row
         >
-          <PinGlyph pinned={pinned} touch />
-        </LegacyActionIcon>
+          {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
+          <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
+            <UserAvatar
+              user={creator ?? currentUser}
+              size="lg"
+              withUsername
+              textSize="lg"
+              subText={
+                currentUser.tier ? <MembershipTierBadge tier={currentUser.tier} /> : undefined
+              }
+              withHoverCard={false}
+            />
+          </div>
+        </MenuItemLink>
+        {onTogglePin && (
+          <LegacyActionIcon
+            size="lg"
+            variant="subtle"
+            color="gray"
+            className="shrink-0"
+            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
+            aria-pressed={pinned}
+            onClick={onTogglePin}
+          >
+            <PinGlyph pinned={pinned} touch />
+          </LegacyActionIcon>
+        )}
+      </div>
+      {features.buzz && (
+        <>
+          <NextLink
+            href="/user/buzz-dashboard"
+            className="block rounded-lg px-1"
+            onClick={() => {
+              trackHeader('buzz-dashboard');
+              handleClose();
+            }}
+          >
+            <BuzzBalances
+              labelled
+              animated={features.buzzSpendPop}
+              iconSize={16}
+              textSize="md"
+              withAbbreviation={false}
+            />
+          </NextLink>
+          <Button
+            variant="light"
+            radius="md"
+            fullWidth
+            leftSection={<IconPlus size={16} />}
+            onClick={() => {
+              // The sheet covers the screen and holds focus, so it closes before the purchase opens.
+              handleClose();
+              onBuyBuzz({});
+            }}
+          >
+            Buy Buzz
+          </Button>
+        </>
       )}
     </div>
   );

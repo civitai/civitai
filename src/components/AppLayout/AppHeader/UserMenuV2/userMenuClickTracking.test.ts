@@ -349,7 +349,8 @@ describe('UserMenu_Click', () => {
   it.each([
     // Desktop rows are Mantine Menu.Items, which close the menu themselves.
     ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0, 'Buy Buzz'],
-    ['mobile', () => createElement(MobileHeaderRows), 2, 'Buy'],
+    // The phone sheet closes before the purchase opens.
+    ['mobile', () => createElement(MobileHeaderRows), 3, 'Buy Buzz'],
   ] as const)(
     'records the %s header rows as header opens, and not Buy Buzz',
     async (surface, node, closes, buyLabel) => {
