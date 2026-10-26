@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import type * as Award from '~/server/events/points/award';
 
 // The CommentV2 write sites: a new comment awards, deleting the actor's last comment under an
@@ -10,6 +11,29 @@ const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
   awardEventPoints: vi.fn(async (..._a: unknown[]) => undefined),
   removeEventPoints: vi.fn(async (..._a: unknown[]) => undefined),
   hatted: new Set<string>(),
+}));
+
+// The hook counts the actor's live comments left under the entity in CommentV3; `live` is that count.
+const kysely = vi.hoisted(() => {
+  const state = { live: 0, counted: [] as { table: string; where: unknown[][] }[] };
+  const selectFrom = (table: string) => {
+    const call = { table, where: [] as unknown[][] };
+    state.counted.push(call);
+    const query = {
+      select: () => query,
+      where: (...a: unknown[]) => {
+        call.where.push(a);
+        return query;
+      },
+      executeTakeFirst: async () => ({ n: String(state.live) }),
+    };
+    return query;
+  };
+  return { state, selectFrom };
+});
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyWrite: { selectFrom: kysely.selectFrom },
 }));
 
 vi.mock('~/server/events/points/award', async (importOriginal) => ({
@@ -51,6 +75,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   hatted.clear();
   hatted.add('Image:7');
+  kysely.state.live = 0;
+  kysely.state.counted.length = 0;
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   db.thread.findUnique.mockResolvedValue(IMAGE_THREAD);
   db.thread.findMany.mockResolvedValue([IMAGE_THREAD]);
@@ -89,7 +115,6 @@ describe('CommentV2 event points', () => {
 
   it("removes when the deleted comment was the actor's last under the image", async () => {
     db.commentV2.delete.mockResolvedValue({ id: 456, userId: USER, threadId: 70 });
-    db.commentV2.count.mockResolvedValue(0);
 
     await deleteComment({ id: 456 });
     await settle();
@@ -98,6 +123,28 @@ describe('CommentV2 event points', () => {
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ type: 'comment', sourceId: `CommentV2:Image:7:${USER}` }),
     ]);
+    // Counted for this actor, on this image, live rows only.
+    expect(kysely.state.counted).toEqual([
+      {
+        table: 'CommentV3',
+        where: [
+          ['userId', '=', USER],
+          ['entityType', '=', 'image'],
+          ['entityId', '=', 7],
+          ['deletedAt', 'is', null],
+        ],
+      },
+    ]);
+  });
+
+  it('keeps the points while the actor has another live comment under the image', async () => {
+    db.commentV2.delete.mockResolvedValue({ id: 456, userId: USER, threadId: 70 });
+    kysely.state.live = 1;
+
+    await deleteComment({ id: 456 });
+    await settle();
+
+    expect(removeEventPoints).not.toHaveBeenCalled();
   });
 
   it('removes for each author the bulk delete deleted, and none it kept', async () => {
@@ -111,7 +158,6 @@ describe('CommentV2 event points', () => {
         : strings.join('').includes('UPDATE')
         ? [{ userId: 8, threadId: 70 }]
         : []) as never);
-    db.commentV2.count.mockResolvedValue(0);
 
     await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
       commentDeleted: 0,
