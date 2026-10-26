@@ -6,7 +6,7 @@
     RULINGS_WIRED_FOR,
   } from '$lib/restriction-types';
   import RestrictionTriage from '$lib/components/restrictions/RestrictionTriage.svelte';
-    import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
   import type { ActionData, PageData } from './$types';
 

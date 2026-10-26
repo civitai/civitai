@@ -8,8 +8,6 @@ vi.mock('$lib/server/db', async () => {
   return { dbRead: db, dbWrite: db };
 });
 
-vi.mock('/server', () => ({ getRequestEvent: () => ({ locals: {} }) }));
-
 vi.mock('$app/server', () => ({ getRequestEvent: () => ({ locals: {} }) }));
 
 const { restrictionTriageLoad } = await import('../restriction-queue');
