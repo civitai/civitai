@@ -2019,6 +2019,7 @@ export const comicsRouter = router({
 
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
+      const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
 
       return {
         id: project.id,
@@ -2026,8 +2027,14 @@ export const comicsRouter = router({
         description: project.description,
         nsfwLevel: project.nsfwLevel,
         meta: parseComicProjectMeta(project.meta),
-        coverImage: project.coverImage,
-        heroImage: project.heroImage,
+        coverImage:
+          ctx.features.isGreen && project.coverImage && !passesSfwGate(project.coverImage.nsfwLevel)
+            ? null
+            : project.coverImage,
+        heroImage:
+          ctx.features.isGreen && project.heroImage && !passesSfwGate(project.heroImage.nsfwLevel)
+            ? null
+            : project.heroImage,
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
@@ -2428,10 +2435,15 @@ export const comicsRouter = router({
         }
       }
 
-      const updated = await dbWrite.comicProject.update({
+      let updated = await dbWrite.comicProject.update({
         where: { id: input.id },
         data,
       });
+
+      if ('coverImageId' in data || 'heroImageId' in data) {
+        await updateComicNsfwLevels([input.id]);
+        updated = await dbWrite.comicProject.findUniqueOrThrow({ where: { id: input.id } });
+      }
 
       await comicsSearchIndex.queueUpdate([
         { id: input.id, action: SearchIndexUpdateQueueAction.Update },
