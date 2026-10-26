@@ -205,20 +205,78 @@ describe('createUnratedOutputWatcher', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  // `watch()` runs on every change to the cached generator lists, and the refetch below is one.
+  async function watchAfterCacheChanges(watch: () => void, times: number) {
+    for (let i = 0; i < times; i++) {
+      watch();
+      await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MIN_MS);
+    }
+  }
+
+  // Regression: a blocked verdict whose workflow still read unrated restarted on every cache
+  // change, one blob HEAD and one workflow refetch every few seconds for as long as the tab lived.
+  it('re-reads the workflow once for a blocked verdict, even if the workflow still reads unrated', async () => {
+    const { watch, verdict, refetch } = setup(async () => ({
+      nsfwLevel: 'xxx',
+      blockedReason: 'NSFWLevel',
+    }));
+    watch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    await watchAfterCacheChanges(watch, 5);
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(verdict).toHaveBeenCalledTimes(1);
+  });
+
   // A tab left open must not poll forever for an output that is never rated.
-  it('gives up after ten minutes without a rating, and a later watch starts over', async () => {
+  it('gives up after ten minutes without a rating, and later cache changes do not restart it', async () => {
     const tenMinutes = 10 * 60_000;
-    const { watch, verdict } = setup(async () => {
+    const { watch, verdict, refetch } = setup(async () => {
       throw new Error('503');
     });
     watch();
     await vi.advanceTimersByTimeAsync(tenMinutes + UNRATED_RETRY_MAX_MS);
     const reads = verdict.mock.calls.length;
+    const refetches = refetch.mock.calls.length;
     await vi.advanceTimersByTimeAsync(tenMinutes);
+    expect(verdict).toHaveBeenCalledTimes(reads);
+
+    await watchAfterCacheChanges(watch, 5);
 
     expect(verdict).toHaveBeenCalledTimes(reads);
+    expect(refetch).toHaveBeenCalledTimes(refetches);
+  });
+
+  it('watches a rated output again if the cache later shows it unrated', async () => {
+    const { watch, verdict, refetch, setWorkflows } = setup(async () => ({ nsfwLevel: 'r' }));
     watch();
-    expect(verdict).toHaveBeenCalledTimes(reads + 1);
+    await vi.advanceTimersByTimeAsync(0);
+    await watchAfterCacheChanges(watch, 3);
+    expect(verdict).toHaveBeenCalledTimes(1);
+
+    setWorkflows([workflow('wf-1', [image('a')])]);
+    await watchAfterCacheChanges(watch, 1);
+
+    expect(verdict).toHaveBeenCalledTimes(2);
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it('still watches a new output of a workflow whose blocked output was settled', async () => {
+    const { watch, verdict, setWorkflows } = setup(async (url) =>
+      url.endsWith('/a') ? { nsfwLevel: 'xxx', blockedReason: 'NSFWLevel' } : { nsfwLevel: 'pg' }
+    );
+    watch();
+    await vi.advanceTimersByTimeAsync(0);
+
+    setWorkflows([workflow('wf-1', [image('a'), image('b')])]);
+    await watchAfterCacheChanges(watch, 2);
+
+    expect(verdict.mock.calls.map(([url]) => url)).toEqual([
+      'https://orchestrator/v2/consumer/blobs/a',
+      'https://orchestrator/v2/consumer/blobs/b',
+    ]);
   });
 });
 
