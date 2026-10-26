@@ -22,6 +22,9 @@ import { booleanString } from '~/utils/zod-helpers';
  *
  * Body, one of:
  *   { "mode": "raise", "ownerIds": [...] }                    plan, and write the raises
+ *   { "mode": "raiseValues", "checkpoint": <ms>, "rows": [{ "ownerId", "expected", "next" }] }
+ *                                                             write values the driver computed as of
+ *                                                             `checkpoint`; 409 once the cron has moved it
  *   { "mode": "rollback", "rows": [{ "ownerId", "added" }] }  take a ledger's raises back off
  *   { "mode": "read", "ownerIds": [...] }                      current images score, for the readback
  *
@@ -35,14 +38,32 @@ const RAISED_STAMP = 'imageScoreRaisedAt';
 const ROLLED_BACK_STAMP = 'imageScoreRaiseRolledBackAt';
 const MAX_OWNERS = 500;
 
-const ids = z.array(z.number().int().positive()).min(1).max(MAX_OWNERS);
+const ownerId = z.number().int().positive();
+const ids = z.array(ownerId).min(1).max(MAX_OWNERS);
 const body = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('raise'), ownerIds: ids }),
   z.object({ mode: z.literal('read'), ownerIds: ids }),
   z.object({
+    mode: z.literal('raiseValues'),
+    checkpoint: z.number().int().positive(),
+    rows: z
+      .array(
+        z.object({
+          ownerId,
+          expected: z.number().nonnegative().nullable(),
+          next: z.number().positive(),
+        })
+      )
+      .min(1)
+      .max(MAX_OWNERS)
+      .refine((rows) => new Set(rows.map((r) => r.ownerId)).size === rows.length, {
+        message: 'duplicate ownerId',
+      }),
+  }),
+  z.object({
     mode: z.literal('rollback'),
     rows: z
-      .array(z.object({ ownerId: z.number().int().positive(), added: z.number().positive() }))
+      .array(z.object({ ownerId, added: z.number().positive() }))
       .min(1)
       .max(MAX_OWNERS),
   }),
@@ -64,9 +85,34 @@ async function storedImages(ownerIds: number[]) {
   }));
 }
 
+async function writeRaises(
+  raises: { ownerId: number; expected: number | null; next: number }[],
+  checkpoint: number,
+  at: Date
+) {
+  const written = await raiseImagesScores(
+    pgDbWrite,
+    raises.map((r) => ({ id: r.ownerId, expected: r.expected, next: r.next })),
+    {
+      checkpoint: { key: CHECKPOINT_KEY, value: checkpoint },
+      stamp: { key: RAISED_STAMP, at },
+    }
+  );
+  const writtenIds = new Set(written.map((w) => w.userId));
+  return {
+    written: written.map((w) => ({
+      ownerId: w.userId,
+      beforeImages: w.oldImages,
+      afterImages: w.newImages,
+      beforeTotal: w.oldTotal,
+      afterTotal: w.newTotal,
+    })),
+    skippedRace: raises.filter((r) => !writtenIds.has(r.ownerId)).map((r) => r.ownerId),
+  };
+}
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-  if (!clickhouse) return res.status(503).json({ error: 'ClickHouse is not available' });
   const { dryRun } = query.parse(req.query);
   const input = body.parse(req.body);
 
@@ -86,9 +132,53 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const checkpoint = await dbWrite.keyValue.findUnique({ where: { key: CHECKPOINT_KEY } });
   if (typeof checkpoint?.value !== 'number')
     return res.status(409).json({ error: `no ${CHECKPOINT_KEY} checkpoint` });
-  const { images: multipliers } = await getScoreMultipliers();
   const excluded = new Set(await getMetricExcludedUserIdsOrThrow());
   const now = new Date();
+
+  if (input.mode === 'raiseValues') {
+    // The values were computed as of `input.checkpoint`; once the cron has moved it they are stale.
+    if (input.checkpoint !== checkpoint.value)
+      return res
+        .status(409)
+        .json({ error: 'checkpoint moved', checkpoint: checkpoint.value, sent: input.checkpoint });
+
+    // Ids with no User row drop out here, so they never come back as a race.
+    const stored = new Map(
+      (await storedImages(input.rows.map((r) => r.ownerId))).map((r) => [r.ownerId, r.images])
+    );
+    const rows = input.rows.filter((r) => stored.has(r.ownerId));
+    const byOwner = new Map(rows.map((r) => [r.ownerId, r]));
+    const plan = planImageScoreRaise(
+      stored,
+      new Map(rows.map((r) => [r.ownerId, r.next])),
+      excluded
+    ).map((p) => {
+      const { expected } = byOwner.get(p.ownerId)!;
+      const stale = p.action !== 'excluded' && p.stored !== expected;
+      return { ...p, expected, action: stale ? ('stale' as const) : p.action };
+    });
+    const raises = plan.filter((p) => p.action === 'raise');
+    const counts = {
+      considered: plan.length,
+      raise: raises.length,
+      equal: plan.filter((p) => p.action === 'equal').length,
+      down: plan.filter((p) => p.action === 'down').length,
+      excluded: plan.filter((p) => p.action === 'excluded').length,
+      stale: plan.filter((p) => p.action === 'stale').length,
+    };
+    if (dryRun)
+      return res.status(200).json({ dryRun, checkpoint: checkpoint.value, ...counts, plan });
+
+    const result = await writeRaises(
+      raises.map((p) => ({ ownerId: p.ownerId, expected: p.expected, next: p.recomputed })),
+      checkpoint.value,
+      now
+    );
+    return res.status(200).json({ dryRun, checkpoint: checkpoint.value, ...counts, ...result });
+  }
+
+  if (!clickhouse) return res.status(503).json({ error: 'ClickHouse is not available' });
+  const { images: multipliers } = await getScoreMultipliers();
 
   // Ids with no User row drop out here, so they never come back as a race.
   const stored = new Map((await storedImages(input.ownerIds)).map((r) => [r.ownerId, r.images]));
@@ -114,26 +204,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (dryRun)
     return res.status(200).json({ dryRun, checkpoint: checkpoint.value, ...counts, plan });
 
-  const written = await raiseImagesScores(
-    pgDbWrite,
-    raises.map((p) => ({ id: p.ownerId, expected: p.stored, next: p.recomputed })),
-    {
-      checkpoint: { key: CHECKPOINT_KEY, value: checkpoint.value },
-      stamp: { key: RAISED_STAMP, at: now },
-    }
+  const result = await writeRaises(
+    raises.map((p) => ({ ownerId: p.ownerId, expected: p.stored, next: p.recomputed })),
+    checkpoint.value,
+    now
   );
-  const writtenIds = new Set(written.map((w) => w.userId));
-  return res.status(200).json({
-    dryRun,
-    checkpoint: checkpoint.value,
-    ...counts,
-    written: written.map((w) => ({
-      ownerId: w.userId,
-      beforeImages: w.oldImages,
-      afterImages: w.newImages,
-      beforeTotal: w.oldTotal,
-      afterTotal: w.newTotal,
-    })),
-    skippedRace: raises.filter((p) => !writtenIds.has(p.ownerId)).map((p) => p.ownerId),
-  });
+  return res.status(200).json({ dryRun, checkpoint: checkpoint.value, ...counts, ...result });
 });
