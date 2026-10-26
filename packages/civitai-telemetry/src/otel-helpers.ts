@@ -1,4 +1,12 @@
-import { trace, context, propagation, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
+import {
+  trace,
+  context,
+  propagation,
+  isSpanContextValid,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  TraceFlags,
+} from '@opentelemetry/api';
 
 const tracer = trace.getTracer('civitai-app');
 
@@ -22,6 +30,41 @@ const withSpanGateState = (globalThis.__civitaiWithSpanSkipUnsampledGate ??= { g
  */
 export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined): void {
   withSpanGateState.gate = gate;
+}
+
+/**
+ * True only when a span opened here could NOT be recorded or exported, so not opening it is
+ * unobservable in trace output: the active span is a valid, LOCAL, non-recording parent whose
+ * sampled flag is clear. Under the app's sampler (ParentBased, default
+ * `localParentNotSampled` = AlwaysOff, see src/instrumentation.node.ts) every child of such a
+ * parent is a NonRecordingSpan.
+ *
+ * Deliberately NOT skipped:
+ *   - no active span: the child would be a new ROOT, ratio-sampled, so some of those spans
+ *     are exported today;
+ *   - a REMOTE parent: the sampler re-applies the ratio to remote parents;
+ *   - a parent with the sampled flag set but not recording (e.g. one that has already ENDED,
+ *     as in work that outlives its request): its children ARE recorded today.
+ */
+function shouldSkipUnsampledSpan(): boolean {
+  const gate = withSpanGateState.gate;
+  if (gate === undefined) return false;
+  const parent = trace.getActiveSpan();
+  if (parent === undefined || parent.isRecording()) return false;
+  const parentContext = parent.spanContext();
+  if (
+    parentContext.isRemote ||
+    (parentContext.traceFlags & TraceFlags.SAMPLED) !== 0 ||
+    !isSpanContextValid(parentContext)
+  ) {
+    return false;
+  }
+  try {
+    return gate() === true;
+  } catch {
+    // A failing gate falls back to opening the span, i.e. the behaviour before the gate.
+    return false;
+  }
 }
 
 /**
@@ -78,6 +121,15 @@ export function withSpan<T>(
   attrsOrFn: Record<string, string | number | boolean> | (() => T),
   maybeFn?: () => T
 ): T {
+  // Under an unsampled local parent the span below would be a NonRecordingSpan that is never
+  // exported, yet opening it still pays for span allocation, attribute handling and an extra
+  // context switch. When the gate is on, run the work directly instead: same return value, same
+  // throw, and the active span inside the work is the parent, which shares the trace id. See
+  // `shouldSkipUnsampledSpan` for exactly which parents qualify.
+  if (shouldSkipUnsampledSpan()) {
+    return typeof attrsOrFn === 'function' ? attrsOrFn() : maybeFn!();
+  }
+
   const [attrs, fn] = typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
 
   return tracer.startActiveSpan(name, (span) => {
