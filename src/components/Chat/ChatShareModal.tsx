@@ -36,7 +36,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import chatClasses from './Chat.module.scss';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
-import { stripStickerTokens } from '~/shared/utils/sticker-token';
+import { chatPreviewText } from '~/components/Chat/util';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -103,6 +103,7 @@ export default function ChatShareModal(props: { message: string }) {
           thisChat.messages = [
             {
               content: data.content,
+              userId: data.userId,
               contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },
@@ -233,7 +234,11 @@ export default function ChatShareModal(props: { message: string }) {
                             minWidth: 0,
                           }}
                         >
-                          {stripStickerTokens(d.messages[0].content)}
+                          {chatPreviewText({
+                            message: d.messages[0],
+                            viewerId: currentUser?.id,
+                            otherMembers,
+                          })}
                         </Text>
                       )}
                     </Stack>

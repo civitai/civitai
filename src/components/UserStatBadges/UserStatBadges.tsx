@@ -167,8 +167,15 @@ const BadgedIcon = ({
 } & Omit<BadgeProps, 'leftSection'>) => (
   <Group gap={0} wrap="nowrap" className="relative">
     <Tooltip label={label}>
-      <Box pos="relative" style={{ zIndex: 2, overflow: 'hidden' }} h={32}>
-        <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
+      <Box
+        pos="relative"
+        style={{ zIndex: 2, overflow: 'hidden' }}
+        h={32}
+        role="img"
+        aria-label={`${label} - ${value}`}
+      >
+        {/* Empty alt: a failed load would otherwise paint the label inside the 32px box. */}
+        <Image src="/images/base-badge.png" alt="" width={32} height={32} />
         <Box
           style={{
             top: '50%',

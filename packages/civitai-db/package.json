@@ -17,7 +17,7 @@
     "kysely": "^0.28.7",
     "pg": "^8.11.3",
     "prom-client": "^14.2.0",
-    "zod": "^4.0.17"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",

@@ -1,8 +1,88 @@
+import { IconMessage2, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 
-/** The author's caption on the image being read. Mount it keyed on the image so it folds on a swipe. */
-export function StorylineCaptionNote({ caption }: { caption: string }) {
+export const STORYLINE_CAPTION_HIDDEN_KEY = 'storyline-caption-hidden';
+
+/**
+ * Whether the reader hid the captions, and a setter that remembers it. Starts shown so the server
+ * render never hides a caption; a missing key, or blocked storage, shows it.
+ */
+function useCaptionHidden() {
+  const [hidden, setHidden] = useState(false);
+
+  useEffect(() => {
+    try {
+      setHidden(localStorage.getItem(STORYLINE_CAPTION_HIDDEN_KEY) === '1');
+    } catch {}
+  }, []);
+
+  const update = (value: boolean) => {
+    setHidden(value);
+    try {
+      if (value) localStorage.setItem(STORYLINE_CAPTION_HIDDEN_KEY, '1');
+      else localStorage.removeItem(STORYLINE_CAPTION_HIDDEN_KEY);
+    } catch {}
+  };
+
+  return [hidden, update] as const;
+}
+
+/**
+ * The author's caption on the image being read. Mount it keyed on the image so it folds on a swipe.
+ * `hideable` adds a control to hide it, remembered per viewer; leave it off for previews.
+ */
+export function StorylineCaptionNote({
+  caption,
+  hideable = false,
+}: {
+  caption: string;
+  hideable?: boolean;
+}) {
+  const [hidden, setHidden] = useCaptionHidden();
+  if (hideable && hidden) {
+    return (
+      <button
+        type="button"
+        onClick={() => setHidden(false)}
+        aria-label="Show image description"
+        title="Show image description"
+        className={clsx(
+          'flex size-9 items-center justify-center self-end rounded-full',
+          'bg-white/95 text-gray-9 shadow-[0_4px_12px_rgba(0,0,0,.3)] ring-1 ring-gray-3/70 backdrop-blur-md',
+          'dark:bg-dark-6/95 dark:text-white dark:ring-dark-4/70',
+          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-4'
+        )}
+        data-testid="storyline-caption-show"
+      >
+        <IconMessage2 size={18} aria-hidden />
+      </button>
+    );
+  }
+  return (
+    <div className="relative w-full @md:w-[560px] @md:max-w-full">
+      <CaptionBody caption={caption} />
+      {hideable && (
+        <button
+          type="button"
+          onClick={() => setHidden(true)}
+          aria-label="Hide image description"
+          title="Hide image description"
+          className={clsx(
+            'absolute -right-2 -top-3 flex size-7 items-center justify-center rounded-full',
+            'bg-white text-gray-9 shadow-md ring-1 ring-gray-3 dark:bg-dark-5 dark:text-white dark:ring-dark-4',
+            'focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-4'
+          )}
+          data-testid="storyline-caption-hide"
+        >
+          <IconX size={14} aria-hidden />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CaptionBody({ caption }: { caption: string }) {
   const [open, setOpen] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
@@ -38,7 +118,7 @@ export function StorylineCaptionNote({ caption }: { caption: string }) {
         }
       }}
       className={clsx(
-        'relative w-full rounded-2xl px-3.5 py-2.5 text-left text-[15px] leading-[21px] @md:w-[560px] @md:max-w-full',
+        'relative w-full rounded-2xl px-3.5 py-2.5 text-left text-[15px] leading-[21px]',
         'bg-white/95 text-gray-9 shadow-[0_8px_24px_rgba(0,0,0,.3)] ring-1 ring-gray-3/70 backdrop-blur-md',
         'dark:bg-dark-6/95 dark:text-white dark:ring-dark-4/70',
         interactive &&

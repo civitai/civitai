@@ -15,8 +15,7 @@ const entityNoun: Record<string, string> = {
 export const textScanNotifications = createNotificationProcessor({
   'text-scan-rating-raised': {
     displayName: 'Content rating raised',
-    category: NotificationCategory.System,
-    toggleable: false,
+    category: NotificationCategory.Moderation,
     prepareMessage: ({ details }) => {
       if (!details) return undefined;
       const { entityType, level, title, url } = details as {
@@ -39,8 +38,7 @@ export const textScanNotifications = createNotificationProcessor({
   // which is scanned again.
   'storyline-title-moderated': {
     displayName: 'Storyline title moderated',
-    category: NotificationCategory.System,
-    toggleable: false,
+    category: NotificationCategory.Moderation,
     prepareMessage: ({ details }) => {
       if (!details) return undefined;
       const { storylineId, title, level, takenDown, minor } = details as {

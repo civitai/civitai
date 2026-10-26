@@ -4,6 +4,7 @@ import {
   deleteEntryScanCopies,
   settleEntryScans,
   settleFinals,
+  settleMalwareScans,
   unpackFinals,
 } from '~/server/services/creator-service-deal-unpack.service';
 import {
@@ -38,8 +39,9 @@ export const creatorServiceDealFilesJob = createJob(
 );
 
 /**
- * Unpacks delivered Finals, builds the archive a buyer downloads, and settles their scans (see the
- * notes in the unpack and repack services). One archive per step per run: each is streamed through
+ * Unpacks delivered Finals, builds the archive a buyer downloads, and settles their scans, polling
+ * the malware scan rather than waiting for a callback (see the notes in the unpack and repack
+ * services). One archive per step per run: each is streamed through
  * memory.
  *
  * Not behind the `creatorServices` flag, for the same reason as the preview job.
@@ -55,10 +57,12 @@ export const creatorServiceUnpackJob = createJob(
     jobContext.checkIfCanceled();
     const entries = await settleEntryScans();
     jobContext.checkIfCanceled();
+    const scans = await settleMalwareScans({ shouldStop });
+    jobContext.checkIfCanceled();
     const finals = await settleFinals();
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
-    return { unpacked, repacked, ...entries, ...finals, copiesDeleted };
+    return { unpacked, repacked, ...entries, ...scans, ...finals, copiesDeleted };
   },
   { lockExpiration: 40 * 60 }
 );

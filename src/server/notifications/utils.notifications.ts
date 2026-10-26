@@ -164,3 +164,9 @@ export const isPushableNotificationType = (type: string) => {
   const processor = notificationProcessors[type];
   return !!processor && processor.toggleable !== false;
 };
+
+export const emailNotificationTypeList = Object.entries(notificationProcessors)
+  .filter(([, processor]) => processor.defaultEmail)
+  .map(([type]) => type);
+
+export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);

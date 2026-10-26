@@ -39,6 +39,8 @@ vi.mock('../lib/server/clients/axiom', () => ({
   safeError: (e: unknown) => ({ message: String(e) }),
 }));
 
+vi.mock('./email', () => ({ dispatchEmail: vi.fn(async () => undefined) }));
+
 vi.mock('../lib/server/cache', () => ({
   notificationCache: {
     incrementUser: vi.fn(async () => {}),
@@ -68,6 +70,7 @@ vi.mock('../env', async (importOriginal) => ({
 
 import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
+import { dispatchEmail } from './email';
 import { notificationsFannedOutTotal, workerPendingProcessedTotal } from '../lib/server/metrics';
 
 // ---- Fake PoolClient -------------------------------------------------------------------------------------
@@ -449,6 +452,34 @@ describe('run (poll pass)', () => {
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body);
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
+  });
+
+  it('hands email only the recipients this pass newly delivered to', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      // 22 already held the row (ON CONFLICT DO NOTHING): absent from RETURNING.
+      userInsert: { rows: [{ id: 9, userId: 11, createdAt: 'q' }] },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [
+      { ...baseRow, type: 'service-deal-requested', users: [11, 22], debounceSeconds: null },
+    ];
+
+    await run();
+
+    expect(dispatchEmail).toHaveBeenCalledTimes(1);
+    expect(dispatchEmail).toHaveBeenCalledWith('service-deal-requested', baseRow.details, [11]);
+  });
+
+  it('a repeated key hands email nobody', async () => {
+    const client = makeClient({ notifSelect: { rows: [{ id: 1 }] }, userInsert: { rows: [] } });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, type: 'service-deal-requested', debounceSeconds: null }];
+
+    await run();
+
+    const recipients = vi.mocked(dispatchEmail).mock.calls.flatMap(([, , ids]) => ids);
+    expect(recipients).toEqual([]);
   });
 
   it('still bumps and signals the remaining recipients when one counter bump fails', async () => {

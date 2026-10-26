@@ -9,6 +9,7 @@ import {
   extraParamDefaults,
   paramsForVersion,
   cardsForMedia,
+  ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
   type ExtraParamField,
@@ -458,6 +459,15 @@ export const runParamsKey = (run: Run): string => `${run.id}:${run.cardType}:${r
 export interface SamplePrompt {
   id: number;
   text: string;
+  /** The input image an image-conditioned sample is rendered from (`runTakesSampleImages`). */
+  image?: SampleImage;
+}
+
+/** An uploaded sample input image. `url` is the scanned blob's media URL — what the orchestrator
+ *  conditions the sample on, the same reference auto-labeling sends it. */
+export interface SampleImage {
+  url: string;
+  name: string;
 }
 
 export const MAX_SAMPLE_PROMPTS = 6;
@@ -482,6 +492,41 @@ export function filledPrompts(texts: string[]): string[] {
 export function submittedPrompts(texts: string[]): string[] {
   const filled = filledPrompts(texts);
   return filled.length ? filled : texts;
+}
+
+/** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
+ *  its card's primary version, so it follows that ecosystem like every other run-level check. */
+export const runTakesSampleImages = (run: Run): boolean =>
+  ecosystemTakesSampleImages(runVersion(run).ecosystem);
+
+/** The rows that are submitted: the filled ones, or all of them when none is (`submittedPrompts`). */
+function submittedRows(prompts: SamplePrompt[]): SamplePrompt[] {
+  const filled = prompts.filter((p) => p.text.trim().length > 0);
+  return filled.length ? filled : prompts;
+}
+
+/** Why the sample input images can't be submitted as they stand, or null. The orchestrator pairs
+ *  `sourceImages[i]` with `prompts[i]`, so either every submitted prompt has an image or none does —
+ *  and an image on a blank row would be dropped with the row. */
+export function sampleImagesProblem(prompts: SamplePrompt[]): string | null {
+  if (prompts.some((p) => p.image && !p.text.trim()))
+    return 'A sample with an input image needs a prompt describing the edit.';
+  const rows = submittedRows(prompts);
+  const withImage = rows.filter((p) => p.image).length;
+  if (withImage > 0 && withImage < rows.length)
+    return 'Add an input image to every sample prompt, or remove them all.';
+  return null;
+}
+
+/** The input images a run's samples are rendered from, index-aligned to its submitted prompts — or
+ *  undefined when the samples are text-only (no image set, or a run whose model can't take them).
+ *  Throws on a `sampleImagesProblem` rather than quietly submitting the run text-only. */
+export function submittedSampleImages(run: Run, prompts: SamplePrompt[]): string[] | undefined {
+  if (!runTakesSampleImages(run)) return undefined;
+  const problem = sampleImagesProblem(prompts);
+  if (problem) throw new Error(problem);
+  const urls = submittedRows(prompts).flatMap((p) => (p.image ? [p.image.url] : []));
+  return urls.length ? urls : undefined;
 }
 
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
@@ -558,7 +603,7 @@ export function buildTrainingRuns(
   trigger: string,
   name: string,
   launched: LaunchedRun[],
-  prompts: string[],
+  prompts: SamplePrompt[],
   currencies: string[],
   labelMode: LabelType
 ): TrainingRunPayload[] {
@@ -599,7 +644,8 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
-      prompts: submittedPrompts(prompts),
+      prompts: submittedPrompts(prompts.map((p) => p.text)),
+      sourceImages: submittedSampleImages(run, prompts),
       currencies,
       meta: {
         name: name.trim() || t || selection.loraType,

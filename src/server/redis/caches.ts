@@ -23,6 +23,8 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readImageTagsViaKysely, readImageTagsViaPrisma } from '~/server/redis/image-tags.reads';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -40,7 +42,6 @@ import { isEventDecorationData } from '~/shared/constants/event-decoration.const
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import {
   type ImageTagComposite,
-  imageTagCompositeSelect,
   type ModelTagComposite,
   modelTagCompositeSelect,
 } from '~/server/selectors/tag.selector';
@@ -1800,6 +1801,18 @@ type ImageTagsCacheItem = {
   tags: ImageTagComposite[];
 };
 
+/**
+ * The rows behind `imageTagsCache`. With `kysely-hot-reads-2` on they read through Kysely, on the
+ * same database: the primary for a write-triggered refresh, the replica otherwise.
+ */
+export async function readImageTagsForImages(ids: number[], fromWrite?: boolean) {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2)) {
+    const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+    return readImageTagsViaKysely(fromWrite ? kyselyWrite : kyselyRead, ids);
+  }
+  return readImageTagsViaPrisma(fromWrite ? dbWrite : dbRead, ids);
+}
+
 export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_TAGS,
   idKey: 'imageId',
@@ -1816,16 +1829,7 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   localMax: 5000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.imageTags, // ~16MB (heaviest remaining value)
   lookupFn: async (ids, fromWrite) => {
-    const db = fromWrite ? dbWrite : dbRead;
-
-    const imageTags = await db.imageTag.findMany({
-      where: { imageId: { in: ids } },
-      select: {
-        imageId: true,
-        ...imageTagCompositeSelect,
-      },
-      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
-    });
+    const imageTags = await readImageTagsForImages(ids, fromWrite);
 
     const result = imageTags.reduce((acc, tag) => {
       const { imageId, ...tagData } = tag;

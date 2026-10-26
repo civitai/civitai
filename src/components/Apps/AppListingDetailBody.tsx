@@ -73,6 +73,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ListingForkAttribution } from '~/components/Apps/ListingForkAttribution';
 import { ListingForksSection } from '~/components/Apps/ListingForksSection';
+import { ListingForkButton } from '~/components/Apps/ForkAppAction';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import {
@@ -1128,6 +1129,9 @@ export function AppListingDetailBody({
                 </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">
                   <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
+                      flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
+                  <ListingForkButton listing={detail} />
                 </Card.Section>
               </Card>
             )}

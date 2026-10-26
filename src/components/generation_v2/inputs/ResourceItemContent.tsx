@@ -20,6 +20,7 @@ import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/Brow
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
+import { getResourceSfwOnlyMessage } from '~/components/SfwOnlyBadge/sfw-only.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { isPreviewVisible } from '~/shared/utils/resource-preview';
@@ -176,7 +177,7 @@ export function ResourceItemContent({
   const isPrivate = status === 'private';
   const isUnavailable = status === 'unavailable';
   const isDisabled = isResourceDisabled(status);
-  const isSfwOnly = !domain.green && (resource.model.sfwOnly || resource.model.minor);
+  const sfwOnlyMessage = domain.green ? undefined : getResourceSfwOnlyMessage(resource);
   const epochDetails = resource.epochDetails;
 
   // Don't show strength slider for disabled resources
@@ -247,7 +248,7 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
-            {isSfwOnly && (
+            {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
                   <ThemeIcon size={18} color="green.5" variant="filled" className="shrink-0">
@@ -255,7 +256,7 @@ export function ResourceItemContent({
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                  <Text size="sm">{sfwOnlyMessage}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}

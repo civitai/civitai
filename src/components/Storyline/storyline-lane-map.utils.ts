@@ -63,6 +63,100 @@ export const storylineMayBranch = (storyline: { chapterCount: number; mainPath: 
   storyline.chapterCount > storyline.mainPath.length;
 
 /**
+ * The edges (`parentChapterId:chapterId`) an owner may put a chapter into: not the way into a
+ * contributor's chapter from its first parent, which the server refuses because the placement
+ * names the chapter it continued. The first parent is the first edge listed for a chapter, the
+ * order the graph is read in. Chapter 1 has no parent, so no edge above it.
+ */
+export function storylineInsertableEdges(graph: {
+  chapters: { chapterId: number; viaPlacement: boolean }[];
+  edges: { chapterId: number; parentChapterId: number }[];
+}) {
+  const viaPlacement = new Set(
+    graph.chapters.flatMap((c) => (c.viaPlacement ? [c.chapterId] : []))
+  );
+  const seen = new Set<number>();
+  const insertable = new Set<string>();
+  for (const { chapterId, parentChapterId } of graph.edges) {
+    const first = !seen.has(chapterId);
+    seen.add(chapterId);
+    if (!(first && viaPlacement.has(chapterId))) insertable.add(`${parentChapterId}:${chapterId}`);
+  }
+  return insertable;
+}
+
+export type StorylineMoveRun = {
+  /** The owner's chapters in order, each the only way on from the one before. */
+  ids: number[];
+  /** Nothing follows the last, so it may move or be moved after. */
+  tailOpen: boolean;
+};
+
+/**
+ * The runs `storyline.moveChapter` can reorder within: the owner's own chapters (no placement),
+ * each the single way on from the one before and reached by no other way. Mirrors the server's
+ * rule so the controls show only where a move can land; the server still decides, and its
+ * refusals (a continuation waiting for review) are shown as written. A cut graph has missing
+ * children, so it yields none.
+ */
+export function storylineMoveRuns(
+  graph: {
+    chapters: { chapterId: number; viaPlacement: boolean; post: { userId: number } | null }[];
+    edges: { chapterId: number; parentChapterId: number }[];
+    truncated: boolean;
+  },
+  ownerId: number
+) {
+  const byChapter = new Map<number, StorylineMoveRun>();
+  if (graph.truncated) return byChapter;
+  const owners = new Set(
+    graph.chapters.flatMap((c) =>
+      c.post?.userId === ownerId && !c.viaPlacement ? [c.chapterId] : []
+    )
+  );
+  const parents = new Map<number, number[]>();
+  const children = new Map<number, number[]>();
+  for (const { chapterId, parentChapterId } of graph.edges) {
+    parents.set(chapterId, [...(parents.get(chapterId) ?? []), parentChapterId]);
+    children.set(parentChapterId, [...(children.get(parentChapterId) ?? []), chapterId]);
+  }
+  const next = (id: number) => {
+    const [only, ...more] = children.get(id) ?? [];
+    return owners.has(id) &&
+      only !== undefined &&
+      !more.length &&
+      owners.has(only) &&
+      parents.get(only)?.length === 1
+      ? only
+      : undefined;
+  };
+  const hasLinkedParent = new Set(
+    [...owners].flatMap((id) => {
+      const n = next(id);
+      return n === undefined ? [] : [n];
+    })
+  );
+  for (const head of owners) {
+    if (hasLinkedParent.has(head)) continue;
+    const ids = [head];
+    for (let n = next(head); n !== undefined && !ids.includes(n); n = next(n)) ids.push(n);
+    if (ids.length < 2) continue;
+    const run = { ids, tailOpen: !children.get(ids[ids.length - 1])?.length };
+    for (const id of ids) byChapter.set(id, run);
+  }
+  return byChapter;
+}
+
+/** The chapters `chapterId` may be put straight after: anywhere in its run but where it is. */
+export function storylineMoveTargets(run: StorylineMoveRun, chapterId: number) {
+  const at = run.ids.indexOf(chapterId);
+  const tail = run.ids[run.ids.length - 1];
+  const fits = (id: number) => id !== tail || run.tailOpen;
+  if (at < 1 || !fits(chapterId)) return [];
+  return run.ids.filter((id, i) => id !== chapterId && i !== at - 1 && fits(id));
+}
+
+/**
  * The lane layout of a storyline graph, and for each chapter the name and link the chapters list
  * shows. Both follow the route the layout draws to the chapter, so the number in an untitled
  * chapter's name is the one the reader shows when the link opens it. Null without chapter 1.

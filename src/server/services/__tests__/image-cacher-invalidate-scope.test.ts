@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // purgeResizeCache tells the image-cache service to drop an image's derived variants. Three
 // things about that call are easy to get wrong and impossible to see afterwards:
@@ -141,6 +141,59 @@ describe('purgeResizeCache', () => {
       await purgeResizeCache({ url: UUID });
 
       expect(lastUrl()).not.toContain('keep=');
+    });
+  });
+
+  describe('waitForInvalidationMs', () => {
+    // The hide flip purges the CDN next; doing that before the service has answered lets the CDN
+    // refill from copies the service has not dropped yet.
+    it('resolves only after the service answers when asked to wait', async () => {
+      let answer!: (res: { ok: boolean; status: number }) => void;
+      mockFetch.mockReturnValueOnce(new Promise((r) => (answer = r)));
+
+      let settled = false;
+      const done = purgeResizeCache({
+        url: UUID,
+        scope: 'hidden-meta-orphans',
+        waitForInvalidationMs: 70_000,
+      }).then(() => (settled = true));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(invalidateCalls()).toHaveLength(1);
+      expect(settled).toBe(false);
+
+      answer({ ok: true, status: 202 });
+      await done;
+      expect(settled).toBe(true);
+    });
+
+    it('still resolves, without throwing, when the service call fails', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(
+        purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 70_000 })
+      ).resolves.toBe('unconfirmed');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'warning' })
+      );
+    });
+
+    // A slow purge running past the wait is the normal case, not an incident.
+    it('logs running out of wait time as info, not a warning', async () => {
+      mockFetch.mockRejectedValueOnce(
+        Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+      );
+
+      await purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 1 });
+
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'info' })
+      );
+    });
+
+    it('does not wait by default, so the delete flow is not slowed down', async () => {
+      mockFetch.mockReturnValueOnce(new Promise(() => undefined));
+
+      await expect(purgeResizeCache({ url: UUID })).resolves.toBe('unconfirmed');
     });
   });
 

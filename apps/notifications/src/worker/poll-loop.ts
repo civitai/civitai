@@ -13,6 +13,7 @@ import { notifDbWrite } from '../lib/server/clients/db';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
 import { notificationCache } from '../lib/server/cache';
 import { health } from '../lib/server/health';
+import { dispatchEmail } from './email';
 import { dispatchPush } from './push';
 import { counterBumpTimeoutMs, signalsEndpoint } from '../env';
 import {
@@ -290,14 +291,12 @@ export const run = async () => {
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
     notificationsFannedOutTotal.inc(affectedUsers.length);
 
-    // Sibling of the signals POST below: runs after the DB write committed, on a recipient list
+    // Siblings of the signals POST below: runs after the DB write committed, on a recipient list
     // that already passed the opt-out filter. Awaited (unlike signals) because it does its own
     // pacing-sensitive outbound calls; it never throws.
-    await dispatchPush(
-      row.type,
-      row.details,
-      affectedUsers.map((u) => u.userId)
-    );
+    const affectedUserIds = affectedUsers.map((u) => u.userId);
+    await dispatchPush(row.type, row.details, affectedUserIds);
+    await dispatchEmail(row.type, row.details, affectedUserIds);
 
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);

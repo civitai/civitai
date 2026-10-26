@@ -51,7 +51,7 @@ was inert until 2026-09-24, though push was never enabled in that window) · 201
 2. **The service worker gets no fetch handler.** A caching SW on a Next.js app can serve stale
    HTML/JS to every visitor and keeps running after the fix ships. Push only.
 3. **Default push types are materialized, not implied.** `DEFAULT_PUSH_TYPES`
-   (`src/server/notifications/push.constants.ts`) is inserted as rows in the same transaction as a
+   (`src/server/notifications/push.constants.ts`, derived from processors with `defaultPush`) is inserted as rows in the same transaction as a
    user's first subscription — and only while they hold zero subscriptions. Editing the list reaches
    **new subscribers only**; that is deliberate (silently pushing a new type to existing users is
    how permission grants get revoked). `push-defaults.test.ts` pins every entry to a real,
@@ -83,8 +83,9 @@ was inert until 2026-09-24, though push was never enabled in that window) · 201
 
 ## What to change, per task
 
-- **Add a default push type** → append to `DEFAULT_PUSH_TYPES`; the guard test validates it.
-  Remember invariant 3: existing subscribers do not get it.
+- **Add a default push type** → set `defaultPush: true` on its processor; the guard test validates it.
+  Remember invariant 3: existing subscribers do not get it without a hand-run backfill (the deal
+  types shipped one: `migrations/20261203120100_deal_push_default_backfill`).
 - **Change the daily cap** → `PUSH_DAILY_CAP` env on the worker (default 20; anything that is not a
   non-negative integer falls back to that default rather than disabling push). Past the cap: exactly
   one summary push, then silence until the UTC day rolls. No redis → cap fails open (send).
@@ -136,7 +137,7 @@ npx web-push generate-vapid-keys
 
 **Client-only verification** (no worker needed): sign in → notification settings (`/user/account`
 or the settings pane) → soft-ask card → Enable → grant. Expect: one `PushSubscription` row with
-`userAgent` set, the four `DEFAULT_PUSH_TYPES` rows in `UserPushSetting`, per-type controls now
+`userAgent` set, one `UserPushSetting` row per `DEFAULT_PUSH_TYPES` entry, per-type controls now
 three-state, and a device list showing "This device". Then send a push straight at the row:
 
 ```bash

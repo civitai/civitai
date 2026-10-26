@@ -15,9 +15,9 @@ import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/Commen
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
 import type { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -34,46 +34,9 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
     { initialData: comment._count.comments, staleTime: Infinity, refetchOnWindowFocus: false }
   );
 
-  const queryUtils = trpc.useUtils();
-
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: id });
-
-      const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, variables, context) {
-      queryUtils.comment.getReactions.setData(
-        { commentId: variables.id },
-        context?.previousReactions
-      );
-    },
-  });
+  const toggleCommentReaction = useToggleCommentReaction(comment.id);
   const handleReactionClick = (reaction: ReviewReactions) => {
-    toggleReactionMutation.mutate({ id: comment.id, reaction });
+    toggleCommentReaction.toggle(reaction);
   };
 
   return (
@@ -120,7 +83,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
         <ReactionPicker
           reactions={reactions}
           onSelect={handleReactionClick}
-          disabled={toggleReactionMutation.isPending}
+          disabled={toggleCommentReaction.isPending}
         />
         <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (

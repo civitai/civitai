@@ -2,6 +2,8 @@
 // imports too.
 export {
   SandboxApiError,
+  SandboxSeedNotAppliedError,
+  appExportPath,
   createSandboxClient,
   isRunningLimit,
   isSandboxServiceUrl,
@@ -11,4 +13,6 @@ export type {
   SandboxClient,
   SandboxClientOptions,
   SandboxErrorKind,
+  SandboxSeed,
+  SandboxSeedResult,
 } from '@civitai/app-assistant';

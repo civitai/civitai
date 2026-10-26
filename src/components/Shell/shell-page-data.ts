@@ -23,6 +23,7 @@ export type ShellPageData = {
   following?: number[];
   navBanners?: NavBanner[];
   siteAlerts?: SiteAlertsPayload;
+  liveNow?: boolean;
   flags: FeatureAccess;
   userFeatureFlags?: FeatureAccess;
   chatSettings?: UserSettingsChat;
@@ -74,11 +75,32 @@ async function readShellResponse(pending: Promise<Response>): Promise<ShellPageD
 // a body that can only be read once.
 const results = new WeakMap<Promise<Response>, Promise<ShellPageDataResult>>();
 
+const PAGE_DATA_INIT: RequestInit = {
+  credentials: 'same-origin',
+  headers: { accept: 'application/json' },
+};
+
+/**
+ * The inline `<head>` script of a shell page (`_document`): starts the page-data request before the
+ * app's bundles have loaded, into `window.__civShell`, for `adoptShellPageData` to take over. The
+ * same URL and options as the fallback request there, built from the same constants. The no-op
+ * `catch` only keeps a network failure from being reported as unhandled before the app attaches;
+ * the app still reads the rejection.
+ */
+export function shellPageDataPrefetchScript(): string {
+  const prefix = JSON.stringify(shellPageDataUrl('', ''));
+  return (
+    `try{var p=fetch(${prefix}+location.pathname+location.search,${JSON.stringify(
+      PAGE_DATA_INIT
+    )});` + `p.catch(function(){});window.__civShell=p}catch(e){}`
+  );
+}
+
 /** The in-flight `window.__civShell` request, or a new one if the inline script did not start it. */
 export function adoptShellPageData(): Promise<ShellPageDataResult> {
   const pending = (window.__civShell ??= fetch(
     shellPageDataUrl(window.location.pathname, window.location.search),
-    { credentials: 'same-origin', headers: { accept: 'application/json' } }
+    PAGE_DATA_INIT
   ));
   let result = results.get(pending);
   if (!result) {

@@ -198,8 +198,12 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    await dbWrite.$transaction(
+    // The scheduled posts the UPDATE below actually published, with their owner as of the write: it
+    // re-checks each one, so a post taken down or moved since the select drops out, and must get
+    // none of the side effects. Returned rather than assigned out, so a rollback yields none.
+    const flippedPosts = await dbWrite.$transaction(
       async (tx) => {
+        let flipped: ScheduledEntity[] = [];
         const modelsToUpdate = [
           ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
         ];
@@ -234,7 +238,20 @@ export const processScheduledPublishing = createJob(
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
-          await tx.$queryRaw<{ id: number }[]>`
+          // Lock the posts' versions, then the posts, in the order a moderator's version takedown
+          // takes them before unpublishing its owner's live posts, which these are not yet: unlocked,
+          // a takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
+          // Only the (post, version) pairs locked here are published: a post moved to another
+          // version while this waited has that version unlocked, so it waits for the next run.
+          const locked = await tx.$queryRaw<{ postId: number; versionId: number }[]>`
+            SELECT p.id AS "postId", mv.id AS "versionId" FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+            FOR NO KEY UPDATE OF mv, p
+          `;
+
+          if (locked.length)
+            flipped = await tx.$queryRaw<ScheduledEntity[]>`
           -- Update scheduled versions posts
           -- Respect prevPublishedAt metadata to preserve original date on republish
           UPDATE "Post" p
@@ -247,11 +264,14 @@ export const processScheduledPublishing = createJob(
             "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
-          WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+          WHERE (p.id, p."modelVersionId") IN (${Prisma.join(
+            locked.map(({ postId, versionId }) => Prisma.sql`(${postId}, ${versionId})`)
+          )})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+          RETURNING p.id, p."userId";
         `;
           // Images are reindexed post-commit via queueImageSearchIndexUpdate
           // below — the db trigger's updatedAt bump isn't reliably picked up by
@@ -263,7 +283,7 @@ export const processScheduledPublishing = createJob(
             .filter((item) => !!item.extras?.hasEarlyAccess)
             .map(({ id }) => id);
 
-          await tx.$executeRaw`
+          const published = await tx.$queryRaw<{ id: number }[]>`
             -- Update scheduled versions published
             UPDATE "ModelVersion" mv 
             SET status = 'Published', availability = 'Public'
@@ -272,22 +292,38 @@ export const processScheduledPublishing = createJob(
               AND mv."modelId" = m.id
               AND mv.status = 'Scheduled'
               AND mv."publishedAt" <= ${now}
-              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+            RETURNING mv.id;
           `;
+          // Only what that statement published: it re-checks the status, so a version a moderator
+          // took down after the select above drops out here, and the early-access publish, which
+          // writes by id, never sees it.
+          const publishedIds = new Set(published.map(({ id }) => id));
+          const earlyAccessPublished = earlyAccess.filter((id) => publishedIds.has(id));
 
-          if (earlyAccess.length) {
+          if (earlyAccessPublished.length) {
             // The only downside to this failing is that the model version will be published with no early access.
             // Initially, I think this will be OK.
             await publishModelVersionsWithEarlyAccess({
-              modelVersionIds: earlyAccess,
+              modelVersionIds: earlyAccessPublished,
               continueOnError: true,
               tx,
             });
           }
         }
+
+        return flipped;
       },
       { timeout: 30000 }
     );
+
+    // Undated until now, so never scanned. First after the commit: the steps below are unguarded, and
+    // these posts are live now, so the next run never selects them again — a scan skipped is lost.
+    if (flippedPosts.length)
+      scanEntitiesInBackground(
+        'Post',
+        flippedPosts.map((p) => p.id)
+      );
 
     // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
     // already read Published, so the next run never selects them again — a bust skipped here is lost.
@@ -325,7 +361,7 @@ export const processScheduledPublishing = createJob(
     // they land here on the day the post actually goes live. The sweep half of this
     // set also carries normally-published drafts, so anything driven off it has to
     // tolerate being handed the same post id twice.
-    const publishedPosts = uniqBy([...scheduledPosts, ...newlyLivePosts], 'id');
+    const publishedPosts = uniqBy([...flippedPosts, ...newlyLivePosts], 'id');
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({
@@ -392,15 +428,10 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    if (scheduledPosts.length) {
+    if (flippedPosts.length) {
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
-      await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
-      // Undated until now, so never scanned.
-      scanEntitiesInBackground(
-        'Post',
-        scheduledPosts.map((p) => p.id)
-      );
+      await userImageVideoCountCaches.refresh(uniq(flippedPosts.map((p) => p.userId)));
     }
 
     const processedModelIds = [
