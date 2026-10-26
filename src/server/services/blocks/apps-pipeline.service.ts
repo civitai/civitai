@@ -903,7 +903,11 @@ export async function waitForApplyJob(
 ): Promise<ApplyJobOutcome> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
-  const timeoutMs = opts.timeoutMs ?? 6 * 60 * 1000; // 6 min — fits the worst-case backoffLimit=2 + 180s rollout
+  // 6 min — fits the worst-case backoffLimit=2 + 180s rollout. The optional
+  // platform publish step (buildApplyScript) runs inside this budget too; the
+  // script it runs must keep its non-blocking path well under a minute, or a
+  // slow publish turns a good deploy into a 'timeout' here.
+  const timeoutMs = opts.timeoutMs ?? 6 * 60 * 1000;
   const pollMs = opts.pollMs ?? 5_000;
   const deadline = Date.now() + timeoutMs;
 
