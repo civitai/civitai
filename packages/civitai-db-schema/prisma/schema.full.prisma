@@ -473,6 +473,8 @@ model User {
   feedback             Feedback[]
   feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
   feedbackOwnerStatus  Feedback[]                 @relation("FeedbackOwnerStatusBy")
+  appAccessRequests    AppAccessRequest[]         @relation("AppAccessRequestUser")
+  appAccessReviewed    AppAccessRequest[]         @relation("AppAccessRequestReviewedBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -2817,6 +2819,27 @@ model Feedback {
   // (WHERE "appListingId" IS NOT NULL), which Prisma cannot express, so it stays a
   // plain @@index here; the SQL in 20261011120000_feedback_app_listing is authoritative.
   @@index([appListingId, createdAt(sort: Desc)], map: "Feedback_appListingId_createdAt_idx")
+}
+
+/// A request to build apps on Civitai, sent from the `/apps/build` pitch and reviewed by a moderator.
+/// Approving records the decision only; access itself is granted outside this table.
+model AppAccessRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  user         User      @relation("AppAccessRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  whatToBuild  String
+  links        String[]  @default([])
+  /// pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
+  /// per user: the migration's PARTIAL unique index, which Prisma cannot express.
+  status       String    @default("pending")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedById Int?
+  reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {

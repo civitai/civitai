@@ -433,7 +433,7 @@ export default defineNextConfig(
         // that reads as a live route, and `appsPageWidths`' fs-walk would then demand a
         // width classification for a route that never renders.
         //
-        // 🔴 ALL THREE ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
+        // 🔴 ALL OF THEM ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
         // to **308**, which preserves the request METHOD — correct in general, but these
         // are GET-only pages whose inbound links are bookmarks, notification URLs and
         // search results, and 301 is the status those consumers cache and rewrite on. The
@@ -456,6 +456,15 @@ export default defineNextConfig(
         },
         {
           source: '/apps/get-started',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        // `/apps/assistant` merged into `/apps/build` too: the page renders the App Assistant
+        // workspace for the viewers `canAccessAppAssistant` admits. Next carries the query string
+        // across, so `/apps/assistant?fork=<slug>` lands on `/apps/build?fork=<slug>` and still
+        // opens the fork.
+        {
+          source: '/apps/assistant',
           destination: '/apps/build',
           statusCode: 301,
         },
