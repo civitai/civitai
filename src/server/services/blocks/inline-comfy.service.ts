@@ -338,7 +338,9 @@ function refusalMessage(reason: RefusedReason): string {
   if (reason.code === 'not-api-format') {
     return (
       `inline workflow is not a ComfyUI API-format graph (detected: ${reason.format}). ` +
-      'Export it from ComfyUI with "Export (API)"; the host does not convert editor graphs.'
+      'Export it from ComfyUI with "Export (API)"; the host does not convert editor graphs. ' +
+      'Then strip per-node extras: each node may carry only `class_type` and `inputs` ' +
+      "(remove an export's `_meta`), or the host's strict node schema rejects it."
     );
   }
   const shown = reason.inputs

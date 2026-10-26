@@ -7520,6 +7520,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
           error: expect.stringContaining('not a ComfyUI API-format graph (detected: ui)'),
           errorCode: 'not-api-format',
         });
+        // An API export carries `_meta` on every node, which the strict node schema
+        // rejects, so the advice must say to strip it.
+        expect(result.snapshot.error).toContain('`_meta`');
         expectNothingSpent();
       });
 

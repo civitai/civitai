@@ -1,75 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('~/server/services/generation/generation.service', () => ({
-  getResourceData: vi.fn(),
-}));
-vi.mock('~/server/services/subscriptions.service', () => ({
-  getHighestTierSubscription: vi.fn(),
-}));
-
-import { checkInlineComfyGraph } from '~/server/services/blocks/inline-comfy.service';
-import { getRecipe, REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
+import { describe, expect, it } from 'vitest';
 
 /**
  * `checkInlineComfyGraph` (civitai-app-starters#774): the one place an inline
  * `customComfy` graph is checked for runnability before any spend. The refusal
- * cases are proved through the router and the REST routes
+ * and accept cases are proved through the router and the REST routes
  * (`blocks.router.workflow.test.ts`, `workflows-controls-seam.test.ts`); this file
- * pins the two things those cannot:
- *
- *   1. the platform's own graphs pass, so the check cannot refuse the shape the
- *      server itself sends (models named by AIR, core nodes);
- *   2. WHO runs it: the set of call sites is exact, so a new path that accepts an
- *      inline graph without the check, or a removed call, goes red here.
+ * pins what those cannot: WHO runs it. The set of call sites is exact, so a new
+ * path that accepts an inline graph without the check, or a removed call, goes
+ * red here.
  */
-
-describe('the platform recipes build graphs the runnability check accepts', () => {
-  const cases = REGISTERED_RECIPE_IDS.flatMap((id) => {
-    const recipe = getRecipe(id)!;
-    return recipe.engines.map((engine) => ({ id, engine, recipe }));
-  });
-
-  // Positive control on the population: the starter recipe the spike ran end to
-  // end must be in it, or "every recipe passes" could pass over an empty list.
-  it('covers starter-comfy-txt2img', () => {
-    expect(cases.map((c) => c.id)).toContain('starter-comfy-txt2img');
-  });
-
-  it.each(cases)(
-    '$id ($engine) is runnable, and the checked graph is the graph',
-    ({ engine, recipe }) => {
-      const params = recipe.paramSchema.parse({
-        prompt: 'a lighthouse at dusk',
-        ...(recipe.engines.length > 1 ? { engine } : {}),
-      });
-      const { workflow } = recipe.buildStep(params, {});
-      const verdict = checkInlineComfyGraph(workflow);
-      expect(verdict).toEqual({ runnable: true, graph: workflow });
-    }
-  );
-
-  // Negative control on the same fixture: the starter graph with one AIR swapped
-  // for a filename is refused, so the case above is not passing a check that
-  // refuses nothing.
-  it('the starter graph with its unet named by filename is refused with model-filenames', () => {
-    const recipe = getRecipe('starter-comfy-txt2img')!;
-    const { workflow } = recipe.buildStep(recipe.paramSchema.parse({ prompt: 'x' }), {});
-    const loaderId = Object.keys(workflow).find((k) => workflow[k].class_type === 'UNETLoader')!;
-    const broken = {
-      ...workflow,
-      [loaderId]: {
-        ...workflow[loaderId],
-        inputs: { ...workflow[loaderId].inputs, unet_name: 'z_image_turbo_bf16.safetensors' },
-      },
-    };
-    const verdict = checkInlineComfyGraph(broken);
-    expect(verdict.runnable).toBe(false);
-    expect(!verdict.runnable && verdict.snapshot.errorCode).toBe('model-filenames');
-  });
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CALLER LEDGER. Every non-test call of `checkInlineComfyGraph`, by
