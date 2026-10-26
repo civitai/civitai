@@ -174,7 +174,8 @@ export const getCommentsViaKysely = async ({
 
   const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
 
-  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  await getKyselyWithoutLag('commentModel', filter.modelId);
+  const db = (await import('~/server/db/kyselyDb')).kyselyRead; // M7
   return listTopLevelCommentsViaKysely(db, topLevel, { limit, skip, sort });
 };
 
