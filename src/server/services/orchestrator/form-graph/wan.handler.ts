@@ -384,7 +384,6 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
           input: removeEmpty({
             ...baseInput,
             provider: 'civitai' as const,
-            diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
           }) as Wan21CivitaiVideoGenInput,
         },
       ];
