@@ -34,6 +34,7 @@ const grant: VerifiedGrant = {
   id: 'g-1',
   expiresAt: new Date(Date.now() + 60_000),
   subagents: false,
+  preview: false,
 };
 
 const request = {

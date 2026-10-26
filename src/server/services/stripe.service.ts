@@ -568,11 +568,19 @@ export const createDonateSession = async ({
   return { sessionId: session.id, url: session.url };
 };
 
+// Every portal session uses this configuration, so its payment-method settings decide what a
+// member can add from the portal. Unset, Stripe uses the account's default configuration.
+const portalConfiguration = () =>
+  env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+    ? { configuration: env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }
+    : {};
+
 export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/membership`,
   });
@@ -595,6 +603,7 @@ export const createSubscriptionChangeSession = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {
@@ -637,6 +646,7 @@ export const createCancelSubscriptionSession = async ({ customerId }: { customer
   }
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {

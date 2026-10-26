@@ -4,6 +4,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -241,6 +242,7 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
+    disclosureVersion: SERVICES_TERMS_VERSION,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,

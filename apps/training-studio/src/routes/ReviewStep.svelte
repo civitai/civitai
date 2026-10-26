@@ -9,6 +9,7 @@
     IconX,
     IconArrowLeft,
     IconInfoCircle,
+    IconPhotoPlus,
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
@@ -16,6 +17,8 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
+  import { isAbort, uploadFile } from '$lib/upload';
+  import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -48,7 +51,9 @@
     runCard,
     runExtraCapabilities,
     runParamsKey,
+    runTakesSampleImages,
     runVersion,
+    sampleImagesProblem,
     runVersionLabel,
     filledPrompts,
     teLocked,
@@ -91,7 +96,7 @@
     matureCount: number;
     onStart: (
       launched: LaunchedRun[],
-      prompts: string[],
+      prompts: SamplePrompt[],
       name: string,
       currencies: string[]
     ) => Promise<void>;
@@ -336,11 +341,49 @@
     prompts = addSamplePrompt(prompts);
   }
   function removePrompt(i: number) {
-    if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
+    if (prompts.length <= 1) return;
+    clearImage(prompts[i]!.id);
+    prompts = prompts.filter((_, k) => k !== i);
   }
   function insertTrigger(i: number) {
     prompts[i]!.text = withTrigger(trigger, prompts[i]!.text);
   }
+  // Edit LoRAs are judged by how they change an input image, so their sample rows take one.
+  const takesImages = $derived(selection.runs.some(runTakesSampleImages));
+  const someRunsTextOnly = $derived(takesImages && !selection.runs.every(runTakesSampleImages));
+  const imagesProblem = $derived(takesImages ? sampleImagesProblem(prompts) : null);
+  // Keyed by prompt id. An upload outliving its row (removed mid-upload) is aborted.
+  let imageUploads = $state<Record<number, AbortController>>({});
+  let imageErrors = $state<Record<number, string>>({});
+  const uploadingImage = $derived(Object.keys(imageUploads).length > 0);
+
+  async function attachImage(id: number, file: File | undefined) {
+    if (!file) return;
+    imageUploads[id]?.abort();
+    const controller = new AbortController();
+    imageUploads[id] = controller;
+    delete imageErrors[id];
+    try {
+      const { url } = await uploadFile(file, () => {}, controller.signal);
+      if (!url) throw new Error('Upload finished but the image is not ready yet — retry.');
+      const row = prompts.find((p) => p.id === id);
+      if (row) row.image = { url, name: file.name };
+    } catch (e) {
+      if (!isAbort(e)) imageErrors[id] = e instanceof Error ? e.message : 'Upload failed';
+    } finally {
+      if (imageUploads[id] === controller) delete imageUploads[id];
+    }
+  }
+  function clearImage(id: number) {
+    imageUploads[id]?.abort();
+    const row = prompts.find((p) => p.id === id);
+    if (row) row.image = undefined;
+    delete imageErrors[id];
+  }
+  $effect(() => () => {
+    for (const controller of Object.values(imageUploads)) controller.abort();
+  });
+
   const triggerText = $derived(trigger.trim());
   const promptsMissingTrigger = $derived(
     triggerText
@@ -367,7 +410,15 @@
   function start() {
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)) return;
+    if (
+      starting ||
+      trainingDisabled ||
+      total == null ||
+      (needsAttestation && !attestSfw) ||
+      imagesProblem ||
+      uploadingImage
+    )
+      return;
     const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
     if (spend) {
       confirmSpend = spend;
@@ -385,7 +436,7 @@
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
-        prompts.map((p) => p.text),
+        prompts,
         name,
         buzzMode.currencies
       );
@@ -413,6 +464,49 @@
       </Tooltip.Content>
     </Tooltip.Root>
   </Tooltip.Provider>
+{/snippet}
+
+{#snippet sampleImage(p: SamplePrompt)}
+  {#if imageUploads[p.id]}
+    <div class="grid size-9 shrink-0 place-items-center rounded-md border border-dark-4 bg-dark-7">
+      <Spinner class="size-4" />
+    </div>
+  {:else if p.image}
+    <div class="group relative size-9 shrink-0">
+      <img
+        src={p.image.url}
+        alt="Input for sample: {p.image.name}"
+        title={p.image.name}
+        class="size-9 rounded-md border border-dark-4 object-cover"
+      />
+      <button
+        type="button"
+        aria-label="Remove input image"
+        onclick={() => clearImage(p.id)}
+        class="absolute -right-1.5 -top-1.5 grid size-4 place-items-center rounded-full border border-dark-4 bg-dark-6 text-dark-1 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <IconX size={10} stroke={2.5} />
+      </button>
+    </div>
+  {:else}
+    <label
+      class="grid size-9 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-dark-4 text-dark-2 transition-colors hover:border-primary hover:text-primary"
+      title="Add an input image"
+    >
+      <IconPhotoPlus size={16} stroke={2} />
+      <input
+        type="file"
+        accept="image/*"
+        class="sr-only"
+        aria-label="Add an input image"
+        onchange={(e) => {
+          const input = e.currentTarget;
+          void attachImage(p.id, input.files?.[0]);
+          input.value = '';
+        }}
+      />
+    </label>
+  {/if}
 {/snippet}
 
 {#snippet recommendedHint(i: number, field: ParamField, display: string)}
@@ -675,6 +769,9 @@
               triggerText !== '' && p.text.trim() !== '' && !promptHasTrigger(triggerText, p.text)}
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-2">
+                {#if takesImages}
+                  {@render sampleImage(p)}
+                {/if}
                 <Input
                   bind:value={prompts[i]!.text}
                   placeholder="Describe a test scene, e.g. standing in a forest at dusk"
@@ -685,6 +782,9 @@
                   <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
                 {/if}
               </div>
+              {#if imageErrors[p.id]}
+                <div class="font-mono text-[11px] text-red-400">{imageErrors[p.id]}</div>
+              {/if}
               {#if missing}
                 <div class="flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-buzz">
                   <IconAlertTriangle size={12} stroke={2} class="shrink-0" />
@@ -709,6 +809,11 @@
             <span class="text-buzz">No sample prompt filled in: no test images will be generated.</span>
           {/if}
           Applied to every run.
+          {#if takesImages}
+            Add an input image to each prompt to render the samples as edits of it{someRunsTextOnly
+              ? ' (on the runs whose model supports it; the others sample from text)'
+              : ''}, or leave them all empty for text-only samples.
+          {/if}
           {#if triggerText}
             Each sample starts with your trigger word "{triggerText}", so the images test what the
             LoRA is learning.
@@ -848,7 +953,12 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)}
+      disabled={starting ||
+        trainingDisabled ||
+        total == null ||
+        (needsAttestation && !attestSfw) ||
+        !!imagesProblem ||
+        uploadingImage}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -863,6 +973,8 @@
       </p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if imagesProblem}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{imagesProblem}</p>
     {:else if total == null && !quoting}
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         We couldn't price every run right now — start is disabled until each run shows a cost.

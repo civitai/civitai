@@ -667,6 +667,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId'],
     decision: 'subject',
   },
+  // The image createImageIngestionRequest is scanning.
+  'src/server/services/video-audio-scan.service.ts#submitVideoAudioScan': {
+    writes: ['imageId'],
+    decision: 'server-derived',
+  },
 };
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */

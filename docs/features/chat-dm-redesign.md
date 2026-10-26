@@ -45,15 +45,19 @@ still wanted a way back in for people they know.
 `userSettingsChat` (stored on `User.settings.chat`) gains:
 
 ```ts
-dmPolicy: 'everyone' | 'following' | 'mutuals' | 'nobody'   // default 'everyone'
-holdNewAccounts: boolean                                    // default true
+dmPolicy: 'everyone' | 'following' | 'mutuals' | 'nobody'   // default 'following' (see below)
+holdNewAccounts: boolean                                    // default false
 ```
 
-`holdNewAccounts` defaults **on**, which changes behaviour for every existing user: a sender
-whose account is under 7 days old lands in Requests rather than the inbox. That is the mockup's
-default state and the only part of Phase 1 that attacks the 7,566 reports/30d without the
-recipient opting in, but it is a product default worth a second look before release — flipping
-it to off costs one line in `DEFAULT_CHAT_SETTINGS`.
+A user who never saved a `dmPolicy` gets `following`: people they follow reach the inbox and
+everyone else lands in Requests. A saved value always wins, including a saved `everyone`. While
+the redesign is flag-gated, the `following` default applies only to recipients who have the
+`chatRedesign` flag; everyone else keeps `everyone`, because the old chat list has no Requests
+tab and has no way to change the policy.
+
+`holdNewAccounts` defaults **off** for the same reason: the toggle is only reachable behind
+`chatRedesign`. Turning it on would hold a sender whose account is under 7 days old in Requests
+for every user. Revisit it when the flag ramps.
 
 `features.chat` stays the master switch for the chat UI as a whole — it hides your own chat
 button, which is more than "who can DM me". `dmPolicy: 'nobody'` and `features.chat === false`

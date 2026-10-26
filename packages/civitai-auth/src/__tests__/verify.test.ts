@@ -181,4 +181,32 @@ describe('createAuthVerifier', () => {
       expect(result.redirect).toContain(`${issuer}/login?callbackUrl=`);
     }
   });
+
+  describe('without a configured audience', () => {
+    let hubSigner: SessionSigner;
+    let hubPublicKeyPem: string;
+    beforeAll(() => {
+      const kp = generateKeyPairSync('ec', {
+        namedCurve: 'P-256',
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      });
+      hubPublicKeyPem = kp.publicKey;
+      hubSigner = createSessionSigner({ privateKeyPem: kp.privateKey, kid: 'h-1', issuer });
+    });
+
+    it('accepts a session token', async () => {
+      const token = await hubSigner.mintSessionToken({ sub: '42', signedAt: 1 }, { jti: 's42' });
+      const verifier = createAuthVerifier({ issuer, publicKeyPem: hubPublicKeyPem });
+      const claims = await verifier.verifyToken(token);
+      expect(claims?.sub).toBe('42');
+    });
+
+    it('rejects a token that carries an audience', async () => {
+      const token = await hubSigner.mintIdToken({ sub: 42, aud: 'some-client', nonce: 'n' });
+      const verifier = createAuthVerifier({ issuer, publicKeyPem: hubPublicKeyPem });
+      const claims = await verifier.verifyToken(token);
+      expect(claims?.sub ?? null).toBeNull();
+    });
+  });
 });

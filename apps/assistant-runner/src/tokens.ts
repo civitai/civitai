@@ -16,6 +16,9 @@ import type { Authenticator } from './interfaces';
  *   the runner trades it, with its own secret, for short-lived tokens at civitai. Those tokens are
  *   the user's, user-wide, as the browser's are; the conversation and idempotency key it names are
  *   checked by the runner at start (and the conversation at a patch), not by civitai's mint.
+ *   A preview grant is a run grant with `use: 'preview'`, valid about 2 minutes, for one Restart
+ *   preview (`preview: true` below); the runner takes it for nothing else, and takes no other grant
+ *   for that.
  */
 export const TOKEN_ISSUER = 'civitai';
 export const TOKEN_ALGORITHM = 'ES256';
@@ -40,6 +43,11 @@ export interface VerifiedGrant {
   expiresAt: Date;
   /** civitai says the viewer may start read-only subagents (claim `subagents: true`). */
   subagents: boolean;
+  /**
+   * A preview grant (claim `use: 'preview'`): civitai signs one, short-lived, for the page's Restart
+   * preview. It is good only for that request (`POST apps/:app/preview`), and a run grant is not.
+   */
+  preview: boolean;
 }
 
 export interface TokenVerifier {
@@ -92,6 +100,7 @@ export function createTokenVerifier(publicKeyPem: string): TokenVerifier {
         id,
         expiresAt: new Date(payload.exp * 1000),
         subagents: payload.subagents === true,
+        preview: payload.use === 'preview',
       };
     },
   };

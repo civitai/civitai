@@ -186,9 +186,12 @@ describe('writeChapterEdgeForPlacement', () => {
     },
   };
 
-  const findChapter = (parent: unknown) =>
-    (({ where }: { where: { placementId?: number; postId?: number } }) =>
-      Promise.resolve(where.postId === args.parentPostId ? parent : null)) as never;
+  // By its post, as the approval finds it, and by its id, as the add re-reads it under its locks.
+  const findChapter = (parent: { id: number }) =>
+    (({ where }: { where: { id?: number; placementId?: number; postId?: number } }) =>
+      Promise.resolve(
+        where.postId === args.parentPostId || where.id === parent.id ? parent : null
+      )) as never;
 
   const findByPlacement = (row: unknown) =>
     (({ where }: { where: { placementId?: number } }) =>
@@ -402,9 +405,9 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(tx.storylineChapterEdge.findFirst).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapter.create).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapterEdge.create).toHaveBeenCalledTimes(1);
-    // The parent-author block check and the parent lock (the owner placing on their own
-    // storyline skips the owner check).
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    // The parent-author block check, the storyline's shared lock, and the parent lock, taken
+    // again for the canon slot (the owner placing on their own storyline skips the owner check).
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
     expect(w.post.findUnique).not.toHaveBeenCalled();
     expect(w.storylineChapterEdge.findFirst).not.toHaveBeenCalled();
     expect(w.storylineChapter.create).not.toHaveBeenCalled();
@@ -775,6 +778,7 @@ describe('authorization', () => {
       w.storylineChapterEdge.findMany.mockResolvedValue([
         { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
       ] as never);
+      w.storylineChapterEdge.updateMany.mockResolvedValue({ count: 1 } as never);
     });
 
     it('moves canon for the owner: clears the old one, then sets the new one', async () => {
@@ -3041,6 +3045,29 @@ describe('covers and cast', () => {
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
       take: STORYLINE_GRAPH_LIMIT + 1,
     });
+  });
+
+  it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+      {
+        id: 3,
+        depth: 1,
+        removedAt: null,
+        placementId: 8,
+        post: chapterPost(103, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.viaPlacement])).toEqual([
+      [1, null, false],
+      [2, null, true],
+      [3, 'removed', true],
+    ]);
+    expect(JSON.stringify(chapters)).not.toContain('placementId');
   });
 
   describe('the storyline page', () => {

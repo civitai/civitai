@@ -3378,6 +3378,24 @@ export type Image = {
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
 };
+export type ImageAudioScan = {
+  imageId: number;
+  workflowId: string;
+  /**
+   * Pending | Succeeded | Failed
+   */
+  status: Generated<string>;
+  /**
+   * null when the video has no audio or the scan failed: unknown, never "clean"
+   */
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: unknown | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Generated<Timestamp>;
+  completedAt: Timestamp | null;
+};
 export type ImageCaption = {
   imageId: number;
   /**
@@ -5233,6 +5251,11 @@ export type ServiceOffering = {
   removedDetails: string | null;
   removedAt: Timestamp | null;
   removedById: number | null;
+  /**
+   * The seller's agreement to the services terms when they published: userId, offeringId,
+   * affirmedAt, version and the statement verbatim. Null until first published.
+   */
+  sellerAffirmation: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5802,6 +5825,11 @@ export type UserCreatorMilestone = {
   achievedAt: Generated<Timestamp>;
   seenAt: Timestamp | null;
 };
+export type UserEmailNotificationOptOut = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -6335,6 +6363,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageAudioScan: ImageAudioScan;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
@@ -6523,6 +6552,7 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserCreatorMilestone: UserCreatorMilestone;
+  UserEmailNotificationOptOut: UserEmailNotificationOptOut;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;

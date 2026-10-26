@@ -553,6 +553,16 @@
   });
 </script>
 
+<!-- An edit run's samples are only readable next to the image they were rendered from. -->
+{#snippet sourceThumb(index: number)}
+  {@const url = d.sourceImages?.[index]}
+  {#if url}
+    <a href={url} target="_blank" rel="noopener noreferrer" class="shrink-0" title="Input image">
+      <img src={url} alt="Input for sample {index + 1}" class="size-10 rounded border border-dark-4 object-cover" />
+    </a>
+  {/if}
+{/snippet}
+
 <!-- The one place the Generate affordance decides gated vs in-place action vs deep link — a render
      site that skipped the gate would silently un-gate non-members. When the host says this user
      can't use unpublished weights, clicking the muted button (touch and keyboard included — a
@@ -873,9 +883,10 @@
 
             {#each promptLabels as prompt, r (r)}
               <div
-                class="flex items-center pr-2 text-xs leading-relaxed text-dark-2"
+                class="flex items-center gap-2 pr-2 text-xs leading-relaxed text-dark-2"
                 title={prompt}
               >
+                {@render sourceThumb(r)}
                 <span class="line-clamp-4">{prompt}</span>
               </div>
               {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
@@ -1018,8 +1029,9 @@
               {:else}
                 <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
               {/if}
-              <figcaption class="text-xs leading-relaxed text-dark-2" title={prompt}>
-                {prompt}
+              <figcaption class="flex items-start gap-2 text-xs leading-relaxed text-dark-2" title={prompt}>
+                {@render sourceThumb(i)}
+                <span>{prompt}</span>
               </figcaption>
             </figure>
           {/each}

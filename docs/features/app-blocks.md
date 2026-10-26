@@ -491,6 +491,40 @@ read that file. As of this writing the families are:
   answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
   `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
+- **Model file contents** (page host only, no scope, session-authed): the host
+  resolves the file as the signed-in viewer through the site's download gate,
+  fetches it in the viewer's tab and posts back only parsed content; the app never
+  sees the signed URL. No download is counted. Review preview refuses both with
+  `forbidden`. The model slot has no handler, so a request there waits for the
+  SDK timeout.
+  - `GET_WILDCARD_PACK { requestId, modelVersionId }` (→ `WILDCARD_PACK_RESULT`):
+    a `Wildcards` version's prompt lists.
+  - `GET_RESOURCE_FILE { requestId, modelVersionId, fileId? }`
+    (→ `RESOURCE_FILE_RESULT`): a `Workflows` / `ComfyWorkflows` version's graph
+    file. Without `fileId` the server picks a `.json` `Config` file, then a `.zip`
+    `Archive`, then the lowest file id. The answer is
+    `{ requestId, file: { meta, entries, truncated } }` with
+    `meta { modelId, modelVersionId, fileId, fileName, modelName, versionName, creatorUsername }`
+    and `entries [{ path, format, graph }]`, or `{ requestId, error }` with `error` one
+    of `not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`,
+    `rate-limited`. A `.json` file is one entry; a `.zip` gives one entry per `.json`
+    inside it, at most 20 (`truncated` is then true, and also when an entry was too
+    large or not valid JSON). `format` is `api` when every top-level value has
+    `class_type` and `inputs`, `ui` when there is a `nodes` array, else `unknown`.
+    Caps: 32 MB before download (counted as the body streams), 4 MB per JSON entry,
+    16 MB inflated in total; 30 requests a minute per user (moderators are not
+    limited) and 3 at once per tab (`busy`). The whole request (resolve, fetch,
+    parse) answers within 110 s, inside the SDK's 120 s timeout; past that it
+    replies `parse-failed` and frees its slot. The bridge is narrower than the
+    download gate: drafts are refused to everyone (owner included), and a version
+    under any active paid-access gate (early access or permanent paid access) or
+    with downloads disabled is refused to everyone but the owner (buyers and
+    moderators included), all as `not-found`. A non-owner, moderators and
+    Private-access grant holders included, gets only public files of an
+    open-access (`Public` or `Unsearchable`), non-POI version. A transient storage
+    failure is `parse-failed`, so the block can retry. `forbidden` is the viewer's maturity ceiling, checked after the
+    download gate. Logic: `src/server/services/resource-file.service.ts`,
+    `src/components/AppBlocks/resourceFileParse.ts` and `resourceFileHost.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does

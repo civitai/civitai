@@ -21,17 +21,30 @@ import classes from './ShellDs.module.css';
  * supplies the exact Mantine values the design system does not have.
  */
 
-export type ShellVariant = 'subtle-gray' | 'filled' | 'filled-red' | 'default';
+export type ShellVariant =
+  | 'subtle-gray'
+  | 'filled'
+  | 'filled-red'
+  | 'default'
+  | 'filled-gray'
+  | 'filled-blue'
+  | 'filled-green'
+  | 'light-gray'
+  | 'light-green'
+  | 'outline-gray'
+  | 'transparent-gray';
 /** Mantine `Button` sizes. */
-export type ShellSize = 'xs' | 'sm';
+export type ShellSize = 'xs' | 'sm' | 'compact-sm';
 /** Mantine `ActionIcon` sizes; set this instead of `size` for an icon-only button. */
-export type ShellIconSize = 'md' | 'lg';
+export type ShellIconSize = 'xs' | 'md' | 'lg';
 
 type ShellStyleProps = {
   variant: ShellVariant;
   size?: ShellSize;
   icon?: ShellIconSize;
   radius?: 'xl';
+  /** Mantine's `fullWidth`. */
+  fullWidth?: boolean;
   className?: string;
 };
 
@@ -41,12 +54,21 @@ export const DS_VARIANT = {
   filled: 'filled',
   'filled-red': 'filled',
   default: 'outline',
+  'filled-gray': 'filled',
+  'filled-blue': 'filled',
+  'filled-green': 'filled',
+  'light-gray': 'light',
+  'light-green': 'light',
+  'outline-gray': 'outline',
+  'transparent-gray': 'subtle',
 } as const satisfies Record<ShellVariant, 'filled' | 'light' | 'outline' | 'subtle'>;
 
 /** The design-system size each shell size renders as (`MARKUP.md`: sm · md · lg). */
 export const DS_SIZE = {
   xs: 'sm',
   sm: 'md',
+  'compact-sm': 'sm',
+  'icon-xs': 'sm',
   'icon-md': 'sm',
   'icon-lg': 'md',
 } as const;
@@ -56,6 +78,25 @@ const VARIANT_CLASS: Record<ShellVariant, string> = {
   filled: classes.filledPrimary,
   'filled-red': classes.filledRed,
   default: classes.default,
+  'filled-gray': classes.filledGray,
+  'filled-blue': classes.filledBlue,
+  'filled-green': classes.filledGreen,
+  'light-gray': classes.lightGray,
+  'light-green': classes.lightGreen,
+  'outline-gray': classes.outlineGray,
+  'transparent-gray': classes.transparentGray,
+};
+
+const SIZE_CLASS: Record<ShellSize, string> = {
+  xs: classes.sizeXs,
+  sm: classes.sizeSm,
+  'compact-sm': classes.sizeCompactSm,
+};
+
+const ICON_CLASS: Record<ShellIconSize, string> = {
+  xs: classes.iconXs,
+  md: classes.iconMd,
+  lg: classes.iconLg,
 };
 
 export function toDesignSystemAttributes({
@@ -63,19 +104,20 @@ export function toDesignSystemAttributes({
   size = 'sm',
   icon,
   radius,
+  fullWidth,
   className,
 }: ShellStyleProps) {
   return {
     'data-civitai-ui': 'button',
     'data-variant': DS_VARIANT[variant],
     'data-size': DS_SIZE[icon ? (`icon-${icon}` as const) : size],
+    ...(fullWidth ? { 'data-full-width': 'true' } : {}),
     className: clsx(
       classes.root,
       VARIANT_CLASS[variant],
-      icon === 'md' && classes.iconMd,
-      icon === 'lg' && classes.iconLg,
-      !icon && (size === 'xs' ? classes.sizeXs : classes.sizeSm),
+      icon ? ICON_CLASS[icon] : SIZE_CLASS[size],
       radius === 'xl' && classes.radiusXl,
+      fullWidth && classes.fullWidth,
       className
     ),
   } as const;
@@ -91,10 +133,10 @@ type ShellLinkProps = ShellStyleProps & {
  * is a plain `<a>`, everything else goes through `NextLink` for client-side navigation.
  */
 export const ShellLink = forwardRef<HTMLAnchorElement, ShellLinkProps>(function ShellLink(
-  { variant, size, icon, radius, className, href, children, ...rest },
+  { variant, size, icon, radius, fullWidth, className, href, children, ...rest },
   ref
 ) {
-  const attrs = toDesignSystemAttributes({ variant, size, icon, radius, className });
+  const attrs = toDesignSystemAttributes({ variant, size, icon, radius, fullWidth, className });
   if (rest.target === '_blank') {
     return (
       <a ref={ref} href={href} {...rest} {...attrs}>
@@ -115,7 +157,7 @@ type ShellButtonProps = ShellStyleProps & {
 
 /** A native `<button>`, `type="button"` like Mantine's, so it never submits an enclosing form. */
 export const ShellButton = forwardRef<HTMLButtonElement, ShellButtonProps>(function ShellButton(
-  { variant, size, icon, radius, className, children, type = 'button', ...rest },
+  { variant, size, icon, radius, fullWidth, className, children, type = 'button', ...rest },
   ref
 ) {
   return (
@@ -123,7 +165,7 @@ export const ShellButton = forwardRef<HTMLButtonElement, ShellButtonProps>(funct
       ref={ref}
       type={type}
       {...rest}
-      {...toDesignSystemAttributes({ variant, size, icon, radius, className })}
+      {...toDesignSystemAttributes({ variant, size, icon, radius, fullWidth, className })}
     >
       {children}
     </button>

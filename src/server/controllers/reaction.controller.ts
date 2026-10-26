@@ -317,12 +317,14 @@ export const toggleReactionHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-    const trackerEvent = result === 'noop' ? undefined : await getTrackerEvent(input, result);
+    // Positive checks: 'noop' and 'ignored' wrote nothing, so they emit nothing.
+    const changed = result === 'created' || result === 'removed';
+    const trackerEvent = changed ? await getTrackerEvent(input, result) : undefined;
     if (trackerEvent) {
       await ctx.track.reaction(trackerEvent).catch(handleLogError);
     }
 
-    if (input.entityType === 'image' && result !== 'noop') {
+    if (input.entityType === 'image' && changed) {
       const metricTypeFromInput = reactionMetricMap[input.reaction];
       if (metricTypeFromInput) {
         await updateEntityMetric({
@@ -366,6 +368,8 @@ export const toggleReactionHandler = async ({
 
       createReactionNotification(input).catch(handleLogError);
     }
+    // API-key callers keep the result set they had before the guard existed.
+    if (result === 'ignored' && ctx.apiKeyId != null) return 'noop';
     return result;
   } catch (error) {
     throw throwDbError(error);

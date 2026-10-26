@@ -12,6 +12,7 @@ const { mockTx } = vi.hoisted(() => ({
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -191,7 +192,10 @@ describe('publishPrivateModel text scan', () => {
       status: 'Published',
       meta: {},
     });
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: PUBLISHED }]);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: PUBLISHED }]);
+    // The in-transaction re-read: the version is still Published, the model is not taken down.
+    mockTx.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? [{ id: PUBLISHED }] : []) as never);
   });
 
   it("scans the model and the owner's posts on its versions when it publishes them", async () => {
@@ -224,16 +228,19 @@ describe('publishPrivateModel text scan', () => {
   it.each([
     ['enforceModelRules off (a moderator publish)', true],
     ['enforceModelRules on (a non-moderator publish)', false],
-  ])('queues no Model rules check after %s: the literal check ran before the publish', async (_who, isModerator) => {
-    dbMock.dbWrite.post.findMany
-      .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])
-      .mockResolvedValueOnce([{ id: 1 }]);
+  ])(
+    'queues no Model rules check after %s: the literal check ran before the publish',
+    async (_who, isModerator) => {
+      dbMock.dbWrite.post.findMany
+        .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])
+        .mockResolvedValueOnce([{ id: 1 }]);
 
-    await publishPrivateModel(
-      { modelId: MODEL_ID, publishVersions: true, isModerator },
-      { enforceModelRules: !isModerator }
-    );
+      await publishPrivateModel(
+        { modelId: MODEL_ID, publishVersions: true, isModerator },
+        { enforceModelRules: !isModerator }
+      );
 
-    expect(modelRulesScans()).toBe(0);
-  });
+      expect(modelRulesScans()).toBe(0);
+    }
+  );
 });
