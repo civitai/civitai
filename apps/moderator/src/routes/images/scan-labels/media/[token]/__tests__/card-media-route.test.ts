@@ -120,6 +120,25 @@ describe('GET /images/scan-labels/media/[token]', () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it.each([404, 410])(
+    'answers an empty 404 when the CDN has no such variant (%i)',
+    async (status) => {
+      const body = upstream(status, { 'content-type': 'text/html', etag: '"media-key-x7"' });
+      const cancel = vi.spyOn(body.body!, 'cancel');
+      const r = await call({ fetch: vi.fn(async () => body) }).res;
+      expect(r.status).toBe(404);
+      expect(await r.text()).toBe('');
+      expect([...r.headers.keys()]).toEqual(['cache-control']);
+      expect(cancel).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each([429, 500, 503])('keeps a CDN %i an empty 502', async (status) => {
+    const r = await call({ fetch: vi.fn(async () => upstream(status)) }).res;
+    expect(r.status).toBe(502);
+    expect(await r.text()).toBe('');
+  });
+
   it('answers 502 when the CDN cannot be reached', async () => {
     const fetch = vi.fn(async () => {
       throw new TypeError('fetch failed');
