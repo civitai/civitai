@@ -222,6 +222,8 @@ export class AppAssistantTools implements ToolProvider {
       // An app on an older @civitai/sdk than the host's is told, once, to upgrade (never throws).
       const sdkUpgrade = await this.#sdkPins.instruction({
         sandbox,
+        // No tools listed: its MCP server is not answering, and a read would wait on the same connect.
+        toolsListed: Object.keys(sandboxTools).length > 0,
         conversationId,
         runId,
         log,

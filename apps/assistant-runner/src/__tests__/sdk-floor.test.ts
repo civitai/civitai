@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { CIVITAI_SDK_FLOOR, checkSdkPin } from '@civitai/app-assistant';
+import { CIVITAI_SDK_FLOOR, checkSdkPin, installedSdkBelowFloor } from '@civitai/app-assistant';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = JSON.parse(
@@ -52,5 +52,16 @@ describe('checkSdkPin', () => {
       expect(checkSdkPin(pkg(range), '0.21.0'), String(range)).toMatchObject({
         kind: 'unparseable',
       });
+  });
+});
+
+describe('installedSdkBelowFloor', () => {
+  it('compares an installed version’s major and minor with the floor’s', () => {
+    expect(installedSdkBelowFloor('1.20.9', '1.21.3')).toBe(true);
+    expect(installedSdkBelowFloor('0.99.0', '1.21.3')).toBe(true);
+    expect(installedSdkBelowFloor('1.21.0', '1.21.3')).toBe(false);
+    expect(installedSdkBelowFloor('1.22.0-beta.1', '1.21.3')).toBe(false);
+    expect(installedSdkBelowFloor(undefined, '1.21.3')).toBeNull();
+    expect(installedSdkBelowFloor('not-a-version', '1.21.3')).toBeNull();
   });
 });

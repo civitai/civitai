@@ -35,6 +35,24 @@ function majorMinor(range: string): [number, number] | null {
 }
 
 /**
+ * Whether an installed `@civitai/sdk` version (its own `package.json`'s `version`) is below
+ * `floor`'s minor; `null` when it is not a version this reads.
+ */
+export function installedSdkBelowFloor(
+  version: unknown,
+  floor: string = CIVITAI_SDK_FLOOR
+): boolean | null {
+  const have = typeof version === 'string' ? majorMinor(version) : null;
+  const want = majorMinor(floor);
+  if (!have || !want) return null;
+  return below(have, want);
+}
+
+function below(have: [number, number], want: [number, number]): boolean {
+  return have[0] < want[0] || (have[0] === want[0] && have[1] < want[1]);
+}
+
+/**
  * Whether an app's parsed `package.json` declares an `@civitai/sdk` below `floor`'s minor, in
  * `dependencies` or `devDependencies`. A range's own base version is what it is judged by: `^0.19.1`
  * and `~0.19.1` (which cannot reach 0.20) are stale against 0.21.0; `^1.0.0` is current.
@@ -53,24 +71,29 @@ export function checkSdkPin(pkg: unknown, floor: string = CIVITAI_SDK_FLOOR): Sd
   const have = typeof declared === 'string' ? majorMinor(declared) : null;
   const want = majorMinor(floor);
   if (!have || !want) return { kind: 'unparseable', declared };
-  const stale = have[0] < want[0] || (have[0] === want[0] && have[1] < want[1]);
-  return { kind: stale ? 'stale' : 'current', declared: declared as string };
+  return { kind: below(have, want) ? 'stale' : 'current', declared: declared as string };
 }
 
 /**
- * What a reply is told when its app's `package.json` (in project directory `dir`) declares a stale
- * `@civitai/sdk`: bump it to `^floor`, install, restart the dev server with the shared command, and
- * change nothing else for it.
+ * What a reply is told when its app (in project directory `dir`) declares a stale `@civitai/sdk`, or
+ * has one installed (`installed`, when that is below the floor too): bump it to `^floor`, install,
+ * restart the dev server with the shared command, and change nothing else for it.
  */
 export function sdkUpgradeInstruction(
   dir: string,
   declared: string,
-  floor: string = CIVITAI_SDK_FLOOR
+  floor: string = CIVITAI_SDK_FLOOR,
+  installed?: string
 ): string {
+  const what = installed
+    ? `${dir}/package.json declares "${CIVITAI_SDK}": ${JSON.stringify(
+        declared
+      )}, but ${CIVITAI_SDK} ${JSON.stringify(
+        installed
+      )} is what is installed in ${dir}/node_modules`
+    : `${dir}/package.json declares "${CIVITAI_SDK}": ${JSON.stringify(declared)}`;
   return [
-    `SDK upgrade, before the rest of this reply: ${dir}/package.json declares "${CIVITAI_SDK}": ${JSON.stringify(
-      declared
-    )}, below the current ${CIVITAI_SDK} ${floor}, and that range never reaches it by itself. The live preview needs the newer SDK (on an older one it can go to sleep while the user works in the app).`,
+    `SDK upgrade, before the rest of this reply: ${what}, below the current ${CIVITAI_SDK} ${floor}; a ^0.x range never moves to a newer minor by itself. The live preview needs the newer SDK (on an older one it can go to sleep while the user works in the app).`,
     `1) In ${dir}/package.json set "${CIVITAI_SDK}": "^${floor}", in the same section it is in now.`,
     `2) Run cd ${dir} && npm install.`,
     `3) Restart the dev server with sandbox__dev_server_restart (sandbox__dev_server_start when it is not running) and exactly this command: cd ${dir} && ${DEV_SERVER_COMMAND}.`,
