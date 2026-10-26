@@ -20,7 +20,16 @@ type Files = Record<number, { id: number; url?: string; [k: string]: unknown }[]
 
 // Downloads answer by (version, file) the way the site's resolve does: a file row with no stored
 // object behind it is a 404, whatever its url says.
-function setup({ files, stored }: { files: Files; stored: Record<string, Buffer> }) {
+function setup({
+  files,
+  stored,
+  lagging = 0,
+}: {
+  files: Files;
+  stored: Record<string, Buffer>;
+  lagging?: number;
+}) {
+  let lagLeft = lagging;
   const call = vi.fn(async (procedure: string, input: Record<string, unknown>) => {
     if (procedure === 'modelFile.getByVersionId') return { files: files[input.id as number] ?? [] };
     if (procedure === 'modelFile.create') {
@@ -34,7 +43,9 @@ function setup({ files, stored }: { files: Files; stored: Record<string, Buffer>
   const fetchFn = vi.fn(async (url: string) => {
     const { pathname, searchParams } = new URL(url);
     const bytes = stored[`${pathname.split('/').pop()}:${searchParams.get('fileId')}`];
-    if (!bytes) return new Response('File not found', { status: 404 });
+    const fileId = Number(searchParams.get('fileId'));
+    const lagged = fileId === 99 && lagLeft-- > 0;
+    if (!bytes || lagged) return new Response('File not found', { status: 404 });
     return new Response(bytes, {
       status: 206,
       headers: { 'content-range': `bytes 0-${bytes.length - 1}/${bytes.length}` },
@@ -47,6 +58,7 @@ function setup({ files, stored }: { files: Files; stored: Record<string, Buffer>
     apiUrl: 'https://civitai.test',
     apiKey: 'k',
     log: (l: string) => lines.push(l),
+    sleep: async () => undefined,
   };
   const created = () => call.mock.calls.filter(([p]) => p === 'modelFile.create');
   return { call, fetchFn, deps, lines, created };
@@ -78,6 +90,15 @@ describe('attach-url', () => {
       metadata: { format: 'SafeTensor' },
     });
     expect(t.lines.join('\n')).toContain('VERIFIED');
+  });
+
+  it('verifies a new file that 404s at first while the read replica catches up', async () => {
+    const t = setup({
+      files: { 100: [SOURCE] },
+      stored: { '100:11': WEIGHTS, '200:99': WEIGHTS },
+      lagging: 2,
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
   });
 
   it('fails and prints the undo when the new file does not download', async () => {

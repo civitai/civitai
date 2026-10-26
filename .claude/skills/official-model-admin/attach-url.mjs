@@ -6,6 +6,9 @@
  */
 
 const PROBE_BYTES = 64 * 1024;
+const TARGET_ATTEMPTS = 4;
+const RETRY_MS = 5000;
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A file row as `modelFile.getByVersionId` returns it, or a reason it can't be used. */
 async function findFile(call, versionId, fileId) {
@@ -83,7 +86,7 @@ function sameBytes(a, b) {
  */
 export async function attachUrl(opts, deps) {
   const { fromFile, fromVersion, version, url: override, writable } = opts;
-  const { call, fetchFn, apiUrl, apiKey, log } = deps;
+  const { call, fetchFn, apiUrl, apiKey, log, sleep = defaultSleep } = deps;
   const probe = (versionId, fileId) =>
     probeDownload({ apiUrl, apiKey, fetchFn, versionId, fileId });
 
@@ -143,7 +146,14 @@ export async function attachUrl(opts, deps) {
     log(`Created file ${targetId} on version ${version}.`);
   }
 
-  const targetProbe = await probe(version, targetId);
+  // The download route finds the file on a read replica, which can lag a just-created row.
+  let targetProbe;
+  for (let attempt = 1; attempt <= TARGET_ATTEMPTS; attempt++) {
+    targetProbe = await probe(version, targetId);
+    if (targetProbe.ok || attempt === TARGET_ATTEMPTS) break;
+    log(`  download: ${describeProbe(targetProbe)}, retrying`);
+    await sleep(RETRY_MS);
+  }
   log(`  download: ${describeProbe(targetProbe)}`);
   if (sameBytes(sourceProbe, targetProbe)) {
     log('VERIFIED: the new file downloads the same bytes as the source.');
