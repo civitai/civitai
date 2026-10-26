@@ -8,10 +8,11 @@ import type { TaskErrorCode } from '~/server/schema/blocks/workflow.schema';
 const TICKET_ISSUER = 'task-router';
 const TICKET_CLOCK_SKEW_SECONDS = 5;
 const MATCH_TIMEOUT_MS = 15_000;
+const FIND_TIMEOUT_MS = 5_000;
 const STARTED_TIMEOUT_MS = 5_000;
 
 // A ticket's tags land beside `app-block:<appId>`, the tag that scopes workflows to an app,
-// so only the two shapes the router documents are accepted.
+// so only the shapes the router documents are accepted.
 const ROUTER_TAG_REGEX = /^(?:task:[A-Za-z0-9.]+@[0-9]+|task:chain|tr:[A-Za-z0-9_]+)$/;
 const TICKET_VERSION = 2;
 const TICKET_MAX_STEPS = 8;
@@ -24,17 +25,21 @@ export type TaskRouterConfig = {
   appAllowlist: string[];
 };
 
-/** `null` when the router is not configured, which keeps `kind:'task'` off. */
-export function getTaskRouterConfig(): TaskRouterConfig | null {
-  if (!env.TASK_ROUTER_URL || !env.TASK_ROUTER_PARTY_KEY || !env.TASK_ROUTER_CALLBACK_ORIGIN) {
-    return null;
-  }
+/**
+ * `null` when the router is not configured for that requester party, which keeps it off:
+ * `blocks` is `kind:'task'`, `mcp` the MCP endpoint. Each party has its own key and id, so a
+ * ticket minted for one is refused by the other.
+ */
+export function getTaskRouterConfig(party: 'blocks' | 'mcp' = 'blocks'): TaskRouterConfig | null {
+  const partyKey = party === 'blocks' ? env.TASK_ROUTER_PARTY_KEY : env.TASK_ROUTER_MCP_PARTY_KEY;
+  if (!env.TASK_ROUTER_URL || !partyKey || !env.TASK_ROUTER_CALLBACK_ORIGIN) return null;
   return {
     url: env.TASK_ROUTER_URL,
-    partyKey: env.TASK_ROUTER_PARTY_KEY,
-    partyId: env.TASK_ROUTER_PARTY_ID,
+    partyKey,
+    partyId: party === 'blocks' ? env.TASK_ROUTER_PARTY_ID : env.TASK_ROUTER_MCP_PARTY_ID,
     callbackOrigin: new URL(env.TASK_ROUTER_CALLBACK_ORIGIN).origin,
-    appAllowlist: env.TASK_ROUTER_APP_ALLOWLIST,
+    appAllowlist:
+      party === 'blocks' ? env.TASK_ROUTER_APP_ALLOWLIST : env.TASK_ROUTER_MCP_ALLOWLIST,
   };
 }
 
@@ -163,6 +168,39 @@ export async function matchTask(
     };
   }
   return { ok: false, code: 'task-unavailable', message: `task router answered ${res.status}` };
+}
+
+const findReplySchema = z.object({
+  items: z.array(
+    z.object({
+      goal: z.string(),
+      description: z.string(),
+      score: z.number(),
+      inputSchema: z.unknown(),
+      tiers: z.array(z.string()),
+      roughPrice: z.object({ min: z.number(), max: z.number(), currency: z.string() }).nullable(),
+    })
+  ),
+});
+export type TaskMenuItem = z.infer<typeof findReplySchema>['items'][number];
+
+/** Menu items matching free text, for MCP `find_tasks`. `null` when the router is unavailable. */
+export async function findTasks(
+  config: TaskRouterConfig,
+  query: string,
+  limit: number,
+  fetchImpl: typeof fetch = fetch
+): Promise<TaskMenuItem[] | null> {
+  const url = new URL('/v1/tasks/find', config.url);
+  url.searchParams.set('q', query);
+  url.searchParams.set('limit', String(limit));
+  const res = await fetchImpl(url, {
+    headers: { authorization: `Bearer ${config.partyKey}` },
+    signal: AbortSignal.timeout(FIND_TIMEOUT_MS),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const parsed = findReplySchema.safeParse(await res.json().catch(() => null));
+  return parsed.success ? parsed.data.items : null;
 }
 
 /** Best effort: outcomes are callback-first, so a lost `/started` only delays traceability. */

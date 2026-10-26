@@ -498,6 +498,11 @@ export const serverSchema = z
     // which may be an in-cluster address the orchestrator cannot reach.
     TASK_ROUTER_CALLBACK_ORIGIN: z.url().optional(),
     TASK_ROUTER_APP_ALLOWLIST: commaDelimitedStringArray().default([]),
+    // The MCP requester (`/api/v1/mcp/tasks`). Unset key = off. Allowlist entries are
+    // `client:<oauth client id>` or `user:<user id>`.
+    TASK_ROUTER_MCP_PARTY_KEY: z.string().optional(),
+    TASK_ROUTER_MCP_PARTY_ID: z.string().default('civitai-mcp'),
+    TASK_ROUTER_MCP_ALLOWLIST: commaDelimitedStringArray().default([]),
     // Optional. Without it only public, ungated Hugging Face repos can be imported; with it, repos
     // this token's account has accepted the terms for.
     HUGGING_FACE_TOKEN: z.string().optional(),

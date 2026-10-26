@@ -886,6 +886,23 @@ Tasks are off unless all three of these hold: `TASK_ROUTER_URL` is set (with its
 callback origin), the app is on `TASK_ROUTER_APP_ALLOWLIST`, and the `app-blocks-task-kind`
 flag is on for the viewer. Page tokens only.
 
+#### Task Router MCP server (experimental)
+
+`POST /api/v1/mcp/tasks` is an MCP server (streamable HTTP, stateless) for agents, with two
+tools: `find_tasks(description)` searches the task menu, and `run_task(...)` takes the same
+request shapes as the `kind:'task'` body plus `budget: { amount }`. Pass only `workflowId` to
+check on a run.
+
+It needs a bearer token, either a personal API key or an OAuth token, with the AI services
+write scope. A session cookie is not enough. The workflow is submitted with the caller's own
+token, so the orchestrator applies that token's own limits, and the spend also counts against
+the same per-user daily cap as App Blocks. It is a separate router party (`civitai-mcp`) from
+App Blocks, so a ticket issued to one is refused by the other.
+
+It is off unless `TASK_ROUTER_MCP_PARTY_KEY` is set, the caller is on
+`TASK_ROUTER_MCP_ALLOWLIST` (`client:<oauth client id>` or `user:<id>`), and the
+`app-blocks-task-kind` flag is on for the user. Output is SFW only.
+
 ## Publish / review / deploy lifecycle (no trust on push)
 
 The build + deploy of new iframe code is gated entirely on **moderator
