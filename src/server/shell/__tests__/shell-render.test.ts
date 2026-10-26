@@ -431,8 +431,9 @@ describe('a declined request on the canonical path', () => {
     });
     const res = makeRes();
     const body = await renderPage(req, res, '/images/shell');
-    // What Next's pages handler turns into the 307 and its Location.
-    expect(JSON.parse(body).pageProps).toEqual({
+    // What Next's pages handler turns into the 307 and its Location (it sends only those for an
+    // HTML request; `_app`'s own props ride along here and are not sent).
+    expect(JSON.parse(body).pageProps).toMatchObject({
       __N_REDIRECT: '/images/987654321?postId=5&civ-shell=0',
       __N_REDIRECT_STATUS: 307,
     });
