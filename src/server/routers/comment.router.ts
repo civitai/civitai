@@ -141,7 +141,7 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure
+  toggleReaction: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleReactionInput)
     // One reaction quota per user, shared with reaction.toggle.
