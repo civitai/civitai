@@ -347,8 +347,9 @@ export function MobileHeaderRows({
           }}
           data-panel-row
         >
-          {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
-          <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
+          {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too.
+              Username's drop shadow is for names over media; on this flat card it smudges the name. */}
+          <div className="-ml-2 min-w-0 overflow-x-clip pl-2 [&_.mantine-Text-root]:filter-none">
             <UserAvatar
               user={creator ?? currentUser}
               size="lg"
