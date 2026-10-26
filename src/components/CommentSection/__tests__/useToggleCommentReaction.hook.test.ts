@@ -38,8 +38,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getReactions: {
               cancel: () => Promise.resolve(),
               getData: () => h.cache,
-              setData: (_key: unknown, update: (old: Row[]) => Row[]) => {
-                h.cache = update(h.cache);
+              setData: (_key: unknown, update: Row[] | ((old: Row[]) => Row[])) => {
+                h.cache = typeof update === 'function' ? update(h.cache) : update;
               },
             },
           },

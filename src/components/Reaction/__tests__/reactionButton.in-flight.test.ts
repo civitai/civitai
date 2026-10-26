@@ -152,8 +152,9 @@ describe('ReactionButton — shared state and unmounting', () => {
     ['the twin answers first', true],
     ['the twin answers last', false],
   ])('the second click wins on the server and %s', (_name, twinFirst) => {
-    const a = mount(204);
-    const b = mount(204);
+    const entityId = twinFirst ? 204 : 205;
+    const a = mount(entityId);
+    const b = mount(entityId);
     act(() => {
       a.click();
       b.click();
