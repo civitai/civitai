@@ -92,7 +92,7 @@ const setWindow = (present: boolean) => {
  */
 const renderProvider = async (
   region: string | null | undefined,
-  hardLoad: { shell?: boolean; signedIn?: boolean } = {}
+  hardLoad: { shell: boolean; signedIn: boolean } = { shell: false, signedIn: false }
 ) => {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
@@ -168,8 +168,9 @@ describe('FaroProvider — session-attributes wiring', () => {
     const { FaroProvider } = await import('~/components/Faro/FaroProvider');
     // TWO renders against the SAME module instance — StrictMode double-mount and
     // Fast-Refresh re-mounts must not re-initialize (module + window guards).
-    renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
-    renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
+    const props = { region: 'US', shell: false, signedIn: false };
+    renderToStaticMarkup(createElement(FaroProvider, props));
+    renderToStaticMarkup(createElement(FaroProvider, props));
     expect(initializeFaro).toHaveBeenCalledTimes(1);
   });
 });
@@ -183,7 +184,7 @@ describe('FaroProvider — page attributes wiring', () => {
     });
   });
 
-  it('a hard load with neither prop reaches initializeFaro as `ssr` + `anon`', async () => {
+  it('an anonymous full render reaches initializeFaro as `ssr` + `anon`', async () => {
     await renderProvider('US');
     expect(initOptions().pageTracking?.page?.attributes).toEqual({
       render_mode: 'ssr',

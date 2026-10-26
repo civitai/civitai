@@ -21,7 +21,9 @@
  *        (not known to be anonymous). A shell is only ever served to a request carrying a session
  *        cookie (`shellRefusal` → `no-session-cookie`) and its pageProps say `hasAuthCookie: true`,
  *        so every shell load is `signed-in`; a dead cookie's page data answers 404 and the page
- *        reloads as a full render, which is a new document with its own value.
+ *        reloads as a full render, which is a new document with its own value. Before that reload
+ *        the shell pauses Faro (`~/utils/faro/pauseRum`), so the abandoned shell document sends
+ *        no further beacons.
  *
  * MECHANISM + THE LOKI FIELDS IT PRODUCES:
  *   - Passed to `initializeFaro` as `pageTracking.page.attributes`. The web-sdk's page meta getter
@@ -35,9 +37,10 @@
  *
  * SCOPE: one value per DOCUMENT, unchanged by client-side navigations. That is deliberate: the
  * web-vitals library measures the hard-loaded document, not a route — CLS and INP are reported
- * once, at page hide, covering every client-side navigation the document went through, and the
- * page URL on such a beacon is wherever the user was at hide time. Re-tagging on navigation would
- * file a shell document's CLS/INP under `ssr`. Read the fields as "this beacon comes from a
+ * when the page is hidden (again on each later hide, and anew after a bfcache restore), covering
+ * every client-side navigation the document went through, and the page URL on such a beacon is
+ * wherever the user was at that moment. Re-tagging on navigation would file a shell document's
+ * CLS/INP under `ssr`. Read the fields as "this beacon comes from a
  * document whose hard load was …", not as facts about the current route or session.
  *
  * PII/SAFETY: four literal values, nothing user-identifying; they match none of the `deepRedact`

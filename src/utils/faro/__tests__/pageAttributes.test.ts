@@ -48,6 +48,10 @@ describe('isHardLoadSignedIn', () => {
     expect(isHardLoadSignedIn({ session: { user: { id: 1 } }, hasAuthCookie: true })).toBe(true);
   });
 
+  it('a resolved session counts on its own, whatever `hasAuthCookie` says', () => {
+    expect(isHardLoadSignedIn({ session: { user: { id: 1 } }, hasAuthCookie: false })).toBe(true);
+  });
+
   it('a full render without a session (no cookie, or a rejected one) is anon', () => {
     expect(isHardLoadSignedIn({ session: null, hasAuthCookie: false })).toBe(false);
   });

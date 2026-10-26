@@ -18,6 +18,7 @@ import type { SessionSeed } from '~/providers/SessionProvider';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
+import { pauseRum } from '~/utils/faro/pauseRum';
 import { trpc } from '~/utils/trpc';
 
 export type ShellStatus = 'pending' | 'ready' | 'failed';
@@ -140,7 +141,10 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     const fallBack = (status: number) => {
       setFailed(true);
       const to = shellFallbackUrl(status, window.location.href);
-      if (to) shellNavigation.replace(to);
+      if (!to) return;
+      // The shell document is abandoned: its later RUM beacons must not count as a shell load.
+      pauseRum();
+      shellNavigation.replace(to);
     };
     void adoptShellPageData().then((result) => {
       if (cancelled) return;

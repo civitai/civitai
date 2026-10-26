@@ -340,13 +340,13 @@ function initFaro({
 
 export function FaroProvider({
   region,
-  shell = false,
-  signedIn = false,
+  shell,
+  signedIn,
 }: {
   region?: string | null;
   /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
-  shell?: boolean;
-  signedIn?: boolean;
+  shell: boolean;
+  signedIn: boolean;
 }) {
   const features = useFeatureFlags();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
