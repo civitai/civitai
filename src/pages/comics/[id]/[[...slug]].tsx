@@ -88,7 +88,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComicChapterStatus, ComicEngagementType } from '~/shared/utils/prisma/enums';
 import { formatRelativeDate } from '~/utils/comic-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { slugitOr } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -210,7 +210,7 @@ function ChapterListItem({
   });
 
   const isLocked = !canRead;
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
   const thumbUrl = ch.panels[0]?.imageUrl ?? null;
   const daysUntilFree = ch.earlyAccessEndsAt
     ? Math.max(
@@ -221,7 +221,10 @@ function ChapterListItem({
 
   return (
     <Link
-      href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`}
+      href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugitOr(
+        ch.name,
+        'chapter'
+      )}`}
       className={styles.chapterListItem}
       style={{ fontWeight: isRead ? 'normal' : 'bold' }}
     >
@@ -392,7 +395,7 @@ function ComicOverview({ project }: { project: Project }) {
   });
   const isFollowing = engagement === ComicEngagementType.Notify;
 
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
 
   // Guard image for hero — use heroImage/coverImage if available, otherwise project-level.
   // Combine the underlying hero image's nsfwLevel with the project composite
@@ -743,7 +746,7 @@ function ComicOverview({ project }: { project: Project }) {
                 <Link
                   href={`/comics/${project.id}/${projectSlug}/${
                     (project.chapters.indexOf(firstReadable!) ?? 0) + 1
-                  }/${slugit(firstReadable?.name ?? 'chapter')}`}
+                  }/${slugitOr(firstReadable?.name, 'chapter')}`}
                   className={styles.ctaBtn}
                 >
                   <IconBook size={20} />
@@ -907,7 +910,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Connection key for ImageGuard2 — all panels in a chapter share the same key
   const chapterConnectId = `${project.id}-${activeChapter?.position ?? 0}`;
 
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
 
   const chapterOptions = useMemo(
     () =>
@@ -930,7 +933,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     setPageIndex(startPage);
     window.scrollTo({ top: 0 });
     void router.replace(
-      `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`,
+      `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugitOr(ch.name, 'chapter')}`,
       undefined,
       { shallow: true }
     );
