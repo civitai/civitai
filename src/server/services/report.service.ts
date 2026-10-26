@@ -345,7 +345,7 @@ type CreateReportProps = CreateReportInput & {
   isModerator?: boolean;
   /**
    * The reporter may not vote on tags yet (see `requiresEmailVerification`), so an NSFW report
-   * records no tag votes or rating request.
+   * records no tag votes or rating request and waits for a moderator.
    */
   emailVerificationRequired?: boolean;
   /**
@@ -454,13 +454,14 @@ export const createReport = async ({
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // Nothing automated acts on a crucible's, game's, storyline's or service's mature-content report,
-  // unlike an image's or a model's tag votes, so it goes to a moderator like any other reason:
-  // deduped, and left Pending.
+  // unlike an image's or a model's tag votes, and a reporter who may not vote on tags casts none,
+  // so it goes to a moderator like any other reason: deduped, and left Pending.
   const awaitsModerator =
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
-    type === ReportEntity.ServiceOffering;
+    type === ReportEntity.ServiceOffering ||
+    !!emailVerificationRequired;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -549,7 +550,7 @@ export const createReport = async ({
             }
           }
 
-          if (!emailVerificationRequired)
+          if (!emailVerificationRequired) {
             await Promise.all([
               createImageRatingRequest(),
               addTagVotes({
@@ -561,6 +562,7 @@ export const createReport = async ({
                 vote: 1,
               }),
             ]);
+          }
 
           break;
         case ReportEntity.Article:
