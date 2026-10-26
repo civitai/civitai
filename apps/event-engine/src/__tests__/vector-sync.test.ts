@@ -15,6 +15,7 @@ import {
   buildEmbedInput,
   takeBatch,
   Embedder,
+  type EmbedderOptions,
   JobBudget,
   MixedStampError,
 } from '@/vector-sync/embedder';
@@ -569,6 +570,76 @@ describe('backfill', () => {
     await rm(path, { force: true });
   });
 
+  const realEmbedder = (fetchImpl: typeof fetch) =>
+    new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 5,
+      maxRetries: 0,
+      batchSize: 5,
+      priority: 'low',
+      fetch: fetchImpl,
+      sleep: async () => undefined,
+    });
+  const okWorkflow = (init?: RequestInit) =>
+    new Response(workflowBody(stepIds(init)), { status: 200 });
+
+  // Written early, a point must be re-checked at once: a block that landed while it had no point
+  // (so its delete found nothing) would otherwise stay searchable until the page ends.
+  test('an image blocked mid-page is deleted right after its own workflow is written', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 10 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const presentAtSecondSubmit: boolean[] = [];
+    let posts = 0;
+    let blocked = 0;
+    await runBackfill(
+      { watermark: 10, floor: 0, span: 10, pages: 1 },
+      {
+        ...deps(pg, store, null),
+        embedder: realEmbedder((async (_u: string | URL | Request, init?: RequestInit) => {
+          if (++posts === 1) {
+            blocked = Number(stepIds(init)[0]);
+            pg.put(imageRow(blocked, { tosViolation: true }));
+          } else presentAtSecondSubmit.push(store.points.has(blocked));
+          return okWorkflow(init);
+        }) as unknown as typeof fetch),
+        state: memoryState(),
+        sleep: async () => undefined,
+      }
+    );
+    expect(presentAtSecondSubmit[0]).toBe(false);
+    expect(store.points.has(blocked)).toBe(false);
+    expect(store.points.size).toBe(9);
+  });
+
+  test('a Qdrant write failing mid-page re-submits nothing already paid for', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 20 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const upsert = store.upsert;
+    let upserts = 0;
+    store.upsert = async (points) => {
+      if (++upserts === 2) throw new Error('qdrant down');
+      return upsert(points);
+    };
+    const submitted: string[] = [];
+    const state = memoryState();
+    await runBackfill(
+      { watermark: 20, floor: 0, span: 20, pages: 1 },
+      {
+        ...deps(pg, store, null),
+        embedder: realEmbedder((async (_u: string | URL | Request, init?: RequestInit) => {
+          submitted.push(...stepIds(init));
+          return okWorkflow(init);
+        }) as unknown as typeof fetch),
+        state,
+        sleep: async () => undefined,
+      }
+    );
+    expect(store.points.size).toBe(20);
+    expect(submitted.length).toBe(new Set(submitted).size);
+    expect(state.cursor).toBe(0);
+  });
+
   // A pod killed mid-page used to lose every vector of the page: they were stored only at page
   // end, and the restart re-submitted them all. Now each workflow is stored as it returns.
   test('a run killed mid-page keeps what it embedded; the restart submits only the rest, and no row below the cursor is ever unwritten', async () => {
@@ -1069,6 +1140,18 @@ describe('embedding gate', () => {
     // Past 2^31 ms the flush interval would fire every millisecond.
     await expect(start({ VECTOR_SYNC_DEBOUNCE_MS: '9999999999' })).rejects.toThrow(/DEBOUNCE_MS/);
     await expect(start({ VECTOR_EMBED_MAX_RETRIES: '3' })).resolves.toBeDefined();
+  });
+
+  // Live sync must keep up with uploads; the step cap is for walks over existing images.
+  test('the step-rate cap applies to backfill and reconcile, not the live consumer', async () => {
+    const paceOf = (priority: 'low' | 'normal') =>
+      withEnv({ VECTOR_EMBED_MAX_STEPS_PER_SECOND: '7' }, async () => {
+        const { Embedder } = await import('@/vector-sync/embedder');
+        const e = Embedder.fromConfig(priority) as unknown as { opts: EmbedderOptions };
+        return e.opts.maxStepsPerSecond;
+      });
+    expect(await paceOf('low')).toBe(7);
+    expect(await paceOf('normal')).toBe(0);
   });
 
   test("embedding needs its switch, this process's Image flag, and a connector that streams Image", async () => {
@@ -1921,9 +2004,9 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
 
   // Cache hits create no orchestrator job, so no job budget bounded them: a restart re-walked
   // ~1,365 steps/min. Steps now go out at a steady rate whatever they cost the orchestrator.
-  test('steps are submitted at a steady rate, even when every step returns at once', async () => {
-    const submits: number[] = [];
-    // Real timers: 1000 steps/s is one 10-step workflow every 10 ms.
+  // Each submit reserves the next slot; with the clock held still, the waits are the schedule.
+  const pacedWaits = async (configured: number, limit?: number) => {
+    const waits: number[] = [];
     const e = new Embedder({
       endpoint: 'http://orch',
       token: 't',
@@ -1931,44 +2014,26 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
       maxRetries: 0,
       batchSize: 10,
       priority: 'low',
-      maxStepsPerSecond: 1000,
-      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
-        submits.push(performance.now());
-        return ok(init, 500);
-      }) as unknown as typeof fetch,
+      maxStepsPerSecond: configured,
+      now: () => 0,
+      sleep: async (ms) => void waits.push(ms),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) =>
+        ok(init, 500)) as unknown as typeof fetch,
     });
+    if (limit !== undefined) e.setLimits({ stepsPerSecond: limit });
     const result = await e.embed(inputs(50));
     expect(result.vectors.size).toBe(50);
-    expect(submits).toHaveLength(5);
-    const gaps = submits.slice(1).map((t, i) => Math.round(t - submits[i]));
-    // Unpaced, all five go out within a millisecond or two.
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(8);
+    return waits;
+  };
+
+  test('steps are submitted at a steady rate, even when every step returns at once', async () => {
+    // 10 steps at 5/s: one workflow every 2 s, the first at once.
+    expect(await pacedWaits(5)).toEqual([2000, 4000, 6000, 8000]);
   });
 
   test('a runtime step rate lowers the configured one but cannot raise it', async () => {
-    const gapsWith = async (limit: number) => {
-      const submits: number[] = [];
-      const e = new Embedder({
-        endpoint: 'http://orch',
-        token: 't',
-        maxInFlight: 500,
-        maxRetries: 0,
-        batchSize: 10,
-        priority: 'low',
-        maxStepsPerSecond: 1000,
-        fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
-          submits.push(performance.now());
-          return ok(init, 500);
-        }) as unknown as typeof fetch,
-      });
-      e.setLimits({ stepsPerSecond: limit });
-      await e.embed(inputs(30));
-      return Math.min(...submits.slice(1).map((t, i) => Math.round(t - submits[i])));
-    };
-    expect(await gapsWith(500)).toBeGreaterThanOrEqual(18); // 10 steps at 500/s
-    const raised = await gapsWith(100_000);
-    expect(raised).toBeGreaterThanOrEqual(8); // still the configured 1000/s
-    expect(raised).toBeLessThan(18);
+    expect(await pacedWaits(5, 1)).toEqual([10_000, 20_000, 30_000, 40_000]);
+    expect(await pacedWaits(5, 1000)).toEqual([2000, 4000, 6000, 8000]);
   });
 
   test('Retry-After: 0 still waits, so a 429 is never a tight loop', async () => {

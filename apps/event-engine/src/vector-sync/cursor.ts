@@ -35,7 +35,11 @@ export async function redisRunState(name: string): Promise<RunState> {
   // One hash tag so both keys live on the same cluster slot.
   const key = (k: string) => `vector-sync:{${name}}:${k}`;
   const limitKey = (name: keyof RunLimits) => key(`limit:${name}`);
-  const num = (v: string | null) => (v === null ? undefined : Number(v));
+  // A hand-set bad value is ignored rather than becoming NaN capacity.
+  const num = (v: string | null) => {
+    const n = Number(v);
+    return v !== null && Number.isInteger(n) && n >= 1 ? n : undefined;
+  };
   return {
     getLimits: async () => ({
       inFlight: num(await redis.get(limitKey('inFlight'))),

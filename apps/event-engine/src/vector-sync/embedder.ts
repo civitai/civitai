@@ -337,7 +337,9 @@ export class Embedder {
       batchSize: config.vectorSync.embedBatchSize,
       resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
       outageRetryForMs: config.vectorSync.embedOutageRetrySeconds * 1000,
-      maxStepsPerSecond: config.vectorSync.embedMaxStepsPerSecond,
+      // Backfill and reconcile only: live sync must keep up with uploads, and is bounded by the
+      // event rate rather than a walk over existing images.
+      maxStepsPerSecond: priority === 'low' ? config.vectorSync.embedMaxStepsPerSecond : 0,
       priority,
     });
   }
@@ -374,11 +376,13 @@ export class Embedder {
         continue;
       }
       const batch = takeBatch(queue, size);
+      // Paced before the budget is taken, so a batch waiting its turn holds no jobs.
+      await this.paceSteps(batch.length);
       const held = await this.budget.acquire(batch.length);
       this.limits.reserve(batch.length);
       const task = (async () => {
         try {
-          await this.embedSplitting(batch, call, 0);
+          await this.embedSplitting(batch, call, 0, 0, this.now(), true);
         } catch (err) {
           call.result.error ??= err;
         } finally {
@@ -401,11 +405,12 @@ export class Embedder {
     call: EmbedCall,
     depth: number,
     outageRetries = 0,
-    started = this.now()
+    started = this.now(),
+    paced = false
   ): Promise<void> {
     let workflow: Workflow;
     try {
-      workflow = await this.runWithRetry(batch);
+      workflow = await this.runWithRetry(batch, paced);
     } catch (err) {
       if (!(err instanceof WorkflowRejectedError)) throw err;
       if (batch.length === 1 || depth >= MAX_SPLIT_DEPTH) {
@@ -514,14 +519,16 @@ export class Embedder {
     if (at > now) await this.sleep(at - now);
   }
 
-  private async runWithRetry(batch: EmbedInput[]): Promise<Workflow> {
+  /** `paced`: the first attempt already took its step-rate slot (the embed loop's batches). */
+  private async runWithRetry(batch: EmbedInput[], paced = false): Promise<Workflow> {
     let errors = 0;
     let rateLimited = 0;
     const rateLimitedSince = this.now();
-    for (;;) {
+    for (let tries = 0; ; tries++) {
+      if (tries > 0 || !paced) await this.paceSteps(batch.length);
+      // After the pace: a 429 seen meanwhile holds this submit too.
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
-      await this.paceSteps(batch.length);
       try {
         return await this.run(batch);
       } catch (err) {

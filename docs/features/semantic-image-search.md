@@ -78,8 +78,10 @@ locally until the orchestration client ships it.
   `Retry-After` (at least 250 ms, at most an hour), and every submit on that process waits it out too. 429s
   are budgeted by time (2 h), not count, since another process can hold the account's quota
   for a whole workflow.
-- **Step rate:** steps go out at a steady `VECTOR_EMBED_MAX_STEPS_PER_SECOND` per process
-  (default 10, 0 is unlimited), each workflow waiting its turn, with no burst. It also bounds
+- **Step rate:** in the backfill and the reconciler, steps go out at a steady
+  `VECTOR_EMBED_MAX_STEPS_PER_SECOND` per process (default 10, 0 is unlimited), each workflow
+  waiting its turn before it takes any budget, with no burst. Live sync is not paced: it must
+  keep up with uploads. It also bounds
   cache hits, which create no orchestrator job and so pass every job-based limit, and which
   share the submodel queue with image scanning.
 - **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
@@ -209,8 +211,9 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 - The cursor is kept in Redis (`vector-sync:{backfill:<collection>:<name>}:cursor`), so it
   survives restarts,
   deploys and reschedules. It moves past a page only once every page above it is written.
-  Within a page, each workflow's vectors are written as it returns, so a run killed mid-page
-  loses only its workflows still in flight. Points that already exist are not re-embedded, so
+  Within a page, each workflow's vectors are written as it returns and its rows re-read at once
+  (so a block that landed meanwhile is deleted right away), and a run killed mid-page loses only
+  its workflows still in flight. Points that already exist are not re-embedded, so
   resuming over a page costs payload writes only. `--cursor-file` keeps it in a local file
   instead, for runs without Redis.
 - `--dry-run` writes nothing, Qdrant or cursor, and reports what it would embed. `--limit N`

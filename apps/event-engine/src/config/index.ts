@@ -172,7 +172,7 @@ export const config = {
     embedResubmitDelaySeconds: vectorInt('VECTOR_EMBED_RESUBMIT_DELAY_SECONDS', 120, 0, 3600),
     // How long after a batch's first attempt an outage (expired, canceled, all failed) may be re-submitted.
     embedOutageRetrySeconds: vectorInt('VECTOR_EMBED_OUTAGE_RETRY_SECONDS', 900, 0, 7200),
-    // Steps submitted per second per process, cache hits included; 0 is unlimited.
+    // Backfill and reconcile steps submitted per second per process, cache hits included; 0 is unlimited.
     embedMaxStepsPerSecond: vectorInt('VECTOR_EMBED_MAX_STEPS_PER_SECOND', 10, 0, 1000),
     // Inputs per workflow, 1 to 128.
     embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
