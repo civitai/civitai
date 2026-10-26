@@ -222,6 +222,19 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 
+  // These posts are live once the transaction commits and are never selected again, so a throw in
+  // the unguarded steps after it must not cost them their text scan.
+  it('still scans the published posts when a later post-commit step throws', async () => {
+    // The post's version publishes in the same run, so its engagement is the first step that can throw.
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      versions: [{ id: 100, userId: 10, extras: { modelId: 11 } }],
+    });
+    mockProcessEngagement.mockRejectedValueOnce(new Error('event engine down'));
+    await expect(runJob()).rejects.toThrow('event engine down');
+    expect(mockScanEntitiesInBackground).toHaveBeenCalledExactlyOnceWith('Post', [1]);
+  });
+
   it('rewards standalone scheduled posts on the day they go live', async () => {
     stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
     await runJob();
