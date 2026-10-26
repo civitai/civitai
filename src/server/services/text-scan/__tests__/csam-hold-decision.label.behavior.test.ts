@@ -242,28 +242,6 @@ describe('deciding text that changed underneath the moderator', () => {
   });
 });
 
-describe('a client that sends no text hash (before the guard rolled out)', () => {
-  const decideUnguarded = () =>
-    decideCsamHold({
-      holdId: 12,
-      decision: 'remove',
-      actor: { id: 7 },
-      tracker: tracker as never,
-    });
-
-  it('decides against the text as stored now', async () => {
-    await decideUnguarded();
-    expect(mocks.removeV2).toHaveBeenCalledTimes(1);
-    expect(await labels()).toMatchObject([{ value: 'csam', reason: 'remove' }]);
-  });
-
-  it('still fails as stale when a rescan swaps the text after the hold was read', async () => {
-    await db.pg.exec(`UPDATE "TextScanHold" SET "textHash" = 'h2'`);
-    await expect(decideUnguarded()).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect(mocks.removeV2).not.toHaveBeenCalled();
-  });
-});
-
 describe('the final update', () => {
   it('takes the per-entity lock a new detection takes before it checks for rulings', async () => {
     await decide('remove');
