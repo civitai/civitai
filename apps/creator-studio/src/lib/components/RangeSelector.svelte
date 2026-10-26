@@ -1,7 +1,12 @@
 <script lang="ts">
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { recentMonths, type DateRange } from '$lib/date-range';
-  import { ANALYTICS_PERIOD_COOKIE } from '$lib/analytics-period';
+  import {
+    ANALYTICS_PERIOD_COOKIE,
+    nextPeriod,
+    withoutMonthParam,
+    type Period,
+  } from '$lib/analytics-period';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { CookieState } from '$lib/state/cookie-state.svelte';
@@ -25,13 +30,11 @@
   // A `?month=` deep link overrides the cookie for that load. Picking a period is an explicit choice, so the pick is
   // saved to the cookie AND the param is dropped (same load) — otherwise the URL would keep overriding it.
   async function reload() {
-    if (!page.url.searchParams.has('month')) return invalidateAll();
-    const url = new URL(page.url);
-    url.searchParams.delete('month');
+    const url = withoutMonthParam(page.url);
+    if (!url) return invalidateAll();
     await goto(url, { replaceState: true, noScroll: true, keepFocus: true, invalidateAll: true });
   }
 
-  type Period = { from: string; cmp: string };
   const period = new CookieState<Period>(
     ANALYTICS_PERIOD_COOKIE,
     () => ({ from: range.from, cmp: compare.key }),
@@ -54,10 +57,10 @@
     const m = months.find((x) => x.key === key);
     if (!m) return;
     // Keep the current comparison — readAnalyticsPeriod clamps it if the new month makes it invalid (>= selected).
-    period.set({ from: m.range.from, cmp: period.value.cmp });
+    period.set(nextPeriod(period.value, { month: m.range.from }));
   }
   function onCompareChange(key: string) {
-    period.set({ from: period.value.from, cmp: key });
+    period.set(nextPeriod(period.value, { cmp: key }));
   }
 </script>
 
