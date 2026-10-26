@@ -91,7 +91,7 @@ async function fileInto(row: StoredReport, user: { id: number }, details: Record
 }
 
 const rewardedFor = async (row: StoredReport) => {
-  dbMock.dbRead.report.findMany.mockResolvedValue([row] as never);
+  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([row] as never);
   await bulkSetReportStatus({ ids: [row.id], status: ReportStatus.Actioned, userId: 2 });
   return apply.mock.calls.map(([event]) => (event as { userId: number }).userId).sort();
 };
