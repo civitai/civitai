@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
+import {
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
+  RESTRICTED_ACCOUNT_MESSAGE,
+} from '~/server/common/content-restriction';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as AnswerController from '~/server/controllers/answer.controller';
 import type * as TagController from '~/server/controllers/tag.controller';
@@ -38,6 +41,13 @@ const member = {
   deletedAt: null,
 };
 const restricted = { ...member, muted: true, mutedAt: new Date('2024-01-02') };
+// Only signups stamped with `emailVerificationRequired` are gated; older unverified accounts are not.
+const unverifiedSignup = {
+  ...member,
+  emailVerified: null,
+  meta: { emailVerificationRequired: true },
+};
+const unverifiedLegacy = { ...member, emailVerified: null };
 
 function ctxFor(user: unknown) {
   return {
@@ -94,5 +104,18 @@ describe('vote mutations use the guarded procedure', () => {
       message: RESTRICTED_ACCOUNT_MESSAGE,
     });
     expect(c.handler).not.toHaveBeenCalled();
+  });
+
+  it.each(cases)('$name asks a new signup to verify their email first', async (c) => {
+    await expect(c.call(unverifiedSignup)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: EMAIL_VERIFICATION_REQUIRED_MESSAGE,
+    });
+    expect(c.handler).not.toHaveBeenCalled();
+  });
+
+  it.each(cases)('$name reaches the handler for an older unverified account', async (c) => {
+    await expect(c.call(unverifiedLegacy)).resolves.toBe(c.expected);
+    expect(c.handler).toHaveBeenCalledTimes(1);
   });
 });
