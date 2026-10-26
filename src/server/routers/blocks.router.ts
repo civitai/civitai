@@ -245,12 +245,14 @@ import { projectModelSubstitutions } from '~/shared/generation/model-substitutio
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
+  checkInlineComfyGraph,
   collectInlineAuditText,
 } from '~/server/services/blocks/inline-comfy.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
 import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
+import type { ComfyGraph } from '~/server/services/blocks/recipes';
 // App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
 // The step registry is the code-reviewed trust root, exactly as the recipe
 // registry is. `planStepSpend` dispatches on the entry's
@@ -9797,7 +9799,13 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   // as a definite price will overstate an inline job's cost. That is a copy
   // change in `@civitai/app-sdk` / the block, tracked separately — nothing here
   // edits another repo.
+  //
+  // A graph that cannot run (not API format, or a model named by filename) is
+  // refused first, with the same `errorCode` the submit refuses it with, so an
+  // app learns it before quoting a ceiling it can never spend.
   if (isInlineComfyBody(body)) {
+    const verdict = checkInlineComfyGraph(body.workflow);
+    if (!verdict.runnable) return { snapshot: verdict.snapshot };
     return {
       snapshot: {
         workflowId: 'wf_estimate',
@@ -9880,7 +9888,19 @@ async function submitCustomComfyWorkflow(opts: {
   // Narrow ONCE, into two mutually-exclusive locals. Exactly one is non-null for
   // any schema-valid body, which is what lets the shared belt below stay a single
   // code path instead of two forked copies of the spend logic.
-  const inlineBody = isInlineComfyBody(body) ? body : null;
+  //
+  // ── INLINE RUNNABILITY. A graph that cannot run (not API format, or a model
+  // named by filename) is refused here, before the session read, the gates, the
+  // orchestrator token, any reservation and the submit, so nothing is charged and
+  // nothing needs refunding. It returns the same failed snapshot, with the same
+  // `errorCode`, as the inline estimate. `inlineBody` carries the graph the check
+  // typed, so every use below reads the checked graph.
+  const inlineVerdict = isInlineComfyBody(body) ? checkInlineComfyGraph(body.workflow) : null;
+  if (inlineVerdict && !inlineVerdict.runnable) return { snapshot: inlineVerdict.snapshot };
+  const inlineBody: (CustomComfyInlineBody & { workflow: ComfyGraph }) | null =
+    isInlineComfyBody(body) && inlineVerdict?.runnable
+      ? { ...body, workflow: inlineVerdict.graph }
+      : null;
   const recipeBody = isInlineComfyBody(body) ? null : body;
   const recipe = recipeBody ? resolveCustomComfyRecipe(recipeBody) : null;
   // The recipe's OWN `.strict()` schema is the real param contract (the wire

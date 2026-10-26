@@ -217,6 +217,10 @@ export default defineNextConfig(
       // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
       // left external; bundling it lets Turbopack resolve the directory.
       '@civitai/orchestration-client',
+      // ESM-only with an `import`-only exports map (no `require` or `default`
+      // condition), and the server imports it at runtime (`checkComfyGraph`).
+      // Bundling it resolves the subpath at build time instead of at runtime.
+      '@civitai/app-sdk',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
