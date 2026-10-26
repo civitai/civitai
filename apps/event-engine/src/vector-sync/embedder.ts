@@ -31,6 +31,19 @@ const MAX_VIDEO_SIDE = 4096;
 const EMBED_IMAGE_WIDTH = 512;
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
+/**
+ * The workflow ended without it being its inputs' fault: expired or canceled, or failed with no
+ * step succeeding across several images. One failed image is that image's own failure.
+ */
+function looksLikeOutage(workflow: Workflow, inputs: number) {
+  if (workflow.status === 'expired' || workflow.status === 'canceled') return true;
+  return (
+    workflow.status === 'failed' &&
+    inputs > 1 &&
+    !(workflow.steps ?? []).some((step) => step.status === 'succeeded')
+  );
+}
+
 export type SkipReason =
   | 'external-url'
   | 'video-disabled'
@@ -93,7 +106,7 @@ export const stepName = (id: string) => `img-${id}`;
  */
 export class JobBudget {
   private used = 0;
-  private readonly waiters: Array<{ n: number; go: () => void }> = [];
+  private readonly waiters: Array<{ n: number; go: (granted: number) => void }> = [];
 
   constructor(public capacity: number) {}
 
@@ -109,16 +122,20 @@ export class JobBudget {
       this.used += n;
       return n;
     }
-    await new Promise<void>((go) => this.waiters.push({ n, go }));
-    return n;
+    return new Promise<number>((go) => this.waiters.push({ n, go }));
   }
 
   release(n: number) {
     this.used -= n;
-    while (this.waiters.length && this.used + this.waiters[0].n <= this.capacity) {
-      const next = this.waiters.shift()!;
-      this.used += next.n;
-      next.go();
+    // Clamped again here: capacity may have dropped below a queued waiter's size since it queued.
+    for (;;) {
+      const next = this.waiters[0];
+      if (!next) break;
+      const granted = Math.min(next.n, this.capacity);
+      if (this.used + granted > this.capacity) break;
+      this.waiters.shift();
+      this.used += granted;
+      next.go(granted);
     }
   }
 
@@ -410,7 +427,13 @@ export class Embedder {
       };
       accepted.push([Number(input.id), output.embedding, stamp, kind]);
     }
-    if (failed.length) {
+    if (failed.length && looksLikeOutage(workflow, batch.length)) {
+      logger.error(
+        { workflow: workflow.id, status: workflow.status, ids: failed },
+        'vector-sync: workflow kept failing after retries; inputs failed'
+      );
+      call.result.failed.push(...failed.map(Number));
+    } else if (failed.length) {
       logger.warn({ workflow: workflow.id, ids: failed }, 'vector-sync: steps failed to embed');
       call.result.failed.push(...failed.map(Number));
     }
@@ -440,7 +463,13 @@ export class Embedder {
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
-        return await this.run(batch);
+        const workflow = await this.run(batch);
+        // Retried here, not by the caller, so a batch that keeps failing ends as counted failures
+        // (reconcile retries them) rather than a flush that never moves on.
+        if (looksLikeOutage(workflow, batch.length) && errors < this.opts.maxRetries) {
+          throw new RetryableError(`workflow ${workflow.id} ${workflow.status}`);
+        }
+        return workflow;
       } catch (err) {
         // Giving up on a workflow that may still be running: the caller's retry (a backfill page,
         // the next consumer flush) re-sends it within seconds, so wait for it to finish first.

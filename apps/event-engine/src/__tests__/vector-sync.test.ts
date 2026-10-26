@@ -1372,6 +1372,24 @@ describe('one input per step (orchestration #460)', () => {
     await waiting;
     expect(second).toBe(true);
   });
+
+  // A quota drop (500 -> q=80) below a queued waiter's size used to strand it, and every waiter
+  // behind it, forever.
+  test('a queued waiter still starts after the capacity drops below its size', async () => {
+    const budget = new JobBudget(500);
+    const held = await budget.acquire(500);
+    let granted: number | undefined;
+    let behind = false;
+    void budget.acquire(128).then((n) => (granted = n));
+    void budget.acquire(1).then(() => (behind = true));
+    budget.setCapacity(80);
+    budget.release(held);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(granted).toBe(80);
+    budget.release(80);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(behind).toBe(true);
+  });
 });
 
 describe('model stamp by media type', () => {
@@ -1591,6 +1609,50 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     Promise.reject(
       new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) })
     );
+
+  const failedWorkflow = (init: RequestInit | undefined, status: string) => {
+    const ids = stepIds(init);
+    return new Response(JSON.stringify({ ...JSON.parse(workflowBody(ids, 'r1', ids)), status }), {
+      status: 200,
+    });
+  };
+
+  // An outage (or an expired queue) used to mark every image failed and let the caller move on.
+  test.each(['failed', 'expired'])(
+    'a %s workflow with no step succeeded is re-submitted, not dropped',
+    async (status) => {
+      let posts = 0;
+      const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) =>
+        ++posts === 1 ? failedWorkflow(init, status) : ok(init, 50)) as unknown as typeof fetch;
+      const result = await clocked(fetchImpl).e.embed(inputs(2));
+      expect(posts).toBe(2);
+      expect(result.failed).toEqual([]);
+      expect(result.vectors.size).toBe(2);
+    }
+  );
+
+  test('a workflow that keeps failing ends as counted failures, without an error that would stall the caller', async () => {
+    let posts = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts++;
+      return failedWorkflow(init, 'failed');
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(2));
+    expect(posts).toBe(3); // maxRetries 2
+    expect(result.failed.sort()).toEqual([1, 2]);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('one image whose step failed is that image failing: no retry', async () => {
+    let posts = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts++;
+      return failedWorkflow(init, 'failed');
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(1));
+    expect(posts).toBe(1);
+    expect(result.failed).toEqual([1]);
+  });
 
   // Ephemeral workflows ignore externalId, so a submit that may have been accepted is only sent
   // again once its steps should be done and cached. Re-sending at once doubles the GPU work.

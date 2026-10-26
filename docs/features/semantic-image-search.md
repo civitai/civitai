@@ -66,7 +66,8 @@ most 8 videos. Identical inputs are served from the orchestrator's cache. The st
 locally until the orchestration client ships it.
 
 - **In-flight budget:** at most `VECTOR_EMBED_MAX_IN_FLIGHT` orchestrator jobs (= steps =
-  images) are in flight per process, default 500, and never more than the account's in-flight
+  images) are in flight per process, default 500 and at least `VECTOR_EMBED_BATCH_SIZE` (a smaller
+  value refuses to start), and never more than the account's in-flight
   quota the orchestrator reports (`RateLimit-Policy` `inflight-multimodalEmbedding` `q`). Each
   workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
   shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
@@ -95,7 +96,10 @@ locally until the orchestration client ships it.
 - **Failures are per step:** a step that fails (or returns a vector of the wrong size or
   precision, or without a model revision or profile) fails only its image, counted as
   `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four
-  times, to isolate the bad input.
+  times, to isolate the bad input. A workflow that ends expired or canceled, or failed with no
+  step succeeding across several images, is an outage rather than bad inputs: it is re-submitted
+  with backoff up to `VECTOR_EMBED_MAX_RETRIES`, and only then are its images counted as failed
+  (logged at error level) for the reconciler to retry.
 - When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
   workflows not yet submitted are skipped. The vectors already returned are stored before the
   error is raised, so a retry pays only for what is missing.
