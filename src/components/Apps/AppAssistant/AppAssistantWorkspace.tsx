@@ -55,10 +55,8 @@ import {
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
-import type { ListingCoverState } from '~/components/Apps/AppAssistant/coverArt';
 import {
   chatTokenOrchestration,
-  coverStateOf,
   createBrowserCoverArtDeps,
   createCoverArt,
 } from '~/components/Apps/AppAssistant/coverArt';
@@ -342,14 +340,8 @@ export function AppAssistantWorkspace({
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
   // The chat reads tools and instructions through these on every call, so neither has to be rebuilt.
-  const live = useRef({
-    active,
-    session,
-    canPreview,
-    apps: sandboxes.list.data,
-    listingCover: null as ListingCoverState | null,
-  });
-  live.current = { ...live.current, active, session, canPreview, apps: sandboxes.list.data };
+  const live = useRef({ active, session, canPreview, apps: sandboxes.list.data });
+  live.current = { active, session, canPreview, apps: sandboxes.list.data };
   const stopRef = useRef(stopDevTunnel.mutateAsync);
   stopRef.current = stopDevTunnel.mutateAsync;
   const startRef = useRef(startDevTunnel.mutateAsync);
@@ -421,16 +413,8 @@ export function AppAssistantWorkspace({
   }, [activeName, gate]);
 
   // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
-  const coverApp = !remoteRunner && active && isAppBlockId(active.app) ? active.app : null;
-  const coverListing = trpc.appListings.getMyListingForApp.useQuery(
-    { slug: coverApp ?? '' },
-    { enabled: !!coverApp, retry: false, staleTime: 5 * 60_000 }
-  );
-  const listingCover = coverApp && coverListing.data ? coverStateOf(coverListing.data) : null;
-  live.current.listingCover = listingCover;
-  const refetchListingRef = useRef(coverListing.refetch);
-  refetchListingRef.current = coverListing.refetch;
-  const coverArt = useMemo(
+  const trpcUtils = trpc.useUtils();
+  const coverTools = useMemo(
     () =>
       createCoverArt(
         createBrowserCoverArtDeps({
@@ -444,12 +428,11 @@ export function AppAssistantWorkspace({
             setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
           },
           orchestration: chatTokenOrchestration(tokens),
-          onAttached: () => void refetchListingRef.current(),
+          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
         })
       ),
-    [tokens]
+    [tokens, trpcUtils]
   );
-  useEffect(() => coverArt.reset(), [activeName, coverArt]);
 
   const tools = useMemo(
     () => ({
@@ -467,9 +450,9 @@ export function AppAssistantWorkspace({
       }),
       ...appTools.tools,
       ...gate.tools,
-      ...(remoteRunner ? {} : coverArt.tools),
+      ...(remoteRunner ? {} : coverTools),
     }),
-    [canPreview, gate, appTools, showPreview, remoteRunner, coverArt]
+    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
   );
 
   const instructions = useCallback(
@@ -479,7 +462,6 @@ export function AppAssistantWorkspace({
         apps: (live.current.apps ?? []).map((s) => s.app),
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
-        listingCover: live.current.listingCover,
         ...(remoteRunner ? { runner: 'remote' as const } : {}),
       }),
     [remoteRunner]
@@ -930,11 +912,10 @@ export function AppAssistantWorkspace({
   const onChatChange = useCallback(
     (id: string | null) => {
       gate.answered();
-      coverArt.reset();
       chatIdRef.current = id;
       setChatId(id);
     },
-    [gate, coverArt]
+    [gate]
   );
 
   // A failed reply waiting on its app is not asked for after a message of the user's, nor in another
@@ -946,8 +927,6 @@ export function AppAssistantWorkspace({
       lastSent.current = text;
       // A message the user sends takes the free-a-slot card away (its own re-send goes after it went).
       setSlot(null);
-      // A cover priced before this message may now be generated.
-      coverArt.userMessage();
       // A message of the user's (or Set up itself) answers the fork's Set up card.
       dismissForkSetup();
       // A new turn: the chat's own asks for a reply after it start afresh.
@@ -956,7 +935,7 @@ export function AppAssistantWorkspace({
         keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
       onBeforeSend(text, queue);
     },
-    [endResumeAsk, onBeforeSend, dismissForkSetup, coverArt]
+    [endResumeAsk, onBeforeSend, dismissForkSetup]
   );
   const onChatReady = useCallback(() => setChatReady(true), []);
   const onChatOpened = useCallback(
