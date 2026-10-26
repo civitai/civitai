@@ -126,7 +126,8 @@ beforeAll(async () => {
       "type"   "CollectionType",
       "read"   "CollectionReadConfiguration" NOT NULL DEFAULT 'Private',
       "write"  "CollectionWriteConfiguration" NOT NULL DEFAULT 'Private',
-      "collaborationDisabledAt" timestamp
+      "collaborationDisabledAt" timestamp,
+      "archivedAt" timestamp
     );
     CREATE TABLE "CollectionContributor" (
       "userId"       integer NOT NULL,
