@@ -2,7 +2,6 @@ import React from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as ServiceUtil from '~/components/CreatorShop/Services/creator-service.util';
-import type * as ServiceUtil from '~/components/CreatorShop/Services/creator-service.util';
 import { ShopSection } from './ShopSection';
 
 const state = vi.hoisted(() => ({
@@ -63,7 +62,7 @@ describe('ShopSection services', () => {
 
   test('a seller whose only service is a Draft sees nothing (the shop query returns Active only)', async () => {
     const text = await renderSection();
-    expect(text).not.toContain('Shop');
+    expect(text.trim()).toBe('');
   });
 
   test('cosmetics still show alongside services', async () => {
