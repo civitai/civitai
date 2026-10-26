@@ -9,7 +9,7 @@ import {
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 
 import type { Logger } from '../interfaces';
-import { manifestOf, projectDirOf } from './preview';
+import { exitCodeOf, manifestOf, outputOf, projectDirOf } from './preview';
 
 /** How long a reply's start waits for the pin check's reads: past it, the reply goes without. */
 export const SDK_PIN_READ_TIMEOUT_MS = 5_000;
@@ -311,7 +311,11 @@ export class SdkUpgrades {
     let restarting: DevServerBefore = 'none';
     try {
       devServer = await devServerBefore(sandbox, dir);
-      done.lock = await keepLockfile(sandbox, dir);
+      done.lock = await keepLockfile(sandbox, dir).catch((error: unknown) => {
+        throw error instanceof UpgradeFailed
+          ? error
+          : new UpgradeFailed('backup', (error as Error)?.name ?? 'error');
+      });
       inTime('backup');
       if (rewritten !== found.text) {
         done.wrote = true;
@@ -435,7 +439,7 @@ export class SdkUpgrades {
           path: `${dir}/package.json`,
           content: found.text,
         });
-        if (wrote.isError) return false;
+        if (wrote.isError) ok = false;
       }
       if (done.installed) {
         // The kept lockfile first, so the install puts back the versions it locked; none before is
@@ -445,14 +449,24 @@ export class SdkUpgrades {
         ok = (await this.#install(input, dir)) && ok;
         if (done.lock && 'absent' in done.lock)
           ok = (await restoreLockfile(sandbox, dir, done.lock)) && ok;
-        ok = (await installedVersion(sandbox, dir)) === found.installedBefore && ok;
+        ok = restoredVersion(await installedVersion(sandbox, dir), found) && ok;
       }
     } catch {
       ok = false;
     }
     // The upgrade took it down to restart it: started again, the same way, on the restored modules.
-    if (restarting !== 'none')
-      ok = await (restarting === 'here' ? input.startDevServer() : restartElsewhere(sandbox)).then(
+    // Stopped first: a restart that started it but timed out waiting for it to listen left it
+    // running on the new modules, and a start of a running server only waits for it.
+    if (restarting === 'here')
+      ok = await sandbox
+        .call('dev_server_stop', {})
+        .then(() => input.startDevServer())
+        .then(
+          () => ok,
+          () => false
+        );
+    else if (restarting === 'elsewhere')
+      ok = await restartElsewhere(sandbox).then(
         () => ok,
         () => false
       );
@@ -464,6 +478,18 @@ export class SdkUpgrades {
     this.#tried.set(key, { pair, attempts });
     if (this.#tried.size > REMEMBERED) this.#tried.delete(this.#tried.keys().next().value!);
   }
+}
+
+/**
+ * Whether the SDK a rollback left is the app's own again: the version installed before, or, where
+ * the install resolves the declared range afresh (no lockfile before, or a stale `node_modules`
+ * under a current lockfile), a version in the declared range's own minor.
+ */
+function restoredVersion(version: string | null, found: StalePin): boolean {
+  if (version === null) return false;
+  if (version === found.installedBefore) return true;
+  const minor = (value: string) => /^\D*(\d+)\.(\d+)/.exec(value)?.slice(1, 3).join('.');
+  return minor(version) !== undefined && minor(version) === minor(found.declared);
 }
 
 /** `package-lock.json` as it was before the upgrade: its exact text, or that there was none. */
@@ -548,18 +574,6 @@ function exactTextOf(answer: string): string | null {
   } catch {
     return null;
   }
-}
-
-/** `sandbox__run_command`'s exit code (its first line, `exit_code: N`), else `null`. */
-function exitCodeOf(text: string): number | null {
-  const match = /^exit_code: (-?\d+)/.exec(text);
-  return match ? Number(match[1]) : null;
-}
-
-/** `sandbox__run_command`'s output: what follows its header's `---` line. */
-function outputOf(text: string): string {
-  const at = text.indexOf('\n---\n');
-  return at < 0 ? '' : text.slice(at + 5);
 }
 
 /** The installed `@civitai/sdk`'s own `version`, else `null` (not installed, or unreadable). */

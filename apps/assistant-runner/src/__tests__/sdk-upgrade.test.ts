@@ -250,10 +250,10 @@ const actions = () =>
       call.tool === 'run_command'
         ? `run_command ${String(call.args.command)}`
         : call.tool === 'dev_server_start'
-          ? `dev_server_start ${String(call.args.command)}`
-          : call.tool === 'write_file'
-            ? `write_file ${String(call.args.path)}`
-            : call.tool
+        ? `dev_server_start ${String(call.args.command)}`
+        : call.tool === 'write_file'
+        ? `write_file ${String(call.args.path)}`
+        : call.tool
     );
 
 const installCount = () =>
@@ -486,6 +486,13 @@ describe('a failed upgrade puts package.json back', () => {
     expect(state.lock).toBe(ORIGINAL_LOCK);
     expect(state.installed).toBe('0.19.1');
     expect(starts).toBe(2);
+    // The rollback stops it before starting it: a start of a running server only waits for it.
+    expect(actions().filter((a) => a.startsWith('dev_server'))).toEqual([
+      'dev_server_stop',
+      `dev_server_start cd my-app && ${DEV_SERVER_COMMAND}`,
+      'dev_server_stop',
+      `dev_server_start cd my-app && ${DEV_SERVER_COMMAND}`,
+    ]);
     expect(state.devRunning).toBe(true);
     expect(failed()).toEqual([
       expect.objectContaining({ object: expect.objectContaining({ stage: 'restart' }) }),
@@ -526,6 +533,36 @@ describe('one upgrade at a time, and never for a stopped run', () => {
     expect(
       [first.instructions, second.instructions].filter((i) => i?.includes(USER_LINE))
     ).toHaveLength(1);
+  });
+
+  it('a Stop during the install lets the upgrade finish, its calls still signed', async () => {
+    fake.add('my-app');
+    const stop = new AbortController();
+    const state = app({ pkg: pkg4(STALE) }, async () => {
+      stop.abort();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      state.installed = CURRENT_VERSION;
+      state.lock = lockFor(CURRENT);
+      return ran(0, 'added 1 package');
+    });
+    const tools = new AppAssistantTools({
+      sandboxUrl: fake.url,
+      // TEST-ONLY stand-in for a minted token: never a real credential. A mint for a caller that
+      // was stopped fails, as the minter's wait does.
+      tokens: () => async (purpose, options) => {
+        if (options?.signal?.aborted) throw new Error('stopped');
+        return `test-token-${purpose}`;
+      },
+      log,
+      wakePollMs: 5,
+      wakeTimeoutMs: 5_000,
+    });
+    await open(tools, { signal: stop.signal }).catch(() => null);
+    expect(state.pkg).toBe(pkg4(CURRENT));
+    expect(state.installed).toBe(CURRENT_VERSION);
+    expect(state.devRunning).toBe(true);
+    expect(fake.callsTo('dev_server_start')).toBe(1);
+    expect(failed()).toEqual([]);
   });
 
   it('a run already stopped changes nothing', async () => {
