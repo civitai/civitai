@@ -619,7 +619,7 @@ type PersistRetryRow = TakedownPersistRetry & {
   /** Written by `reserveTakedownRetractions`; cleared when its delete settles. */
   reservation?: string;
   /** What a row reserved over owed before (its own `retract` and schedule), handed back on settle. */
-  reservedOver?: { retract?: boolean; nextAttemptAt?: string };
+  reservedOver?: { retract?: boolean; purgeEdge?: boolean; nextAttemptAt?: string };
 };
 type UrlImage = { id: number | null; name: string | null; type: MediaType | null };
 
@@ -707,17 +707,18 @@ async function logRevivedRetries(imageIds: number[]) {
  * retraction or an edge purge it already owed (`retract`/`purgeEdge` are OR-ed), and a new event
  * restarts its attempts (clearing `gaveUpAt`) and makes it due now. One exception: a row another
  * delete has reserved keeps its reservation and lease, so it is not sent while that delete's own
- * retraction may still be in flight. `settles` names the reservation this failure belongs to, which
- * is released instead.
+ * retraction may still be in flight; the new obligation goes into its `reservedOver`, due now, so
+ * that delete's settle hands it back instead of removing the row with it. `settles` names the
+ * reservation this failure belongs to, which is released instead.
  *
- * 🔴 Must tolerate the enum label not existing: on a database without it the insert fails and is
- * logged.
+ * Returns whether the row was written. 🔴 Must tolerate the enum label not existing: on a database
+ * without it the insert fails, is logged, and this returns false.
  */
 export async function queueTakedownPersistRetry({
   imageId,
   settles,
   ...data
-}: TakedownPersistRetry & { imageId: number | undefined; settles?: string }) {
+}: TakedownPersistRetry & { imageId: number | undefined; settles?: string }): Promise<boolean> {
   try {
     if (imageId === undefined) throw new Error('no image id for this url');
     await logRevivedRetries([imageId]);
@@ -740,10 +741,16 @@ export async function queueTakedownPersistRetry({
           THEN jsonb_strip_nulls(jsonb_build_object(
             'reservation', "JobQueue".data->'reservation',
             'nextAttemptAt', "JobQueue".data->'nextAttemptAt',
-            'reservedOver', "JobQueue".data->'reservedOver'))
+            'reservedOver', (COALESCE("JobQueue".data->'reservedOver', '{}'::jsonb) - 'nextAttemptAt')
+              || jsonb_build_object(
+                'retract', COALESCE(("JobQueue".data->'reservedOver'->>'retract')::boolean, false)
+                  OR COALESCE((EXCLUDED.data->>'retract')::boolean, false),
+                'purgeEdge', COALESCE(("JobQueue".data->'reservedOver'->>'purgeEdge')::boolean, false)
+                  OR COALESCE((EXCLUDED.data->>'purgeEdge')::boolean, false))))
           ELSE '{}'::jsonb
         END
     `;
+    return true;
   } catch (error) {
     await logToAxiom({
       type: 'error',
@@ -753,6 +760,7 @@ export async function queueTakedownPersistRetry({
       imageKey: data.url,
       error: safeError(error),
     }).catch(() => undefined);
+    return false;
   }
 }
 
@@ -818,7 +826,9 @@ export async function reserveTakedownRetractions(
 /**
  * Releases the reservations of these images that still carry `reservation`, once their delete
  * settled: retracted, nothing to retract, or the delete kept the image. A reservation of its own is
- * removed; one made over an existing retry gives that row back its own `retract` and schedule.
+ * removed; one with a `reservedOver` (made over an existing retry, or merged into by another
+ * delete's failure since) gives the row back what it owes there: its `retract`, edge purge and
+ * schedule.
  */
 export async function settleTakedownReservations(imageIds: number[], reservation: string) {
   if (!imageIds.length) return;
@@ -835,7 +845,9 @@ export async function settleTakedownReservations(imageIds: number[], reservation
     UPDATE "JobQueue" SET data =
       (data - 'reservation' - 'reservedOver' - 'nextAttemptAt' - 'retract')
       || jsonb_build_object(
-        'retract', COALESCE((data->'reservedOver'->>'retract')::boolean, false))
+        'retract', COALESCE((data->'reservedOver'->>'retract')::boolean, false),
+        'purgeEdge', COALESCE((data->>'purgeEdge')::boolean, false)
+          OR COALESCE((data->'reservedOver'->>'purgeEdge')::boolean, false))
       || jsonb_strip_nulls(jsonb_build_object('nextAttemptAt', data->'reservedOver'->'nextAttemptAt'))
     WHERE ${mine} AND data->'reservedOver' IS NOT NULL
   `;
@@ -992,9 +1004,10 @@ const DELETE_PERSIST_CONCURRENCY = 10;
 /**
  * Persists the takedowns `remove-blocked-images` has just hard-deleted. It runs after their storage
  * deletes, never between a row's delete and its object's, and is bounded: one attempt each, and
- * none started past the budget. Whatever does not land is queued for the one retry, which resends
- * the retraction too. A row whose retraction did not land is queued without an attempt, since the
- * retry sends both. A url another row still uses is left alone, as `deleteImageFromS3` does.
+ * none started past the budget. Whatever does not land is queued for the retry, which resends the
+ * retraction too. A row whose retraction did not land is queued without an attempt, since the retry
+ * sends both. A url another row still uses is left alone, as `deleteImageFromS3` does. `unqueued`
+ * names the images whose retry could not be written: their reservation is all that is left.
  */
 export async function persistDeletedTakedowns(
   rows: { id: number; url: string; retraction?: ImageCacherOutcome }[],
@@ -1009,6 +1022,7 @@ export async function persistDeletedTakedowns(
 ) {
   const deadline = Date.now() + budgetMs;
   const totals = { sent: 0, queued: 0, skipped: 0, notAttempted: 0, retractionPending: 0 };
+  const unqueued: number[] = [];
   await limitConcurrency(
     rows.map(({ id, url, retraction }) => async () => {
       try {
@@ -1039,20 +1053,21 @@ export async function persistDeletedTakedowns(
         await logToAxiom({
           type: 'warning',
           name: 'takedown-persist-failed',
-          message: 'takedown persist failed; retrying once',
+          message: 'takedown persist failed; queued for retry',
           imageIds: [id],
           imageKey: url,
           error: safeError(error),
         }).catch(() => undefined);
       }
       totals.queued++;
-      await queueTakedownPersistRetry({
+      const written = await queueTakedownPersistRetry({
         imageId: id,
         url,
         retract: true,
         purgeEdge: false,
         settles: reservation,
       });
+      if (!written) unqueued.push(id);
     }),
     DELETE_PERSIST_CONCURRENCY
   );
@@ -1064,7 +1079,7 @@ export async function persistDeletedTakedowns(
       notAttempted: totals.notAttempted,
       budgetMs,
     }).catch(() => undefined);
-  return totals;
+  return { ...totals, unqueued };
 }
 
 // ── queue drain ─────────────────────────────────────────────────────────────────────────────────

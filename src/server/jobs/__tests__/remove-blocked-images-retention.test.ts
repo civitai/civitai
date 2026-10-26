@@ -83,6 +83,7 @@ const {
   accountHeldIds,
   markerView,
   withoutModActivity,
+  goneIds,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
@@ -100,6 +101,8 @@ const {
   const markerView = { present: true };
   // Images whose block has no moderator takedown on record, so they take the non-retracting call.
   const withoutModActivity: number[] = [];
+  // Images deleted by someone else between the batch read and this job's delete.
+  const goneIds: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -163,6 +166,13 @@ const {
         (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
       );
     }
+    // The existence check on images the delete did not return.
+    if (sql.includes('SELECT id FROM "Image" WHERE id = ANY')) {
+      const ids = (values.find(Array.isArray) as number[]) ?? [];
+      return allImages()
+        .filter((i) => ids.includes(i.id) && !goneIds.includes(i.id))
+        .map((i) => ({ id: i.id }));
+    }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
       const ids = (values.find(Array.isArray) as number[]) ?? [];
@@ -186,6 +196,7 @@ const {
     accountHeldIds,
     markerView,
     withoutModActivity,
+    goneIds,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -232,10 +243,11 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(a
 // Hand-listed for the same reason: the takedown sync loads the CDN and edge-url clients, which
 // this file's env and logging stubs cannot boot. The job imports only this from it.
 const { mockPersistDeletedTakedowns, mockReserve, mockSettle } = vi.hoisted(() => ({
-  mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[]) => ({
+  mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[], _opts?: unknown) => ({
     sent: 0,
     queued: 0,
     skipped: 0,
+    unqueued: [] as number[],
   })),
   mockReserve: vi.fn(async (_rows: { id: number; url?: string | null }[]) => 'reservation'),
   mockSettle: vi.fn(async (_ids: number[], _reservation: string) => undefined),
@@ -345,6 +357,7 @@ beforeEach(() => {
   accountHeldIds.length = 0;
   markerView.present = true;
   withoutModActivity.length = 0;
+  goneIds.length = 0;
   extraImages.length = 0;
   extraQueue.length = 0;
   holdLookup.error = null;
@@ -827,7 +840,9 @@ describe('remove-blocked-images retraction load', () => {
     expect(mockSettle).not.toHaveBeenCalled();
   });
 
-  it('settles only the reservations whose retraction landed', async () => {
+  // Whether the retry was WRITTEN decides it, not the retraction's outcome: a written retry already
+  // released the reservation, and an unwritten one leaves the reservation as the only record.
+  it('keeps the reservation only where the retry could not be written', async () => {
     addTakedowns();
     mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
       ids.map((id, i) => ({
@@ -835,10 +850,33 @@ describe('remove-blocked-images retraction load', () => {
         retraction: i === 0 ? ('unconfirmed' as const) : ('confirmed' as const),
       }))
     );
+    mockPersistDeletedTakedowns.mockImplementationOnce(async (rows: { id: number }[]) => ({
+      sent: 0,
+      queued: 2,
+      skipped: 0,
+      // The first row's retry was written; the second's (a failed persist) was not.
+      unqueued: [rows[1].id],
+    }));
     await runJob();
 
     const chunkIds = retractingCalls()[0][0] as number[];
-    expect(mockSettle.mock.calls[0]).toEqual([chunkIds.slice(1), 'reservation']);
+    expect(mockSettle.mock.calls[0]).toEqual([
+      chunkIds.filter((id) => id !== chunkIds[1]),
+      'reservation',
+    ]);
+  });
+
+  it('keeps the reservation of an image deleted by someone else before this delete', async () => {
+    addTakedowns();
+    goneIds.push(8);
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 8).map((id) => ({ id, retraction: 'confirmed' as const }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(chunkIds).toContain(8);
+    expect(mockSettle.mock.calls[0][0]).toEqual(chunkIds.filter((id) => id !== 8));
   });
 
   it('releases the reservation of an image the delete kept, so a held image gets no retraction', async () => {
