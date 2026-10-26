@@ -317,6 +317,14 @@ export const processScheduledPublishing = createJob(
       { timeout: 30000 }
     );
 
+    // Undated until now, so never scanned. First after the commit: the steps below are unguarded, and
+    // these posts are live now, so the next run never selects them again — a scan skipped is lost.
+    if (flippedPosts.length)
+      scanEntitiesInBackground(
+        'Post',
+        flippedPosts.map((p) => p.id)
+      );
+
     // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
     // already read Published, so the next run never selects them again — a bust skipped here is lost.
     // Each bust is guarded so that moving them first cannot let one cache fault cancel the engagements.
@@ -424,11 +432,6 @@ export const processScheduledPublishing = createJob(
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(flippedPosts.map((p) => p.userId)));
-      // Undated until now, so never scanned.
-      scanEntitiesInBackground(
-        'Post',
-        flippedPosts.map((p) => p.id)
-      );
     }
 
     const processedModelIds = [
