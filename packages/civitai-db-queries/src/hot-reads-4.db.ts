@@ -56,12 +56,14 @@ function topLevelCommentConditions(
 ): Expression<SqlBool> {
   const conditions: Expression<SqlBool>[] = [];
   if (filter.modelId !== undefined) conditions.push(eb('Comment.modelId', '=', filter.modelId));
-  if (filter.userId) conditions.push(eb('Comment.userId', '=', filter.userId));
-  else if (filter.excludedUserIds.length)
+  if (filter.userId) conditions.push(eb('Comment.userId', '=', filter.userId)); // M2
+  if (filter.excludedUserIds.length)
     conditions.push(eb('Comment.userId', 'not in', filter.excludedUserIds));
   conditions.push(eb('Comment.parentId', 'is', null));
-  if (filter.excludeTosViolations) conditions.push(eb('Comment.tosViolation', '=', false));
-  conditions.push(eb('Comment.hidden', '=', filter.hidden));
+  // M3 ToS filter dropped
+  conditions.push(
+    filter.hidden ? eb('Comment.hidden', '=', true) : eb('Comment.hidden', 'is not', true)
+  ); // M1
   if (pinned === 'unpinned') conditions.push(eb('Comment.pinnedAt', 'is', null));
   if (pinned === 'pinned') conditions.push(eb('Comment.pinnedAt', 'is not', null));
   return eb.and(conditions);
@@ -75,6 +77,7 @@ export async function countTopLevelComments(
 ) {
   const row = await db
     .selectFrom('Comment')
+    .innerJoin('UserStat', 'UserStat.userId', 'Comment.userId') // M6
     .select(sql<number>`count(*)::int`.as('count'))
     .where((eb) => topLevelCommentConditions(eb, filter, pinned))
     .executeTakeFirstOrThrow();
@@ -131,8 +134,8 @@ export function listTopLevelComments(
           .whereRef('CommentReaction.commentId', '=', 'Comment.id')
       ).as('reactions'),
     ]);
-  if (page.pinned) return query.orderBy('Comment.pinnedAt', 'desc').execute();
+  if (page.pinned) return query.orderBy('Comment.pinnedAt', 'asc').execute(); // M4
   query = query.orderBy('Comment.createdAt', page.createdAt).limit(page.limit);
-  if (page.offset) query = query.offset(page.offset);
+  // M5 offset ignored
   return query.execute();
 }

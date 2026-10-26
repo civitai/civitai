@@ -174,7 +174,8 @@ export const getCommentsViaKysely = async ({
 
   const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
 
-  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  await getKyselyWithoutLag('commentModel', filter.modelId);
+  const db = (await import('~/server/db/kyselyDb')).kyselyRead; // M7
   return listTopLevelCommentsViaKysely(db, topLevel, { limit, skip, sort });
 };
 
@@ -205,7 +206,8 @@ export const getVisibleCommentCount = async ({
   // `kysely-hot-reads-4` on: the same counts through Kysely, on the client the same lag decision
   // picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
   let count: (filter: TopLevelCommentsFilter, pinned: PinnedScope) => Promise<number>;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4))) {
+    // M8
     const db = await getKyselyWithoutLag('commentModel', input.modelId);
     count = (filter, pinned) => countTopLevelCommentsViaKysely(db, filter, pinned);
   } else {
