@@ -25,7 +25,12 @@ import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { shellRouteByName } from '~/server/shell/shell-mode';
-import { applyShellPrivateHeaders, syncShellRouteCookie } from '~/server/shell/shell-response';
+import {
+  applyShellBounceHeaders,
+  applyShellPrivateHeaders,
+  syncShellRouteCookie,
+} from '~/server/shell/shell-response';
+import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const getServerProxySSGHelpers = async (
@@ -126,6 +131,16 @@ export function createServerSideProps<P>({
       shellReq[SHELL_RENDERED_REQ_KEY] = shell;
       applyShellPrivateHeaders(context.res);
       return { props: { adsGated: true } as unknown as NonNullable<P> };
+    }
+    // 🔴 The route's canonical path (`~/server/shell/shell-canonical`) is never rendered: whatever
+    // reached it without the shell — refused, no valid original URL, a data request — is sent back
+    // to the URL it came from with `?civ-shell=0`, before this reads a session or prefetches. `_app`
+    // ran its full path first; the bounce headers drop any cookie or edge header it left.
+    if (shell && isCanonicalShellPath(shell, context.resolvedUrl)) {
+      applyShellBounceHeaders(context.res);
+      return {
+        redirect: { destination: shellBounceLocation(shell, context.req), permanent: false },
+      };
     }
 
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;

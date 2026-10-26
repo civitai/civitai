@@ -81,19 +81,22 @@ async function request({
   headers = {},
   preset = {},
   page = gssp,
+  method = 'GET',
 }: {
   url?: string;
   headers?: Record<string, string>;
   preset?: Record<string, unknown>;
   page?: typeof gssp;
+  method?: string;
 }) {
   const req = {
-    method: 'GET',
+    method,
     url,
     headers: { host: 'civitai.com', cookie: SHELL_COOKIES, ...headers },
   };
   const res = fakeResponse(preset);
-  const query: Record<string, string> = { imageId: '123' };
+  const imageId = url.split('?')[0]!.split('/').pop()!;
+  const query: Record<string, string> = { imageId };
   for (const [k, v] of new URLSearchParams(url.split('?')[1] ?? '')) query[k] = v;
   const noop = () => null;
   await appGetInitialProps({
@@ -106,9 +109,11 @@ async function request({
     req,
     res,
     query,
-    params: { imageId: '123' },
+    params: { imageId },
     resolvedUrl: url,
   } as unknown as GetServerSidePropsContext);
+  // A redirect is sent without rendering anything (`render.js`): no document.
+  if ('redirect' in result) return { headers: res.getHeaders(), result, req, res };
   // Then the document, which Next renders only once the page rendered (its `renderPage` is stubbed).
   await AppDocument.getInitialProps({
     req,
@@ -248,5 +253,144 @@ describe('the edge headers go only with a shell the page itself rendered', () =>
     expect(headers['x-civ-render']).toBe('shell');
     await errorRender(req, res);
     expectFullRender(res.getHeaders());
+  });
+});
+
+/**
+ * The canonical path `/images/shell`, where the edge sends every eligible `/images/<id>` request
+ * with the original URL in `x-civ-shell-orig`. It answers with the shell, or with a 307 back to the
+ * original URL plus `?civ-shell=0` — private, no cookie, no edge-cache header — and is never
+ * rendered for a viewer.
+ */
+describe('the canonical shell path', () => {
+  const CANONICAL = '/images/shell';
+  const ORIG = { 'x-civ-shell-orig': '/images/123?postId=5' };
+  const BOUNCE = '/images/123?postId=5&civ-shell=0';
+
+  function expectBounce(
+    { headers, result }: Awaited<ReturnType<typeof request>>,
+    destination: string
+  ) {
+    expect(result).toEqual({ redirect: { destination, permanent: false } });
+    expect(headers['cache-control']).toBe('private, no-store');
+    expect(headers).not.toHaveProperty('set-cookie');
+    // Opted out of the edge cache explicitly; no purge tag, no shell label.
+    expect(headers['cloudflare-cdn-cache-control']).toBe('no-store');
+    expect(headers).not.toHaveProperty('cache-tag');
+    expect(headers).not.toHaveProperty('x-civ-render');
+    // The page bounces before it reads a session (`_app`'s bootstrap is its own and is discarded).
+    expect(h.authSession).not.toHaveBeenCalled();
+  }
+
+  it('an eligible request gets the shell, with the shell’s headers', async () => {
+    const { headers, result } = await request({
+      url: CANONICAL,
+      headers: ORIG,
+      preset: { 'Set-Cookie': ['ref=1; Path=/'] },
+    });
+    expect(result).toEqual({ props: { adsGated: true } });
+    expect(headers['x-civ-render']).toBe('shell');
+    expect(headers['cloudflare-cdn-cache-control']).toBe(
+      'public, max-age=60, stale-while-revalidate=30'
+    );
+    expect(headers['cache-tag']).toMatch(/^shell,shell-images,build-[\w-]+$/);
+    expect(headers['cache-control']).toBe('private, no-store');
+    expect(headers).not.toHaveProperty('set-cookie');
+  });
+
+  it.each<[string, Parameters<typeof request>[0], () => void]>([
+    ['the kill switch off', {}, () => (h.flags.shellMaster = false)],
+    ['a HEAD request', { method: 'HEAD' }, () => undefined],
+    ['a data request header', { headers: { 'x-nextjs-data': '1' } }, () => undefined],
+    ['an Authorization header', { headers: { authorization: 'Bearer key' } }, () => undefined],
+    ['a verified bot', { headers: { 'x-civitai-verified-bot': 'googlebot' } }, () => undefined],
+    ['no session cookie', { headers: { cookie: 'civ-shell-images=1' } }, () => undefined],
+    ['no route cookie', { headers: { cookie: '__Secure-civ-token=a.b.c' } }, () => undefined],
+    ['a blocked region', { headers: { 'cf-ipcountry': 'GB' } }, () => undefined],
+  ])('declined for %s: 307 to the original URL with civ-shell=0', async (_, input, arrange) => {
+    arrange();
+    const out = await request({
+      ...input,
+      url: CANONICAL,
+      headers: { ...ORIG, ...input.headers },
+      // A cookie written on the way must not ride the bounce.
+      preset: { 'Set-Cookie': ['ref=1; Path=/'] },
+    });
+    expectBounce(out, BOUNCE);
+  });
+
+  it.each<[string, string, string]>([
+    ['the bypass', '/images/123?civ-shell=0', '/images/123?civ-shell=0'],
+    ['a ?token= credential', '/images/123?token=abc', '/images/123?token=abc&civ-shell=0'],
+  ])('declined for %s in the ORIGINAL URL', async (_, orig, destination) => {
+    expectBounce(
+      await request({
+        url: CANONICAL,
+        headers: { 'x-civ-shell-orig': orig },
+        preset: { 'Set-Cookie': ['ref=1; Path=/'] },
+      }),
+      destination
+    );
+  });
+
+  it('runs after _app’s full path and still leaves no cookie or edge header on the 307', async () => {
+    // Refused (no route cookie), so `_app` takes its full path; a full render would also set the
+    // route cookie here, which the bounce must not.
+    const out = await request({
+      url: CANONICAL,
+      headers: { ...ORIG, cookie: '__Secure-civ-token=a.b.c' },
+      preset: {
+        'Set-Cookie': ['ref=1; Path=/'],
+        'Cloudflare-CDN-Cache-Control': 'public, max-age=60',
+        'Cache-Tag': 'shell',
+        'X-Civ-Render': 'shell',
+      },
+    });
+    expectBounce(out, BOUNCE);
+    // CONTROL: `_app` did take its full path (the bootstrap ran).
+    expect(h.bootstrap).toHaveBeenCalled();
+  });
+
+  it.each<[string, Record<string, string>]>([
+    ['no original URL', {}],
+    ['an absolute URL', { 'x-civ-shell-orig': 'https://evil.example/images/123' }],
+    ['a protocol-relative URL', { 'x-civ-shell-orig': '//evil.example/images/123' }],
+    ['another path', { 'x-civ-shell-orig': '/user/account' }],
+    ['the canonical path', { 'x-civ-shell-orig': CANONICAL }],
+  ])('declined for %s: 307 to /images', async (_, headers) => {
+    expectBounce(
+      await request({ url: CANONICAL, headers, preset: { 'Set-Cookie': ['ref=1; Path=/'] } }),
+      '/images'
+    );
+  });
+
+  it('a data request for the canonical path is bounced too, never resolved', async () => {
+    // Next hands getServerSideProps the page path as `resolvedUrl` for a `/_next/data` request.
+    const req = { method: 'GET', url: '/_next/data/b/images/shell.json', headers: { ...ORIG } };
+    const res = fakeResponse();
+    const result = await gssp({
+      req,
+      res,
+      query: { imageId: 'shell' },
+      params: { imageId: 'shell' },
+      resolvedUrl: CANONICAL,
+    } as unknown as GetServerSidePropsContext);
+    expect(result).toEqual({ redirect: { destination: BOUNCE, permanent: false } });
+    expect(res.getHeaders()['cloudflare-cdn-cache-control']).toBe('no-store');
+    expect(h.authSession).not.toHaveBeenCalled();
+  });
+
+  it('a valid image path with an unacceptable query: 307 to that image, query dropped', async () => {
+    expectBounce(
+      await request({ url: CANONICAL, headers: { 'x-civ-shell-orig': '/images/123?a=b c' } }),
+      '/images/123?civ-shell=0'
+    );
+  });
+
+  it('CONTROL: the same declined request on a real image URL is a full render', async () => {
+    h.flags.shellMaster = false;
+    const { headers, result } = await request({ headers: ORIG });
+    expect(result).toMatchObject({ props: { session: SESSION } });
+    expectFullRender(headers);
   });
 });

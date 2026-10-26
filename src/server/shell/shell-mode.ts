@@ -9,6 +9,12 @@ import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isPreview, isProd } from '~/env/other';
 import { SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE } from '~/shared/constants/shell.constants';
 import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
+import {
+  isCanonicalShellPath,
+  requestPath,
+  SHELL_ORIGINAL_URL_HEADER,
+  shellOriginalUrl,
+} from '~/server/shell/shell-canonical';
 
 /**
  * Static shell mode: whether a page request is answered with the route's static shell — one HTML
@@ -44,6 +50,7 @@ export function shellRouteByName(name: ShellRouteName): ShellRoute {
 export type ShellRefusal =
   | 'method'
   | 'route'
+  | 'original-url'
   | 'data-request'
   | 'bypass'
   | 'verified-bot'
@@ -64,9 +71,21 @@ type ShellRequest = IncomingMessage & {
 const isSessionCookieName = (name: string) =>
   name.endsWith('civ-token') || name.endsWith('civitai-token');
 
-function queryParam(req: ShellRequest, name: string): string | null {
-  const queryString = req.url?.split('?')[1];
+function queryParam(url: string, name: string): string | null {
+  const queryString = url.split('?')[1];
   return queryString ? new URLSearchParams(queryString).get(name) : null;
+}
+
+/**
+ * The URLs a request is judged on: its own, and — on the route's canonical path
+ * (`~/server/shell/shell-canonical`) — the original URL the edge rewrote from, or `null` when that
+ * request carries no valid one. Every URL-dependent refusal must hold for each of them.
+ */
+function judgedUrls(req: ShellRequest, route: ShellRoute): string[] | null {
+  const own = req.url ?? '';
+  if (!isCanonicalShellPath(route.name, own)) return [own];
+  const original = shellOriginalUrl(route.name, req.headers[SHELL_ORIGINAL_URL_HEADER]);
+  return original ? [own, original] : null;
 }
 
 /**
@@ -84,13 +103,23 @@ export async function shellRefusal(
   if (req.method !== 'GET') return 'method';
   if (!(pathname in SHELL_ROUTES)) return 'route';
   const route = SHELL_ROUTES[pathname as ShellRoutePattern];
+  // On the canonical path the URL that matters is the one the browser asked for.
+  const urls = judgedUrls(req, route);
+  if (!urls) return 'original-url';
   // A client-side navigation's data request is answered by getServerSideProps alone: no HTML.
   if (isNextDataRequest(req as never)) return 'data-request';
-  if (queryParam(req, SHELL_BYPASS_PARAM) === SHELL_BYPASS_VALUE) return 'bypass';
+  if (urls.some((url) => queryParam(url, SHELL_BYPASS_PARAM) === SHELL_BYPASS_VALUE)) {
+    return 'bypass';
+  }
   if (parseVerifiedBotHeader(req.headers[VERIFIED_BOT_HEADER])) return 'verified-bot';
   // Credentials other than the cookie: the page would be rendered for THAT caller.
   if (req.headers.authorization) return 'authorization';
-  if (requestCarriesQueryToken(req as never)) return 'query-token';
+  if (
+    requestCarriesQueryToken(req as never) ||
+    urls.some((url) => requestCarriesQueryToken({ url } as never))
+  ) {
+    return 'query-token';
+  }
 
   const cookies = getCookies({ req: req as never });
   const names = Object.keys(cookies);
@@ -101,7 +130,7 @@ export async function shellRefusal(
   const region = getRegion(req);
   if (isRegionBlocked(region) || isRegionRestricted(region)) return 'region';
   // A guarded path needs the session to decide, which a shell render does not read.
-  if (resolveAuthGuard((req.url ?? '').split('?')[0], null, { isProd, isPreview })) {
+  if (urls.some((url) => resolveAuthGuard(requestPath(url), null, { isProd, isPreview }))) {
     return 'auth-guard';
   }
 
