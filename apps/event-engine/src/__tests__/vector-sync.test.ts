@@ -1661,6 +1661,32 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(result.error).toBeUndefined();
   });
 
+  // Attempts alone let 8 retries of a 30-minute expiry hold one flush for hours.
+  test('an outage is not re-submitted once the batch has been at it for the outage window', async () => {
+    let clock = 0;
+    let posts = 0;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 500,
+      maxRetries: 8,
+      priority: 'low',
+      outageRetryForMs: 15 * 60_000,
+      now: () => clock,
+      sleep: async (ms) => void (clock += ms),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        posts++;
+        clock += 10 * 60_000; // the queue held it until its steps expired
+        return failedWorkflow(init, 'expired');
+      }) as unknown as typeof fetch,
+    });
+    const result = await e.embed(inputs(2));
+    expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
+
+    expect(result.failed.sort()).toEqual([1, 2]);
+    expect(result.error).toBeUndefined();
+  });
+
   test('one image whose step failed is that image failing: no retry', async () => {
     let posts = 0;
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
