@@ -144,6 +144,10 @@ export type BaseModelRecord = {
 // Ecosystem Constants
 // =============================================================================
 
+/** The upscaler the generator uses when none is picked. A CivitaiOfficial version, so no creator fee applies. */
+export const DEFAULT_UPSCALER = { modelId: 147759, versionId: 164821 } as const;
+export const DEFAULT_UPSCALER_AIR = `urn:air:other:upscaler:civitai:${DEFAULT_UPSCALER.modelId}@${DEFAULT_UPSCALER.versionId}`;
+
 export const ECO = {
   // Root ecosystems - Image models
   SD1: 1,
@@ -1858,7 +1862,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Other,
     defaults: {
-      model: { id: 164821 },
+      model: { id: DEFAULT_UPSCALER.versionId },
     },
   },
   {
