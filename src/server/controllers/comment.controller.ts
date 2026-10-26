@@ -84,7 +84,7 @@ export const getCommentsInfiniteHandler = async ({
   // Pinned comments surface at the top of the first page only.
   const pinnedComments = input.cursor
     ? []
-    : viaKysely && false // M9
+    : viaKysely
     ? await getPinnedCommentsViaKysely({ input, user })
     : await getPinnedComments({ input, user, select: getAllCommentsWithCachedUserSelect });
 
