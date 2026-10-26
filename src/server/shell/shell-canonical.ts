@@ -87,6 +87,7 @@ export function shellBounceLocation(route: ShellCanonicalRouteName, req: Incomin
   const value = req.headers[SHELL_ORIGINAL_URL_HEADER];
   const parts = splitOriginal(value);
   if (!parts || !isOriginalPath(route, parts.path)) return SHELL_CANONICAL_ROUTES[route].fallback;
+  if (!shellOriginalUrl(route, value)) return SHELL_CANONICAL_ROUTES[route].fallback;
   // Re-serialised, so the Location carries only percent-encoded query text.
   const params = new URLSearchParams(shellOriginalUrl(route, value) ? parts.query : '');
   params.set(SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE);
