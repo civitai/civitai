@@ -112,4 +112,10 @@ export const WATCHLIST = [
     globalKey: '__civitaiSignalsWrapperState',
     why: 'The one object holding the per-lane p-limit limiters and queue counters and the shared circuit breaker behind withSignals(). This module is emitted as one runtime module PER Turbopack runtime (measured on a local production build: one module id under `chunks/`, carried by 21 chunks, and one under `chunks/ssr/`, carried by 21), so one process evaluates it twice. A copy with private state gets its own concurrency cap, its own queue bound and its own circuit — the per-lane limits apply per copy, not per process, and a backend outage tripped through one copy never fails calls made through the other — and the collect()-based gauges `civitai_app_signals_call_active`/`_call_queue_depth`/`_circuit_state` read whichever copy owns the hook. Vitest cannot see this (it loads each module once) except where a test forces two copies, as `src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts` does.',
   },
+  {
+    rule: 'SHARED_STATE',
+    module: 'packages/civitai-telemetry/src/otel-helpers.ts',
+    globalKey: '__civitaiWithSpanSkipUnsampledGate',
+    why: "The one holder of the gate behind withSpan()'s unsampled-parent shortcut. `src/instrumentation.node.ts` installs the gate ONCE at boot (setWithSpanSkipUnsampledGate), while withSpan() is called from service, router and middleware modules that the bundler can inline into many emitted chunks. A copy holding a private gate never sees that registration, so its call sites keep opening spans while the flag reads ON — a dark, partial rollout with no error and no counter. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
+  },
 ];
