@@ -8,7 +8,7 @@ import {
   type TopLevelCommentsFilter,
 } from '@civitai/db-queries/hot-reads-4';
 import { ReviewSort } from '~/server/common/enums';
-import { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comment.selector';
+import type { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comment.selector';
 
 export type { PinnedScope, TopLevelCommentsFilter };
 
