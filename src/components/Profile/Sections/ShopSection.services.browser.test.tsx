@@ -1,6 +1,8 @@
 import React from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as ServiceUtil from '~/components/CreatorShop/Services/creator-service.util';
+import type * as ServiceUtil from '~/components/CreatorShop/Services/creator-service.util';
 import { ShopSection } from './ShopSection';
 
 const state = vi.hoisted(() => ({
@@ -18,9 +20,7 @@ vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
 }));
 vi.mock('~/components/CreatorShop/Services/creator-service.util', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('~/components/CreatorShop/Services/creator-service.util')
-  >()),
+  ...(await importOriginal<typeof ServiceUtil>()),
   useQueryShopServices: () => ({ offerings: state.offerings, isLoading: false }),
 }));
 vi.mock('~/components/Shop/ShopItem', () => ({

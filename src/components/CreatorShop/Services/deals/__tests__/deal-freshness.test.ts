@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
-import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { focusManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The reported bug: the app's QueryClient defaults to `staleTime: Infinity` and no refetch on
@@ -13,33 +13,33 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 const server = vi.hoisted(() => ({ deal: 'round-1', requests: ['req-1'], fetches: 0 }));
 
-vi.mock('~/utils/trpc', async () => {
+vi.mock('~/utils/trpc', async (importOriginal) => {
   const { useQuery, useInfiniteQuery } = await import('@tanstack/react-query');
+  const { makeTrpcProxy } = await import('../../../../../../test/trpcProxyStub');
   return {
-    trpc: {
-      creatorServiceDeal: {
-        get: {
-          useQuery: (input: { id: number }, opts: object) =>
-            useQuery({
-              queryKey: ['deal.get', input],
-              queryFn: async () => {
-                server.fetches++;
-                return { round: server.deal };
-              },
-              ...opts,
-            }),
-        },
-        listMine: {
-          useInfiniteQuery: (input: object, opts: object) =>
-            useInfiniteQuery({
-              queryKey: ['deal.listMine', input],
-              queryFn: async () => ({ items: [...server.requests], nextCursor: undefined }),
-              initialPageParam: undefined,
-              ...opts,
-            } as never),
-        },
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'creatorServiceDeal.get': {
+        useQuery: (input: { id: number }, opts: object) =>
+          useQuery({
+            queryKey: ['deal.get', input],
+            queryFn: async () => {
+              server.fetches++;
+              return { round: server.deal };
+            },
+            ...opts,
+          }),
       },
-    },
+      'creatorServiceDeal.listMine': {
+        useInfiniteQuery: (input: object, opts: object) =>
+          useInfiniteQuery({
+            queryKey: ['deal.listMine', input],
+            queryFn: async () => ({ items: [...server.requests], nextCursor: undefined }),
+            initialPageParam: undefined,
+            ...opts,
+          } as never),
+      },
+    }),
   };
 });
 
@@ -65,11 +65,7 @@ function mount<T>(client: QueryClient, useHook: () => T) {
     return null;
   };
   const root = createRoot(document.createElement('div'));
-  act(() =>
-    root.render(
-      createElement(QueryClientProvider, { client, children: createElement(Probe) as ReactNode })
-    )
-  );
+  act(() => root.render(createElement(QueryClientProvider, { client }, createElement(Probe))));
   return { result, unmount: () => act(() => root.unmount()) };
 }
 
