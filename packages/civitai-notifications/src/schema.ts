@@ -124,3 +124,162 @@ export const cleanupNotificationsInput = z.object({
   before: z.coerce.date(),
 });
 export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput>;
+
+// --- System notices (POST /notifications/notices) --------------------------------------------------
+
+export const systemNoticeTypes = ['system-message', 'system-announcement'] as const;
+export type SystemNoticeType = (typeof systemNoticeTypes)[number];
+export const MAX_NOTICE_RECIPIENTS = 50_000;
+export const MAX_NOTICE_PARAM_LENGTH = 100;
+export const MAX_NOTICE_MESSAGE_LENGTH = 500;
+
+const placeholderPattern = /\{([A-Za-z0-9_]+)\}/g;
+
+export function noticePlaceholders(message: string): string[] {
+  return [...new Set([...message.matchAll(placeholderPattern)].map((m) => m[1]))];
+}
+
+export function renderNoticeMessage(message: string, params: Record<string, string> = {}): string {
+  return message.replace(placeholderPattern, (_, name: string) => params[name] ?? `{${name}}`);
+}
+
+const noticeUserId = z.number().int().positive();
+const hasHtml = (s: string) => /[<>]/.test(s);
+
+export const sendSystemNoticesInput = z
+  .object({
+    sendId: z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}'),
+    mode: z.enum(['dry-run', 'send']).default('dry-run'),
+    type: z.enum(systemNoticeTypes),
+    message: z
+      .string()
+      .min(1)
+      .max(MAX_NOTICE_MESSAGE_LENGTH)
+      .refine((s) => !hasHtml(s), 'message may not contain HTML'),
+    // A leading "//" is protocol-relative, i.e. off-site.
+    url: z
+      .string()
+      .max(1000)
+      .regex(/^\/(?!\/)/, 'url must be a site path starting with "/"')
+      .optional(),
+    userIds: z.array(noticeUserId).optional(),
+    recipients: z
+      .array(
+        z.object({
+          userId: noticeUserId,
+          params: z.record(z.string(), z.string().max(MAX_NOTICE_PARAM_LENGTH)),
+        })
+      )
+      .optional(),
+    includeInactive: z.boolean().default(false),
+    sentBy: z.string().trim().min(1).max(200),
+    reason: z.string().trim().min(1).max(200),
+  })
+  .superRefine((input, ctx) => {
+    if (!!input.userIds === !!input.recipients) {
+      ctx.addIssue({ code: 'custom', message: 'Pass exactly one of userIds or recipients' });
+      return;
+    }
+    const ids = input.userIds ?? input.recipients!.map((r) => r.userId);
+    if (ids.length < 1 || ids.length > MAX_NOTICE_RECIPIENTS) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Between 1 and ${MAX_NOTICE_RECIPIENTS} recipients per call (got ${ids.length})`,
+      });
+      return;
+    }
+    const seen = new Set<number>();
+    const duplicates = new Set<number>();
+    for (const id of ids) (seen.has(id) ? duplicates : seen).add(id);
+    if (duplicates.size) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Duplicate userIds: ${[...duplicates].slice(0, 100).join(', ')}`,
+      });
+    }
+
+    const placeholders = noticePlaceholders(input.message);
+    if (input.userIds) {
+      if (placeholders.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['message'],
+          message: `message has placeholders (${placeholders.join(
+            ', '
+          )}); use recipients with params`,
+        });
+      }
+      return;
+    }
+    const expected = new Set(placeholders);
+    const bad: number[] = [];
+    for (const { userId, params } of input.recipients!) {
+      const keys = Object.keys(params);
+      const rendered = renderNoticeMessage(input.message, params);
+      if (
+        keys.length !== expected.size ||
+        keys.some((k) => !expected.has(k)) ||
+        rendered.length > MAX_NOTICE_MESSAGE_LENGTH ||
+        Object.values(params).some(hasHtml)
+      ) {
+        bad.push(userId);
+      }
+    }
+    if (bad.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['recipients'],
+        message: `params must supply exactly {${placeholders.join(
+          ', '
+        )}}, with no HTML and a rendered message of at most ${MAX_NOTICE_MESSAGE_LENGTH} characters; failing userIds: ${bad
+          .slice(0, 100)
+          .join(', ')}${bad.length > 100 ? ` (+${bad.length - 100} more)` : ''}`,
+      });
+    }
+  });
+export type SendSystemNoticesInput = z.input<typeof sendSystemNoticesInput>;
+export type SendSystemNoticesParsed = z.output<typeof sendSystemNoticesInput>;
+
+export const noticeBuckets = [
+  'queued',
+  'optedOut',
+  'unknownUser',
+  'inactiveUser',
+  'alreadySent',
+] as const;
+export type NoticeBucket = (typeof noticeBuckets)[number];
+
+export type SendSystemNoticesResult = {
+  sendId: string;
+  mode: 'dry-run' | 'send';
+  requested: number;
+  counts: Record<NoticeBucket, number>;
+  samples: Array<{ userId: number; message: string; url?: string }>;
+  /** Dropped userIds per bucket, capped at 1,000 each. */
+  dropped: Partial<Record<Exclude<NoticeBucket, 'queued'>, number[]>>;
+};
+
+export const getSystemNoticeSendInput = z.object({ sendId: z.string() });
+export type GetSystemNoticeSendInput = z.infer<typeof getSystemNoticeSendInput>;
+
+export type SystemNoticeSendRecord = {
+  sendId: string;
+  type: SystemNoticeType;
+  message: string;
+  url: string | null;
+  contentHash: string;
+  sentBy: string;
+  actorUserId: number | null;
+  reason: string;
+  credential: string;
+  requested: number;
+  queued: number;
+  optedOut: number;
+  unknownUser: number;
+  inactiveUser: number;
+  alreadySent: number;
+  dryRuns: number;
+  sends: number;
+  firstAt: string;
+  lastAt: string;
+};

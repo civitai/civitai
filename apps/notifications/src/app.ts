@@ -5,12 +5,16 @@ import {
   countNotificationsInput,
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  getSystemNoticeSendInput,
   markReadInput,
   notificationExistsInput,
   queryNotificationsInput,
+  sendSystemNoticesInput,
 } from '@civitai/notifications';
 import { register, producerRequestsTotal, httpRequestDurationSeconds } from './lib/server/metrics';
-import { isAuthorized } from './lib/server/auth';
+import { isAuthorized, isNoticesAuthorized } from './lib/server/auth';
+import { logToAxiom } from './lib/server/clients/axiom';
+import { getSystemNoticeSend, NoticeError, sendSystemNotices } from './lib/server/notices';
 import { createNotification } from './lib/server/create';
 import {
   cleanupNotifications,
@@ -39,6 +43,9 @@ import { logLevel } from './env';
  *   - POST /notifications/mark-read — mark one/all/category read (fire-and-forget).
  *   - POST /notifications/exists  — producer-side key dedup.
  *   - POST /notifications/cleanup — delete old UserNotification rows.
+ * System notices, gated by their own token (NOTIFICATIONS_NOTICES_TOKEN), never the producer one:
+ *   - POST /notifications/notices     — dry-run or send a system notice to a list of users.
+ *   - POST /notifications/notices/get — the audit record for one sendId.
  */
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -186,6 +193,66 @@ export async function buildServer(): Promise<FastifyInstance> {
     if (!body) return reply;
     const deleted = await cleanupNotifications(body.before);
     return reply.send({ deleted });
+  });
+
+  function noticesBody<T>(schema: ZodType<T>, req: FastifyRequest, reply: FastifyReply): T | null {
+    if (!isNoticesAuthorized(req.headers)) {
+      reply.code(401).send({ error: 'Unauthorized' });
+      return null;
+    }
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'Invalid payload', issues: parsed.error.issues });
+      return null;
+    }
+    return parsed.data;
+  }
+
+  app.post('/notifications/notices', async (req, reply) => {
+    const body = noticesBody(sendSystemNoticesInput, req, reply);
+    if (!body) return reply;
+    const credential = 'notices-token' as const;
+    const audit = {
+      name: 'system-notices',
+      sendId: body.sendId,
+      mode: body.mode,
+      noticeType: body.type,
+      sentBy: body.sentBy,
+      reason: body.reason,
+      credential,
+    };
+    try {
+      const result = await sendSystemNotices(body, credential);
+      logToAxiom({
+        type: 'info',
+        ...audit,
+        status: 200,
+        requested: result.requested,
+        ...result.counts,
+      }).catch(() => undefined);
+      return reply.send(result);
+    } catch (err) {
+      const status = err instanceof NoticeError ? err.status : 500;
+      const extra = err instanceof NoticeError ? err.extra : {};
+      const message = (err as Error).message;
+      logToAxiom({
+        type: status >= 500 ? 'error' : 'warning',
+        ...audit,
+        status,
+        message,
+        ...extra,
+      }).catch(() => undefined);
+      if (status >= 500) req.log.error({ err }, 'system notices failed');
+      return reply.code(status).send({ error: message, ...extra });
+    }
+  });
+
+  app.post('/notifications/notices/get', async (req, reply) => {
+    const body = noticesBody(getSystemNoticeSendInput, req, reply);
+    if (!body) return reply;
+    const record = await getSystemNoticeSend(body.sendId);
+    if (!record) return reply.code(404).send({ error: 'Unknown sendId' });
+    return reply.send(record);
   });
 
   return app;
