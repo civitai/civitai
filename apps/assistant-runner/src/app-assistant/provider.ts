@@ -34,7 +34,7 @@ import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
-import { SdkPinNudges } from './sdk-pin';
+import { SdkUpgrades } from './sdk-pin';
 
 /**
  * What App Assistant's page says about itself as a reply starts (`remoteRunner.pageState`): the key
@@ -110,6 +110,8 @@ export interface AppAssistantToolsOptions {
   previewKeepaliveMs?: number;
   /** How long a reply's start waits for the app's `package.json` (`SDK_PIN_READ_TIMEOUT_MS`; tests). */
   sdkPinReadTimeoutMs?: number;
+  /** The `@civitai/sdk` upgrade's budget before it is rolled back (`SDK_UPGRADE_TIMEOUT_MS`; tests). */
+  sdkUpgradeTimeoutMs?: number;
 }
 
 /** No dev-tunnel endpoints configured: every start is refused as not set up. */
@@ -130,14 +132,19 @@ const unconfiguredTunnels: DevTunnels = {
  */
 export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
-  /** Which conversations were told to upgrade their app's `@civitai/sdk`: shared by every run. */
-  readonly #sdkPins: SdkPinNudges;
+  /** Which conversations' apps had their `@civitai/sdk` upgrade tried: shared by every run. */
+  readonly #sdkUpgrades: SdkUpgrades;
 
   constructor(options: AppAssistantToolsOptions) {
     this.#options = options;
-    this.#sdkPins = new SdkPinNudges(
-      options.sdkPinReadTimeoutMs !== undefined ? { timeoutMs: options.sdkPinReadTimeoutMs } : {}
-    );
+    this.#sdkUpgrades = new SdkUpgrades({
+      ...(options.sdkPinReadTimeoutMs !== undefined
+        ? { readTimeoutMs: options.sdkPinReadTimeoutMs }
+        : {}),
+      ...(options.sdkUpgradeTimeoutMs !== undefined
+        ? { upgradeTimeoutMs: options.sdkUpgradeTimeoutMs }
+        : {}),
+    });
   }
 
   async open(context: ToolContext): Promise<OpenTools> {
@@ -219,11 +226,19 @@ export class AppAssistantTools implements ToolProvider {
           : {}),
       });
       if (this.#options.devTunnels) openPreviewAfterDevServer(sandboxTools, preview, context);
-      // An app on an older @civitai/sdk than the host's is told, once, to upgrade (never throws).
-      const sdkUpgrade = await this.#sdkPins.instruction({
+      // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
+      // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
+      const livePreview = preview;
+      const sdkUpgrade = await this.#sdkUpgrades.upgrade({
         sandbox,
-        // No tools listed: its MCP server is not answering, and a read would wait on the same connect.
-        toolsListed: Object.keys(sandboxTools).length > 0,
+        // Not listed: its MCP server is not answering (no tools at all), or has no such tool.
+        hasTool: (name) => `sandbox__${name}` in sandboxTools,
+        startDevServer: (abort) => livePreview.startDevServer(abort),
+        // The install changed files: both gates hear of it as of any command, so checks run again.
+        report: (result) => {
+          core.onToolResult(result);
+          context.report?.(reportOf(result));
+        },
         conversationId,
         runId,
         log,
