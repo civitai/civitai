@@ -1471,6 +1471,13 @@ export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
 export const allowsCustomBase = (card: ModelCard): boolean =>
   ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
 
+/** Ecosystems whose training samples can be rendered from an input image (`samples.sourceImages`).
+ *  Add one only after a real run shows its samples follow the input — otherwise uploads are ignored. */
+const SAMPLE_SOURCE_IMAGE_ECOSYSTEMS: ReadonlySet<string> = new Set(['flux2klein']);
+
+export const ecosystemTakesSampleImages = (ecosystem: string): boolean =>
+  SAMPLE_SOURCE_IMAGE_ECOSYSTEMS.has(ecosystem);
+
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =
   'its backend cannot train the text encoder, and a run that tries hangs without finishing.';

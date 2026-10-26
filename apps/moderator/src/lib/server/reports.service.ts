@@ -456,6 +456,32 @@ export async function getReportLastActioned(): Promise<Record<string, LastAction
   );
 }
 
+export type QueueWorker = { by: string | null; at: string; count: number };
+
+/**
+ * Each moderator who reviewed a report of this type inside the window, most recent first: when they
+ * last did and how many they reviewed. Reads the same rows as `getReportLastActioned`, so its first
+ * entry is that queue's last-actioned badge. A report counts for whoever set its status last.
+ */
+export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWorker[]> {
+  const { reportTable } = reportEntity(type);
+  const { rows } = await sql<{ by: number; at: Date; count: number }>`
+    select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
+    from "Report" r
+    join ${sql.table(reportTable)} er on er."reportId" = r."id"
+    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+      and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+      and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
+    group by r."statusSetBy"
+    order by "at" desc`.execute(dbRead);
+  const users = await usersByIds(rows.map((r) => r.by));
+  return rows.map((r) => ({
+    by: users.get(r.by)?.username ?? null,
+    at: new Date(r.at).toISOString(),
+    count: r.count,
+  }));
+}
+
 /** When the oldest new report of each type was filed, keyed like `getReportCounts`, as ISO strings. */
 export async function getReportOldestOpen(): Promise<Record<string, string>> {
   const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));

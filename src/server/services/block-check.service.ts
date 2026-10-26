@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
-  muteableThreadsCte,
+  threadAncestorsCte,
   threadIsRooted,
   UNRESOLVED_THREAD_CHAIN_MESSAGE,
 } from '~/server/common/thread-chain';
@@ -190,9 +190,9 @@ type RootOwner = { resolved: false } | { resolved: true; ownerId: number | undef
  */
 async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
   const [top] = await guardDb.$queryRaw<{ id: number; rooted: boolean }[]>`
-    ${Prisma.raw(muteableThreadsCte(String(Number(threadId))))}
+    ${Prisma.raw(threadAncestorsCte(String(Number(threadId))))}
     SELECT top."id", ${threadIsRooted('th')} "rooted"
-    FROM (SELECT mt."id" FROM muteable_threads mt ORDER BY mt."depth" DESC LIMIT 1) top
+    FROM (SELECT mt."id" FROM thread_ancestors mt ORDER BY mt."depth" DESC LIMIT 1) top
     JOIN "Thread" th ON th.id = top."id"
   `;
   if (!top?.rooted) return { resolved: false };

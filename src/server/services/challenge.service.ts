@@ -321,7 +321,7 @@ const challengeCardQuery = Prisma.sql`
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",
@@ -489,7 +489,7 @@ export async function getMyChallenges({
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
            c.status, c.source, c."buzzType", c."prizePool",
            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') AS "entryCount",
-           COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) AS "commentCount",
+           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) AS "commentCount",
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
@@ -3532,9 +3532,11 @@ export async function getActiveEvents(
   if (allChallengeIds.length > 0) {
     const counts = await dbRead.$queryRaw<
       Array<{ challengeId: number; commentCount: number }>
-    >`SELECT "challengeId", "commentCount" FROM "Thread" WHERE "challengeId" IN (${Prisma.join(
-      allChallengeIds
-    )})`;
+    >`SELECT "entityId" AS "challengeId", COUNT(*)::int AS "commentCount"
+       FROM "CommentV3"
+       WHERE "entityType" = 'challenge' AND "parentId" IS NULL AND "deletedAt" IS NULL
+         AND "entityId" IN (${Prisma.join(allChallengeIds)})
+       GROUP BY "entityId"`;
     for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
   }
 
@@ -4211,7 +4213,7 @@ export async function getCompletedChallengesWithWinners(
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",

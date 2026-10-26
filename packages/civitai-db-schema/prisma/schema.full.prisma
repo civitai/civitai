@@ -5208,6 +5208,7 @@ model CommentV3 {
   @@index([parentId, hidden, reactionCount(sort: Desc), id(sort: Desc)], map: "commentv3_replies_reactions")
   @@index([rootId, depth], map: "commentv3_root_depth")
   @@index([userId, id(sort: Desc)], map: "commentv3_user")
+  @@index([createdAt], map: "commentv3_created")
 }
 
 model CommentV3Reaction {
@@ -5222,6 +5223,7 @@ model CommentV3Reaction {
 
   @@unique([commentId, userId, reaction])
   @@index([userId])
+  @@index([createdAt])
 }
 
 model CommentV3Report {

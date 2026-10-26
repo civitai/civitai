@@ -563,13 +563,13 @@ function isProjectDir(dir: string): boolean {
 }
 
 /** `sandbox__run_command`'s exit code (its first line, `exit_code: N`), else `null`. */
-function exitCodeOf(text: string): number | null {
+export function exitCodeOf(text: string): number | null {
   const match = /^exit_code: (-?\d+)/.exec(text);
   return match ? Number(match[1]) : null;
 }
 
 /** `sandbox__run_command`'s output: what follows its header's `---` line. */
-function outputOf(text: string): string {
+export function outputOf(text: string): string {
   const at = text.indexOf('\n---\n');
   return at < 0 ? '' : text.slice(at + 5);
 }
