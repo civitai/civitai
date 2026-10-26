@@ -102,10 +102,15 @@ type Call = { method: string; path: string };
 const calls: Call[] = [];
 /** Statuses to answer, in order, before falling back to 202. */
 let scripted: number[] = [];
+/** Answers by call instead, ahead of `scripted`: a status, or an error to throw. */
+let respond: ((c: Call) => number | Error | Promise<number> | undefined) | null = null;
 const fetchFake = vi.fn(async (input: string, init?: { method?: string }) => {
-  calls.push({ method: init?.method ?? 'GET', path: input.replace(CACHER, '') });
-  const status = scripted.length ? (scripted.shift() as number) : 202;
-  return { ok: status >= 200 && status < 300, status } as Response;
+  const call = { method: init?.method ?? 'GET', path: input.replace(CACHER, '') };
+  calls.push(call);
+  const answer = await respond?.(call);
+  if (answer instanceof Error) throw answer;
+  const status = answer ?? (scripted.length ? (scripted.shift() as number) : 202);
+  return { ok: status >= 200 && status < 300, status, headers: new Headers() } as Response;
 });
 
 const realFetch = globalThis.fetch;
@@ -214,6 +219,7 @@ beforeEach(async () => {
   `);
   calls.length = 0;
   scripted = [];
+  respond = null;
   purged.length = 0;
   purgeFails = 0;
   combinedOk.clear();
@@ -1140,6 +1146,392 @@ describe('failures', () => {
   });
 });
 
+// The image server answers 429 when its retraction limit is full. Retrying at once adds to the load
+// it is shedding, so each path leaves the work for a later run.
+describe('image server busy (429)', () => {
+  it('the drain makes one call, keeps the queue row, and retracts on a later run', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [429];
+    const first = await syncCdnAccess();
+
+    expect(callsFor(u(1))).toEqual(['retract']);
+    expect(first).toMatchObject({ failed: 1, throttled: true });
+    expect(await stateOf(u(1))).toBeUndefined();
+    expect((await queued()).n).toBe(1);
+
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract', 'retract']);
+    expect(await stateOf(u(1))).toBe('Retracted');
+    expect((await queued()).n).toBe(0);
+  });
+
+  it('the drain leaves the rest of the run for later after a 429', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => i + 1);
+    for (const id of ids) {
+      await image(id);
+      await moderatorBlock(id);
+    }
+    scripted = ids.map(() => 429);
+    await syncCdnAccess();
+
+    // Fewer calls than urls, and never a second call for one url.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThan(ids.length);
+    for (const id of ids) expect(callsFor(u(id)).length).toBeLessThanOrEqual(1);
+    expect((await queued()).n).toBe(ids.length);
+  });
+
+  it('the persist retry keeps a busy row for the next run instead of dropping it', async () => {
+    combinedOk.add(GONE);
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (7, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: GONE, retract: true, purgeEdge: false })}::jsonb)`;
+    scripted = [429];
+
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 0, throttled: 1 });
+    expect(calls).toHaveLength(1);
+    // Backed off, but a 429 is load shedding: it spends none of the row's attempts.
+    expect(await retryRows()).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          attempts: 0,
+          backoffs: 1,
+          nextAttemptAt: expect.any(String),
+        }),
+      }),
+    ]);
+
+    await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(calls).toHaveLength(2);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('the persist retry stops the batch after a 429', async () => {
+    const urls = Array.from({ length: 12 }, (_, i) => u(200 + i));
+    for (const [i, url] of urls.entries()) {
+      combinedOk.add(url);
+      await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+                VALUES (${200 + i}, 'Image', 'ImageCdnPersistRetry',
+                        ${JSON.stringify({ url, retract: true, purgeEdge: false })}::jsonb)`;
+    }
+    scripted = urls.map(() => 429);
+
+    const totals = await retryTakedownPersists();
+    expect(totals).toMatchObject({
+      queued: urls.length,
+      sent: 0,
+      failed: 0,
+      throttled: urls.length,
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThan(urls.length);
+    expect(await retryRows()).toHaveLength(urls.length);
+  });
+
+  it("the drain's denies still go after a 429 holds back its retractions", async () => {
+    // Retractions first in the queue, so every deny is planned after the 429s land.
+    for (let id = 1; id <= 8; id++) {
+      await image(id);
+      await moderatorBlock(id);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    for (let id = 9; id <= 12; id++) {
+      await image(id);
+      await scannerBlock(id);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+    await syncCdnAccess();
+
+    for (let id = 9; id <= 12; id++) {
+      expect(callsFor(u(id)), `image ${id}`).toEqual(['deny']);
+      expect(await stateOf(u(id))).toBe('Denied');
+    }
+    for (let id = 1; id <= 8; id++) expect(await stateOf(u(id))).toBeUndefined();
+    expect(calls.filter((c) => kind(c) === 'retract').length).toBeLessThanOrEqual(5);
+    // Only the retractions' rows stay queued.
+    expect((await queued()).n).toBe(8);
+  });
+
+  it('a retraction that runs out of wait time is left for the next run, not resent', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      await image(1);
+      await moderatorBlock(1);
+      respond = (c) =>
+        kind(c) === 'retract'
+          ? Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+          : undefined;
+      const first = await syncCdnAccess();
+
+      expect(callsFor(u(1))).toEqual(['retract']);
+      expect(timeout).toHaveBeenCalledWith(70_000);
+      expect(first).toMatchObject({ failed: 1 });
+      expect(await stateOf(u(1))).toBeUndefined();
+      expect((await queued()).n).toBe(1);
+
+      respond = null;
+      await syncCdnAccess();
+      expect(callsFor(u(1))).toEqual(['retract', 'retract']);
+      expect(await stateOf(u(1))).toBe('Retracted');
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it('the reconciler leaves a busy upgrade for the next run, at warn, and stops sending them', async () => {
+    const ids = [...Array(10).keys()].map((i) => i + 1);
+    for (const id of ids) {
+      await image(id);
+      await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${id}`;
+      await moderatorBlock(id);
+    }
+    await syncCdnAccess();
+    for (const id of ids) expect(callsFor(u(id))).toEqual(['deny']);
+    await sql`UPDATE "Image" SET "needsReview" = NULL`;
+    calls.length = 0;
+
+    respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+    const totals = await reconcileCdnAccess();
+    expect(totals).toMatchObject({ upgraded: 0, failed: 0, throttled: ids.length });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeLessThanOrEqual(5);
+    expect(errorLogs('cdn-access-reconcile')).toEqual([]);
+    for (const id of ids) expect(await stateOf(u(id))).toBe('Denied');
+
+    respond = null;
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: ids.length, throttled: 0 });
+    for (const id of ids) expect(await stateOf(u(id))).toBe('Retracted');
+  });
+
+  it('a retraction whose url claim was taken while it waited for a slot is not sent', async () => {
+    const { callCdnAccess } = await import('~/server/services/cdn-access.service');
+    let release!: () => void;
+    const held = new Promise<number>((resolve) => (release = () => resolve(202)));
+    const holderKeys = [...Array(5).keys()].map((i) => u(90 + i));
+    respond = (c) => (holderKeys.some((k) => onUrl(k)(c)) ? held : undefined);
+    const holders = holderKeys.map((k) => callCdnAccess(k, 'retract'));
+
+    await image(1);
+    await moderatorBlock(1);
+    const run = syncCdnAccess();
+    // The drain claims the url, then waits for a slot.
+    for (let i = 0; i < 200; i++) {
+      const { rows } = await sql`SELECT 1 FROM "ImageCdnAccessClaim" WHERE url = ${u(1)}`;
+      if (rows.length) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // A newer run takes the url over (e.g. after the claim lapsed).
+    await sql`UPDATE "ImageCdnAccessClaim" SET token = gen_random_uuid() WHERE url = ${u(1)}`;
+    release();
+    await Promise.all(holders);
+    await run;
+
+    expect(callsFor(u(1))).toEqual([]);
+    expect(await stateOf(u(1))).toBeUndefined();
+    expect((await queued()).n).toBe(1);
+  });
+
+  it('a reserved retraction is left alone until its lease runs out, then sent', async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    combinedOk.add(u(1));
+    combinedOk.add(u(2));
+    const reservation = await reserveTakedownRetractions([
+      { id: 1, url: u(1) },
+      { id: 2, url: u(2) },
+      { id: 3, url: 'https://elsewhere.test/x.jpg' },
+    ]);
+    expect(reservation).toEqual(expect.any(String));
+    expect((await retryRows()).map((r) => r.entityId)).toEqual([1, 2]);
+    // The run is still deleting: not due.
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 0 });
+
+    // Image 1's retraction landed; image 2's run died before it could settle.
+    await settleTakedownReservations([1], reservation!);
+    await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(calls.map((c) => c.path)).toEqual([
+      `/admin/invalidate?imageKey=${u(2)}&retractPublicBlobs=true&persist=true`,
+    ]);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  // A row already queued for the image is the sync's deny persist (with its edge purge) here.
+  const queuedDenyPersist = async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+  };
+
+  it('a reservation over a due retry holds it until settled, then hands back what it owed', async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    await queuedDenyPersist();
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+
+    const [reserved] = await retryRows();
+    expect(reserved.data).toMatchObject({ reservation, retract: true, purgeEdge: true });
+    expect(new Date(String(reserved.data.nextAttemptAt)).getTime()).toBeGreaterThan(Date.now());
+    // Not sent while the delete's own retraction may be in flight.
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 0 });
+
+    await settleTakedownReservations([1], reservation!);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+    const before = calls.length;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(calls.slice(before).map(kind)).toEqual(['deny']);
+    expect(purged).toHaveLength(1);
+  });
+
+  it("a reservation over a dead run's reservation takes it over, and settling removes it", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const second = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    expect((await retryRows())[0].data).toMatchObject({ reservation: second });
+    expect((await retryRows())[0].data.reservedOver).toBeUndefined();
+
+    await settleTakedownReservations([1], second!);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('a deny persist failing on a reserved row keeps its retraction and its lease', async () => {
+    const { reserveTakedownRetractions, queueTakedownPersistRetry } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const lease = (await retryRows())[0].data.nextAttemptAt;
+    await queueTakedownPersistRetry({ imageId: 1, url: u(1), retract: false, purgeEdge: true });
+
+    expect((await retryRows())[0].data).toMatchObject({
+      retract: true,
+      purgeEdge: true,
+      reservation,
+      nextAttemptAt: lease,
+    });
+  });
+
+  it("a failure merged into another delete's reservation survives that delete's settle", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations, queueTakedownPersistRetry } =
+      await import('~/server/services/cdn-access.service');
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    // The sync's deny persist for the same image fails while the delete is still running.
+    expect(
+      await queueTakedownPersistRetry({ imageId: 1, url: u(1), retract: false, purgeEdge: true })
+    ).toBe(true);
+
+    // The delete's retraction landed, so it settles.
+    await settleTakedownReservations([1], reservation!);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+  });
+
+  // Two overlapping runs select the same image. A deletes it and its retraction is refused, but B
+  // has reserved the image since; B's delete finds nothing to delete and settles.
+  it("a retraction one run still owes survives an overlapping run's settle", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations, queueTakedownPersistRetry } =
+      await import('~/server/services/cdn-access.service');
+    const a = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const b = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    await queueTakedownPersistRetry({
+      imageId: 1,
+      url: u(1),
+      retract: true,
+      purgeEdge: false,
+      settles: a!,
+    });
+    await settleTakedownReservations([1], b!);
+
+    const rows = await retryRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data).toMatchObject({ url: u(1), retract: true });
+    expect(rows[0].data.reservation).toBeUndefined();
+    // Due now: the next retry run sends it.
+    expect(rows[0].data.nextAttemptAt).toBeUndefined();
+  });
+
+  it('reports a takedown whose retry could not be written', async () => {
+    scripted = [503];
+    dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
+      throw new Error('insert failed');
+    }) as never);
+    expect(await persistDeletedTakedowns([{ id: 1, url: u(1) }])).toMatchObject({
+      queued: 1,
+      unqueued: [1],
+    });
+    expect(await retryRows()).toEqual([]);
+    calls.length = 0;
+  });
+
+  it('a new reservation revives a retry that had run out of attempts, and says so once', async () => {
+    const { reserveTakedownRetractions } = await import('~/server/services/cdn-access.service');
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (1, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({
+                        url: u(1),
+                        retract: true,
+                        purgeEdge: false,
+                        attempts: 24,
+                        gaveUpAt: '2026-10-01T00:00:00Z',
+                      })}::jsonb)`;
+    await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+
+    const [row] = await retryRows();
+    expect(row.data.gaveUpAt).toBeUndefined();
+    expect(row.data.attempts).toBeUndefined();
+    expect(logsOf('info', 'takedown-persist-retry-revived')).toEqual([
+      expect.objectContaining({ imageIds: [1] }),
+    ]);
+  });
+
+  it('never resends a retraction for an image that is still there (a hold kept it)', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(await stateOf(u(1))).toBe('Retracted');
+    // A retraction retry left for the image, as by a reservation the delete never settled.
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (1, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: u(1), retract: true, purgeEdge: false })}::jsonb)`;
+    const before = calls.length;
+
+    await retryTakedownPersists();
+    const sent = calls.slice(before);
+    expect(sent).toHaveLength(1);
+    expect(kind(sent[0])).toBe('deny');
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('a hard-deleted takedown whose retraction was busy is queued for the retry, not persisted', async () => {
+    expect(
+      await persistDeletedTakedowns([
+        { id: 1, url: u(1), retraction: 'busy' },
+        { id: 2, url: u(2), retraction: 'unconfirmed' },
+        { id: 3, url: u(3), retraction: 'confirmed' },
+      ])
+    ).toMatchObject({ sent: 1, queued: 2, retractionPending: 2 });
+    expect(calls.map((c) => c.path)).toEqual([`/admin/invalidate?imageKey=${u(3)}&persist=true`]);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: true, purgeEdge: false } },
+      { entityId: 2, data: { url: u(2), retract: true, purgeEdge: false } },
+    ]);
+    calls.length = 0;
+  });
+});
+
 describe('reconciler', () => {
   it('re-asserts an old deny, leaves a fresh one, and forgets a url with no rows left', async () => {
     await image(1);
@@ -1429,20 +1821,67 @@ describe('takedown persist', () => {
     expect(await retryRows()).toEqual([]);
   });
 
-  it('retries once only: a second failure is logged and dropped', async () => {
+  it('a failed retry backs off, and is kept for a human once its attempts run out', async () => {
     await image(1);
     await moderatorBlock(1);
     scripted = [202, 500, 500, 500];
     await syncCdnAccess();
     expect(await retryRows()).toHaveLength(1);
+    const dueIn = async () =>
+      new Date(String((await retryRows())[0].data.nextAttemptAt)).getTime() - Date.now();
+    const makeDue = () =>
+      sql`UPDATE "JobQueue" SET data = data || jsonb_build_object('nextAttemptAt', (now() - interval '1 second')::text)
+          WHERE type = 'ImageCdnPersistRetry'`;
 
     scripted = [500, 500, 500];
     expect(await retryTakedownPersists()).toMatchObject({ queued: 1, failed: 1 });
-    expect(await retryRows()).toEqual([]);
-    expect(errorLogs('takedown-persist-retry-failed')).toEqual([
+    expect(await retryRows()).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ attempts: 1 }) }),
+    ]);
+    expect(await dueIn()).toBeGreaterThan(50_000);
+    expect(await dueIn()).toBeLessThanOrEqual(60_000);
+    expect(logsOf('warning', 'takedown-persist-retry-failed')).toHaveLength(1);
+    // Not due yet: the next run leaves it alone.
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 0 });
+
+    await makeDue();
+    scripted = [500, 500, 500];
+    await retryTakedownPersists();
+    expect((await retryRows())[0].data).toMatchObject({ attempts: 2 });
+    expect(await dueIn()).toBeGreaterThan(4 * 60_000);
+
+    await sql`UPDATE "JobQueue" SET data = data || '{"attempts": 23}'::jsonb
+              WHERE type = 'ImageCdnPersistRetry'`;
+    await makeDue();
+    scripted = [500, 500, 500];
+    expect(await retryTakedownPersists()).toMatchObject({ gaveUp: 1 });
+    const [kept] = await retryRows();
+    expect(kept.data).toMatchObject({ attempts: 24, gaveUpAt: expect.any(String) });
+    expect(errorLogs('takedown-persist-retry-exhausted')).toEqual([
       expect.objectContaining({ imageId: 1, imageKey: u(1) }),
     ]);
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 0 });
     expect(await stateOf(u(1))).toBe('Retracted');
+  });
+
+  it('a deny-only retry is not stuck behind 100 retractions the image server is refusing', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    expect(await retryRows()).toHaveLength(1);
+    const stuck = Array.from({ length: 101 }, (_, i) => u(300 + i));
+    for (const url of stuck) combinedOk.add(url);
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data, "createdAt")
+              SELECT 300 + i, 'Image', 'ImageCdnPersistRetry',
+                     jsonb_build_object('url', u, 'retract', true, 'purgeEdge', false),
+                     now() - interval '1 hour'
+              FROM unnest(${stuck}::text[]) WITH ORDINALITY AS t(u, i)`;
+    respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+
+    await retryTakedownPersists();
+    expect(persistsFor(u(1)).filter((c) => kind(c) === 'deny')).toHaveLength(4);
+    expect(await retryRows()).toHaveLength(101);
   });
 
   it('a failed CDN purge queues the retry, which purges', async () => {
@@ -1551,7 +1990,14 @@ describe('persist after a takedown hard delete', () => {
         { id: 1, url: u(1) },
         { id: 2, url: u(2) },
       ])
-    ).toEqual({ sent: 2, queued: 0, skipped: 0, notAttempted: 0 });
+    ).toEqual({
+      sent: 2,
+      queued: 0,
+      skipped: 0,
+      notAttempted: 0,
+      retractionPending: 0,
+      unqueued: [],
+    });
     expect(calls.map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(1)}&persist=true`,
       `/admin/invalidate?imageKey=${u(2)}&persist=true`,
@@ -1592,6 +2038,8 @@ describe('persist after a takedown hard delete', () => {
       queued: 30,
       skipped: 0,
       notAttempted: 30,
+      retractionPending: 0,
+      unqueued: [],
     });
     expect(calls).toEqual([]);
     // One error for the run, the rows at warn.
@@ -1662,7 +2110,15 @@ describe('the persist retry, as the job runs it', () => {
     const before = calls.length;
 
     const totals = await retryTakedownPersists();
-    expect(totals).toEqual({ queued: 1, sent: 0, skipped: 0, failed: 0, busy: 1 });
+    expect(totals).toEqual({
+      queued: 1,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      busy: 1,
+      throttled: 0,
+      gaveUp: 0,
+    });
     expect(Object.values(totals).every((n) => Number.isInteger(n))).toBe(true);
     expect(calls.slice(before)).toEqual([]);
     expect(await retryRows()).toHaveLength(1);

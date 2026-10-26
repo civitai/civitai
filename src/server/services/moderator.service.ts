@@ -107,7 +107,8 @@ type UserModActivity = {
     | `creatorProgramBan:${string}`
     // A lost payment dispute on a payment this account made
     // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
-    | `chargeback:${string}`;
+    | `chargeback:${string}`
+    | `creditCryptoDeposit:${string}`;
 };
 
 type ComicProjectModActivity = {

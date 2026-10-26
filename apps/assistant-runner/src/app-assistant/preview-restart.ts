@@ -10,7 +10,7 @@ import {
 import type { Logger } from '../interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
-import { DevServerNotRunningError, RunnerPreview } from './preview';
+import { DevServerNotRunningError, DevServerStartError, RunnerPreview } from './preview';
 import { AppSandbox } from './sandbox';
 
 /** How many restarts one user may ask for in `RESTART_WINDOW_MS`, on one runner process. */
@@ -53,8 +53,13 @@ export const RESTART_MESSAGES = {
   refused: 'Live preview is not available on this account.',
   'not-found': 'That app was not found among yours.',
   'app-not-running': 'Your app is not running. Start it, then restart the preview.',
-  'dev-server-not-running':
-    'Your app’s dev server is not running. Ask the assistant to start it, and the preview opens by itself.',
+  // Restart starts a dev server that is not running; these say why it still does not run.
+  'dev-server-no-project':
+    'Your app’s dev server is not running, and the preview could not tell which project to start. Ask the assistant to start it, and the preview opens by itself.',
+  'dev-server-refused':
+    'Your app’s dev server is not running, and your app would not start it. Ask the assistant to start it, and the preview opens by itself.',
+  'dev-server-timeout':
+    'Your app’s dev server was started but did not answer in time. Ask the assistant to look at it, and the preview opens by itself.',
   'rate-limited':
     'Too many previews were started in the last hour. Wait a few minutes, then try again.',
   'runner-rate-limited':
@@ -63,6 +68,22 @@ export const RESTART_MESSAGES = {
     'The preview could not connect to your app. Make sure its dev server runs, then try again.',
   unavailable: 'The preview could not start just now. Try again in a moment.',
 } as const;
+
+/** Which words say why a dev server the restart started does not run. */
+const DEV_SERVER_FAILED = {
+  'no-project': 'dev-server-no-project',
+  refused: 'dev-server-refused',
+  timeout: 'dev-server-timeout',
+} as const satisfies Record<
+  Exclude<DevServerStartError['reason'], 'exited'>,
+  keyof typeof RESTART_MESSAGES
+>;
+
+/** …and when the dev server it started stopped at once, with its exit code when the sandbox says. */
+export function devServerExitedMessage(exitCode: number | null): string {
+  const code = exitCode === null ? '' : ` (exit code ${exitCode})`;
+  return `Your app’s dev server stopped as soon as it started${code}. Ask the assistant to fix and start it, and the preview opens by itself.`;
+}
 
 /** `PreviewRestarts.grantConversation`: App Assistant makes every app key a valid block id (`newAppKey`). */
 export function restartGrantConversation(app: string): string | null {
@@ -80,7 +101,10 @@ export interface PreviewRestarterOptions {
   fetch?: typeof fetch;
   now?: () => number;
   waitMs?: number;
+  /** How often a starting app, and a dev server this restart started, are looked at. */
   pollMs?: number;
+  /** How long a dev server this restart started has to listen (`DEV_SERVER_WAIT_MS`). */
+  devServerWaitMs?: number;
 }
 
 /**
@@ -88,7 +112,8 @@ export interface PreviewRestarterOptions {
  * asks for it again, with no reply, no model call and no Buzz. The same steps as `start_preview`
  * (`RunnerPreview.reopen`: a key in the sandbox, civitai opens the tunnel for the grant's user and
  * judges every gate, the sandbox dials it), then nothing more: no keep-alive, as no run is live, so
- * the tunnel idles out by civitai's own rules.
+ * the tunnel idles out by civitai's own rules. A dev server that is not running (a resumed sandbox
+ * runs none) is started first, as the assistant is told to start it (`RunnerPreview.startDevServer`).
  *
  * Two clicks for one app share one restart (one tunnel); each user has `RESTART_LIMIT` restarts in
  * `RESTART_WINDOW_MS` here, on top of civitai's own hourly cap on unsubmitted apps.
@@ -161,13 +186,40 @@ export class PreviewRestarter implements PreviewRestarts {
       runId: LOG_ID,
       ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
     });
-    const preview = new RunnerPreview({ sandbox, tunnels, log, runId: LOG_ID });
+    const preview = new RunnerPreview({
+      sandbox,
+      tunnels,
+      log,
+      runId: LOG_ID,
+      ...(this.#options.devServerWaitMs !== undefined
+        ? { devServerWaitMs: this.#options.devServerWaitMs }
+        : {}),
+      ...(this.#options.pollMs !== undefined ? { devServerPollMs: this.#options.pollMs } : {}),
+    });
     try {
       const found = await this.#running(client, app);
       if ('error' in found) return found.error;
       // Running: `open` only connects to it, and never wakes or pauses anything.
       await sandbox.open(app, [found.sandbox]);
-      const shown = await preview.reopen();
+      let shown;
+      try {
+        shown = await preview.reopen();
+      } catch (error) {
+        if (!(error instanceof DevServerNotRunningError)) throw error;
+        // Not running (as after every resume): start it as the assistant would, then the same
+        // reopen. Still no run, no model call and no Buzz. Assumed: no reply is working in this
+        // sandbox meanwhile (one mid-`npm install` would see its dev server started early); the
+        // runner cannot see the page's replies from here.
+        await preview.startDevServer();
+        try {
+          shown = await preview.reopen();
+        } catch (reopenError) {
+          // It listened a moment ago and is gone now: it stopped by itself.
+          if (reopenError instanceof DevServerNotRunningError)
+            throw new DevServerStartError('exited');
+          throw reopenError;
+        }
+      }
       return { ok: true, blockId: shown.blockId, host: shown.host };
     } catch (error) {
       return this.#refusal(error);
@@ -208,8 +260,16 @@ export class PreviewRestarter implements PreviewRestarts {
       error: code,
       message,
     });
+    if (error instanceof DevServerStartError)
+      return fail(
+        'not-running',
+        error.reason === 'exited'
+          ? devServerExitedMessage(error.exitCode)
+          : RESTART_MESSAGES[DEV_SERVER_FAILED[error.reason]]
+      );
+    // Only `startDevServer`'s own first look: the app stopped running (or closed) before it began.
     if (error instanceof DevServerNotRunningError)
-      return fail('not-running', RESTART_MESSAGES['dev-server-not-running']);
+      return fail('not-running', RESTART_MESSAGES['app-not-running']);
     // civitai refused the user (a gate, their consent) at the sandbox token's mint. A grant that ran
     // out (it lives about 2 minutes) is not a refusal: the next click brings a fresh one.
     if (error instanceof MintRefusedError)

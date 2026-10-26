@@ -1,11 +1,11 @@
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { pluralize } from '~/shared/utils/pluralize';
 import type { RouterOutput } from '~/types/router';
 
 export type ServiceOffering = RouterOutput['creatorService']['getMine']['items'][number];
 
-export const pluralize = (count: number, word: string) =>
-  `${count} ${word}${count === 1 ? '' : 's'}`;
+export { pluralize };
 
 export function serviceTermsLine(
   offering: Pick<ServiceOffering, 'deliveryDays' | 'revisionsIncluded'>

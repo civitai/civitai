@@ -18,7 +18,10 @@ import {
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
 import { trace } from '@opentelemetry/api';
-import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import {
+  buildOtelInstrumentations,
+  isHttpInstrumentationEnabled,
+} from '~/server/otel-instrumentations';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
@@ -194,6 +197,11 @@ if (!OTEL_ENABLED) {
       remoteParentSampled: ratioSampler,
     });
     console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
+    console.log(
+      `[instrumentation.node] OTEL inbound HTTP instrumentation: ${
+        isHttpInstrumentationEnabled() ? 'on' : 'off (OTEL_HTTP_INSTRUMENTATION)'
+      }`
+    );
 
     // Trace exporter
     const traceExporter = new OTLPTraceExporter({
@@ -253,25 +261,10 @@ if (!OTEL_ENABLED) {
       // Prometheus), and DB pool metrics are separate labeled gauges
       // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
       // withSpan() instrumentation on specific hot calls is unaffected.
-      instrumentations: [
-        // HttpInstrumentation narrowed to INBOUND-only. It only ever patched Node
-        // core http/https, so the affected outbound spans are the core-http
-        // clients (S3 via @aws-sdk, ClickHouse, axios/signals) — NOT orchestrator
-        // or meilisearch, which use fetch/undici and were never auto-instrumented
-        // (their visibility comes from manual withSpan()). Each remaining outgoing
-        // client span is another async_hooks context.with + span alloc on the hot
-        // path — the structural cost head sampling can't remove.
-        // ignoreOutgoingRequestHook returning true for every outgoing request
-        // suppresses those client spans (and their traceparent injection) while
-        // keeping incoming server-request spans (the per-request root) intact.
-        // (instrumentation-http@0.213.0 also exposes
-        // disableOutgoingRequestInstrumentation, which skips patching outbound
-        // entirely; the ignore hook is used here to keep the path patched for
-        // future per-call allow-listing.) Tradeoff: lost cross-service trace
-        // linkage for S3/ClickHouse — observability-only; nothing in the app reads
-        // traceparent functionally. The custom withSpan() spans are unaffected.
-        new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
-      ],
+      // HttpInstrumentation (inbound-only) unless OTEL_HTTP_INSTRUMENTATION=off. The choice,
+      // and what turning it off does and does not remove, is documented in
+      // ~/server/otel-instrumentations.
+      instrumentations: buildOtelInstrumentations(),
     });
 
     sdk.start();

@@ -18,6 +18,7 @@ import { dbRead } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
+import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import {
   commentRateLimits,
   commentUpsertInput,
@@ -36,6 +37,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
@@ -139,9 +141,11 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure
+  toggleReaction: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleReactionInput)
+    // One reaction quota per user, shared with reaction.toggle.
+    .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
     .mutation(({ input, ctx }) =>
       toggleReactionHandler({
         ctx,

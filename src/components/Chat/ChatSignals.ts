@@ -80,6 +80,7 @@ export const useChatNewMessageSignal = () => {
           thisChat.messages = [
             {
               content: updated.content,
+              userId: updated.userId,
               contentType: updated.contentType,
               createdAt: new Date(updated.createdAt),
             },

@@ -29,6 +29,8 @@ export interface PreviewRestart {
 export const NO_LIVE_PREVIEW = 'The live preview isn’t running.';
 /** …and when the app's frame would not load. */
 export const PREVIEW_NOT_LOADING = 'The preview isn’t loading.';
+/** …and beside its caption while a preview is shown: what the app saves there does not last. */
+export const PREVIEW_DATA_RESETS = 'Data saved in the preview resets when it reloads.';
 
 function RestartPreview({ restart, reason }: { restart: PreviewRestart; reason: string }) {
   return (
@@ -102,9 +104,15 @@ export function AppAssistantPreview({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Group justify="space-between" px="sm" py={6} wrap="nowrap" className="shrink-0">
-        <Text size="xs" c="dimmed" truncate>
-          New previews can take a minute to appear.
-        </Text>
+        <Stack gap={0} className="min-w-0">
+          <Text size="xs" c="dimmed" truncate>
+            New previews can take a minute to appear.
+          </Text>
+          {/* The SDK keeps a preview's `app.storage` in memory in this tab (`local-preview`). */}
+          <Text size="xs" c="dimmed" truncate>
+            {PREVIEW_DATA_RESETS}
+          </Text>
+        </Stack>
         <Group gap={6} wrap="nowrap">
           <Button
             size="compact-xs"

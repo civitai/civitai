@@ -4,199 +4,118 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   backfillSql,
-  buildEvents,
   clickhouseConfig,
-  landedState,
-  nextStampMs,
   openLedger,
   readLedger,
+  touchEvents,
 } from '../lib/collection-item-adder.mjs';
 
-const T = 1_761_000_000;
 const read = (lines) => readLedger(lines, 'Article');
-
-describe('buildEvents', () => {
-  it('emits what the CDC handler would, one event per key valued at its row count', () => {
-    // One owner holding model 7 in two collections: two +1 rows with the same raw-table key would
-    // collapse to one under ReplacingMergeTree, so they must arrive as a single +2.
-    const events = buildEvents(
-      [
-        { id: 1, collectionId: 10, modelId: 7, addedById: 5 },
-        { id: 2, collectionId: 11, modelId: 7, addedById: 5 },
-        { id: 3, collectionId: 12, articleId: 3, addedById: 6 },
-        { id: 4, collectionId: 12, postId: 9, addedById: 6 },
-      ],
-      T
-    );
-
-    const by = (entityType, entityId) =>
-      events.filter((e) => e.entityType === entityType && e.entityId === entityId);
-    expect(by('Model', 7)).toEqual([
-      {
-        entityType: 'Model',
-        entityId: 7,
-        metricType: 'collectedCount',
-        userId: 5,
-        metricValue: 2,
-        createdAt: T,
-      },
-    ]);
-    expect(by('Article', 3)).toMatchObject([
-      { metricType: 'collectedCount', userId: 6, metricValue: 1 },
-    ]);
-    expect(by('Post', 9)).toMatchObject([
-      { metricType: 'collectedCount', userId: 6, metricValue: 1 },
-    ]);
-    expect(by('Collection', 12)).toMatchObject([
-      { metricType: 'itemCount', userId: 6, metricValue: 2 },
-    ]);
-    expect(events).toHaveLength(6);
-  });
-});
-
-describe('nextStampMs', () => {
-  it('gives each batch its own second even when batches finish within one', () => {
-    const first = nextStampMs(null, T * 1000 + 400);
-    const second = nextStampMs(first, T * 1000 + 900);
-    expect(first).toBe(T * 1000);
-    expect(second).toBe(T * 1000 + 1000);
-  });
-});
+const line = (o) => JSON.stringify(o);
+const pending = (lo, hi) =>
+  line({ lo, hi, phase: 'pending', entity: 'Article', xid: String(lo), ids: [lo + 1] });
 
 describe('readLedger', () => {
-  const line = (o) => JSON.stringify(o);
-
-  const pending = (lo, hi, stampMs) =>
-    line({ lo, hi, phase: 'pending', entity: 'Article', xid: String(lo), stampMs, events: [] });
-
-  it('returns the one unfinished batch and where finished work ends', () => {
+  it('returns the unfinished batch and where the run resumes', () => {
     const state = read([
-      pending(0, 100, 1000),
+      pending(0, 100),
       line({ lo: 0, phase: 'committed' }),
-      line({ lo: 0, phase: 'inserted' }),
-      pending(100, 200, 2000),
+      pending(100, 200),
       line({ lo: 100, phase: 'committed' }),
+      pending(200, 300),
       '',
     ]);
-    expect(state.open).toMatchObject({ lo: 100, hi: 200, phase: 'committed', xid: '100' });
-    expect(state.resumeFrom).toBe(100);
-    expect(state.lastStampMs).toBe(2000);
+    expect(state.open).toMatchObject({ lo: 200, hi: 300, phase: 'pending', xid: '200' });
+    expect(state.resumeFrom).toBe(200);
+    expect(state.touched).toBe(false);
   });
 
   it('does not count an abandoned batch as done, so its range is redone', () => {
     const state = read([
-      pending(0, 100, 1000),
-      line({ lo: 0, phase: 'inserted' }),
-      pending(100, 200, 2000),
+      pending(0, 100),
+      line({ lo: 0, phase: 'committed' }),
+      pending(100, 200),
       line({ lo: 100, phase: 'abandoned' }),
     ]);
     expect(state.open).toBeNull();
     expect(state.resumeFrom).toBe(100);
   });
 
-  it('resumes a restamped batch with its new stamp and events', () => {
-    const events = [{ entityType: 'Model', entityId: 1, createdAt: 9 }];
-    const state = read([
-      pending(0, 100, 1000),
-      line({ lo: 0, phase: 'committed' }),
-      line({ lo: 0, phase: 'restamped', stampMs: 9000, events }),
-    ]);
-    expect(state.open).toMatchObject({ phase: 'restamped', stampMs: 9000, events });
-    expect(state.lastStampMs).toBe(9000);
+  it('reports a finished touch', () => {
+    expect(read([pending(0, 100), line({ phase: 'touched', entity: 'Article' })]).touched).toBe(
+      true
+    );
   });
 
   it('drops a torn final line but not a torn line in the middle', () => {
-    expect(read([pending(0, 100, 1000), '{"lo":0,"pha']).open).toMatchObject({
-      phase: 'pending',
-      entity: 'Article',
-    });
-    expect(() => read(['{"lo":0,"pha', pending(0, 100, 1000)])).toThrow();
+    expect(read([pending(0, 100), '{"lo":0,"pha']).open).toMatchObject({ phase: 'pending' });
+    expect(() => read(['{"lo":0,"pha', pending(0, 100)])).toThrow();
   });
 
   it('refuses a ledger written for another entity', () => {
-    expect(() => readLedger([pending(0, 100, 1000)], 'Model')).toThrow(/written for Article/);
+    expect(() => readLedger([pending(0, 100)], 'Model')).toThrow(/written for Article/);
   });
 
-  it('refuses a ledger with two unfinished batches', () => {
-    expect(() => read([pending(0, 100, 1000), pending(100, 200, 2000)])).toThrow(
-      /2 unfinished batches/
+  it('refuses two unfinished batches, and a ledger from the earlier versions of this script', () => {
+    expect(() => read([pending(0, 100), pending(100, 200)])).toThrow(/2 unfinished batches/);
+    expect(() => read([pending(0, 100), line({ phase: 'reconcile', entity: 'Article' })])).toThrow(
+      /unknown phase reconcile/
     );
   });
 });
 
 describe('openLedger', () => {
   it('cuts a torn tail so the next line survives a later read', () => {
-    // Otherwise a restamp line glued onto the fragment is dropped as torn, the next resume checks
-    // the old stamp, finds nothing, and inserts the batch a second time.
+    // Otherwise a `committed` line glued onto the fragment is lost on a later read, and the
+    // resume has to ask Postgres about a batch the ledger already settled.
     const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
-    const pending = {
-      lo: 0,
-      hi: 100,
-      phase: 'pending',
-      entity: 'Article',
-      xid: '1',
-      stampMs: 1000,
-      events: [],
-    };
-    writeFileSync(path, `${JSON.stringify(pending)}\n{"lo":0,"pha`);
+    writeFileSync(path, `${pending(0, 100)}\n{"lo":0,"pha`);
     const ledger = openLedger(path);
-    ledger.write({ lo: 0, phase: 'restamped', stampMs: 9000, events: [] });
+    ledger.write({ lo: 0, phase: 'committed' });
     ledger.close();
-    expect(read(readFileSync(path, 'utf-8').split('\n')).open).toMatchObject({
-      phase: 'restamped',
-      stampMs: 9000,
-    });
+    expect(read(readFileSync(path, 'utf-8').split('\n')).resumeFrom).toBe(100);
   });
 
   it('keeps a complete final line that only lacks its newline', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
-    const pending = {
-      lo: 0,
-      hi: 100,
-      phase: 'pending',
-      entity: 'Article',
-      xid: '1',
-      stampMs: 1000,
-      events: [],
-    };
-    writeFileSync(
-      path,
-      `${JSON.stringify(pending)}\n${JSON.stringify({ lo: 0, phase: 'committed' })}`
-    );
+    writeFileSync(path, `${pending(0, 100)}\n${line({ lo: 0, phase: 'committed' })}`);
     const ledger = openLedger(path);
-    ledger.write({ lo: 0, phase: 'inserted' });
+    ledger.write({ phase: 'touched', entity: 'Article' });
     ledger.close();
     const lines = readFileSync(path, 'utf-8').split('\n');
     expect(lines.filter(Boolean).map((l) => JSON.parse(l).phase)).toEqual([
       'pending',
       'committed',
-      'inserted',
+      'touched',
     ]);
   });
 });
 
-describe('landedState', () => {
-  const ev = (entityId, metricValue) => ({
-    entityType: 'Model',
-    entityId,
-    metricType: 'collectedCount',
-    userId: 5,
-    metricValue,
-  });
-
-  it('reads all, none and partial', () => {
-    expect(landedState([ev(1, 2), ev(2, 1)], [ev(1, 2), ev(2, 1)])).toBe('all');
-    expect(landedState([ev(1, 2), ev(2, 1)], [])).toBe('none');
-    expect(landedState([ev(1, 2), ev(2, 1)], [ev(1, 2)])).toBe('partial');
-  });
-
-  it('does not take a live event with the same key but another value as ours', () => {
-    expect(landedState([ev(1, 2)], [ev(1, 1)])).toBe('none');
+describe('touchEvents', () => {
+  it('writes a 0 per entity, which marks it for a recount and moves no sum', () => {
+    expect(touchEvents('Article', 'collectedCount', [3, 4], 1_761_000_000)).toEqual([
+      {
+        entityType: 'Article',
+        entityId: 3,
+        metricType: 'collectedCount',
+        userId: -1,
+        metricValue: 0,
+        createdAt: 1_761_000_000,
+      },
+      {
+        entityType: 'Article',
+        entityId: 4,
+        metricType: 'collectedCount',
+        userId: -1,
+        metricValue: 0,
+        createdAt: 1_761_000_000,
+      },
+    ]);
   });
 });
 
 describe('backfillSql', () => {
-  // Run against a real Postgres, so this checks which rows the UPDATE touches, not its text.
+  // Run against a real Postgres, so this checks which rows the queries touch, not their text.
   async function db() {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
@@ -206,21 +125,23 @@ describe('backfillSql', () => {
       CREATE TABLE "CollectionItem" (
         id int PRIMARY KEY, "collectionId" int, "articleId" int, "modelId" int, "postId" int,
         "imageId" int, "addedById" int);
+      CREATE TABLE "ArticleMetric" ("articleId" int, timeframe text, "collectedCount" int);
       INSERT INTO "Collection" VALUES (1, 5, 'Bookmark'), (2, 6, NULL), (3, 7, 'Contest');
       INSERT INTO "CollectionItem" VALUES
         (1, 1, 30, NULL, NULL, NULL, NULL),
         (2, 2, 31, NULL, NULL, NULL, NULL),
         (3, 3, 32, NULL, NULL, NULL, NULL),
         (4, 1, NULL, 40, NULL, NULL, NULL);
+      -- 35 lost all its rows while they had no adder, so nothing ever uncounted it.
+      INSERT INTO "ArticleMetric" VALUES (30, 'AllTime', 1), (35, 'AllTime', 4), (36, 'AllTime', 0);
     `);
     return pg;
   }
 
   it('gives an adder only to Bookmark-collection rows of the chosen entity', async () => {
     const pg = await db();
-    const { update } = backfillSql('Article');
-    const { rows } = await pg.query(update, [0, 100]);
-    expect(rows.map((r) => [r.id, r.addedById])).toEqual([[1, 5]]);
+    const { rows } = await pg.query(backfillSql('Article').update, [0, 100]);
+    expect(rows.map((r) => r.id)).toEqual([1]);
     const { rows: after } = await pg.query(
       'SELECT id, "addedById" FROM "CollectionItem" ORDER BY id'
     );
@@ -235,12 +156,21 @@ describe('backfillSql', () => {
 
   it('counts the rows it leaves out by collection mode', async () => {
     const pg = await db();
-    const { rows } = await pg.query(backfillSql('Article').breakdown, [0, 100]);
+    const { rows } = await pg.query(backfillSql('Article').candidates, [0, 100]);
     expect(Object.fromEntries(rows.map((r) => [r.mode ?? 'none', r.n]))).toEqual({
       Bookmark: 1,
       Contest: 1,
       none: 1,
     });
+    await pg.close();
+  });
+
+  it('marks every entity with rows, and every one still showing a count without them', async () => {
+    const pg = await db();
+    const sql = backfillSql('Article');
+    const ids = async (q) => (await pg.query(q)).rows.map((r) => r.id).sort((a, b) => a - b);
+    expect(await ids(sql.touchEntities)).toEqual([30, 31, 32, 35]);
+    expect(await ids(sql.touchCollections)).toEqual([1, 2, 3]);
     await pg.close();
   });
 
