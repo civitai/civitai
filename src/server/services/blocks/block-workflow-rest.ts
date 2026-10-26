@@ -182,7 +182,11 @@ async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefi
   });
   if (!row) return undefined;
   const { appAccessRequests, ...user } = row;
-  return { ...user, appBuilderApproved: appAccessRequests.length > 0 } as unknown as SessionUser;
+  // `?.`: a row without the relation (a partial stub) reads as not approved rather than a 500.
+  return {
+    ...user,
+    appBuilderApproved: (appAccessRequests?.length ?? 0) > 0,
+  } as unknown as SessionUser;
 }
 
 /**

@@ -96,6 +96,8 @@ describe('the REST transport targets Flipt with the token subject, not an empty 
   it.each([
     ['an approved App Access Request', [{ id: 5 }], true],
     ['none', [], false],
+    // A row without the relation (a partial stub) must fail CLOSED, not 500 and not grant.
+    ['a row without the relation', undefined, false],
   ])(
     '🔴 threads appBuilderApproved from the DB row (%s) to the flag context',
     async (_label, appAccessRequests, approved) => {
