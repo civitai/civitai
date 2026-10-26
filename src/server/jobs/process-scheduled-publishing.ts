@@ -198,8 +198,12 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    await dbWrite.$transaction(
+    // The scheduled posts the UPDATE below actually published, with their owner as of the write: it
+    // re-checks each one, so a post taken down or moved since the select drops out, and must get
+    // none of the side effects. Returned rather than assigned out, so a rollback yields none.
+    const flippedPosts = await dbWrite.$transaction(
       async (tx) => {
+        let flipped: ScheduledEntity[] = [];
         const modelsToUpdate = [
           ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
         ];
@@ -247,7 +251,7 @@ export const processScheduledPublishing = createJob(
           `;
 
           if (locked.length)
-            await tx.$queryRaw<{ id: number }[]>`
+            flipped = await tx.$queryRaw<ScheduledEntity[]>`
           -- Update scheduled versions posts
           -- Respect prevPublishedAt metadata to preserve original date on republish
           UPDATE "Post" p
@@ -266,7 +270,8 @@ export const processScheduledPublishing = createJob(
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+          RETURNING p.id, p."userId";
         `;
           // Images are reindexed post-commit via queueImageSearchIndexUpdate
           // below — the db trigger's updatedAt bump isn't reliably picked up by
@@ -306,6 +311,8 @@ export const processScheduledPublishing = createJob(
             });
           }
         }
+
+        return flipped;
       },
       { timeout: 30000 }
     );
@@ -346,7 +353,7 @@ export const processScheduledPublishing = createJob(
     // they land here on the day the post actually goes live. The sweep half of this
     // set also carries normally-published drafts, so anything driven off it has to
     // tolerate being handed the same post id twice.
-    const publishedPosts = uniqBy([...scheduledPosts, ...newlyLivePosts], 'id');
+    const publishedPosts = uniqBy([...flippedPosts, ...newlyLivePosts], 'id');
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({
@@ -413,14 +420,14 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    if (scheduledPosts.length) {
+    if (flippedPosts.length) {
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
-      await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      await userImageVideoCountCaches.refresh(uniq(flippedPosts.map((p) => p.userId)));
       // Undated until now, so never scanned.
       scanEntitiesInBackground(
         'Post',
-        scheduledPosts.map((p) => p.id)
+        flippedPosts.map((p) => p.id)
       );
     }
 
