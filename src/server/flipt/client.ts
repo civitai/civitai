@@ -92,6 +92,27 @@ export enum FLIPT_FEATURE_FLAGS {
   // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_2 = 'kysely-hot-reads-2',
+  // Reads the next hot Prisma read shapes (packages/civitai-db-queries/src/hot-reads-3.db.ts) through
+  // Kysely-over-pg instead of the Prisma query engine: the model page's default-version lookup
+  // (`getDefaultModelVersion`, three Prisma queries, one statement here), three reads
+  // `getModelHandler` makes after the model row (the suggested-resource count, the owner's settings,
+  // the owner's posts on the versions), and the viewer's pending remix-gallery submissions
+  // (`getViewerPendingSubmissions`). DEFAULT-OFF, same semantics as KYSELY_HOT_READS_2 above: boolean
+  // only, evaluated with no entityId. Every statement reads base tables only, never a view.
+  //
+  // 🔴 Each read keeps its database: the default-version lookup takes
+  // `getKyselyWithoutLag('model', id)`, the twin of the `getDbWithoutLag('model', id)` decision the
+  // Prisma read made; the others read `kyselyRead`, as they read `dbRead`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every model page render and every model page payload.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_3 = 'kysely-hot-reads-3',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
