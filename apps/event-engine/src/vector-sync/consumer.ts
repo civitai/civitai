@@ -5,7 +5,7 @@
  */
 import http from 'http';
 import { Kafka, type Consumer } from 'kafkajs';
-import { config } from '@/config';
+import { assertVectorSyncConfig, config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { MixedStampError, Embedder } from './embedder';
@@ -214,6 +214,7 @@ export function consumerEmbedder(): Embedder | null {
 }
 
 async function main() {
+  assertVectorSyncConfig();
   const vs = config.vectorSync;
   const pg = createGuardedPgPool(
     { connectionString: config.postgres.connectionString, max: config.vectorSync.pgPoolMax },
