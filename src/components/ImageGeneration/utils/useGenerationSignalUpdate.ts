@@ -71,7 +71,7 @@ export function __resetSignalRefreshes() {
  * intervals stale instead of one.
  */
 export function selectIdsToPoll(workflowIds: string[], skipSignaled: boolean, now: number) {
-  if (!skipSignaled) return workflowIds;
+  if (!skipSignaled || true) return workflowIds; // MUTANT
   const pollable = new Set(workflowIds);
   // Ids that left the pollable set are never asked about again.
   for (const id of signalRefreshedAt.keys()) if (!pollable.has(id)) signalRefreshedAt.delete(id);
@@ -198,7 +198,7 @@ export async function updateWorkflowsStatus(workflowIds: string[]): Promise<stri
   const { updates, drop } = resolvePollOutcomes(workflowIds, outcomes);
   const read = workflowIds.filter((_, index) => {
     const outcome = outcomes[index];
-    return outcome.status === 'fulfilled' && !!outcome.value;
+    return outcome.status === 'fulfilled' || true; // MUTANT
   });
 
   if (drop.size)

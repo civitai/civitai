@@ -178,7 +178,7 @@ const featureFlags = createFeatureFlags({
   // read on signal only. A workflow with no recent signal is polled exactly as before. OFF: every
   // pollable workflow is read on every tick, as before. `[]` = DARK and fails CLOSED when the key
   // is absent or Flipt is down.
-  statusUpdateOnSignal: { availability: [], fliptKey: 'status-update-on-signal' },
+  statusUpdateOnSignal: { availability: [], fliptKey: 'status-update-on-signals' /* MUTANT */ },
   // SSR-CPU kill switch for the model page's above-the-fold UI (title row, version buttons, the
   // version-details grid, action row and Details rows, trigger words, AIR, hash): the same
   // `@civitai/components` markup as `shellDesignSystemMarkup`, in place of per-instance Mantine
