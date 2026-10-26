@@ -80,19 +80,25 @@ function flushSales() {
   pendingSales.clear();
   // Same chunk as the provider path, so one flush can never exceed the procedure's cap.
   for (const ids of chunkIds([...waiting.keys()], MODEL_SALE_IDS_PER_REQUEST)) {
-    // Deferred into a promise so a fetch that throws SYNCHRONOUSLY rejects this chunk's waiters
-    // instead of aborting the loop and leaving this and every later chunk's cards pending forever.
-    Promise.resolve()
-      .then(() => modelSaleBatcher.fetch(ids))
-      .then(
-        (sales) => {
-          const byId = (sales ?? {}) as SalesByModelId;
-          for (const id of ids) for (const w of waiting.get(id) ?? []) w.resolve(byId[id] ?? null);
-        },
-        (error) => {
-          for (const id of ids) for (const w of waiting.get(id) ?? []) w.reject(error);
-        }
-      );
+    // Sent SYNCHRONOUSLY, so a flush released by the shared batch window (`trpcUnifiedBatchWindow`)
+    // reaches the batch link inside that release and shares its request. A fetch that throws
+    // synchronously still rejects this chunk's waiters instead of aborting the loop and leaving this
+    // and every later chunk's cards pending forever.
+    let request: ReturnType<typeof modelSaleBatcher.fetch>;
+    try {
+      request = modelSaleBatcher.fetch(ids);
+    } catch (error) {
+      request = Promise.reject(error);
+    }
+    request.then(
+      (sales) => {
+        const byId = (sales ?? {}) as SalesByModelId;
+        for (const id of ids) for (const w of waiting.get(id) ?? []) w.resolve(byId[id] ?? null);
+      },
+      (error) => {
+        for (const id of ids) for (const w of waiting.get(id) ?? []) w.reject(error);
+      }
+    );
   }
 }
 

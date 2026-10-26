@@ -8,7 +8,7 @@ import {
   __resetEngagedMembershipBatcher,
   requestEngagedMembership,
 } from '~/hooks/useEngagedModelMembership';
-import { queryClient, setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { queryClient, setTrpcBatchingEnabled, trpc, trpcVanilla } from '~/utils/trpc';
 import {
   __resetTrpcBatchWindow,
   setTrpcUnifiedBatchWindowEnabled,
@@ -22,8 +22,9 @@ import {
  *  - t=5 ms: a later-mounting component asks `system.getBrowsingSettingAddons` (React client).
  *
  * OFF, every coalescer runs its own clock: two React-client requests at their own ticks, the sale
- * batcher at 50 ms and the engaged batcher at 80 ms, so four requests. ON, all four calls wait for
- * one window and leave as ONE request. Paths are compared as literals.
+ * batcher at 50 ms and the engaged batcher at 80 ms, so four requests. ON, the two React-client
+ * queries share one window (closing at 16 ms); each batcher still collects for its own window and
+ * then sends with the next shared close, so three requests carrying the same four calls.
  */
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -118,11 +119,13 @@ describe('trpc-unified-batch-window OFF: each coalescer keeps its own clock', ()
 });
 
 describe('trpc-unified-batch-window ON: one shared window', () => {
-  it('sends the same four calls as ONE request', async () => {
+  it('sends the same four calls in three requests', async () => {
     setTrpcUnifiedBatchWindowEnabled(true);
     await loadPage(12);
     expect(requests.map(procedures)).toEqual([
-      'model.getActiveSales,system.getBrowsingSettingAddons,user.getEngagedModelsByIds,user.getSettings',
+      'system.getBrowsingSettingAddons,user.getSettings',
+      'model.getActiveSales',
+      'user.getEngagedModelsByIds',
     ]);
   });
 
@@ -138,6 +141,50 @@ describe('trpc-unified-batch-window ON: one shared window', () => {
       'system.getBrowsingSettingAddons',
       'user.getEngagedModelsByIds',
       'user.getSettings',
+    ]);
+  });
+});
+
+/**
+ * The engaged batcher keeps its own 80 ms window with the flag on, so ids that arrive 30 ms apart
+ * are still ONE call; the flag only moves that call into the request of whatever is pending in the
+ * shared window when the batcher's window ends. Here a query starts at 75 ms, opening a shared
+ * window that closes at 91 ms, and the batcher's window ends at 80 ms, inside it.
+ */
+describe('the engaged batcher keeps its own window', () => {
+  async function idsThirtyMsApartThenAQuery() {
+    requestEngagedMembership([21]);
+    await advance(30);
+    requestEngagedMembership([22]);
+    await advance(45);
+    trpcVanilla.system.getBrowsingSettingAddons.query().catch(() => undefined);
+    await advance(100);
+  }
+  const engagedCalls = () =>
+    requests
+      .flatMap((url) => procedures(url).split(','))
+      .filter((p) => p === 'user.getEngagedModelsByIds');
+  const carriesBothIds = () =>
+    requests.filter((url) => decodeURIComponent(url).includes('"modelIds":[21,22]')).length;
+
+  it('OFF: one engaged call for both ids, in its own request', async () => {
+    setTrpcUnifiedBatchWindowEnabled(false);
+    await idsThirtyMsApartThenAQuery();
+    expect(engagedCalls()).toHaveLength(1);
+    expect(carriesBothIds()).toBe(1);
+    expect(requests.map(procedures).sort()).toEqual([
+      'system.getBrowsingSettingAddons',
+      'user.getEngagedModelsByIds',
+    ]);
+  });
+
+  it("ON: still one engaged call for both ids, sent in the pending query's request", async () => {
+    setTrpcUnifiedBatchWindowEnabled(true);
+    await idsThirtyMsApartThenAQuery();
+    expect(engagedCalls()).toHaveLength(1);
+    expect(carriesBothIds()).toBe(1);
+    expect(requests.map(procedures)).toEqual([
+      'system.getBrowsingSettingAddons,user.getEngagedModelsByIds',
     ]);
   });
 });

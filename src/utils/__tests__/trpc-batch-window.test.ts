@@ -45,14 +45,12 @@ describe('deferToBatchWindow', () => {
     expect(log).toEqual(['a@16', 'b@36']);
   });
 
-  it('runs work a released callback starts from a promise continuation in the same release', async () => {
-    // The sale-badge batcher sends from `Promise.resolve().then(...)`; that query must still leave
-    // with the window that released it, not wait for another one.
-    deferToBatchWindow(() => {
-      void Promise.resolve().then(() => deferToBatchWindow(at('continuation')));
-    });
+  it('runs work a released callback starts synchronously in the same release', async () => {
+    // A released batcher flush sends its query from inside the release; that query must leave with
+    // the window that released it, not wait for another one.
+    deferToBatchWindow(() => deferToBatchWindow(at('nested')));
     await vi.advanceTimersByTimeAsync(16);
-    expect(log).toEqual(['continuation@16']);
+    expect(log).toEqual(['nested@16']);
   });
 });
 
@@ -66,13 +64,26 @@ describe('scheduleBatcherFlush', () => {
     expect(log).toEqual(['sale@50', 'engaged@80']);
   });
 
-  it('ON where batching applies: both batchers flush on the shared window', async () => {
+  it('ON where batching applies: each batcher keeps its own window, then waits for a shared close', async () => {
     registerBatchingApplies(() => true);
     setTrpcUnifiedBatchWindowEnabled(true);
     scheduleBatcherFlush(at('sale'), 50);
     scheduleBatcherFlush(at('engaged'), 80);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(log).toEqual([]);
     await vi.advanceTimersByTimeAsync(100);
-    expect(log).toEqual(['sale@16', 'engaged@16']);
+    // Nothing else was pending, so each flush opened its own shared window: 50 + 16, 80 + 16.
+    expect(log).toEqual(['sale@66', 'engaged@96']);
+  });
+
+  it('ON: a batcher flush joins a shared window that is already open', async () => {
+    registerBatchingApplies(() => true);
+    setTrpcUnifiedBatchWindowEnabled(true);
+    scheduleBatcherFlush(at('engaged'), 80);
+    await vi.advanceTimersByTimeAsync(75);
+    deferToBatchWindow(at('query')); // opens a window closing at 91
+    await vi.advanceTimersByTimeAsync(50);
+    expect(log).toEqual(['query@91', 'engaged@91']);
   });
 
   it('ON where batching does not apply: own timers, since nothing would be merged', async () => {

@@ -7,15 +7,16 @@
  * or on different clocks, leave as separate HTTP requests even when every one of them could have
  * shared a batch.
  *
- * With the flag on, all of them wait for the same window instead: it opens at the first query or
- * batcher flush, closes `TRPC_BATCH_WINDOW_MS` later (it does not slide, so latency is bounded), and
+ * With the flag on, batchable queries wait for one shared window instead: it opens at the first
+ * query, closes `TRPC_BATCH_WINDOW_MS` later (it does not slide, so latency is bounded), and
  * everything queued in it is released in ONE task, so the batch link sends it as one request per
- * URL/item cap. Work queued while the window is being released (a batcher's own query) joins that
- * release rather than opening a new window.
+ * URL/item cap. The hand-rolled batchers keep their own collection windows, so they never split
+ * their ids into more calls than without the flag; only their FLUSH moves: when a batcher's own
+ * window ends, its flush joins the shared window that is open, or opens one and waits for it.
  *
  * It applies only where batching applies (`trpcBatching` on, signed-in browser): an unbatched query
- * leaves as its own request whatever the clock, so shortening a batcher's window there would only
- * add requests. That check lives in `~/utils/trpc` and is registered here, so this module imports
+ * leaves as its own request whatever the clock, so holding a batcher's flush there would only add
+ * latency. That check lives in `~/utils/trpc` and is registered here, so this module imports
  * nothing and a test that replaces `~/utils/trpc` with a stub falls back to each batcher's own timer.
  */
 
@@ -56,22 +57,21 @@ function runSafely(run: () => void) {
 
 function release() {
   timer = null;
-  // The release lasts until this task's microtasks have run, not just this loop: the sale-badge
-  // batcher sends from a promise continuation, and that query must still leave with this release.
-  // This timer is queued before any query released below reaches the batch link, whose own 0 ms
-  // dispatch timer therefore fires after it, with everything released here in one request.
   releasing = true;
-  setTimeout(() => {
+  try {
+    const due = queue;
+    queue = [];
+    for (const run of due) runSafely(run);
+  } finally {
     releasing = false;
-  }, 0);
-  const due = queue;
-  queue = [];
-  for (const run of due) runSafely(run);
+  }
 }
 
 /**
- * Runs `run` when the shared window closes, or now if the window is being released (so work a
- * released callback starts joins the same request). Callers check `isUnifiedBatchWindowActive`.
+ * Runs `run` when the shared window closes, or now if the window is being released, so a query a
+ * released batcher flush sends joins the same request. That covers only work started SYNCHRONOUSLY
+ * inside a released callback; both batchers send synchronously from their flush for that reason.
+ * Callers check `isUnifiedBatchWindowActive`.
  */
 export function deferToBatchWindow(run: () => void) {
   if (releasing) return runSafely(run);
@@ -80,12 +80,16 @@ export function deferToBatchWindow(run: () => void) {
 }
 
 /**
- * A hand-rolled batcher's flush timer. On the shared window while it is active; otherwise the
- * batcher's own `ownWindowMs` timer, exactly as before the flag.
+ * A hand-rolled batcher's flush timer. The batcher always collects for its own `ownWindowMs`, so
+ * one flush carries exactly the ids it carries without the flag. When that window ends and the
+ * shared window is active, the flush joins the open shared window (or the next one) so its call
+ * leaves with the queries pending there; otherwise it runs at once, exactly as before the flag.
  */
 export function scheduleBatcherFlush(flush: () => void, ownWindowMs: number) {
-  if (isUnifiedBatchWindowActive()) deferToBatchWindow(flush);
-  else setTimeout(flush, ownWindowMs);
+  setTimeout(() => {
+    if (isUnifiedBatchWindowActive()) deferToBatchWindow(flush);
+    else flush();
+  }, ownWindowMs);
 }
 
 /** Test-only: drop queued work and the flag. */

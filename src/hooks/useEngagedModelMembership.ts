@@ -62,8 +62,8 @@ function dropStateFromAnEarlierGeneration() {
 
 /**
  * Test/injection seam. Production uses the vanilla tRPC client + an ~80ms
- * debounce flush (the shared 16ms batch window instead while
- * `trpcUnifiedBatchWindow` applies); tests swap in a controllable fetcher and a synchronous
+ * debounce flush (which, while `trpcUnifiedBatchWindow` applies, then waits for the
+ * shared batch window to close); tests swap in a controllable fetcher and a synchronous
  * scheduler. `schedule` returns void so a test override may return void too.
  */
 export const engagedMembershipBatcher = {
