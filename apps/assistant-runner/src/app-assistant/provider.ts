@@ -160,7 +160,9 @@ export class AppAssistantTools implements ToolProvider {
     const sandbox = new AppSandbox({
       client,
       baseUrl: sandboxUrl,
-      token: () => sandboxToken(),
+      // Not ended by a Stop (the mint has its own bound): a Stop does not cut short an upgrade of
+      // the app's packages, which must still finish or roll back (`SdkUpgrades`).
+      token: () => tokens('sandbox'),
       signal,
       log,
       runId,
@@ -233,7 +235,7 @@ export class AppAssistantTools implements ToolProvider {
         sandbox,
         // Not listed: its MCP server is not answering (no tools at all), or has no such tool.
         hasTool: (name) => `sandbox__${name}` in sandboxTools,
-        startDevServer: (abort) => livePreview.startDevServer(abort),
+        startDevServer: () => livePreview.startDevServer(),
         // The install changed files: both gates hear of it as of any command, so checks run again.
         report: (result) => {
           core.onToolResult(result);

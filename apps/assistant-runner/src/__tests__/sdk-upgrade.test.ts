@@ -250,10 +250,10 @@ const actions = () =>
       call.tool === 'run_command'
         ? `run_command ${String(call.args.command)}`
         : call.tool === 'dev_server_start'
-        ? `dev_server_start ${String(call.args.command)}`
-        : call.tool === 'write_file'
-        ? `write_file ${String(call.args.path)}`
-        : call.tool
+          ? `dev_server_start ${String(call.args.command)}`
+          : call.tool === 'write_file'
+            ? `write_file ${String(call.args.path)}`
+            : call.tool
     );
 
 const installCount = () =>
