@@ -435,6 +435,45 @@ describe('hunyuan.handler', () => {
   });
 });
 
+describe('wan.handler v2.1', () => {
+  // Unnamed, text-to-video ran the orchestrator's 1.3B default, which is not enabled, so every
+  // submit was refused; image-to-video's unnamed default only happened to be enabled.
+  it('names the 14B text-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'WanVideo14B_T2V',
+      prompt: 'a cat',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'wan',
+      version: 'v2.1',
+      diffusionModel: 'urn:air:test:1707796',
+    });
+  });
+
+  it('names the 720p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_720p',
+      prompt: 'a cat',
+      resolution: '720p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501344' });
+  });
+
+  it('names the 480p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_480p',
+      prompt: 'a cat',
+      resolution: '480p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501125' });
+  });
+});
+
 describe('wan-image.handler', () => {
   // The input has no aspect ratio field: an unmapped pick lands on its square default.
   it('sends the picked aspect ratio as a fal size preset', async () => {
