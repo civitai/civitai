@@ -1667,6 +1667,7 @@ model ModActivity {
   entityType String?
   entityId   Int?
   createdAt  DateTime @default(now())
+  host       String?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])

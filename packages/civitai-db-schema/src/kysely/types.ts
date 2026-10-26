@@ -3735,6 +3735,7 @@ export type ModActivity = {
   entityType: string | null;
   entityId: number | null;
   createdAt: Generated<Timestamp>;
+  host: string | null;
 };
 export type Model = {
   id: Generated<number>;

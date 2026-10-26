@@ -1357,6 +1357,7 @@ export interface ModActivity {
   entityType: string | null;
   entityId: number | null;
   createdAt: Date;
+  host: string | null;
 }
 
 export interface Report {

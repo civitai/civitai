@@ -257,6 +257,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   the four `ServiceDealFile.malwareScan*` columns: `20261128150000_creator_service_final_malware_scan`
     //   `ApiKey.workerDeviceId`: `20261130120000_worker_identity`
     //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
+    //   `ModActivity.host`: `20261205120000_mod_activity_host`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -275,6 +276,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDealFile.malwareScanAttempts',
       'ApiKey.workerDeviceId',
       'ServiceOffering.sellerAffirmation',
+      'ModActivity.host',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
