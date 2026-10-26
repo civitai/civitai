@@ -1,10 +1,9 @@
-import type { InstantMeiliSearchOptions } from '@meilisearch/instant-meilisearch';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
 
 /**
- * The key the browser sends to Meilisearch: a short-lived per-viewer token from
- * `/api/search/token`, or the shared public key when the server has no signing key configured.
+ * Site search's direct path, used while the `siteSearchProxy` flag is off (see
+ * `site-search-client`). The key the browser sends to Meilisearch: a short-lived per-viewer token
+ * from `/api/search/token`, or the shared public key when the server has no signing key configured.
  *
  * Held in memory only. Every change of signed-in identity (sign-in, sign-out, account switch,
  * impersonation) is a full page load, which starts this module empty.
@@ -78,20 +77,6 @@ export async function searchFetch<T = any>(url: string, init: RequestInit = {}):
     throw error;
   }
   return body as T;
-}
-
-/** The browser's instant-meilisearch client. Requests carry the current key, not a fixed one. */
-export function createInstantMeiliSearch(
-  options: Omit<InstantMeiliSearchOptions, 'httpClient'> = {}
-) {
-  return instantMeiliSearch(
-    env.NEXT_PUBLIC_SEARCH_HOST as string,
-    env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-    {
-      ...options,
-      httpClient: searchFetch,
-    }
-  );
 }
 
 /** Test seam: forget the cached key. */

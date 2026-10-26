@@ -498,8 +498,9 @@ export const serverSchema = z
     AXIOM_DATASTREAM: z.string().optional(),
     SEARCH_HOST: z.url().optional(),
     SEARCH_API_KEY: z.string().optional(),
-    // Search-only Meilisearch key (value + uid) that signs per-viewer browser search tokens.
-    // Unset = browsers keep using NEXT_PUBLIC_SEARCH_CLIENT_KEY.
+    // Search-only Meilisearch key (value + uid). With `siteSearchProxy` on, /api/search queries with
+    // it (unset = SEARCH_API_KEY); off, it signs per-viewer browser search tokens (unset = browsers
+    // use NEXT_PUBLIC_SEARCH_CLIENT_KEY).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
