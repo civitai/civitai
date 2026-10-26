@@ -149,6 +149,24 @@ describe('scam restrictions bulk rule', () => {
     expect(result).toMatchObject({ banned: 0, failed: [expect.objectContaining({ id: 1 })] });
   });
 
+  it('upholds an account already banned without banning it again', async () => {
+    // `setBanned` refuses an already-banned account, which used to leave the row pending forever.
+    tables.UserRestriction[0].bannedAt = new Date();
+    expect(await rule([1], [])).toMatchObject({ banned: 1, failed: [] });
+    expect(setBanned).not.toHaveBeenCalled();
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({ userRestrictionId: 1, status: 'Upheld' })
+    );
+  });
+
+  it('rides out a rate-limit refusal instead of reporting it', async () => {
+    resolveRestriction
+      .mockResolvedValueOnce({ ok: false, error: 'Rate limit exceeded', retryAfterSeconds: 0.01 })
+      .mockResolvedValue({ ok: true });
+    expect(await rule([], [2])).toMatchObject({ cleared: 1, failed: [] });
+    expect(resolveRestriction).toHaveBeenCalledTimes(2);
+  });
+
   it('refuses to ban without the audit ban grant, before anything is written', async () => {
     const result = await rule([1], [2], {} as { 'audit.ban.execute': boolean });
     expect(result).toMatchObject({ status: 403 });
