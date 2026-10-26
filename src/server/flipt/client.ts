@@ -113,6 +113,27 @@ export enum FLIPT_FEATURE_FLAGS {
   // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_3 = 'kysely-hot-reads-3',
+  // Reads the model page's comment reads (packages/civitai-db-queries/src/hot-reads-4.db.ts) through
+  // Kysely-over-pg instead of the Prisma query engine: the visible top-level comment count
+  // (`getVisibleCommentCount`, `comment.getVisibleCountByModel`) and the first page of
+  // `comment.getAll` (the unpinned list sorted newest or oldest first, and the pinned block), each
+  // list with its author, reactions and model name in one statement where Prisma issues one query
+  // per relation. A cursor page or another sort stays on Prisma. DEFAULT-OFF, same semantics as
+  // KYSELY_HOT_READS_2 above: boolean only, evaluated with no entityId. Every statement reads base
+  // tables only, never a view.
+  //
+  // 🔴 Each read keeps its database: `getKyselyWithoutLag('commentModel', modelId)`, the twin of the
+  // `getDbWithoutLag('commentModel', modelId)` decision the Prisma reads make.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every model page comment count and comment list request.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_4 = 'kysely-hot-reads-4',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.

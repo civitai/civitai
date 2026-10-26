@@ -18,9 +18,25 @@ import {
 } from '~/server/services/commentsv2.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { ReviewFilter } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  getKyselyWithoutLag,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  countTopLevelCommentsViaKysely,
+  countTopLevelCommentsViaPrisma,
+  findPinnedCommentsViaPrisma,
+  findTopLevelCommentsViaPrisma,
+  listPinnedCommentsViaKysely,
+  listTopLevelCommentsViaKysely,
+  type KyselyCommentListSort,
+  type PinnedScope,
+  type TopLevelCommentsFilter,
+} from '~/server/services/hot-reads-4.reads';
 import { modelMetrics, userMetrics } from '~/server/metrics';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -60,15 +76,17 @@ async function getViewerExclusionLists(
 }
 
 /**
- * Where-clause shared by the comment list, the pinned list and the visible count so they can't drift.
- * Pass `lists` when building more than one where for the same viewer, so the lists are read once.
+ * The filter shared by the comment list, the pinned list and the visible count so they can't drift.
+ * Both the Prisma where (`topLevelCommentsWhere`) and the Kysely statements behind
+ * `kysely-hot-reads-4` are pure functions of it (hot-reads-4.reads.ts).
+ * Pass `lists` when building more than one filter for the same viewer, so the lists are read once.
  */
-async function getTopLevelCommentsWhere(
+async function getTopLevelCommentsFilter(
   { modelId, userId, hidden = false }: ModelCommentsFilterInput,
   user: SessionUser | undefined,
   { ownerSeesBlockers }: { ownerSeesBlockers: boolean },
   lists?: ViewerExclusionLists
-): Promise<Prisma.CommentWhereInput> {
+): Promise<TopLevelCommentsFilter> {
   const isMod = user?.isModerator ?? false;
 
   const { hiddenUsers, blockedByUsers, blockedUsers } =
@@ -85,19 +103,19 @@ async function getTopLevelCommentsWhere(
     });
     isContentOwner = model?.userId === user.id;
   }
-  // De-dupe + cap the exclusion list so the `userId: { notIn: [...] }` negation below stays
-  // under the Postgres bind-parameter limit (a heavily-blocked viewer's combined list can
-  // otherwise overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority —
-  // see boundExcludedUserIds.
+  // De-dupe + cap the exclusion list so the `userId NOT IN (...)` negation stays under the
+  // Postgres bind-parameter limit (a heavily-blocked viewer's combined list can otherwise
+  // overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority — see
+  // boundExcludedUserIds.
   const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
     isContentOwner,
   });
 
   return {
     modelId,
-    userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-    parentId: { equals: null },
-    tosViolation: !isMod ? false : undefined,
+    userId: userId ? userId : undefined,
+    excludedUserIds,
+    excludeTosViolations: !isMod,
     hidden,
   };
 }
@@ -115,24 +133,10 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const where = await getTopLevelCommentsWhere(filter, user, { ownerSeesBlockers: true });
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
 
   const db = await getDbWithoutLag('commentModel', filter.modelId);
-  const comments = await db.comment.findMany({
-    take: limit,
-    skip,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: { ...where, pinnedAt: null },
-    orderBy: {
-      createdAt:
-        sort === ReviewSort.Oldest ? 'asc' : sort === ReviewSort.Newest ? 'desc' : undefined,
-      reactions: sort === ReviewSort.MostLiked ? { _count: 'desc' } : undefined,
-      comments: sort === ReviewSort.MostComments ? { _count: 'desc' } : undefined,
-    },
-    select,
-  });
-
-  return comments;
+  return findTopLevelCommentsViaPrisma(db, topLevel, { limit, skip, cursor, sort }, select);
 };
 
 export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
@@ -146,14 +150,48 @@ export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
 }) => {
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const where = await getTopLevelCommentsWhere(filter, user, { ownerSeesBlockers: false });
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: false });
 
   const db = await getDbWithoutLag('commentModel', filter.modelId);
-  return db.comment.findMany({
-    where: { ...where, pinnedAt: { not: null } },
-    orderBy: { pinnedAt: 'desc' },
-    select,
-  });
+  return findPinnedCommentsViaPrisma(db, topLevel, select);
+};
+
+/**
+ * `getComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on), for a
+ * page `isKyselyCommentListPage` accepts: the first page, newest or oldest first. Same filter, same
+ * lag decision (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+ */
+export const getCommentsViaKysely = async ({
+  input: { limit = DEFAULT_PAGE_SIZE, page, filterBy, sort, ...filter },
+  user,
+}: {
+  input: GetAllCommentsSchema & { cursor?: undefined; sort: KyselyCommentListSort };
+  user?: SessionUser;
+}) => {
+  const skip = page ? (page - 1) * limit : undefined;
+
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
+
+  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  return listTopLevelCommentsViaKysely(db, topLevel, { limit, skip, sort });
+};
+
+/** `getPinnedComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on). */
+export const getPinnedCommentsViaKysely = async ({
+  input: { filterBy, ...filter },
+  user,
+}: {
+  input: GetAllCommentsSchema;
+  user?: SessionUser;
+}) => {
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: false });
+
+  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  return listPinnedCommentsViaKysely(db, topLevel);
 };
 
 /** How many top-level comments `getComments` + `getPinnedComments` can return to this viewer. */
@@ -164,22 +202,31 @@ export const getVisibleCommentCount = async ({
   input: GetCommentCountByModelInput;
   user?: SessionUser;
 }) => {
-  const db = await getDbWithoutLag('commentModel', input.modelId);
+  // `kysely-hot-reads-4` on: the same counts through Kysely, on the client the same lag decision
+  // picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+  let count: (filter: TopLevelCommentsFilter, pinned: PinnedScope) => Promise<number>;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
+    const db = await getKyselyWithoutLag('commentModel', input.modelId);
+    count = (filter, pinned) => countTopLevelCommentsViaKysely(db, filter, pinned);
+  } else {
+    const db = await getDbWithoutLag('commentModel', input.modelId);
+    count = (filter, pinned) => countTopLevelCommentsViaPrisma(db, filter, pinned);
+  }
   const lists = await getViewerExclusionLists(user);
-  const [unpinnedWhere, pinnedWhere] = await Promise.all([
-    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: true }, lists),
-    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: false }, lists),
+  const [unpinnedFilter, pinnedFilter] = await Promise.all([
+    getTopLevelCommentsFilter(input, user, { ownerSeesBlockers: true }, lists),
+    getTopLevelCommentsFilter(input, user, { ownerSeesBlockers: false }, lists),
   ]);
-  // The two wheres differ only when the viewer owns the model AND has a blocked-by list (the
+  // The two filters differ only when the viewer owns the model AND has a blocked-by list (the
   // unpinned list then lets the owner see blockers' comments; the pinned list does not). In
   // every other case they are identical, and `pinnedAt IS NULL` / `IS NOT NULL` partition the
-  // rows, so one COUNT over the shared where equals the sum of the two. Don't fold the
+  // rows, so one COUNT over the shared filter equals the sum of the two. Don't fold the
   // differing case into a single OR: it would bind both `notIn` lists in one statement, and
   // each is capped just under the bind-parameter limit on its own (boundExcludedUserIds).
-  if (isEqual(unpinnedWhere, pinnedWhere)) return db.comment.count({ where: unpinnedWhere });
+  if (isEqual(unpinnedFilter, pinnedFilter)) return count(unpinnedFilter, 'any');
   const [unpinned, pinned] = await Promise.all([
-    db.comment.count({ where: { ...unpinnedWhere, pinnedAt: null } }),
-    db.comment.count({ where: { ...pinnedWhere, pinnedAt: { not: null } } }),
+    count(unpinnedFilter, 'unpinned'),
+    count(pinnedFilter, 'pinned'),
   ]);
   return unpinned + pinned;
 };
