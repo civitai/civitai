@@ -343,6 +343,8 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 type CreateReportProps = CreateReportInput & {
   userId: number;
   isModerator?: boolean;
+  /** The reporter may not vote on tags yet (see `requiresEmailVerification`). */
+  emailVerificationRequired?: boolean;
   /**
    * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
    * needs its idempotency receipt committed atomically with the report, or a resend after a crash
@@ -391,6 +393,7 @@ export const createReport = async ({
   userId,
   id,
   isModerator,
+  emailVerificationRequired,
   type,
   tx: callerTx,
   ...data
@@ -545,14 +548,15 @@ export const createReport = async ({
 
           await Promise.all([
             createImageRatingRequest(),
-            addTagVotes({
-              userId,
-              type: type,
-              id,
-              tags: data.details.tags ?? [],
-              isModerator,
-              vote: 1,
-            }),
+            !emailVerificationRequired &&
+              addTagVotes({
+                userId,
+                type: type,
+                id,
+                tags: data.details.tags ?? [],
+                isModerator,
+                vote: 1,
+              }),
           ]);
 
           break;
