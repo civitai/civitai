@@ -10,6 +10,7 @@ import type {
 import {
   APP_COVER_HEIGHT,
   APP_COVER_MODEL,
+  APP_COVER_PROMPT_MAX,
   APP_COVER_WIDTH,
   COVER_LISTING_UNREADABLE,
   COVER_NO_APP,
@@ -24,7 +25,7 @@ import {
 } from '~/components/Apps/AppAssistant/coverArt';
 import { validateListingImage } from '~/server/schema/blocks/app-listing.schema';
 
-const LISTING: CoverListing = { listingId: 'apl_1', blockedReason: null };
+const LISTING: CoverListing = { listingId: 'apl_1', blockedReason: null, status: 'approved' };
 const IMAGE_URL = 'https://orchestration.example/blobs/cover.jpeg';
 
 function setup(overrides: Partial<CoverArtDeps> = {}) {
@@ -94,6 +95,38 @@ describe('generate_app_cover: the one recipe it can run', () => {
     expect(deps.attach).toHaveBeenCalledWith('apl_1', IMAGE_URL);
   });
 
+  // `setCover` puts an approved listing's cover on its draft revision and a draft's in place:
+  // neither is in the store until submitted, so the note must not say it is.
+  it('says the cover is on the draft for a listing not under review', async () => {
+    for (const status of ['approved', 'draft']) {
+      const { call } = setup({
+        listing: vi.fn(async () => ({ ...LISTING, status })),
+        attach: vi.fn(async () => ({ scanPending: false })),
+      });
+      expect(await call({ prompt: 'a calculator' })).toEqual({
+        attached: true,
+        note: 'The cover was added to your listing draft. Submit the listing for review to publish it in the store.',
+      });
+    }
+  });
+
+  it('says a listing under review shows the cover once approved, and when it is still being checked', async () => {
+    const { call } = setup({ listing: vi.fn(async () => ({ ...LISTING, status: 'pending' })) });
+    expect(await call({ prompt: 'a calculator' })).toEqual({
+      attached: true,
+      note: 'The cover is on your listing, which is under review: it shows in the store once the listing is approved. The image is still being checked.',
+    });
+  });
+
+  it('cuts the prompt to its cap', async () => {
+    const { deps, call } = setup();
+    await call({ prompt: 'x'.repeat(APP_COVER_PROMPT_MAX + 50) });
+    expect(deps.generate.mock.calls[0]![0].steps[0].input.prompt).toBe(
+      'x'.repeat(APP_COVER_PROMPT_MAX)
+    );
+    expect(APP_COVER_PROMPT_MAX).toBe(600);
+  });
+
   // `setCover` runs `validateListingImage` on what was generated, so the recipe must pass it.
   it('makes an image the cover check accepts', () => {
     expect(
@@ -137,6 +170,7 @@ function api(overrides: Partial<CoverListingApi> = {}) {
     getMyListingForApp: vi.fn(
       async (_: { slug: string }): Promise<ListingForCover> => ({
         appListingId: 'apl_1',
+        status: 'approved',
         editBlockedReason: null,
       })
     ),
@@ -162,6 +196,7 @@ function orchestration(overrides: Partial<CoverOrchestration> = {}): CoverOrches
       status: 'succeeded',
       steps: [{ output: { images: [{ url: IMAGE_URL, available: true }] } }],
     })),
+    cancelWorkflow: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -198,20 +233,35 @@ describe('the page’s cover: attached through the listing editor’s own proced
     const onAttached = vi.fn();
     await expect(
       browserDeps(listingApi, orchestration(), onAttached).attach('apl_1', IMAGE_URL)
-    ).rejects.toThrow(coverNotAttached(reason));
+    ).rejects.toThrow(coverNotAttached(reason, IMAGE_URL));
     expect(onAttached).not.toHaveBeenCalled();
+  });
+
+  // The image is already paid for: the error carries its URL so the user need not generate again.
+  it('names the generated image when it cannot be ingested', async () => {
+    const listingApi = api({
+      ingestAssetFromUrl: vi.fn(async () => Promise.reject(new Error('upload failed'))),
+    });
+    const attempt = browserDeps(listingApi).attach('apl_1', IMAGE_URL);
+    await expect(attempt).rejects.toThrow(IMAGE_URL);
+    await expect(attempt).rejects.toThrow(
+      `The cover was generated but could not be put on your listing: upload failed. The image is at ${IMAGE_URL}`
+    );
+    expect(listingApi.setCover).not.toHaveBeenCalled();
   });
 
   it('reads the user’s listing, no listing as none, and any other failure as unreadable', async () => {
     const ok = api({
       getMyListingForApp: vi.fn(async () => ({
         appListingId: 'apl_9',
+        status: 'pending',
         editBlockedReason: 'Under review.',
       })),
     });
     expect(await browserDeps(ok).listing('tip-calculator')).toEqual({
       listingId: 'apl_9',
       blockedReason: 'Under review.',
+      status: 'pending',
     });
     expect(ok.getMyListingForApp).toHaveBeenCalledWith({ slug: 'tip-calculator' });
 
@@ -235,6 +285,33 @@ describe('the page’s cover: attached through the listing editor’s own proced
     const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
     expect(await browserDeps(api(), client).generate(workflow)).toBe(IMAGE_URL);
     expect(client.submitWorkflow).toHaveBeenCalledWith(workflow);
+  });
+
+  it('cancels the run when the user stops the chat while it is generating', async () => {
+    const controller = new AbortController();
+    const stopped = new DOMException('Aborted', 'AbortError');
+    const client = orchestration({
+      waitForWorkflow: vi.fn(async () => {
+        controller.abort();
+        throw stopped;
+      }),
+    });
+    const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
+    await expect(browserDeps(api(), client).generate(workflow, controller.signal)).rejects.toBe(
+      stopped
+    );
+    expect(client.cancelWorkflow).toHaveBeenCalledWith('wf_1');
+  });
+
+  it('does not cancel a run that failed on its own', async () => {
+    const client = orchestration({
+      waitForWorkflow: vi.fn(async () => Promise.reject(new Error('network'))),
+    });
+    const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
+    await expect(
+      browserDeps(api(), client).generate(workflow, new AbortController().signal)
+    ).rejects.toThrow('network');
+    expect(client.cancelWorkflow).not.toHaveBeenCalled();
   });
 
   it('fails without a generated image, and attaches nothing', async () => {

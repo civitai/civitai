@@ -65,6 +65,8 @@ export interface CoverListing {
   listingId: string;
   /** Why the listing's media cannot be edited now, in the user's words; null when it can. */
   blockedReason: string | null;
+  /** The listing's lifecycle status (`draft|pending|approved|…`): where an attached cover lands. */
+  status: string;
 }
 
 export interface CoverArtDeps {
@@ -87,8 +89,17 @@ export const COVER_NO_LISTING =
 export const COVER_NO_PROMPT = 'Describe what the cover should show.';
 export const COVER_LISTING_UNREADABLE = 'Your app’s store listing could not be read right now.';
 export const COVER_NOT_GENERATED = 'The cover could not be generated, so nothing was attached.';
-export const coverNotAttached = (reason: string) =>
-  `The cover was generated but could not be put on your listing: ${reason}`;
+// Carries the image's URL: it is already paid for, so the user need not generate it again.
+export const coverNotAttached = (reason: string, url: string) =>
+  `The cover was generated but could not be put on your listing: ${reason.replace(/\.?$/, '.')} ` +
+  `The image is at ${url} — upload it as the cover from the listing editor rather than making a new one.`;
+// `setCover` writes an approved listing's cover to its draft revision and a draft's in place, so
+// neither shows in the store until it is submitted; a listing under review shows it once approved.
+export const COVER_ON_DRAFT =
+  'The cover was added to your listing draft. Submit the listing for review to publish it in the store.';
+export const COVER_ON_LISTING_IN_REVIEW =
+  'The cover is on your listing, which is under review: it shows in the store once the listing is approved.';
+export const COVER_SCAN_PENDING = 'The image is still being checked.';
 
 /**
  * `generate_app_cover`: a store cover for the open app's listing, from the one fixed recipe above,
@@ -111,11 +122,10 @@ export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool
     };
     const url = await deps.generate(workflow, signal);
     const attached = await deps.attach(listing.listingId, url);
+    const where = listing.status === 'pending' ? COVER_ON_LISTING_IN_REVIEW : COVER_ON_DRAFT;
     return {
       attached: true,
-      note: attached.scanPending
-        ? 'The cover is on the listing. It is still being checked, and shows in the store once that passes.'
-        : 'The cover is on the listing.',
+      note: attached.scanPending ? `${where} ${COVER_SCAN_PENDING}` : where,
     };
   };
 
@@ -146,6 +156,7 @@ export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool
 /** What `appListings.getMyListingForApp` answers that the cover reads. */
 export interface ListingForCover {
   appListingId: string;
+  status: string;
   editBlockedReason: string | null;
 }
 
@@ -153,16 +164,18 @@ export interface ListingForCover {
 export interface CoverListingApi {
   getMyListingForApp(input: { slug: string }): Promise<ListingForCover>;
   ingestAssetFromUrl(input: { url: string; kind: 'cover' }): Promise<{ imageId: number }>;
+  /** Never answers `pending`: `setListingCover` loads with `allowPending`, so it attaches or throws. */
   setCover(input: {
     listingId: string;
     imageId: number;
-  }): Promise<{ status: 'pending' } | { status: 'attached'; scanPending?: boolean }>;
+  }): Promise<{ status: string; scanPending?: boolean }>;
 }
 
 /** The part of `@civitai/sdk`'s orchestration client the cover runs on. */
 export interface CoverOrchestration {
   submitWorkflow(template: AppCoverWorkflow): Promise<CoverWorkflowResult>;
   waitForWorkflow(id: string, opts?: { signal?: AbortSignal }): Promise<CoverWorkflowResult>;
+  cancelWorkflow(id: string): Promise<unknown>;
 }
 
 export interface CoverWorkflowResult {
@@ -209,28 +222,40 @@ export function createBrowserCoverArtDeps({
         if (isNoListing(error)) return null;
         throw new Error(COVER_LISTING_UNREADABLE);
       }
-      return { listingId: listing.appListingId, blockedReason: listing.editBlockedReason };
+      return {
+        listingId: listing.appListingId,
+        blockedReason: listing.editBlockedReason,
+        status: listing.status,
+      };
     },
     async generate(workflow, signal) {
       const client = await orchestration();
       const submitted = await client.submitWorkflow(workflow);
       if (!submitted.id) throw new Error(COVER_NOT_GENERATED);
-      const done = await client.waitForWorkflow(submitted.id, { signal });
+      const id = submitted.id;
+      let done: CoverWorkflowResult;
+      try {
+        done = await client.waitForWorkflow(id, { signal });
+      } catch (error) {
+        // The user stopped the chat: stop the run too, as the chat's own jobs do, so it is not billed on.
+        if (signal?.aborted) void client.cancelWorkflow(id).catch(() => undefined);
+        throw error;
+      }
       const image = done.steps?.[0]?.output?.images?.[0];
       if (done.status !== 'succeeded' || !image?.url || image.available === false)
         throw new Error(COVER_NOT_GENERATED);
       return image.url;
     },
     async attach(listingId, url) {
-      let result: Awaited<ReturnType<CoverListingApi['setCover']>>;
+      let result: { scanPending?: boolean };
       try {
         const { imageId } = await api.ingestAssetFromUrl({ url, kind: 'cover' });
         result = await api.setCover({ listingId, imageId });
       } catch (error) {
-        throw new Error(coverNotAttached(messageOf(error)));
+        throw new Error(coverNotAttached(messageOf(error), url));
       }
       onAttached?.();
-      return { scanPending: result.status === 'pending' || !!result.scanPending };
+      return { scanPending: !!result.scanPending };
     },
   };
 }
