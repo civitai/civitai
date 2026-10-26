@@ -1,5 +1,6 @@
 import type { Jsonified } from '$lib/format';
 import type { AuthorHoldSummary } from '$lib/server/csam-holds.queries';
+import type { UserReportRow } from '$lib/server/user-reports.service';
 import type { ReportedContent, UserCard, UserCounts } from '$lib/server/user-lookup.service';
 
 /** The payload of `/api/csam-hold-author/[holdId]`. */
@@ -9,6 +10,8 @@ export type HoldAuthor = {
   card: Jsonified<UserCard> | null;
   counts: Jsonified<UserCounts> | null;
   reportedContent: ReportedContent[] | null;
+  /** The newest human-filed reports on the author's content. Null under the same gate as the card. */
+  recentReports: Jsonified<UserReportRow>[] | null;
   holds: {
     /** Every other hold of the author, counting the decided ones past `others`. */
     total: number;
