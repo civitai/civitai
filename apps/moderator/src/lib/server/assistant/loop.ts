@@ -165,10 +165,12 @@ export async function runTurn(input: {
         messages,
         tools: input.specs,
         toolChoice: last ? 'none' : 'auto',
-        // A lookup can outlast the deadline. The answer that reports what it did and did not check
-        // still gets its own short window, or the turn ends with nothing for the moderator to read.
-        signal:
-          last && abort.signal.aborted ? AbortSignal.timeout(FINAL_ANSWER_GRACE_MS) : abort.signal,
+        // The answer that reports what was and was not checked always gets at least a short window,
+        // even when the lookups before it ran up to or past the deadline; otherwise the turn ends
+        // with nothing for the moderator to read.
+        signal: last
+          ? AbortSignal.timeout(Math.max(deadline - now(), FINAL_ANSWER_GRACE_MS))
+          : abort.signal,
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;

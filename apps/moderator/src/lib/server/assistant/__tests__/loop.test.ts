@@ -173,6 +173,31 @@ describe('runTurn', () => {
       ).toEqual({ error: 'The lookup timed out.' });
     });
 
+    it('still answers when the last lookup ends just before the deadline', async () => {
+      vi.useFakeTimers();
+      try {
+        // The lookup ends at 236 s; the answer then takes 10 s, crossing the 240 s deadline.
+        const script = [reply(null, [call('slow', { ids: ['a'] })]), reply('found a')];
+        const complete = vi.fn(async (req: { signal?: AbortSignal }) => {
+          const next = script.shift()!;
+          if (script.length) return next;
+          await new Promise<void>((resolve, reject) => {
+            const t = setTimeout(resolve, 10_000);
+            req.signal?.addEventListener('abort', () => {
+              clearTimeout(t);
+              reject(new Error('aborted'));
+            });
+          });
+          return next;
+        });
+        const { run } = turn([], { tools: [slow(236_000, 300_000)], complete: complete as never });
+        await vi.advanceTimersByTimeAsync(247_000);
+        expect(await run).toMatchObject({ status: 'done', answer: 'found a' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('still answers when the turn deadline passes during a lookup', async () => {
       vi.useFakeTimers();
       try {
