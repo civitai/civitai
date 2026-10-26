@@ -571,7 +571,7 @@ export const createReport = async ({
 
           if (!castsNoTagVotes) {
             await Promise.all([
-              createImageRatingRequest(),
+              type === ReportEntity.Image && createImageRatingRequest(),
               addTagVotes({
                 userId,
                 type: type,
