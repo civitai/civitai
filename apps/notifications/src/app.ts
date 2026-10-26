@@ -222,7 +222,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       credential,
     };
     try {
-      const result = await sendSystemNotices(body, credential);
+      const result = await sendSystemNotices(body, { credential });
       logToAxiom({
         type: 'info',
         ...audit,
@@ -232,14 +232,18 @@ export async function buildServer(): Promise<FastifyInstance> {
       }).catch(() => undefined);
       return reply.send(result);
     } catch (err) {
-      const status = err instanceof NoticeError ? err.status : 500;
-      const extra = err instanceof NoticeError ? err.extra : {};
-      const message = (err as Error).message;
+      const known = err instanceof NoticeError;
+      const status = known ? err.status : 500;
+      const extra = known ? err.extra : {};
+      // Raw database errors go to the log only; the caller gets our own message.
+      const message = known ? err.message : 'Internal error';
+      const cause = known ? err.cause : err;
       logToAxiom({
         type: status >= 500 ? 'error' : 'warning',
         ...audit,
         status,
         message,
+        ...(cause ? { cause: (cause as Error).message } : {}),
         ...extra,
       }).catch(() => undefined);
       if (status >= 500) req.log.error({ err }, 'system notices failed');

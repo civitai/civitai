@@ -144,6 +144,17 @@ export function renderNoticeMessage(message: string, params: Record<string, stri
 }
 
 const noticeUserId = z.number().int().positive();
+const SITE_ORIGIN = 'https://civitai.com';
+// Browsers read "\" as "/" and drop tabs and newlines, so "/\evil.com" or "/\t/evil.com" leaves the
+// site; resolving against a fixed origin is the check that matches what the browser will do.
+function isSitePath(url: string): boolean {
+  if (!url.startsWith('/') || /[\\\s]/.test(url)) return false;
+  try {
+    return new URL(url, SITE_ORIGIN).origin === SITE_ORIGIN;
+  } catch {
+    return false;
+  }
+}
 const hasHtml = (s: string) => /[<>]/.test(s);
 
 export const sendSystemNoticesInput = z
@@ -156,12 +167,7 @@ export const sendSystemNoticesInput = z
       .min(1)
       .max(MAX_NOTICE_MESSAGE_LENGTH)
       .refine((s) => !hasHtml(s), 'message may not contain HTML'),
-    // A leading "//" is protocol-relative, i.e. off-site.
-    url: z
-      .string()
-      .max(1000)
-      .regex(/^\/(?!\/)/, 'url must be a site path starting with "/"')
-      .optional(),
+    url: z.string().max(1000).refine(isSitePath, 'url must be a path on this site').optional(),
     userIds: z.array(noticeUserId).optional(),
     recipients: z
       .array(

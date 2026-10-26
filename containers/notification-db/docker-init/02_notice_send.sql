@@ -26,15 +26,29 @@ CREATE TABLE IF NOT EXISTS "NoticeSend" (
     "lastAt" timestamp(3) without time zone NOT NULL DEFAULT now()
 );
 
--- One row per call; the rolling 24h recipient ceiling sums "queued" over mode = 'send'.
+-- One row per call; the rolling 24h recipient ceiling sums "queued" over mode = 'send'. A send's row
+-- is written before its queue writes, so a failure part-way still counts toward the ceiling.
 CREATE TABLE IF NOT EXISTS "NoticeSendCall" (
     id serial PRIMARY KEY,
     "sendId" text NOT NULL REFERENCES "NoticeSend"("sendId") ON DELETE CASCADE,
     mode text NOT NULL,
     requested integer NOT NULL,
     queued integer NOT NULL,
+    "sentBy" text NOT NULL,
+    reason text NOT NULL,
+    credential text NOT NULL,
+    "actorUserId" integer,
     "createdAt" timestamp(3) without time zone NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS "NoticeSendCall_createdAt_idx" ON "NoticeSendCall" ("createdAt");
 CREATE INDEX IF NOT EXISTS "NoticeSendCall_sendId_idx" ON "NoticeSendCall" ("sendId");
+
+-- Leases serialising notice calls: 'send:<sendId>' per send, 'global-send' across sends. Rows rather
+-- than advisory locks so they hold behind a transaction-mode pooler; "lockedUntil" frees a lease a
+-- crashed call never released.
+CREATE TABLE IF NOT EXISTS "NoticeSendLease" (
+    name text PRIMARY KEY,
+    holder text NOT NULL,
+    "lockedUntil" timestamp(3) without time zone NOT NULL
+);

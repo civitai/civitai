@@ -16,7 +16,8 @@ const CEILING = 10;
 const h = vi.hoisted(() => ({
   notif: undefined as unknown as PGlite,
   main: undefined as unknown as PGlite,
-  busyLock: undefined as unknown,
+  failOn: undefined as string | undefined,
+  beforePendingInsert: undefined as undefined | (() => Promise<void>),
   failPendingInsertAfter: Infinity,
   pendingInserts: 0,
 }));
@@ -25,22 +26,23 @@ vi.mock('./clients/db', async (importOriginal) => {
   const actual = await importOriginal<typeof Db>();
   const run = async (db: () => PGlite, sql: string, params?: unknown[]) => {
     if (sql.includes('INSERT INTO "PendingNotification"')) {
+      const hook = h.beforePendingInsert;
+      h.beforePendingInsert = undefined;
+      await hook?.();
       if (h.pendingInserts >= h.failPendingInsertAfter) throw new Error('insert boom');
       h.pendingInserts++;
     }
-    // PGlite is one session, so advisory locks are re-entrant here; a busy lock is the one faked step.
-    if (sql.includes('pg_try_advisory_lock') && params?.includes(h.busyLock))
-      return [{ locked: false }];
-    return (await db().query(sql, params as unknown[])).rows;
+    if (h.failOn && sql.includes(h.failOn)) throw new Error('audit boom');
+    const { rows } = await db().query(sql, params as unknown[]);
+    // Transaction-mode pooler: the next statement may run on another server connection, so no
+    // session state (advisory locks, SET, temp tables) survives from one statement to the next.
+    await db().exec('DISCARD ALL');
+    return rows;
   };
   const pool = (db: () => PGlite) => ({
     cancellableQuery: async (sql: string, params?: unknown[]) => ({
       result: () => run(db, sql, params),
       cancel: async () => undefined,
-    }),
-    connect: async () => ({
-      query: async (sql: string, params?: unknown[]) => ({ rows: await run(db, sql, params) }),
-      release: () => undefined,
     }),
   });
   return {
@@ -92,13 +94,14 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  h.busyLock = undefined;
+  h.failOn = undefined;
+  h.beforePendingInsert = undefined;
   h.failPendingInsertAfter = Infinity;
   h.pendingInserts = 0;
   await h.notif.exec(`
-    TRUNCATE "PendingNotification", "UserNotification", "Notification", "NoticeSendCall", "NoticeSend"
+    TRUNCATE "PendingNotification", "UserNotification", "Notification", "NoticeSendCall", "NoticeSend",
+      "NoticeSendLease"
     RESTART IDENTITY CASCADE;
-    SELECT pg_advisory_unlock_all();
   `);
 });
 
@@ -132,10 +135,15 @@ async function pending() {
   ).rows;
 }
 
-async function advisoryLocks() {
-  const r = await h.notif.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`
+async function holdLease(name: string, until: string) {
+  await h.notif.query(
+    `INSERT INTO "NoticeSendLease" (name, holder, "lockedUntil") VALUES ($1, 'another-call', now() + $2::interval)`,
+    [name, until]
   );
+}
+
+async function leases() {
+  const r = await h.notif.query<{ n: number }>(`SELECT count(*)::int AS n FROM "NoticeSendLease"`);
   return r.rows[0].n;
 }
 
@@ -264,7 +272,7 @@ describe('idempotency', () => {
   });
 
   it('refuses a concurrent call on the same sendId (409), dry runs included', async () => {
-    h.busyLock = base.sendId;
+    await holdLease('send:test-send-1', '10 minutes');
     expect((await post({ ...base, userIds: [1] })).statusCode).toBe(409);
     expect((await post({ ...base, mode: 'send', userIds: [1] })).statusCode).toBe(409);
     expect(
@@ -273,10 +281,40 @@ describe('idempotency', () => {
   });
 
   it('runs one send at a time across sendIds (409), while dry runs still proceed', async () => {
-    h.busyLock = 74_202;
+    await holdLease('global-send', '10 minutes');
     expect((await post({ ...base, mode: 'send', userIds: [1] })).statusCode).toBe(409);
     expect((await post({ ...base, userIds: [1] })).statusCode).toBe(200);
     expect(await pending()).toEqual([]);
+  });
+
+  it('holds the lease across statements on different pooled connections', async () => {
+    let concurrent: number | undefined;
+    h.beforePendingInsert = async () => {
+      concurrent = (await post({ ...base, userIds: [1] })).statusCode;
+    };
+    const res = await post({ ...base, mode: 'send', userIds: [1] });
+    expect(res.statusCode).toBe(200);
+    expect(concurrent).toBe(409);
+    expect(await leases()).toBe(0);
+  });
+
+  it('takes over an expired lease, so a crashed call cannot block the send forever', async () => {
+    await holdLease('send:test-send-1', '-1 minute');
+    await holdLease('global-send', '-1 minute');
+    const res = await post({ ...base, mode: 'send', userIds: [1] });
+    expect(res.statusCode).toBe(200);
+    expect(await leases()).toBe(0);
+  });
+
+  it('releases only its own lease, never one another call took over after expiry', async () => {
+    h.beforePendingInsert = async () => {
+      await h.notif.query(
+        `UPDATE "NoticeSendLease" SET holder = 'another-call' WHERE name = 'global-send'`
+      );
+    };
+    await post({ ...base, mode: 'send', userIds: [1] });
+    const left = await h.notif.query<{ name: string }>(`SELECT name FROM "NoticeSendLease"`);
+    expect(left.rows).toEqual([{ name: 'global-send' }]);
   });
 });
 
@@ -291,7 +329,8 @@ describe('failures', () => {
     });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toMatchObject({ written: 0 });
-    expect(await advisoryLocks()).toBe(0);
+    expect(res.json().error).not.toContain('insert boom');
+    expect(await leases()).toBe(0);
 
     h.failPendingInsertAfter = Infinity;
     const retry = await post({
@@ -302,6 +341,23 @@ describe('failures', () => {
     });
     expect(retry.statusCode).toBe(200);
     expect(retry.json().counts.queued).toBe(1);
+  });
+});
+
+describe('ceiling accounting when the audit write fails', () => {
+  it('still counts queued recipients toward the ceiling and reports the failure', async () => {
+    h.failOn = 'UPDATE "NoticeSend" SET';
+    const res = await post({ ...base, mode: 'send', userIds: [1, 2, 3, 4, 6, 7] });
+    expect(res.statusCode).toBe(500);
+    expect((await pending())[0].users).toHaveLength(6);
+    h.failOn = undefined;
+    const over = await post({
+      ...base,
+      sendId: 'test-send-2',
+      mode: 'send',
+      userIds: [1, 2, 3, 4, 6],
+    });
+    expect(over.statusCode).toBe(429);
   });
 });
 
@@ -321,6 +377,9 @@ describe('validation (whole call fails, nothing written)', () => {
     ['duplicate userIds', { userIds: [1, 1] }],
     ['url not a site path', { url: 'https://evil.example', userIds: [1] }],
     ['protocol-relative url', { url: '//evil.example', userIds: [1] }],
+    ['backslash url', { url: '/\\evil.example', userIds: [1] }],
+    ['backslash-slash url', { url: '/\\/evil.example', userIds: [1] }],
+    ['tab-smuggled url', { url: '/\t/evil.example', userIds: [1] }],
     ['type outside the allowlist', { type: 'tos-violation', userIds: [1] }],
     ['HTML in message', { message: '<b>hi</b>', userIds: [1] }],
     ['missing sentBy', { sentBy: undefined, userIds: [1] }],
@@ -331,6 +390,11 @@ describe('validation (whole call fails, nothing written)', () => {
     const res = await post({ ...base, mode: 'send', ...override });
     expect(res.statusCode).toBe(400);
     expect(await pending()).toEqual([]);
+  });
+
+  it('accepts a site path with a query and fragment', async () => {
+    const res = await post({ ...base, url: '/models/1?tab=reviews#top', userIds: [1] });
+    expect(res.statusCode).toBe(200);
   });
 
   it('names every failing recipient', async () => {
@@ -392,6 +456,34 @@ describe('token scope', () => {
   });
 });
 
+describe('token scope with the notices token unset', () => {
+  let closedApp: FastifyInstance;
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.stubEnv('NOTIFICATIONS_NOTICES_TOKEN', '');
+    const { buildServer } = await import('../../app');
+    closedApp = await buildServer();
+    await closedApp.ready();
+    vi.stubEnv('NOTIFICATIONS_NOTICES_TOKEN', NOTICES_TOKEN);
+  }, 60_000);
+  afterAll(() => closedApp.close());
+
+  it.each([
+    ['an empty x-webhook-token', { 'x-webhook-token': '' }],
+    ['an empty Bearer', { authorization: 'Bearer ' }],
+    ['no header', {}],
+    ['the producer token', { authorization: `Bearer ${PRODUCER_TOKEN}` }],
+  ])('refuses %s', async (_, headers) => {
+    const res = await closedApp.inject({
+      method: 'POST',
+      url: '/notifications/notices',
+      headers,
+      payload: { ...base, userIds: [1] },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe('rolling 24h ceiling', () => {
   it('refuses a send that would pass the ceiling (429 with the remaining allowance); dry runs do not count', async () => {
     await post({ ...base, userIds: [1, 2, 3, 4, 6, 7, 8] });
@@ -449,6 +541,22 @@ describe('audit record', () => {
       dryRuns: 1,
       sends: 2,
     });
+  });
+
+  it('records who made each call, and keeps the first caller on the send', async () => {
+    await post({ ...base, userIds: [1] });
+    await post({ ...base, mode: 'send', sentBy: 'second', reason: 'hq:other', userIds: [1] });
+    const calls = (
+      await h.notif.query<{ mode: string; sentBy: string; reason: string; credential: string }>(
+        `SELECT mode, "sentBy", reason, credential FROM "NoticeSendCall" ORDER BY id`
+      )
+    ).rows;
+    expect(calls).toEqual([
+      { mode: 'dry-run', sentBy: 'test', reason: 'hq:test', credential: 'notices-token' },
+      { mode: 'send', sentBy: 'second', reason: 'hq:other', credential: 'notices-token' },
+    ]);
+    const send = await post({ sendId: base.sendId }, { url: '/notifications/notices/get' });
+    expect(send.json()).toMatchObject({ sentBy: 'test', reason: 'hq:test' });
   });
 
   it('404s an unknown sendId', async () => {

@@ -1,8 +1,8 @@
 // System notices: one free-text on-site notice to a list of users, with a dry run, per-user dedupe,
 // and an audit row per send (NoticeSend / NoticeSendCall, containers/notification-db/docker-init/02).
 
-import { createHash } from 'node:crypto';
-import type { PoolClient, QueryResultRow } from 'pg';
+import { createHash, randomUUID } from 'node:crypto';
+import type { QueryResultRow } from 'pg';
 import { chunk } from 'lodash-es';
 import {
   NotificationCategory,
@@ -15,6 +15,7 @@ import {
   type SystemNoticeType,
 } from '@civitai/notifications';
 import { mainDbRead, notifDbWrite } from './clients/db';
+import { logAxiomError } from './clients/axiom';
 import { createNotificationsBulk } from './operations';
 import { noticesChunkPauseMs, noticesDailyRecipientCeiling } from '../../env';
 
@@ -23,9 +24,9 @@ const categoryByType: Record<SystemNoticeType, NotificationCategory> = {
   'system-announcement': NotificationCategory.System,
 };
 
-// Two-int advisory keys, namespaced so they cannot collide with any other lock on the notif DB.
-const SEND_ID_LOCK_NS = 74_201;
-const GLOBAL_SEND_LOCK: [number, number] = [74_202, 0];
+// Longer than the slowest call (50,000 per-user rows, paced); only reached if a call dies holding it.
+const LEASE_TTL = '15 minutes';
+const GLOBAL_SEND_LEASE = 'global-send';
 const WRITE_CHUNK = 1000;
 const DROPPED_ID_CAP = 1000;
 const SAMPLE_COUNT = 5;
@@ -34,14 +35,15 @@ export class NoticeError extends Error {
   constructor(
     readonly status: number,
     message: string,
-    readonly extra: Record<string, unknown> = {}
+    readonly extra: Record<string, unknown> = {},
+    options?: { cause?: unknown }
   ) {
-    super(message);
+    super(message, options);
     this.name = 'NoticeError';
   }
 }
 
-export type NoticeCredential = 'notices-token';
+export type NoticeCaller = { credential: 'notices-token'; actorUserId?: number };
 
 const dedupeKeyFor = (sendId: string) => `notice:${sendId}`;
 const userKeyFor = (sendId: string, userId: number) => `notice:${sendId}:${userId}`;
@@ -52,35 +54,38 @@ function contentHash(input: Pick<SendSystemNoticesParsed, 'type' | 'message' | '
     .digest('hex');
 }
 
-async function rows<T>(client: PoolClient, sql: string, params: unknown[] = []): Promise<T[]> {
-  return (await client.query(sql, params)).rows as T[];
-}
-
-async function tryLock(client: PoolClient, key: [number, string | number]) {
-  const sql =
-    typeof key[1] === 'string'
-      ? `SELECT pg_try_advisory_lock($1, hashtext($2)) AS locked`
-      : `SELECT pg_try_advisory_lock($1, $2) AS locked`;
-  const [row] = await rows<{ locked: boolean }>(client, sql, key);
-  return row?.locked === true;
-}
-
-async function unlock(client: PoolClient, key: [number, string | number]) {
-  const sql =
-    typeof key[1] === 'string'
-      ? `SELECT pg_advisory_unlock($1, hashtext($2))`
-      : `SELECT pg_advisory_unlock($1, $2)`;
-  await client.query(sql, key);
+// Every notif query goes through the write pool (the primary) as a standalone statement, so nothing
+// here depends on keeping one server connection, which a transaction-mode pooler does not give.
+async function notifRows<T extends QueryResultRow>(
+  sql: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  return (await notifDbWrite().cancellableQuery<T>(sql, params)).result();
 }
 
 async function mainRows<T extends QueryResultRow>(sql: string, params: unknown[]): Promise<T[]> {
   return (await mainDbRead().cancellableQuery<T>(sql, params)).result();
 }
 
+async function acquireLease(name: string, holder: string): Promise<boolean> {
+  const taken = await notifRows<{ name: string }>(
+    `INSERT INTO "NoticeSendLease" (name, holder, "lockedUntil")
+     VALUES ($1, $2, now() + interval '${LEASE_TTL}')
+     ON CONFLICT (name) DO UPDATE SET holder = excluded.holder, "lockedUntil" = excluded."lockedUntil"
+       WHERE "NoticeSendLease"."lockedUntil" < now()
+     RETURNING name`,
+    [name, holder]
+  );
+  return taken.length === 1;
+}
+
+async function releaseLease(name: string, holder: string) {
+  await notifRows(`DELETE FROM "NoticeSendLease" WHERE name = $1 AND holder = $2`, [name, holder]);
+}
+
 type Buckets = Record<NoticeBucket, number[]>;
 
 async function bucketRecipients(
-  client: PoolClient,
   input: SendSystemNoticesParsed,
   userIds: number[]
 ): Promise<Buckets> {
@@ -101,13 +106,11 @@ async function bucketRecipients(
     ).map((r) => r.userId)
   );
 
-  // Read on the primary (the locked client), so replica lag cannot hide an earlier call's rows. A
-  // per-user Notification with no UserNotification yet is the worker mid-drain: already delivered.
+  // On the primary, so replica lag cannot hide an earlier call's rows.
   const dedupeKey = dedupeKeyFor(input.sendId);
   const sent = new Set(
     (
-      await rows<{ userId: number }>(
-        client,
+      await notifRows<{ userId: number }>(
         `SELECT "userId" FROM "UserNotification" WHERE "dedupeKey" = $1 AND "userId" = ANY($2::int[])
          UNION
          SELECT unnest(users) FROM "PendingNotification" WHERE "dedupeKey" = $1
@@ -178,79 +181,95 @@ function samplesFor(input: SendSystemNoticesParsed, queued: number[]) {
   }));
 }
 
-async function upsertAudit(
-  client: PoolClient,
+// NoticeSend keeps its first caller; each call's caller is on its NoticeSendCall row.
+async function ensureSendRecord(
   input: SendSystemNoticesParsed,
   hash: string,
-  credential: NoticeCredential
+  caller: NoticeCaller
 ) {
-  const [existing] = await rows<{ contentHash: string }>(
-    client,
+  await notifRows(
+    `INSERT INTO "NoticeSend"
+       ("sendId", type, message, url, "contentHash", "sentBy", "actorUserId", reason, credential)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT ("sendId") DO NOTHING`,
+    [
+      input.sendId,
+      input.type,
+      input.message,
+      input.url ?? null,
+      hash,
+      input.sentBy,
+      caller.actorUserId ?? null,
+      input.reason,
+      caller.credential,
+    ]
+  );
+  const [existing] = await notifRows<{ contentHash: string }>(
     `SELECT "contentHash" FROM "NoticeSend" WHERE "sendId" = $1`,
     [input.sendId]
   );
-  if (existing && existing.contentHash !== hash) {
+  if (existing?.contentHash !== hash) {
     throw new NoticeError(
       409,
       'sendId was already used with a different type, message or url; pick a new sendId'
     );
   }
-  if (!existing) {
-    await client.query(
-      `INSERT INTO "NoticeSend" ("sendId", type, message, url, "contentHash", "sentBy", reason, credential)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        input.sendId,
-        input.type,
-        input.message,
-        input.url ?? null,
-        hash,
-        input.sentBy,
-        input.reason,
-        credential,
-      ]
-    );
-  }
 }
 
 async function recordCall(
-  client: PoolClient,
+  input: SendSystemNoticesParsed,
+  caller: NoticeCaller,
+  requested: number,
+  queued: number
+) {
+  await notifRows(
+    `INSERT INTO "NoticeSendCall"
+       ("sendId", mode, requested, queued, "sentBy", reason, credential, "actorUserId")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      input.sendId,
+      input.mode,
+      requested,
+      queued,
+      input.sentBy,
+      input.reason,
+      caller.credential,
+      caller.actorUserId ?? null,
+    ]
+  );
+}
+
+// Counts sum real sends only; a dry run bumps dryRuns and nothing else.
+async function addToSendTotals(
   input: SendSystemNoticesParsed,
   requested: number,
   counts: Record<NoticeBucket, number>
 ) {
   const isSend = input.mode === 'send';
-  await client.query(
-    `INSERT INTO "NoticeSendCall" ("sendId", mode, requested, queued) VALUES ($1, $2, $3, $4)`,
-    [input.sendId, input.mode, requested, counts.queued]
-  );
-  // Counts sum real sends only; a dry run bumps dryRuns and nothing else.
-  await client.query(
+  const n = (value: number) => (isSend ? value : 0);
+  await notifRows(
     `UPDATE "NoticeSend" SET
        requested = requested + $2, queued = queued + $3, "optedOut" = "optedOut" + $4,
        "unknownUser" = "unknownUser" + $5, "inactiveUser" = "inactiveUser" + $6,
        "alreadySent" = "alreadySent" + $7,
-       "dryRuns" = "dryRuns" + $8, sends = sends + $9, "sentBy" = $10, reason = $11, "lastAt" = now()
+       "dryRuns" = "dryRuns" + $8, sends = sends + $9, "lastAt" = now()
      WHERE "sendId" = $1`,
     [
       input.sendId,
-      isSend ? requested : 0,
-      isSend ? counts.queued : 0,
-      isSend ? counts.optedOut : 0,
-      isSend ? counts.unknownUser : 0,
-      isSend ? counts.inactiveUser : 0,
-      isSend ? counts.alreadySent : 0,
+      n(requested),
+      n(counts.queued),
+      n(counts.optedOut),
+      n(counts.unknownUser),
+      n(counts.inactiveUser),
+      n(counts.alreadySent),
       isSend ? 0 : 1,
-      isSend ? 1 : 0,
-      input.sentBy,
-      input.reason,
+      n(1),
     ]
   );
 }
 
-async function remainingAllowance(client: PoolClient): Promise<number> {
-  const [row] = await rows<{ used: number }>(
-    client,
+async function remainingAllowance(): Promise<number> {
+  const [row] = await notifRows<{ used: number }>(
     `SELECT COALESCE(SUM(queued), 0)::int AS used FROM "NoticeSendCall"
       WHERE mode = 'send' AND "createdAt" > now() - interval '24 hours'`
   );
@@ -261,63 +280,63 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function sendSystemNotices(
   input: SendSystemNoticesParsed,
-  credential: NoticeCredential
+  caller: NoticeCaller
 ): Promise<SendSystemNoticesResult> {
   const userIds = input.userIds ?? input.recipients!.map((r) => r.userId);
-  const hash = contentHash(input);
   const isSend = input.mode === 'send';
+  const holder = randomUUID();
+  const held: string[] = [];
 
-  const client = (await notifDbWrite().connect()) as PoolClient;
-  const held: Array<[number, string | number]> = [];
   try {
-    const sendLock: [number, string] = [SEND_ID_LOCK_NS, input.sendId];
-    if (!(await tryLock(client, sendLock)))
+    const sendLease = `send:${input.sendId}`;
+    if (!(await acquireLease(sendLease, holder)))
       throw new NoticeError(409, 'Another call for this sendId is in progress');
-    held.push(sendLock);
+    held.push(sendLease);
     if (isSend) {
-      if (!(await tryLock(client, GLOBAL_SEND_LOCK)))
+      if (!(await acquireLease(GLOBAL_SEND_LEASE, holder)))
         throw new NoticeError(409, 'Another notice send is in progress; retry shortly');
-      held.push(GLOBAL_SEND_LOCK);
+      held.push(GLOBAL_SEND_LEASE);
     }
 
-    await upsertAudit(client, input, hash, credential);
-    const buckets = await bucketRecipients(client, input, userIds);
+    await ensureSendRecord(input, contentHash(input), caller);
+    const buckets = await bucketRecipients(input, userIds);
+    const counts = countsOf(buckets);
 
     if (isSend) {
-      const remaining = await remainingAllowance(client);
-      if (buckets.queued.length > remaining) {
+      const remaining = await remainingAllowance();
+      if (counts.queued > remaining) {
         throw new NoticeError(
           429,
           `Rolling 24h notice ceiling (${noticesDailyRecipientCeiling} recipients) would be exceeded`,
-          { remaining, wouldQueue: buckets.queued.length }
+          { remaining, wouldQueue: counts.queued }
         );
       }
     }
 
-    let written = 0;
+    // Recorded before the writes, at the full planned count: a send that fails part-way still counts
+    // in full toward the ceiling.
+    await recordCall(input, caller, userIds.length, counts.queued);
+
     if (isSend) {
+      let written = 0;
       const batches = buildRows(input, buckets.queued);
       try {
         for (const [i, batch] of batches.entries()) {
           if (i > 0 && noticesChunkPauseMs) await pause(noticesChunkPauseMs);
           await createNotificationsBulk(batch);
-          written += batch.reduce((n, r) => n + r.users.length, 0);
+          written += batch.reduce((total, row) => total + row.users.length, 0);
         }
       } catch (err) {
-        const partial = { ...countsOf(buckets), queued: written };
-        await recordCall(client, input, userIds.length, partial).catch(() => undefined);
         throw new NoticeError(
           500,
-          `Write failed after ${written} recipients: ${(err as Error).message}`,
-          {
-            written,
-          }
+          `Write failed with at least ${written} recipients queued; re-run the same call to finish`,
+          { written },
+          { cause: err }
         );
       }
     }
 
-    const counts = countsOf(buckets);
-    await recordCall(client, input, userIds.length, counts);
+    await addToSendTotals(input, userIds.length, counts);
 
     const dropped: SendSystemNoticesResult['dropped'] = {};
     for (const bucket of ['optedOut', 'unknownUser', 'inactiveUser', 'alreadySent'] as const) {
@@ -332,15 +351,8 @@ export async function sendSystemNotices(
       dropped,
     };
   } finally {
-    let unlockFailed = false;
-    for (const key of held.reverse()) {
-      await unlock(client, key).catch(() => {
-        unlockFailed = true;
-      });
-    }
-    // Session advisory locks outlive the checkout: a connection we could not unlock is destroyed, not
-    // returned to the pool still holding them.
-    client.release(unlockFailed);
+    // A lease that fails to release here expires after LEASE_TTL.
+    for (const name of held.reverse()) await releaseLease(name, holder).catch(logAxiomError);
   }
 }
 
@@ -355,11 +367,9 @@ function countsOf(buckets: Buckets): Record<NoticeBucket, number> {
 }
 
 export async function getSystemNoticeSend(sendId: string): Promise<SystemNoticeSendRecord | null> {
-  const [row] = await (
-    await notifDbWrite().cancellableQuery<SystemNoticeSendRecord>(
-      `SELECT * FROM "NoticeSend" WHERE "sendId" = $1`,
-      [sendId]
-    )
-  ).result();
+  const [row] = await notifRows<SystemNoticeSendRecord>(
+    `SELECT * FROM "NoticeSend" WHERE "sendId" = $1`,
+    [sendId]
+  );
   return row ?? null;
 }
