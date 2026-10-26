@@ -1,3 +1,5 @@
+import type { ModelRuleReference } from '@civitai/moderation/model-rules';
+
 /** One recorded state of a Model rule, as the history drawer shows it. */
 export type ModelRuleVersionView = {
   id: number;
@@ -6,7 +8,7 @@ export type ModelRuleVersionView = {
   description: string;
   aliases: string[];
   category?: string;
-  references: { url: string; label?: string }[];
+  references: ModelRuleReference[];
   note: string;
   enabled: boolean;
   needsAttention: boolean;
@@ -20,7 +22,7 @@ export type RuleStateView = {
   description: string;
   aliases: readonly string[];
   category?: string;
-  references?: readonly { url: string; label?: string }[];
+  references?: readonly ModelRuleReference[];
   note: string;
   enabled: boolean;
   needsAttention?: boolean;

@@ -97,8 +97,12 @@ const CATEGORY_VALUES = MODEL_RULE_CATEGORIES.map((c) => c.value) as [
 
 export const modelRuleCategoryField = z.enum(CATEGORY_VALUES);
 
-export const modelRuleCategoryLabel = (category: ModelRuleCategory) =>
-  MODEL_RULE_CATEGORIES.find((c) => c.value === category)?.label ?? category;
+export const isModelRuleCategory = (value: unknown): value is ModelRuleCategory =>
+  MODEL_RULE_CATEGORIES.some((c) => c.value === value);
+
+/** Empty for no category; a value this build does not know is shown as it is. */
+export const modelRuleCategoryLabel = (category: string | null | undefined) =>
+  category ? (MODEL_RULE_CATEGORIES.find((c) => c.value === category)?.label ?? category) : '';
 
 const isHttpUrl = (value: string) => {
   try {
@@ -109,27 +113,49 @@ const isHttpUrl = (value: string) => {
   }
 };
 
-export const modelRuleReferenceField = z.object({
-  url: z
-    .string()
-    .trim()
-    .max(MODEL_RULE_LIMITS.referenceUrlChars, 'A reference link is too long.')
-    .refine(isHttpUrl, 'A reference link must be a valid http or https URL.'),
-  label: z
-    .string()
-    .trim()
-    .max(MODEL_RULE_LIMITS.referenceLabelChars, 'A reference label is too long.')
-    .optional()
-    .transform((label) => label || undefined),
-});
-export type ModelRuleReference = z.infer<typeof modelRuleReferenceField>;
+export type ModelRuleReference = { url: string; label?: string };
+
+export const modelRuleReferenceField = z
+  .object({
+    url: z
+      .string()
+      .trim()
+      .max(MODEL_RULE_LIMITS.referenceUrlChars, 'A reference link is too long.')
+      .refine(isHttpUrl, 'A reference link must be a valid http or https URL.'),
+    label: z
+      .string()
+      .trim()
+      .max(MODEL_RULE_LIMITS.referenceLabelChars, 'A reference label is too long.')
+      .optional(),
+  })
+  .transform(({ url, label }): ModelRuleReference => (label ? { url, label } : { url }));
 
 export const modelRuleReferencesField = z
   .array(modelRuleReferenceField)
   .max(
     MODEL_RULE_LIMITS.referencesPerRule,
     `At most ${MODEL_RULE_LIMITS.referencesPerRule} references per rule.`
+  )
+  .refine(
+    (references) => new Set(references.map((r) => r.url)).size === references.length,
+    'Each reference link can only be listed once.'
   );
+
+const ruleExtrasSchema = z.object({
+  category: modelRuleCategoryField.optional().catch(undefined),
+  references: tolerantList(modelRuleReferenceField),
+});
+
+/** The category and references of a stored definition, dropping whatever does not parse. */
+export function readModelRuleExtras(definition: unknown): {
+  category?: ModelRuleCategory;
+  references: ModelRuleReference[];
+} {
+  const parsed = ruleExtrasSchema.safeParse(definition ?? {});
+  return parsed.success
+    ? { ...(parsed.data.category ? { category: parsed.data.category } : {}), references: parsed.data.references }
+    : { references: [] };
+}
 
 // `ModerationRule.definition` of a Model rule. The moderator app writes it and the main app reads
 // it; a row failing this schema is skipped by the matcher, so the two sides must share it rather

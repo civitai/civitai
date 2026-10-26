@@ -44,6 +44,8 @@ describe('modelRuleFormSchema', () => {
     { category: 'nope' },
     { references: JSON.stringify([{ url: 'mailto:a@example.com' }]) },
     { references: '[' },
+    { references: [{ url: ' ', label: 'Orphan label' }] },
+    { references: [{ url: 'https://example.com/a' }, { url: 'https://example.com/a ' }] },
   ])('rejects %j', (extra) => {
     expect(modelRuleFormSchema.safeParse({ subject: 'S', ...extra }).success).toBe(false);
   });

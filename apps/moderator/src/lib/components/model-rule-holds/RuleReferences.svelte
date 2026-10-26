@@ -17,7 +17,7 @@
 {#if category}
   <MetaChip>{modelRuleCategoryLabel(category)}</MetaChip>
 {/if}
-{#each references as reference (reference.url)}
+{#each references as reference, i (i)}
   <a href={reference.url} target="_blank" rel="noopener noreferrer" class={LINK_CLASS}>
     {referenceText(reference)}
   </a>

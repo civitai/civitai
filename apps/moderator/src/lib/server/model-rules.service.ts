@@ -3,6 +3,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import {
   MODEL_RULES_HOLD_LABEL,
+  readModelRuleExtras,
   type ModelRuleCategory,
   type ModelRuleReference,
 } from '@civitai/moderation/model-rules';
@@ -87,8 +88,7 @@ export async function listModelRules(): Promise<ModelRuleView[]> {
     subject: semantic.subject,
     description: semantic.description,
     aliases: semantic.aliases ?? [],
-    category: semantic.category,
-    references: semantic.references ?? [],
+    ...readModelRuleExtras(semantic),
     needsAttention: !!semantic.needsAttention,
     enabled: row.enabled,
     note: row.reason ?? '',
@@ -214,8 +214,7 @@ const viewOf = (definition: unknown, reason: string | null, enabled: boolean) =>
     subject: semantic.subject,
     description: semantic.description,
     aliases: semantic.aliases ?? [],
-    category: semantic.category,
-    references: semantic.references ?? [],
+    ...readModelRuleExtras(semantic),
     note: reason ?? '',
     enabled,
     needsAttention: !!semantic.needsAttention,

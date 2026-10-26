@@ -40,8 +40,10 @@
               </MetaChip>
               <MetaChip>{modeLabel(entry.mode)}</MetaChip>
               {#each entry.rules as rule, i (rule.id)}
-                <span>{rule.subject}{i < entry.rules.length - 1 ? ',' : ''}</span>
-                <RuleReferences category={rule.category} references={rule.references} />
+                <span class="inline-flex flex-wrap items-center gap-x-1.5">
+                  <span>{rule.subject}{i < entry.rules.length - 1 ? ',' : ''}</span>
+                  <RuleReferences category={rule.category} references={rule.references} />
+                </span>
               {:else}
                 <span>no rule stored</span>
               {/each}

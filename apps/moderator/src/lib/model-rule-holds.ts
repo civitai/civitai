@@ -1,3 +1,5 @@
+import type { ModelRuleReference } from '@civitai/moderation/model-rules';
+
 export const MODEL_RULE_HOLD_STATUSES = ['pending', 'confirmed', 'dismissed', 'all'] as const;
 export const MODEL_RULE_HOLD_MODES = ['all', 'review', 'auto'] as const;
 export const MODEL_RULE_HOLD_SORTS = ['oldest', 'newest'] as const;
@@ -184,7 +186,7 @@ export function heldOutcome(hold: {
 export const MODEL_RULE_MATCHES_PATH = '/models/rule-matches';
 
 /** The text of a rule's reference link: its label, else the site it points at. */
-export function referenceText(reference: { url: string; label?: string }): string {
+export function referenceText(reference: ModelRuleReference): string {
   if (reference.label) return reference.label;
   try {
     return new URL(reference.url).hostname.replace(/^www\./, '');

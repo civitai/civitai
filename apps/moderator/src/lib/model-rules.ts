@@ -20,14 +20,30 @@ export {
   type SemanticModelRule,
 };
 
-/** A reference row as the editor holds it: either field may be blank until saved. */
-export type ReferenceRow = { url: string; label: string };
+/** A reference row as the editor holds it: either field may be blank until saved. `key` only identifies the row while it is edited. */
+export type ReferenceRow = { key: string; url: string; label: string };
 
-/** Rows with no link are blank editor rows, not references. */
-export function cleanReferenceRows(rows: readonly ReferenceRow[]): { url: string; label?: string }[] {
+let rowKeys = 0;
+export const newReferenceRow = (url = '', label = ''): ReferenceRow => ({
+  key: `ref-${++rowKeys}`,
+  url,
+  label,
+});
+
+const isBlankRow = (row: { url?: unknown; label?: unknown }) =>
+  !(typeof row.url === 'string' && row.url.trim()) &&
+  !(typeof row.label === 'string' && row.label.trim());
+
+/** Drops blank editor rows and the editor's row keys; a row with only a label stays, for the server to refuse. */
+export function cleanReferenceRows(
+  rows: readonly { url?: unknown; label?: unknown }[]
+): { url: string; label?: string }[] {
   return rows
-    .filter((row) => row.url.trim())
-    .map((row) => ({ url: row.url, ...(row.label.trim() ? { label: row.label } : {}) }));
+    .filter((row) => !isBlankRow(row))
+    .map((row) => ({
+      url: typeof row.url === 'string' ? row.url : '',
+      ...(typeof row.label === 'string' && row.label.trim() ? { label: row.label } : {}),
+    }));
 }
 
 // The form posts references as JSON in one field; Save all sends them as an array.
@@ -43,13 +59,14 @@ const referencesInput = z.preprocess((raw, ctx) => {
     }
   }
   if (!Array.isArray(value)) return [];
-  return value
-    .filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
-    .filter((row) => typeof row.url === 'string' && row.url.trim())
-    .map((row) => ({
-      url: row.url,
-      ...(typeof row.label === 'string' && row.label.trim() ? { label: row.label } : {}),
-    }));
+  const rows = cleanReferenceRows(
+    value.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
+  );
+  if (rows.some((row) => !row.url.trim())) {
+    ctx.addIssue({ code: 'custom', message: 'A reference label needs a link.' });
+    return z.NEVER;
+  }
+  return rows;
 }, modelRuleReferencesField);
 
 // One per line, never split on commas: a name can contain one ("Doe, Jane"), and splitting it would

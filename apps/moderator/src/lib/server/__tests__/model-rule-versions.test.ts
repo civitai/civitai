@@ -293,6 +293,28 @@ describe('listModelRuleVersions', () => {
   });
 });
 
+describe('a hand-written bad category or reference', () => {
+  it('never reaches the version view', async () => {
+    answers.version = [
+      {
+        id: 1,
+        definition: {
+          ...SEMANTIC,
+          category: 'bogus',
+          references: [{ url: 'javascript:alert(1)' }, { url: 'https://example.com/ok' }],
+        },
+        enabled: true,
+        reason: null,
+        createdById: 3,
+        createdAt: UPDATED,
+      },
+    ];
+    const [view] = await listModelRuleVersions(7);
+    expect(view.category).toBeUndefined();
+    expect(view.references).toEqual([{ url: 'https://example.com/ok' }]);
+  });
+});
+
 describe('a rule that needs attention', () => {
   const FLAGGED = {
     ...RULE,

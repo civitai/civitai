@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { newReferenceRow } from '$lib/model-rules';
 import {
   EMPTY,
   RuleDraftsState,
@@ -263,16 +264,22 @@ describe('category and references', () => {
   it('does not send blank reference rows to Save all, and a row-only draft is not empty', () => {
     const drafts = make();
     const id = drafts.add();
-    drafts.editNew(id, { ...EMPTY, references: [{ url: '  ', label: 'x' }] });
+    drafts.editNew(id, { ...EMPTY, references: [newReferenceRow('  ', 'x')] });
     expect(drafts.saveAllPayload([])).toEqual([]);
     drafts.editNew(id, {
       ...EMPTY,
       subject: 'S',
       references: [
-        { url: 'https://example.com', label: ' ' },
-        { url: '', label: '' },
+        newReferenceRow('https://example.com', ' '),
+        newReferenceRow(),
       ],
     });
     expect(drafts.saveAllPayload([])[0].references).toEqual([{ url: 'https://example.com' }]);
+    drafts.editNew(id, {
+      ...EMPTY,
+      subject: 'S',
+      references: [newReferenceRow('', 'Orphan label')],
+    });
+    expect(drafts.saveAllPayload([])[0].references).toEqual([{ url: '', label: 'Orphan label' }]);
   });
 });

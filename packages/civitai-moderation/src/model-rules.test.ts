@@ -4,7 +4,10 @@ import {
   MODEL_RULE_LIMITS,
   aliasKindField,
   aliasWorkflowIdField,
+  isModelRuleCategory,
   isSemanticDefinition,
+  modelRuleCategoryLabel,
+  readModelRuleExtras,
   parseModelRulesHoldMeta,
   semanticModelRuleSchema,
   storedModelRuleSchema,
@@ -38,7 +41,7 @@ describe('semanticModelRuleSchema', () => {
       category: 'artist',
       references: [
         { url: 'https://example.com/a', label: 'Portfolio' },
-        { url: 'http://example.com/b', label: undefined },
+        { url: 'http://example.com/b' },
       ],
     });
   });
@@ -71,7 +74,7 @@ describe('semanticModelRuleSchema', () => {
       references: [{ url: 'https://example.com/ok' }, { url: 'ftp://example.com' }, 'nope'],
     });
     expect(parsed.category).toBeUndefined();
-    expect(parsed.references).toEqual([{ url: 'https://example.com/ok', label: undefined }]);
+    expect(parsed.references).toEqual([{ url: 'https://example.com/ok' }]);
   });
 
   it('rejects empty-string aliases', () => {
@@ -219,4 +222,41 @@ describe('aliasWorkflowIdField', () => {
       expect(aliasWorkflowIdField.safeParse(value).success).toBe(false);
     }
   );
+});
+
+describe('reference uniqueness', () => {
+  it('rejects the same link twice, after trimming', () => {
+    const result = semanticModelRuleSchema.safeParse({
+      type: 'semantic',
+      subject: 'Jane',
+      references: [{ url: 'https://example.com/a' }, { url: ' https://example.com/a ', label: 'x' }],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('Each reference link can only be listed once.');
+  });
+});
+
+describe('category helpers', () => {
+  it('guards and labels a category, tolerating empty and unknown values', () => {
+    expect(isModelRuleCategory('ip')).toBe(true);
+    expect(isModelRuleCategory('nope')).toBe(false);
+    expect(isModelRuleCategory('')).toBe(false);
+    expect(modelRuleCategoryLabel('likeness')).toBe('Real person');
+    expect(modelRuleCategoryLabel('')).toBe('');
+    expect(modelRuleCategoryLabel(undefined)).toBe('');
+    expect(modelRuleCategoryLabel('legacy')).toBe('legacy');
+  });
+});
+
+describe('readModelRuleExtras', () => {
+  it('keeps what parses from a stored definition and drops the rest', () => {
+    expect(
+      readModelRuleExtras({
+        category: 'artist',
+        references: [{ url: 'https://example.com/a' }, { url: 'javascript:x' }, 7],
+      })
+    ).toMatchObject({ category: 'artist', references: [{ url: 'https://example.com/a' }] });
+    expect(readModelRuleExtras({ category: 'bogus', references: 'x' })).toEqual({ references: [] });
+    expect(readModelRuleExtras(null)).toEqual({ references: [] });
+  });
 });

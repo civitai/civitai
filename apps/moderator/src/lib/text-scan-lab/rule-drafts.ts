@@ -1,6 +1,7 @@
+import { isModelRuleCategory, type ModelRuleReference } from '@civitai/moderation/model-rules';
 import {
-  MODEL_RULE_CATEGORIES,
   cleanReferenceRows,
+  newReferenceRow,
   parseAliases,
   type ReferenceRow,
 } from '$lib/model-rules';
@@ -29,13 +30,17 @@ export type SavedRule = {
   description: string;
   aliases: string[];
   category?: string;
-  references?: { url: string; label?: string }[];
+  references?: ModelRuleReference[];
   note: string;
   enabled: boolean;
   updatedAt: Date | string;
 };
 export type SaveAllEntry = Omit<RuleFields, 'references'> & {
-  references: { url: string; label?: string }[]; draftId: number; id?: number; baseUpdatedAt?: string };
+  references: ModelRuleReference[];
+  draftId: number;
+  id?: number;
+  baseUpdatedAt?: string;
+};
 
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 type Drafts = Record<string, RuleDraft>;
@@ -56,7 +61,7 @@ export const fieldsOf = (rule: SavedRule): RuleFields => ({
   description: rule.description,
   aliases: rule.aliases.join('\n'),
   category: rule.category ?? '',
-  references: (rule.references ?? []).map((r) => ({ url: r.url, label: r.label ?? '' })),
+  references: (rule.references ?? []).map((r) => newReferenceRow(r.url, r.label ?? '')),
   note: rule.note,
 });
 const sameReferences = (a: ReferenceRow[], b: ReferenceRow[]) =>
@@ -79,13 +84,12 @@ const isDraft = (v: unknown): v is RuleDraft => {
 };
 
 // Drafts stored before category and references existed have neither.
-const knownCategory = (value: unknown) =>
-  MODEL_RULE_CATEGORIES.some((c) => c.value === value) ? (value as string) : '';
+const knownCategory = (value: unknown) => (isModelRuleCategory(value) ? value : '');
 const storedReferences = (value: unknown): ReferenceRow[] =>
   Array.isArray(value)
     ? value.flatMap((r) =>
         r && typeof r.url === 'string'
-          ? [{ url: r.url, label: typeof r.label === 'string' ? r.label : '' }]
+          ? [newReferenceRow(r.url, typeof r.label === 'string' ? r.label : '')]
           : []
       )
     : [];
