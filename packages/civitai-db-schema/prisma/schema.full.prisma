@@ -6730,12 +6730,16 @@ model EvidenceHold {
 }
 
 /// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. Purged once no hold covers the owner.
+/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
+/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
 model EvidenceHoldImage {
-  imageId Int      @id
-  userId  Int
-  postId  Int?
-  keptAt  DateTime @default(now())
+  imageId         Int      @id
+  userId          Int
+  postId          Int?
+  keptAt          DateTime @default(now())
+  priorIngestion  String?
+  priorBlockedFor String?
+  priorNsfwLevel  Int?
 }
 
 /// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
