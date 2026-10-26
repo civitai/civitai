@@ -72,6 +72,9 @@ export const appRouter = router({
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
+  semanticImageSearch: lazy(() =>
+    import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter)
+  ),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
   stickerBook: lazy(() => import('./sticker-book.router').then((m) => m.stickerBookRouter)),
   stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),
