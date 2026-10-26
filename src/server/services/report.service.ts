@@ -196,12 +196,15 @@ export const findReportToFoldInto = ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  /** Fold only into a report still waiting for a moderator. */
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
@@ -223,6 +226,7 @@ export const findReportToFoldInto = ({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
+      ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -235,6 +239,7 @@ const validateReportCreation = async ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   userId: number;
@@ -242,6 +247,7 @@ const validateReportCreation = async ({
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -250,6 +256,7 @@ const validateReportCreation = async ({
     entityReportId,
     reason,
     details,
+    pendingOnly,
     tx,
   });
 
@@ -453,15 +460,20 @@ export const createReport = async ({
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
-  // Nothing automated acts on a crucible's, game's, storyline's or service's mature-content report,
-  // unlike an image's or a model's tag votes, and a reporter who may not vote on tags casts none,
-  // so it goes to a moderator like any other reason: deduped, and left Pending.
+  // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
+  // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
+  // storyline's or service's, it goes to a moderator like any other reason: deduped, and left Pending.
+  // It joins only a report still waiting for one, never an earlier report that was already actioned.
+  const castsNoTagVotes =
+    !!emailVerificationRequired &&
+    data.reason === ReportReason.NSFW &&
+    (type === ReportEntity.Image || type === ReportEntity.Model);
   const awaitsModerator =
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
-    !!emailVerificationRequired;
+    castsNoTagVotes;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -470,6 +482,7 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details: data.details as MixedObject,
+          pendingOnly: castsNoTagVotes,
           tx: callerTx,
         })
       : null;
@@ -550,7 +563,7 @@ export const createReport = async ({
             }
           }
 
-          if (!emailVerificationRequired) {
+          if (!castsNoTagVotes) {
             await Promise.all([
               createImageRatingRequest(),
               addTagVotes({

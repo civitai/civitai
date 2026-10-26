@@ -51,6 +51,13 @@ const existingReportLookup = dbMock.dbWrite.report.findFirst;
 const reportUpdate = dbMock.dbWrite.report.update;
 const createdStatus = () => reportCreate.mock.calls[0]?.[0]?.data?.status;
 
+const earlierReport = { id: 80, alsoReportedBy: [52], previouslyReviewedCount: 0, details: {} };
+/** `report.findFirst` over these rows, honouring the status filter the way the database would. */
+const storedReports =
+  (rows: { status: ReportStatus }[]) =>
+  async ({ where }: { where: { status?: ReportStatus } }) =>
+    rows.find((row) => !where.status || row.status === where.status) ?? null;
+
 describe.each([ReportEntity.Image, ReportEntity.Model])('an NSFW %s report', (type) => {
   it('is actioned with tag votes for a verified account', async () => {
     await fileNsfwReport(member, type);
@@ -81,8 +88,8 @@ describe.each([ReportEntity.Image, ReportEntity.Model])('an NSFW %s report', (ty
   });
 
   it('folds into the open report on that entity for a new signup that has not verified their email', async () => {
-    const openReport = { id: 80, alsoReportedBy: [52], previouslyReviewedCount: 0, details: {} };
-    existingReportLookup.mockResolvedValue(openReport);
+    const openReport = { ...earlierReport, status: ReportStatus.Pending };
+    existingReportLookup.mockImplementation(storedReports([openReport]));
     reportUpdate.mockResolvedValue({ ...openReport, alsoReportedBy: [52, 41] });
 
     await fileNsfwReport(newSignup, type);
@@ -95,6 +102,51 @@ describe.each([ReportEntity.Image, ReportEntity.Model])('an NSFW %s report', (ty
       })
     );
     expect(addTagVotes).not.toHaveBeenCalled();
+  });
+
+  it('opens a new report, rather than joining an actioned one, for a new signup that has not verified their email', async () => {
+    existingReportLookup.mockImplementation(
+      storedReports([{ ...earlierReport, status: ReportStatus.Actioned }])
+    );
+
+    await fileNsfwReport(newSignup, type);
+
+    expect(reportUpdate).not.toHaveBeenCalled();
+    expect(reportCreate).toHaveBeenCalledOnce();
+    expect(createdStatus()).toBe(ReportStatus.Pending);
+  });
+});
+
+describe('another reason from a new signup that has not verified their email', () => {
+  it('still joins an earlier report on that image, actioned or not', async () => {
+    const actioned = { ...earlierReport, status: ReportStatus.Actioned };
+    existingReportLookup.mockImplementation(storedReports([actioned]));
+    reportUpdate.mockResolvedValue({ ...actioned, alsoReportedBy: [52, 41] });
+
+    await createReportHandler({
+      input: {
+        type: ReportEntity.Image,
+        id: 63,
+        reason: ReportReason.TOSViolation,
+        details: { violation: 'Spam' },
+      },
+      ctx: { user: newSignup, track: { report: vi.fn() } } as never,
+    });
+
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(reportUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 80 } }));
+  });
+});
+
+describe('an NSFW article report from a new signup that has not verified their email', () => {
+  it('is actioned as before', async () => {
+    await createReportHandler({
+      input: { type: ReportEntity.Article, id: 63, reason: ReportReason.NSFW, details: {} },
+      ctx: { user: newSignup, track: { report: vi.fn() } } as never,
+    });
+
+    expect(existingReportLookup).not.toHaveBeenCalled();
+    expect(createdStatus()).toBe(ReportStatus.Actioned);
   });
 });
 
