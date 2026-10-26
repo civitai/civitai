@@ -42,6 +42,7 @@ import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -330,7 +331,12 @@ export function MobileHeaderRows({
   if (!currentUser) return null;
 
   return (
-    <div className="m-1 flex flex-col gap-3 rounded-xl border border-gray-3 bg-gray-0 p-2 dark:border-dark-4 dark:bg-dark-6">
+    // Opening focuses the card itself, not its first link, so a tap does not light a focus ring on the name.
+    <div
+      tabIndex={-1}
+      data-autofocus
+      className="m-1 flex flex-col gap-3 rounded-xl bg-gray-1 p-2 outline-none dark:bg-dark-6"
+    >
       <div className="flex items-center gap-1">
         <MenuItemLink
           href={`/user/${currentUser.username}`}
@@ -355,6 +361,7 @@ export function MobileHeaderRows({
             />
           </div>
         </MenuItemLink>
+        {!currentUser.tier && <SupportChip onClick={handleClose} />}
         {onTogglePin && (
           <LegacyActionIcon
             size="lg"

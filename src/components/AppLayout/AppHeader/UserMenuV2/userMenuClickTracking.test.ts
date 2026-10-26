@@ -19,7 +19,7 @@ import type * as IsMobile from '~/hooks/useIsMobile';
  */
 const mocks = vi.hoisted(() => ({
   actions: [] as TrackActionInput[],
-  user: { id: 1, username: 'tester' } as { id: number; username: string } | null,
+  user: { id: 1, username: 'tester' } as { id: number; username: string; tier?: string } | null,
   flags: { buzz: true } as Record<string, boolean>,
 }));
 
@@ -405,12 +405,20 @@ describe('UserMenu_Click', () => {
     }
   );
 
-  it('keeps the Pro chip out of the mobile header rows, whatever the flags', async () => {
+  it('offers membership on the mobile card to a viewer with no tier, and closes the menu', async () => {
     mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
     await mount(createElement(MobileHeaderRows));
 
-    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
+    await click(document.querySelector('a[href="/purchase/buzz"]'));
+    expect(handleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a member their tier on the mobile card, not the membership offer', async () => {
+    mocks.user = { id: 1, username: 'tester', tier: 'gold' };
+    await mount(createElement(MobileHeaderRows));
+
     expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
   });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
