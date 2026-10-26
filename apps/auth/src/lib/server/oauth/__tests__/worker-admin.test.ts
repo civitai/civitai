@@ -7,7 +7,7 @@ vi.hoisted(() => {
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { createKyselyFake } from '../../../../test/kysely-fake';
-import { blockWorkerDevice, createWorkerClient } from '../worker-admin';
+import { blockWorkerDevice, createIntrospectorClient, createWorkerClient } from '../worker-admin';
 
 const DEVICE_ID = 'urn:civitai:token-type:device-id';
 const JWT = 'urn:ietf:params:oauth:token-type:jwt';
@@ -43,7 +43,7 @@ describe('createWorkerClient', () => {
     const { clientId, secret } = await createWorkerClient(db, {
       id: 'workers-salad',
       name: 'Salad workers',
-      provider: 'salad',
+      provider: 'SaladML',
       subjectTokenTypes: [JWT],
       saladContainerGroupIds: ['group-a'],
     });
@@ -63,7 +63,7 @@ describe('createWorkerClient', () => {
     expect(tables.WorkerClient).toEqual([
       expect.objectContaining({
         clientId: 'workers-salad',
-        provider: 'salad',
+        provider: 'SaladML',
         subjectTokenTypes: [JWT],
         saladContainerGroupIds: ['group-a'],
       }),
@@ -85,9 +85,19 @@ describe('createWorkerClient', () => {
       /cannot accept device ids/,
     ],
     ['Salad tokens without a group', { subjectTokenTypes: [JWT] }, /needs at least one/],
+    [
+      'an unknown provider',
+      { provider: 'salad', subjectTokenTypes: [DEVICE_ID] },
+      /unknown provider salad/,
+    ],
+    [
+      'a provider in the wrong case',
+      { provider: 'saladml', subjectTokenTypes: [DEVICE_ID] },
+      /unknown provider saladml/,
+    ],
   ])('refuses %s, writing nothing', async (_, over, error) => {
     await expect(
-      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', ...over })
+      createWorkerClient(db, { id: 'x', name: 'x', provider: 'Submodel', ...over })
     ).rejects.toThrow(error);
     expect(tables.OauthClient).toHaveLength(0);
     expect(tables.WorkerClient).toHaveLength(0);
@@ -96,13 +106,81 @@ describe('createWorkerClient', () => {
   it('refuses unless exactly one account holds the system role', async () => {
     tables.UserRole.push({ userId: 901, role: 'system:workload' });
     await expect(
-      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', subjectTokenTypes: [DEVICE_ID] })
+      createWorkerClient(db, {
+        id: 'x',
+        name: 'x',
+        provider: 'Submodel',
+        subjectTokenTypes: [DEVICE_ID],
+      })
     ).rejects.toThrow(/found 2/);
 
     tables.UserRole.splice(0, tables.UserRole.length);
     await expect(
-      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', subjectTokenTypes: [DEVICE_ID] })
+      createWorkerClient(db, {
+        id: 'x',
+        name: 'x',
+        provider: 'Submodel',
+        subjectTokenTypes: [DEVICE_ID],
+      })
     ).rejects.toThrow(/found 0/);
+    expect(tables.OauthClient).toHaveLength(0);
+  });
+
+  it('records a device-id client under its orchestrator provider name', async () => {
+    await createWorkerClient(db, {
+      id: 'workers-dp',
+      name: 'DP workers',
+      provider: 'Submodel',
+      subjectTokenTypes: [DEVICE_ID],
+    });
+    expect(tables.WorkerClient).toEqual([
+      expect.objectContaining({ clientId: 'workers-dp', provider: 'Submodel' }),
+    ]);
+  });
+});
+
+describe('createIntrospectorClient', () => {
+  it('registers a confidential client with no grants, owned by the system account', async () => {
+    const { clientId, secret } = await createIntrospectorClient(db, {
+      id: 'orchestrator-workers',
+      name: 'Orchestrator',
+    });
+
+    expect(clientId).toBe('orchestrator-workers');
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(tables.OauthClient).toEqual([
+      expect.objectContaining({
+        id: 'orchestrator-workers',
+        secret: generateSecretHash(secret),
+        grants: [],
+        allowedScopes: 0,
+        isConfidential: true,
+        userId: 900,
+      }),
+    ]);
+    expect(JSON.stringify(tables)).not.toContain(secret);
+    expect(tables.WorkerClient).toHaveLength(0);
+  });
+
+  it('refuses an id that already exists, leaving that client as it was', async () => {
+    const existing = { id: 'orchestrator-workers', secret: 'stored-hash', grants: ['x'] };
+    tables.OauthClient.push({ ...existing });
+    await expect(
+      createIntrospectorClient(db, { id: 'orchestrator-workers', name: 'x' })
+    ).rejects.toThrow(/already exists/);
+    expect(tables.OauthClient).toEqual([existing]);
+  });
+
+  it('refuses a client id with "+", writing nothing', async () => {
+    await expect(createIntrospectorClient(db, { id: 'orch+workers', name: 'x' })).rejects.toThrow(
+      /client id/
+    );
+    expect(tables.OauthClient).toHaveLength(0);
+  });
+
+  it('refuses unless exactly one account holds the system role', async () => {
+    tables.UserRole.push({ userId: 901, role: 'system:workload' });
+    await expect(createIntrospectorClient(db, { id: 'x', name: 'x' })).rejects.toThrow(/found 2/);
     expect(tables.OauthClient).toHaveLength(0);
   });
 });

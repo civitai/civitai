@@ -658,7 +658,8 @@ textarea {
 /* Mantine overrides */
 
 .mantine-Badge-label *,
-.mantine-Button-label * {
+.mantine-Button-label *,
+[data-badge-label] * {
   font-size: inherit;
   font-weight: inherit;
   font-family: inherit;

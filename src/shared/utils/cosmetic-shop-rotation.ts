@@ -1,11 +1,21 @@
 import { seededRng, shuffle } from '@civitai/shared/post-scheduling';
 
-/** What a rotating block falls back to when its metadata leaves these out. */
-export const COSMETIC_SHOP_ROTATION_DEFAULTS = { maxItems: 6, rotateHours: 3 } as const;
+/** Rows the home block shows, and the most columns MasonryProvider ever lays out (its default). */
+export const SHOP_BLOCK_ROWS = 2;
+const SHOP_BLOCK_MAX_COLUMNS = 7;
+
+/**
+ * What a rotating block falls back to when its metadata leaves these out. `maxItems` fills the
+ * widest row layout, so a wide screen never shows an empty slot while the section has more.
+ */
+export const COSMETIC_SHOP_ROTATION_DEFAULTS = {
+  maxItems: SHOP_BLOCK_ROWS * SHOP_BLOCK_MAX_COLUMNS,
+  rotateHours: 3,
+} as const;
 
 type ShopBlockMeta = { maxItems?: number; random?: boolean } | undefined;
 
-/** How many items a shop block shows: its own `maxItems`, else 6 when it rotates, else all. */
+/** How many items a shop block shows: its own `maxItems`, else a full widest-row grid when it rotates, else all. */
 export function shopBlockMaxItems(meta: ShopBlockMeta) {
   return meta?.maxItems ?? (meta?.random ? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems : undefined);
 }

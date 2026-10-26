@@ -321,7 +321,7 @@ test('the real chat gives a message the page could not send back into an empty b
   await expect.element(box).toHaveValue('Also add a timer');
 });
 
-test('a message the real chat keeps back in the empty box on a refused grant while the user dictates is taken out again (Build it)', async () => {
+test('a message refused for its grant while the user dictates never lands in their box (Build it)', async () => {
   fakeMicrophone();
   const { chat } = await realSignedInChat({ grants: false });
   await press('Talk instead of typing');
@@ -339,10 +339,12 @@ test('a message the real chat keeps back in the empty box on a refused grant whi
     () => isDictating(chat),
     () => false
   );
-  // The refused grant stopped it before before-send, and the copy it left was taken out, so the
-  // page gives it back instead of the user's words being joined to it.
+  // The refused grant stopped it before before-send. Since components-chat 0.30.0 the chat no longer
+  // keeps such a message in an empty box while the user dictates, so there is no copy for the page
+  // to take out (`sendNotJoined`'s compose('') is not needed) and the page gives it back instead of
+  // the user's words being joined to it.
   expect(fired).not.toHaveBeenCalled();
-  expect(compose.mock.calls).toEqual([['']]);
+  expect(compose.mock.calls).toEqual([]);
   expect(messageBoxText(chat)).toBe('');
   expect(isDictating(chat)).toBe(true);
 });

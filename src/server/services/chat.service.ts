@@ -15,6 +15,7 @@ import {
   latestChat,
   singleChatSelect,
 } from '~/server/selectors/chat.selector';
+import { getChatRedesignRecipients } from '~/server/services/chat-redesign-recipients.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
@@ -88,10 +89,24 @@ const evaluateDmPolicies = async ({
   );
   const senderIsNew = !!sender && dayjs().diff(dayjs(sender.createdAt), 'day') < newAccountAgeDays;
 
+  // @ai: delete this gate (and `getChatRedesignRecipients`) when chat-redesign ramps to
+  // public. Until then the `following` default only applies to recipients who can see
+  // Requests; the old list has no such tab and would just lose the badge for strangers.
+  const unsetIds = recipientIds.filter((_, i) => !recipientSettings[i]?.chat?.dmPolicy);
+  const redesignIds = await getChatRedesignRecipients({
+    recipientIds: unsetIds,
+    earlyAdopters: new Set(
+      recipientIds.filter((_, i) => recipientSettings[i]?.isEarlyAdopter === true)
+    ),
+  });
+
   recipientIds.forEach((recipientId, i) => {
     const settings = recipientSettings[i] ?? {};
+    const fallback = redesignIds.has(recipientId)
+      ? DEFAULT_CHAT_SETTINGS.dmPolicy ?? 'following'
+      : 'everyone';
     const routing = decideDmRouting({
-      policy: resolveDmPolicy(settings),
+      policy: resolveDmPolicy(settings, fallback),
       holdNewAccounts:
         settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? false,
       senderIsNew,

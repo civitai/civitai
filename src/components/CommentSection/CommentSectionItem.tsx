@@ -29,9 +29,9 @@ import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEdit
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
 import type { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -129,43 +129,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
     },
   });
 
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: comment.id });
-
-      const previousReactions =
-        queryUtils.comment.getReactions.getData({ commentId: comment.id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, _variables, context) {
-      queryUtils.comment.getReactions.setData(
-        { commentId: comment.id },
-        context?.previousReactions
-      );
-    },
-  });
+  const toggleCommentReaction = useToggleCommentReaction(comment.id);
 
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
@@ -238,7 +202,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             <Group gap={4}>
               <ReactionPicker
                 reactions={reactions}
-                onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
+                onSelect={(reaction) => toggleCommentReaction.toggle(reaction)}
               />
               {comment.hidden && <HideAgainButton onClick={conceal} />}
               {currentUser && !isOwner && !comment.locked && !isMuted && (

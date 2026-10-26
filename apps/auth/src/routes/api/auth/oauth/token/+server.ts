@@ -40,6 +40,13 @@ export const OPTIONS: RequestHandler = () => {
   return new Response(null, { status: 204, headers });
 };
 
+// The client id in a Basic Authorization header, parsed as the OAuth library's `basic-auth` dependency parses it.
+function basicAuthClientId(header: string | null): string | undefined {
+  const match = /^ *(?:[Bb][Aa][Ss][Ii][Cc]) +([A-Za-z0-9._~+/-]+=*) *$/.exec(header ?? '');
+  if (!match) return undefined;
+  return /^([^:]*):(.*)$/.exec(Buffer.from(match[1], 'base64').toString())?.[1];
+}
+
 export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const clientId =
@@ -60,6 +67,21 @@ export const POST: RequestHandler = async ({ request }) => {
     return json(
       { error: 'rate_limited', error_description: 'Too many token requests' },
       { status: 429, headers }
+    );
+  }
+
+  // The library authenticates the Basic header's client and ignores a body client_id, so a different one
+  // there would name a client that never authenticated.
+  const basicClientId = basicAuthClientId(request.headers.get('authorization'));
+  if (basicClientId !== undefined && body.client_id && body.client_id !== basicClientId) {
+    const headers = new Headers({ 'WWW-Authenticate': 'Basic realm="Service"' });
+    setWildcardCors(headers);
+    return json(
+      {
+        error: 'invalid_client',
+        error_description: 'client_id does not match the authenticated client',
+      },
+      { status: 401, headers }
     );
   }
 
@@ -161,7 +183,7 @@ export const POST: RequestHandler = async ({ request }) => {
       if (ctx.nonce) {
         idToken = await idTokenSigner.mintIdToken({
           sub: token.user.id,
-          aud: clientId,
+          aud: token.client.id,
           nonce: ctx.nonce,
           authTime: ctx.authTime,
           expiresIn: token.accessTokenLifetime ?? ACCESS_TOKEN_TTL,

@@ -766,6 +766,7 @@ export const JobQueueType = {
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
+  ImageCdnPersistRetry: 'ImageCdnPersistRetry',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {

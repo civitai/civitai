@@ -11,22 +11,11 @@ import {
 // Helpers for backfill-collection-item-adder.mjs, split out so they can be tested without a
 // database. See that script's header for why each rule exists.
 
-// What collectionItemHandler (src/handlers/collection-items.ts) emits for one created row, minus
-// Image: image rows are excluded from this backfill.
-const ENTITY_METRICS = [
-  ['collectionId', 'Collection', 'itemCount'],
-  ['modelId', 'Model', 'collectedCount'],
-  ['postId', 'Post', 'collectedCount'],
-  ['articleId', 'Article', 'collectedCount'],
-];
-
 // One entity per run, so each can be scoped and sized on its own; a bookmark row carries one of these.
 const ENTITY_COLUMNS = { Article: 'articleId', Model: 'modelId', Post: 'postId' };
 
 // Only Bookmark collections: their owner is the only one who adds to them, so the owner is the
-// adder. In any other collection the owner may not be, and a row whose adder was nulled by a user
-// delete was already counted under that user. `breakdown` counts every mode so the dry run shows
-// what was left out. $1 and $2 are the id range.
+// adder. In any other collection the owner may not be. $1 and $2 are the id range.
 export function backfillSql(entity) {
   const column = ENTITY_COLUMNS[entity];
   if (!column)
@@ -41,13 +30,38 @@ export function backfillSql(entity) {
     AND ci."${column}" IS NOT NULL
     AND c."userId" > 0`;
   return {
-    breakdown: `SELECT c.mode::text AS mode, count(*)::int AS n
+    candidates: `SELECT c.mode::text AS mode, count(*)::int AS n
       FROM "CollectionItem" ci, "Collection" c WHERE ${candidates} GROUP BY 1`,
     update: `UPDATE "CollectionItem" ci SET "addedById" = c."userId"
       FROM "Collection" c
       WHERE ${candidates} AND c.mode = 'Bookmark'
-      RETURNING ci.id, ci."collectionId", ci."articleId", ci."modelId", ci."postId", ci."addedById"`,
+      RETURNING ci.id`,
+    // Everything whose count the new rules can change: every entity and collection with a row of
+    // this kind, and every entity still showing a count with no rows left to back it.
+    touchEntities: `SELECT DISTINCT "${column}" AS id FROM "CollectionItem" WHERE "${column}" IS NOT NULL
+      UNION
+      SELECT "${column}" FROM "${entity}Metric" WHERE "collectedCount" <> 0`,
+    touchCollections: `SELECT DISTINCT "collectionId" AS id FROM "CollectionItem"
+      WHERE "${column}" IS NOT NULL`,
   };
+}
+
+// The metric jobs recount, from Postgres, every entity with an event in this table since their
+// last run (src/server/metrics/collection-item-counts.ts reads it by name).
+export const EVENTS_TABLE = 'entityMetricEvents_month';
+
+// A 0 marks an entity for that recount and moves no sum, so writing one twice is harmless.
+export const TOUCH_USER_ID = -1;
+
+export function touchEvents(entityType, metricType, ids, createdAt) {
+  return ids.map((entityId) => ({
+    entityType,
+    entityId,
+    metricType,
+    userId: TOUCH_USER_ID,
+    metricValue: 0,
+    createdAt,
+  }));
 }
 
 // From the environment only: a missing credential stops the run rather than falling back.
@@ -64,58 +78,19 @@ export function clickhouseConfig(env) {
   return { url: env.CLICKHOUSE_HOST, username, password: env.CLICKHOUSE_PASSWORD };
 }
 
-export const METRIC_PAIRS = ENTITY_METRICS.map(([, entityType, metricType]) => [
-  entityType,
-  metricType,
-]);
-
-// One event per (entityType, entityId, metricType, userId), valued at its row count. The events
-// table is a ReplacingMergeTree keyed on those four plus createdAt to the second, so two +1 rows
-// for the same key in one batch would collapse to one in any argMax reader.
-export function buildEvents(rows, createdAt) {
-  const byKey = new Map();
-  for (const row of rows) {
-    for (const [field, entityType, metricType] of ENTITY_METRICS) {
-      const entityId = row[field];
-      if (entityId == null) continue;
-      const key = `${entityType}:${entityId}:${metricType}:${row.addedById}`;
-      const event = byKey.get(key);
-      if (event) event.metricValue += 1;
-      else
-        byKey.set(key, {
-          entityType,
-          entityId,
-          metricType,
-          userId: row.addedById,
-          metricValue: 1,
-          createdAt,
-        });
-    }
-  }
-  return [...byKey.values()];
-}
-
-// Each batch gets its own second, so a key that recurs in a later batch is a distinct row rather
-// than a replacement of the earlier one. Never in the past: the metric jobs find affected entities
-// by `createdAt >= lastUpdate`, and the daily views ignore anything older than yesterday.
-export function nextStampMs(prevStampMs, nowMs) {
-  const now = Math.floor(nowMs / 1000) * 1000;
-  return prevStampMs == null ? now : Math.max(now, prevStampMs + 1000);
-}
-
-// The ledger is JSONL: a `pending` line carrying the batch (its Postgres txid, stamp and events),
-// then lines naming it by `lo`: `committed`, `restamped` (new stamp and events), `inserted`, or
-// `abandoned` (its transaction rolled back; the range is redone). Returns the one batch that has not
-// finished, if any, and the highest id fully handled so a rerun starts after it.
+// The ledger is JSONL. Per id range: `pending` (the Postgres txid and the row ids given an adder),
+// then `committed`, or `abandoned` if its transaction rolled back. Once every range is done:
+// `touched`. Returns the batch left unfinished, if any, where the run resumes, and whether the
+// touch has run.
 //
 // A torn final line is dropped: every line is written before the step it records, so losing the
-// last one only loses a claim the resume check re-derives from Postgres and ClickHouse.
+// last one only loses a claim the resume check re-derives from Postgres.
 //
 // A ledger belongs to one entity: resuming it under another would skip that entity's rows in every
 // range the first run finished.
 export function readLedger(lines, entity) {
   const batches = new Map();
-  let lastStampMs = null;
+  let touched = false;
   const entries = lines.filter((line) => line.trim());
   entries.forEach((line, i) => {
     let entry;
@@ -125,29 +100,28 @@ export function readLedger(lines, entity) {
       if (i === entries.length - 1) return;
       throw err;
     }
-    if (entry.phase === 'pending') {
-      if (entry.entity !== entity)
-        throw new Error(
-          `ledger: written for ${entry.entity}, this run is ${entity}; use a new ledger`
-        );
-      batches.set(entry.lo, { ...entry });
-    } else {
+    if ((entry.phase === 'pending' || entry.phase === 'touched') && entry.entity !== entity)
+      throw new Error(
+        `ledger: written for ${entry.entity}, this run is ${entity}; use a new ledger`
+      );
+    if (entry.phase === 'pending') batches.set(entry.lo, { ...entry });
+    else if (entry.phase === 'committed' || entry.phase === 'abandoned') {
       const batch = batches.get(entry.lo);
       if (!batch) throw new Error(`ledger: ${entry.phase} line for unknown batch ${entry.lo}`);
       if (entry.phase === 'abandoned') batches.delete(entry.lo);
-      else Object.assign(batch, entry);
-    }
-    if (entry.stampMs != null) lastStampMs = Math.max(lastStampMs ?? 0, entry.stampMs);
+      else batch.phase = 'committed';
+    } else if (entry.phase === 'touched') touched = true;
+    else throw new Error(`ledger: unknown phase ${entry.phase}`);
   });
   const all = [...batches.values()];
-  const open = all.filter((b) => b.phase !== 'inserted');
+  const open = all.filter((b) => b.phase === 'pending');
   if (open.length > 1)
     throw new Error(`ledger: ${open.length} unfinished batches; the script only ever leaves one`);
-  const done = all.filter((b) => b.phase === 'inserted');
+  const done = all.filter((b) => b.phase === 'committed');
   return {
     open: open[0] ?? null,
     resumeFrom: done.length ? Math.max(...done.map((b) => b.hi)) : null,
-    lastStampMs,
+    touched,
   };
 }
 
@@ -175,15 +149,4 @@ export function openLedger(path) {
     },
     close: () => closeSync(fd),
   };
-}
-
-// Compares a batch's events with the rows found in ClickHouse at its stamp. A real event in the
-// same second can share a key, so a key only counts as landed when its value matches too.
-export function landedState(expected, found) {
-  const keyOf = (e) => `${e.entityType}:${e.entityId}:${e.metricType}:${e.userId}:${e.metricValue}`;
-  const foundKeys = new Set(found.map(keyOf));
-  const hits = expected.filter((e) => foundKeys.has(keyOf(e))).length;
-  if (hits === 0) return 'none';
-  if (hits === expected.length) return 'all';
-  return 'partial';
 }

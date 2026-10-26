@@ -461,6 +461,7 @@ model User {
   notificationSettings UserNotificationSettings[]
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
+  emailOptOuts         UserEmailNotificationOptOut[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -4934,6 +4935,18 @@ model UserPushSetting {
   @@id([userId, type])
 }
 
+// Row = email OFF for this notification type. Only types whose processor sets `defaultEmail` send
+// email at all, so absence means ON for those and is meaningless for every other type. Single
+// polarity, like UserPushSetting (the opposite one) — never add an `enabled` column.
+model UserEmailNotificationOptOut {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -7226,6 +7239,7 @@ enum JobQueueType {
   ReplacedImageDelete
   ImageStorageDelete
   CdnAccessSync
+  ImageCdnPersistRetry
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -7635,6 +7649,25 @@ model ScanLabelFlag {
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([itemId])
+}
+
+/// Shadow audio scan of a video, from a workflow separate from the visual ingestion scan.
+/// Nothing reads it to filter, rate or hide media.
+model ImageAudioScan {
+  imageId       Int       @id
+  workflowId    String    @unique
+  /// Pending | Succeeded | Failed
+  status        String    @default("Pending")
+  /// null when the video has no audio or the scan failed: unknown, never "clean"
+  flagged       Boolean?
+  hasAudio      Boolean?
+  result        Json?
+  resultVersion Int?
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([flagged, createdAt])
 }
 
 model ScanLabelVote {
@@ -10530,6 +10563,9 @@ model ServiceOffering {
   removedDetails    String?
   removedAt         DateTime?
   removedById       Int?
+  /// The seller's agreement to the services terms when they published: userId, offeringId,
+  /// affirmedAt, version and the statement verbatim. Null until first published.
+  sellerAffirmation Json?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]

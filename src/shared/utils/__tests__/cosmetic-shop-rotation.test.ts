@@ -6,8 +6,8 @@ import {
 } from '~/shared/utils/cosmetic-shop-rotation';
 
 describe('shopBlockMaxItems', () => {
-  it('shows 6 of a rotating block that names no maxItems, and all of one that does not rotate', () => {
-    expect(shopBlockMaxItems({ random: true })).toBe(6);
+  it('shows 14 (two rows of the widest layout) of a rotating block that names no maxItems, and all of one that does not rotate', () => {
+    expect(shopBlockMaxItems({ random: true })).toBe(14);
     expect(shopBlockMaxItems({ random: true, maxItems: 4 })).toBe(4);
     expect(shopBlockMaxItems({})).toBeUndefined();
     expect(shopBlockMaxItems({ maxItems: 8 })).toBe(8);

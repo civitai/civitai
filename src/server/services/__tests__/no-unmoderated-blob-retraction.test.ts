@@ -95,9 +95,27 @@ const LEDGER_MENTIONS = [
  */
 const LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
 
+/**
+ * Persist keeps a takedown's deny until it is lifted. Only the takedown CDN sync builds the
+ * parameter, and the one other way to ask for it is `persistDeletedTakedowns`, which
+ * `remove-blocked-images` calls once, for the takedowns among the images it hard-deletes.
+ */
+const PERSIST_PARAM = '&persist=true';
+const PERSIST_ENTRY = 'persistDeletedTakedowns';
+const PERSIST_CALL = /persistDeletedTakedowns\(/g;
+const PERSIST_LEDGER_MENTIONS = [
+  'src/server/jobs/image-ingestion.ts',
+  'src/server/services/cdn-access.service.ts',
+];
+const PERSIST_LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
+const PERSIST_LEDGER_PARAM = ['src/server/services/cdn-access.service.ts'];
+
 type Scan = {
   mentions: string[];
   setters: string[];
+  persistMentions: string[];
+  persistSetters: string[];
+  persistParam: string[];
   scanned: number;
   scannedByRoot: Record<string, number>;
 };
@@ -122,6 +140,9 @@ function scan(): Scan {
   );
   const mentions: string[] = [];
   const setters: string[] = [];
+  const persistMentions: string[] = [];
+  const persistSetters: string[] = [];
+  const persistParam: string[] = [];
   // Keyed on what the walk actually YIELDED, never seeded from `SCAN_ROOTS`: a root that was not
   // walked has to come back absent, not as a zero the constant put there.
   const scannedByRoot: Record<string, number> = {};
@@ -138,12 +159,29 @@ function scan(): Scan {
     const root = file.slice(0, file.indexOf('/'));
     scannedByRoot[root] = (scannedByRoot[root] ?? 0) + 1;
     const src = readFileSync(abs, 'utf8');
+    if (src.includes(PERSIST_PARAM)) persistParam.push(file);
+    if (src.includes(PERSIST_ENTRY)) {
+      persistMentions.push(file);
+      // Calls, not mentions; a definition is `function name(`, which this does not count.
+      const count = [...src.matchAll(PERSIST_CALL)].filter(
+        (m) => !src.slice(Math.max(0, m.index - 9), m.index).endsWith('function ')
+      ).length;
+      if (count > 0) persistSetters.push(`${file} ×${count}`);
+    }
     if (!src.includes(OPTION)) continue;
     mentions.push(file);
     const count = src.match(SET_TRUE)?.length ?? 0;
     if (count > 0) setters.push(`${file} ×${count}`);
   }
-  cached = { mentions: mentions.sort(), setters: setters.sort(), scanned, scannedByRoot };
+  cached = {
+    mentions: mentions.sort(),
+    setters: setters.sort(),
+    persistMentions: persistMentions.sort(),
+    persistSetters: persistSetters.sort(),
+    persistParam: persistParam.sort(),
+    scanned,
+    scannedByRoot,
+  };
   return cached;
 }
 
@@ -230,5 +268,21 @@ describe('no-unmoderated-blob-retraction', () => {
       'A new file mentioning this option is a new way to reach retraction. Add it here ' +
         'deliberately, or route the call through image.service.'
     ).toEqual(LEDGER_MENTIONS);
+  });
+
+  it('lets persist be asked for only by the takedown sync and the takedown hard delete', () => {
+    const { persistMentions, persistSetters, persistParam } = scan();
+    expect(
+      persistSetters,
+      'Persist keeps a takedown deny in place; only the moderation takedown may request it.'
+    ).toEqual(PERSIST_LEDGER_SETTERS);
+    expect(
+      persistMentions,
+      `A new file mentioning ${PERSIST_ENTRY} is a new way to reach it.`
+    ).toEqual(PERSIST_LEDGER_MENTIONS);
+    expect(
+      persistParam,
+      'A new file spelling the persist parameter is a new caller of it on the image server.'
+    ).toEqual(PERSIST_LEDGER_PARAM);
   });
 });

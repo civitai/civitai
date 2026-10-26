@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.41",
+  "version": "0.1.46",
   "private": true,
   "type": "module",
   "scripts": {
@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.3.2",
-    "@sveltejs/kit": "^2.43.2",
+    "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
     "@types/node": "^20.19.9",
     "@types/pg": "^8.11.10",

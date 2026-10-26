@@ -20,6 +20,8 @@ export const requestServiceDealSchema = z.object({
   expectedRevisionsIncluded: z.number().int().min(0),
   expectedDeliveryDays: z.number().int().positive(),
   requestText: text(5000),
+  /** The buyer-disclosure version the buyer was shown; the service refuses a request without the current one. */
+  disclosureVersion: z.string(),
 });
 
 export const getServiceDealSchema = dealId;

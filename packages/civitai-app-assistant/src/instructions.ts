@@ -22,6 +22,16 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
     'It is a fork whose files never arrived, so it is empty and has no sandbox tools. Do not build in it: tell the user to use Try again on the page, which deletes it and starts a fresh fork.',
 };
 
+/** The dev server's port: the one the sandbox's tunnel forwards and its preview_check loads. */
+export const DEV_SERVER_PORT = 5173;
+/**
+ * The dev server's command, run after `cd <blockId> && ` (sandbox__dev_server_start starts in
+ * /workspace): what the assistant is told to start it with, and what the runner's Restart preview
+ * starts it with when it is not running. CIVITAI_DEV_TUNNEL_HMR=1 is what makes the dev server send
+ * the headers the preview needs to load.
+ */
+export const DEV_SERVER_COMMAND = `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port ${DEV_SERVER_PORT}`;
+
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */
 export type AssistantRunner = 'browser' | 'remote';
 
@@ -180,7 +190,7 @@ export function buildAssistantInstructions({
         STATE_NOTE[sandbox.state]
       } When the user asks for a different, new app, call create_app; the open one is paused and kept.${yourApps}`,
       'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.',
-      "Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port 5173 in any command you give it."
+      `Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && ${DEV_SERVER_COMMAND}. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port ${DEV_SERVER_PORT} in any command you give it.`
     );
     if (!canPreview) {
       lines.push(NO_PREVIEW);

@@ -34,7 +34,7 @@ import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
-import { loadMotion } from '~/components/Chat/util';
+import { chatPreviewText, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -48,7 +48,6 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { BlurText } from '~/components/BlurText/BlurText';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import { stripStickerTokens } from '~/shared/utils/sticker-token';
 import type { ChatBucket } from '~/shared/utils/chat';
 import { chatBucketFor } from '~/shared/utils/chat';
 
@@ -385,7 +384,11 @@ export function ChatList() {
                           }}
                           blur={replaceBadWords || domainColor === 'green'}
                         >
-                          {stripStickerTokens(d.messages[0].content)}
+                          {chatPreviewText({
+                            message: d.messages[0],
+                            viewerId: currentUser?.id,
+                            otherMembers,
+                          })}
                         </BlurText>
                       )}
                     </Stack>

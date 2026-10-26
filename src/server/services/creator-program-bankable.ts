@@ -1,5 +1,6 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
+import { clickhouseTransactionTypePredicate } from '~/server/clickhouse/transaction-type';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
@@ -7,11 +8,16 @@ import {
   buzzBankTypesSql,
   BuzzType,
   GENERATION_TIP_TRANSACTION_PREFIX,
+  TransactionType,
 } from '~/shared/constants/buzz.constants';
 import {
   BANKABLE_CUTOVER,
   EXTRACTION_FEE_DESCRIPTION,
 } from '~/shared/constants/creator-program.constants';
+import {
+  SERVICE_DEAL_TRANSACTION_PREFIX,
+  type ServiceDealLegName,
+} from '~/shared/constants/creator-services.constants';
 import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -26,6 +32,21 @@ const placementEarningDescriptionsSql = Object.values(PLACEMENT_LEDGER_TEXT)
   .flatMap((text) => [text.toOwner, text.feeToOwner, text.toSeller])
   .map(sqlString)
   .join(', ');
+
+const SERVICE_RELEASE_LEG: ServiceDealLegName = 'release';
+
+/**
+ * A Creator Services release, paid by the platform to the seller out of the buyer's hold. Holds
+ * and refunds share the type, so the leg is told by its id. The buyer is `details.buyerId`; a
+ * release without one is not bankable, since nothing could net it against them.
+ */
+export const SERVICE_RELEASE_SQL = `(${clickhouseTransactionTypePredicate(
+  TransactionType.ServiceEscrow
+)} AND fromAccountId = 0 AND startsWith(externalTransactionId, ${sqlString(
+  SERVICE_DEAL_TRANSACTION_PREFIX
+)}) AND endsWith(externalTransactionId, ${sqlString(
+  `-${SERVICE_RELEASE_LEG}`
+)}) AND JSONExtractInt(details, 'buyerId') > 0)`;
 
 /**
  * Transactions that raise a creator's bankable amount. Excludes generation `compensation`, purchased
@@ -47,6 +68,7 @@ export const BANKABLE_EARNING_PREDICATE_SQL = `(
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE ${sqlString(
     `${APP_AUTHOR_FEE_DESCRIPTION}%`
   )})
+  OR ${SERVICE_RELEASE_SQL}
 )`;
 
 /**
@@ -111,7 +133,7 @@ export const clickhouseDateTime = (at: Date) =>
 
 /**
  * Bankable Buzz the platform paid out of what a user spent, per recipient and the user who paid
- * it: a sale by its buyer, and a bounty award split between its supporters.
+ * it: a sale or service release by its buyer, and a bounty award split between its supporters.
  */
 export function platformPaidFromUsersSql(where: string) {
   return `
@@ -119,6 +141,11 @@ export function platformPaidFromUsersSql(where: string) {
       toInt64(amount) AS amount
     FROM buzzTransactions
     WHERE ${where} AND ${PLATFORM_PAID_SALE_SQL}
+    UNION ALL
+    SELECT toInt64(toAccountId) AS recipient, toInt64(JSONExtractInt(details, 'buyerId')) AS payer,
+      toInt64(amount) AS amount
+    FROM buzzTransactions
+    WHERE ${where} AND ${SERVICE_RELEASE_SQL}
     UNION ALL
     SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
     FROM (${bountyAwardsSql(where)}) ARRAY JOIN arrayZip(ids, amts) AS s
@@ -210,18 +237,18 @@ async function getCutoverSnapshot(userId: number, now: Date) {
 
 /**
  * What `userId` paid other users in a window, counted where it became bankable for them:
- * paid from their own account, a platform-paid sale they bought, and their part of a bounty they
- * helped fund.
+ * paid from their own account, a platform-paid sale or service they bought, and their part of a
+ * bounty they helped fund.
  */
 export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: Date }) {
   const paidTo = `toAccountId > 0 AND toAccountId != ${userId} AND toAccountType IN (${buzzBankTypesSql})
     AND date >= ${clickhouseDateTime(from)}${to ? ` AND date < ${clickhouseDateTime(to)}` : ''}`;
   // A closed window's total is stored.
   const dedupe = to ? ONE_ROW_PER_TRANSACTION : '';
-  // The creator's charges for a bounty award; the cutover balance already reflects one made before it.
-  const ownCharges = `(id, a, t) -> if(id = ${userId} AND t >= ${
-    BANKABLE_CUTOVER.getTime() / 1000
-  }, a, 0)`;
+  // A charge made before the cutover is already out of the cutover balance: a bounty contribution,
+  // or the hold behind a service release.
+  const cutoverSeconds = BANKABLE_CUTOVER.getTime() / 1000;
+  const ownCharges = `(id, a, t) -> if(id = ${userId} AND t >= ${cutoverSeconds}, a, 0)`;
   return `
     SELECT sum(amount) AS spent FROM (
       SELECT toInt64(amount) AS amount FROM buzzTransactions
@@ -232,6 +259,12 @@ export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: 
       SELECT toInt64(amount) AS amount FROM buzzTransactions
       WHERE ${PLATFORM_PAID_SALE_SQL} AND ${paidTo}
         AND JSONExtractInt(details, 'purchasedBy') = ${userId}
+      ${dedupe}
+      UNION ALL
+      SELECT toInt64(amount) AS amount FROM buzzTransactions
+      WHERE ${SERVICE_RELEASE_SQL} AND ${paidTo}
+        AND JSONExtractInt(details, 'buyerId') = ${userId}
+        AND JSONExtractInt(details, 'heldAt') >= ${cutoverSeconds}
       ${dedupe}
       UNION ALL
       SELECT intDiv(amount * arraySum(arrayMap(${ownCharges}, ids, amts, ats)), arraySum(amts)) AS amount

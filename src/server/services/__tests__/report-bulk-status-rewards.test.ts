@@ -53,8 +53,8 @@ const removedUsers = async ({ where }: { where: Where }) =>
 
 beforeEach(() => {
   apply.mockClear();
-  dbMock.dbWrite.report.update.mockReset().mockResolvedValue({} as never);
-  dbMock.dbRead.report.findMany.mockResolvedValue([
+  // The rows the guarded UPDATE changed and returned.
+  dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([
     { id: 7, userId: REPORTER, alsoReportedBy: [ALSO, BANNED, DELETED, UPLOADER] },
     { id: 8, userId: UPLOADER, alsoReportedBy: [] },
   ] as never);
@@ -79,7 +79,7 @@ describe('bulkSetReportStatus', () => {
       rewardRemovedReporters: false,
     });
 
-    expect(dbMock.dbWrite.report.update.mock.calls.map(([args]) => args.where.id)).toEqual([7, 8]);
+    expect(dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1)).toContainEqual([7, 8]);
     expect(rewarded()).toEqual([`7:${REPORTER}`, `7:${UPLOADER}`].sort());
   });
 
