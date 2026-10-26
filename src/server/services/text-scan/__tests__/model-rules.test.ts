@@ -26,7 +26,13 @@ describe('getEnabledModelRules', () => {
         id: 4,
         order: null,
         updatedAt: new Date(5000),
-        definition: { type: 'semantic', subject: 'Jane Doe', description: 'Likeness claim' },
+        definition: {
+          type: 'semantic',
+          subject: 'Jane Doe',
+          description: 'Likeness claim',
+          category: 'likeness',
+          references: [{ url: 'https://example.com/jane', label: 'Profile' }],
+        },
       },
       {
         id: 5,
@@ -43,7 +49,15 @@ describe('getEnabledModelRules', () => {
     ]);
 
     await expect(getEnabledModelRules()).resolves.toEqual([
-      { id: 4, subject: 'Jane Doe', description: 'Likeness claim', aliases: [], updatedAt: 5000 },
+      {
+        id: 4,
+        subject: 'Jane Doe',
+        description: 'Likeness claim',
+        aliases: [],
+        category: 'likeness',
+        references: [{ url: 'https://example.com/jane', label: 'Profile' }],
+        updatedAt: 5000,
+      },
     ]);
     expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({

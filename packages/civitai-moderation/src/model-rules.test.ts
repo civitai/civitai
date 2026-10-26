@@ -19,7 +19,59 @@ describe('semanticModelRuleSchema', () => {
       subject: 'Jane Doe',
       description: '',
       aliases: [],
+      references: [],
     });
+  });
+
+  it('accepts a category and trimmed http(s) references, dropping an empty label', () => {
+    expect(
+      semanticModelRuleSchema.parse({
+        type: 'semantic',
+        subject: 'Jane',
+        category: 'artist',
+        references: [
+          { url: ' https://example.com/a ', label: ' Portfolio ' },
+          { url: 'http://example.com/b', label: '  ' },
+        ],
+      })
+    ).toMatchObject({
+      category: 'artist',
+      references: [
+        { url: 'https://example.com/a', label: 'Portfolio' },
+        { url: 'http://example.com/b', label: undefined },
+      ],
+    });
+  });
+
+  it.each([
+    ['an unknown category', { category: 'celebrity' }],
+    ['a non-http link', { references: [{ url: 'javascript:alert(1)' }] }],
+    ['a link that is not a URL', { references: [{ url: 'example' }] }],
+    ['a link over the cap', { references: [{ url: `https://example.com/${'a'.repeat(500)}` }] }],
+    ['a label over the cap', { references: [{ url: 'https://example.com', label: 'a'.repeat(101) }] }],
+    [
+      'too many references',
+      {
+        references: Array.from({ length: MODEL_RULE_LIMITS.referencesPerRule + 1 }, (_, i) => ({
+          url: `https://example.com/${i}`,
+        })),
+      },
+    ],
+  ])('rejects %s', (_name, extra) => {
+    expect(
+      semanticModelRuleSchema.safeParse({ type: 'semantic', subject: 'Jane', ...extra }).success
+    ).toBe(false);
+  });
+
+  it('lets the matcher read a stored rule whose new fields are malformed', () => {
+    const parsed = storedModelRuleSchema.parse({
+      type: 'semantic',
+      subject: 'Jane',
+      category: 'celebrity',
+      references: [{ url: 'https://example.com/ok' }, { url: 'ftp://example.com' }, 'nope'],
+    });
+    expect(parsed.category).toBeUndefined();
+    expect(parsed.references).toEqual([{ url: 'https://example.com/ok', label: undefined }]);
   });
 
   it('rejects empty-string aliases', () => {
@@ -84,12 +136,43 @@ describe('parseModelRulesHoldMeta', () => {
       mode: 'active',
       fields: [{ heading: 'Name', text: 'Hero One LoRA' }],
       matches: [{ ruleId: 3, term: 'Hero One', field: 'Name', fieldIndex: 0, start: 0, end: 8 }],
-      rules: [{ id: 3, subject: 'Example Franchise', description: 'd', aliases: ['Hero One'] }],
+      rules: [
+        {
+          id: 3,
+          subject: 'Example Franchise',
+          description: 'd',
+          aliases: ['Hero One'],
+          category: 'ip',
+          references: [{ url: 'https://example.com/ref', label: 'Official art' }],
+        },
+      ],
       applied: true,
       kind: 'redetected',
       priorHoldId: 9,
     };
     expect(parseModelRulesHoldMeta(meta)).toEqual(meta);
+  });
+
+  it('keeps the category and references of a snapshot, and tolerates a snapshot without them', () => {
+    const parsed = parseModelRulesHoldMeta({
+      rules: [
+        {
+          id: 1,
+          subject: 'A',
+          category: 'ip',
+          references: [{ url: 'https://example.com/x', label: 'X' }, { url: 'bad' }],
+        },
+        { id: 2, subject: 'B', category: 'nope', references: 'nope' },
+        { id: 3, subject: 'C' },
+      ],
+    });
+    expect(parsed.rules).toMatchObject([
+      { id: 1, category: 'ip', references: [{ url: 'https://example.com/x', label: 'X' }] },
+      { id: 2, references: [] },
+      { id: 3, references: [] },
+    ]);
+    expect(parsed.rules[1].category).toBeUndefined();
+    expect(parsed.rules[2].category).toBeUndefined();
   });
 
   it('keeps the source of a hold a training run recorded, and drops one it does not know', () => {
@@ -108,7 +191,7 @@ describe('parseModelRulesHoldMeta', () => {
       mode: 'shadow',
       fields: [{ heading: 'Name', text: 'x' }],
       matches: [],
-      rules: [{ id: 1, subject: 'S', description: '', aliases: [] }],
+      rules: [{ id: 1, subject: 'S', description: '', aliases: [], references: [] }],
     });
     for (const meta of [null, undefined, 'x', []])
       expect(parseModelRulesHoldMeta(meta)).toMatchObject({ fields: [], matches: [], rules: [] });
