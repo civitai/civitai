@@ -50,6 +50,14 @@ export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.en
  *   - Log/trace correlation: the logs SDK reads the active context itself.
  * Requests answered before Next's request handler runs (e.g. static files the router serves
  * itself) no longer get a server span at all.
+ * Also gone with it OFF:
+ *   - The instrumentation's own HTTP server metric (`http.server.duration`), which the SDK
+ *     exports through its default OTLP metric exporter. Anything built on that metric stops
+ *     receiving data.
+ *   - The trace ROOT for requests the middleware lets through: it becomes Next's short
+ *     middleware-pass span (bare-verb name, no `http.route`, `next.bubble`), with the routed
+ *     request span as its child. Queries keyed on the root span's name, duration or status
+ *     read differently; span metrics that drop `next.bubble` spans do not.
  */
 export function buildOtelInstrumentations(
   env: NodeJS.ProcessEnv = process.env
