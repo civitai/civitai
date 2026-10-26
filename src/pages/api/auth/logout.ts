@@ -19,22 +19,9 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 // keep a legacy-cookie user logged in — plus the orchestrator cookie AND the device cookie (`civ-device`) that
 // gates seamless multi-account switching (HttpOnly, so the client can't clear it; on a shared machine the
 // "switch back without re-login" set would otherwise survive logout). Best-effort revokes the token at the
-// hub, then redirects. Reached via handleSignOut when the hub is configured. See docs/main-app-auth-cutover.md (B).
+// hub, then finishes through the hub's logout. Reached via handleSignOut when the hub is configured. See docs/main-app-auth-cutover.md (B).
 const sessionTokenClient = createSessionTokenClient();
 const HUB = (process.env.AUTH_JWT_ISSUER ?? '').replace(/\/+$/, '');
-
-// The hub's registrable domain (e.g. civitai.com). A spoke whose own registrable domain DIFFERS is CROSS-SITE:
-// its logout response can't clear the hub's `.civitai.com` cookies, and the hub session is a SEPARATE token, so
-// a local-only logout leaves the hub session alive and the user is re-SSO'd straight back in. Such spokes must
-// finish logout THROUGH the hub (see handler). Same-registrable-domain spokes share the hub cookie → local
-// clear + token revoke is already complete.
-function hubRegistrableDomain(): string | undefined {
-  try {
-    return HUB ? cookieDomainForHost(new URL(HUB).host) : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const uniq = <T>(arr: T[]): T[] => [...new Set(arr)];
 
@@ -89,21 +76,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   res.setHeader('Set-Cookie', buildLogoutCookies(req.headers.host));
   if (token) await sessionTokenClient.revoke(token);
 
-  // Cross-site spoke (e.g. civitai.red): finish logout THROUGH the hub so the browser actually receives the
-  // `.civitai.com` cookie-clears AND the hub session token gets revoked — otherwise the surviving hub session
-  // re-SSOs the user right back in. Bounce to the hub logout landing with an absolute returnUrl back here; the
-  // hub validates that returnUrl against the trusted-spoke registry before redirecting back.
-  const spokeDomain = cookieDomainForHost(req.headers.host);
-  const hubDomain = hubRegistrableDomain();
-  const crossSite = !!HUB && !!spokeDomain && !!hubDomain && spokeDomain !== hubDomain;
-  if (crossSite) {
+  // Every logout, same-site included, finishes THROUGH the hub: its host-only cookies can only be cleared by a
+  // response from the hub's own origin. The hub validates the absolute returnUrl against the trusted-spoke
+  // registry before redirecting back.
+  if (HUB) {
     const selfOrigin = resolveSelfOrigin(req);
     const returnUrl = selfOrigin ? `${selfOrigin.replace(/\/+$/, '')}${callbackUrl}` : callbackUrl;
     res.redirect(302, hubLogoutUrl(HUB, returnUrl));
     return;
   }
 
-  // Same-site spoke: it shares the hub's `.civitai.com` cookie, so the clears above already ended the hub
-  // session everywhere on that domain — just continue locally.
   res.redirect(302, callbackUrl);
 }
