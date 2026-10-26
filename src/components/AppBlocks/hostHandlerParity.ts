@@ -58,9 +58,11 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` FIVE keys are ahead: `RUN_CONFIRMED_STEP`,
- * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD`. The
- * published union's 50 types are all inventory keys.
+ * As of the installed `@civitai/app-sdk@0.80.0` the published union's 55 types are all
+ * inventory keys, and the inventory carries two keys the union lacks, neither of them
+ * ahead: `VIEWER_ACTIVITY` (sent by `@civitai/sdk`, which this package does not
+ * describe) and `PREPARE_TRAINING_DATASET` (removed from the SDK in 0.77.0; the page
+ * host still answers it with `removed`).
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
  * `package.json` — a caret on a 0.x version admits patch releases only, and
@@ -240,6 +242,21 @@ export const INVENTORY = {
     // host props, never the payload.
     IframeHost: 'required',
     PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // `@civitai/sdk`'s throttled report (at most one a minute, no payload) that the viewer pressed,
+  // typed, scrolled or focused inside the frame, which the page cannot see. No host handles it: the
+  // App Assistant's preview pane reads it straight off the window (`previewKeepAlive.ts`), and
+  // fire-and-forget means an unhandled one is dropped with no NACK and nothing waiting on it.
+  VIEWER_ACTIVITY: {
+    request: false,
+    reply: '',
+    replyKeys: null,
+    errorKeys: null,
+    IframeHost:
+      'activity report for the App Assistant preview keep-alive, read off the window there; fire-and-forget, nothing to do on a model slot',
+    PageBlockHost:
+      'activity report read off the window by the App Assistant preview keep-alive (previewKeepAlive.ts), not by the host; fire-and-forget, no reply',
     InlineHost: INLINE_STUB,
   },
   REQUEST_SIGN_IN: {
@@ -767,6 +784,18 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Workflow-file read (civitai-app-starters#664): the GET_WILDCARD_PACK pattern
+  // for Workflows / ComfyWorkflows versions. Page-only by decision on that issue.
+  GET_RESOURCE_FILE: {
+    request: true,
+    reply: 'RESOURCE_FILE_RESULT',
+    replyKeys: ['file'],
+    errorKeys: ['error'],
+    IframeHost:
+      'model slot has no resource-file surface; page-only by decision (civitai-app-starters#664)',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // ── Collection follow/unfollow (host bridge) ───────────────────────────────
   // A block asks the HOST to follow/unfollow a collection as the logged-in
   // viewer. Replaces the block's own `POST /api/v1/blocks/collections/[id]/follow`
@@ -980,9 +1009,8 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // graph (under `src`, not excluded; not a `*.test.ts` corner case).
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
-// INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP`,
-// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` as of
-// app-sdk 0.65.1).
+// INVENTORY MAY carry extra keys the published union lacks (`VIEWER_ACTIVITY` and
+// the removed `PREPARE_TRAINING_DATASET` as of app-sdk 0.80.0).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //

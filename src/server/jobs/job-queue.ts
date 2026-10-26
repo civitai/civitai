@@ -283,7 +283,8 @@ const handleJobQueueCleanIfEmpty = createJob(
         if (!ids.length) return;
         // Delete posts that have no images, but preserve the empty anchor post of a published
         // version — deleting it cascades to auto-unpublishing the version (reason 'no-posts'),
-        // stranding the creator. Keeping the shell lets them re-add showcase images.
+        // stranding the creator. Keeping the shell lets them re-add showcase images. A storyline
+        // chapter's post is kept for the same reason: deleting it leaves the chapter without content.
         await dbWrite.$executeRaw`
           DELETE FROM "Post" p
           WHERE id IN (${Prisma.join(ids)})
@@ -295,6 +296,7 @@ const handleJobQueueCleanIfEmpty = createJob(
                 AND p."userId" = m."userId"
                 AND mv.status = 'Published'::"ModelStatus"
             )
+            AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
         `;
       });
 

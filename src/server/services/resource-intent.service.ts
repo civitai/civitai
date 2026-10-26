@@ -39,11 +39,11 @@ import {
   type TagIndexServing,
 } from '~/server/services/resource-intent-tags/holder';
 import {
-  ecosystemBaseModelGate,
   gateEligibleEcosystems,
   modalityEligibleEcosystems,
   RESOURCE_INTENT_V1_GATE_SPEC_HASH,
   V1_TAGS_REQUEST_MEDIA_TYPE,
+  v1ListBaseModelFilter,
 } from '~/server/services/resource-intent-tags/gate';
 import {
   scoreTagRequest,
@@ -459,7 +459,8 @@ const v1ModelTypes = (kind: TagKind) =>
 /**
  * The v1 score. A caller's baseModel is the ecosystem and the tags choose none (`scoreTagRequest`);
  * without one, the tags choose only an ecosystem with enough resources under its gate whose base
- * model generates the request's media type.
+ * model generates the request's media type. Either way the list's base-model filter is
+ * `v1ListBaseModelFilter`'s: the ecosystem's gate, except a caller's checkpoint baseModel exactly.
  */
 function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
   const gated = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
@@ -494,9 +495,7 @@ async function listV1Tags(
     maxModels: V1_TAGS_LIST_MODELS,
     modelIds: score.candidates.map((c) => c.modelId),
     modelTypes,
-    baseModel: req.baseModel
-      ? score.ecosystem
-      : ecosystemBaseModelGate(score.ecosystem, modelTypes),
+    baseModel: v1ListBaseModelFilter(req.kind, !!req.baseModel, score.ecosystem, modelTypes),
     browsingLevel: req.browsingLevel,
     coverage: req.coverage,
     cap: req.cap,

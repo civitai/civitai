@@ -27,6 +27,8 @@ import { readRunnerRequest } from '~/server/services/app-assistant/runner-reques
  *   200 `{ token, expiresAt }`
  *   401 the runner's secret is missing or wrong, or the grant is not a current run grant
  *   403 `refused` when a gate refuses the user; `consent_required` once they turned App Assistant off
+ *       `refused` also for a `chat` token asked with a preview grant (`use: 'preview'`), which mints
+ *       `sandbox` tokens only
  *   503 not configured, the mint failed, or the gates could not be judged just now (`unavailable`)
  *
  * Like `TokenSecuredEndpoint`, a blank configured secret answers 503. Mints are logged without the
@@ -43,6 +45,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   if (!request) return;
   const { grant } = request;
   const { purpose } = request.body;
+  // A preview grant opens one live preview: the sandbox's token, never one that spends Buzz.
+  if (grant.use === 'preview' && purpose !== 'sandbox')
+    return res
+      .status(403)
+      .json({ error: 'A preview grant mints sandbox tokens only', code: 'refused' });
 
   try {
     // The runner's own flag too: turning it off ends runs already holding a grant at their next mint.

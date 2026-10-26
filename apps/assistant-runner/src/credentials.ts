@@ -28,6 +28,14 @@ export class RunCredentials {
     return this.#source(() => grantForConversation(this.#grants, userId, conversationId));
   }
 
+  /**
+   * Tokens from a grant one request carried (a Restart preview's), for that request only: the grant
+   * is held by the returned function and never stored.
+   */
+  forGrant(grant: string): TokenSource {
+    return this.#source(async () => grant);
+  }
+
   #source(grant: () => Promise<string | null>): TokenSource {
     return async (purpose, options) => {
       const token = await grant();

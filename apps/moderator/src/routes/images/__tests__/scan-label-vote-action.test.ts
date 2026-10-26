@@ -223,31 +223,33 @@ describe('load', () => {
     expect(data.version).toBe('');
   });
 
-  it('sends the card with no item or image id anywhere in the page data', async () => {
+  it('sends the card with no item id, image id or media key anywhere in the page data', async () => {
     isControlFlaggerVersion.mockResolvedValue(false);
     claimNext.mockResolvedValue({
       itemId: 41,
       imageId: 42,
       token: TOKEN,
-      url: 'guid',
+      url: 'media-key-x7',
       type: 'image',
-      name: 'a.png',
+      name: 'upload-name.png',
       width: 1,
       height: 1,
       leaseExpiresAt: new Date(0),
     });
     const data = (await open('')) as unknown as { card: unknown };
-    // Exactly these fields, so no id reaches the page under any name.
+    // Exactly these fields, so no id or media key reaches the page under any name.
     expect(data.card).toEqual({
       token: TOKEN,
-      url: 'guid',
       type: 'image',
-      name: 'a.png',
       width: 1,
       height: 1,
       leaseExpiresAt: new Date(0),
+      mediaSrc: `/images/scan-labels/media/${TOKEN}`,
     });
-    expect(JSON.stringify(data)).not.toMatch(/[^0-9.]4[12][^0-9]/);
+    const json = JSON.stringify(data);
+    expect(json).not.toMatch(/[^0-9.]4[12][^0-9]/);
+    expect(json).not.toContain('media-key-x7');
+    expect(json).not.toContain('upload-name');
   });
 
   it('keeps any other version as the filter', async () => {

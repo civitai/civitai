@@ -1,9 +1,13 @@
+import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import type { StorylinePublishOutcome } from '~/server/services/storyline-publish.service';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 export type StorylinePublishMessage = {
+  title?: string;
   message: string;
   color: 'teal' | 'yellow' | 'red';
+  /** Where to follow it up; a message with one stays until dismissed. */
+  link?: { href: string; label: string };
 };
 
 /** What publishing did with the post's storyline draft, in the words the author is shown. */
@@ -27,7 +31,12 @@ export function storylinePublishMessage(
     case 'waiting':
       return { color: 'yellow', message: waitingMessage(outcome.reason, chapter) };
     case 'submitted':
-      return { color: 'teal', message: `${chapter} was submitted for the creator's review.` };
+      return {
+        color: 'teal',
+        title: 'Submitted, waiting for approval',
+        message: `${chapter} is waiting for the storyline owner's approval. It joins the story once they accept it.`,
+        link: { href: STORYLINE_QUEUE_SENT_URL, label: 'See your sent continuations' },
+      };
     case 'dropped':
       return { color: 'red', message: outcome.reason };
   }

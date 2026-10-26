@@ -1,21 +1,29 @@
-// Operator script for worker identity: register a workload client, or block a worker device.
+// Operator script for worker identity: register a workload client or an introspector client, or block a
+// worker device.
 //
 // Usage (from apps/auth; DATABASE_URL and NEXTAUTH_SECRET must be set in the environment, nothing is read
 // from .env):
-//   pnpm run worker-client create --id workers-salad --name "Salad workers" --provider salad \
+//   pnpm run worker-client create --id workers-salad --name "Salad workers" --provider SaladML \
 //     --accept salad-jwt --salad-group <container group id> [--salad-group ...]
-//   pnpm run worker-client create --id workers-dp --name "DP workers" --provider dp --accept device-id
+//   pnpm run worker-client create --id workers-dp --name "DP workers" --provider Submodel \
+//     --accept device-id
+//   pnpm run worker-client introspector --id orchestrator-workers --name "Orchestrator introspection"
 //   pnpm run worker-client block --device <WorkerDevice id> --reason "<why>"
 //
 // The package script bundles this file with esbuild first: tsx cannot import named exports from the
 // workspace packages' TypeScript sources here.
 //
-// `create` prints the client secret once, on stdout. It is stored only as a hash and cannot be shown again.
+// `create` and `introspector` print the client secret once, on stdout. It is stored only as a hash and
+// cannot be shown again.
 import { parseArgs } from 'node:util';
 import pg from 'pg';
 import { Kysely, PostgresDialect } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { blockWorkerDevice, createWorkerClient } from '../src/lib/server/oauth/worker-admin';
+import {
+  blockWorkerDevice,
+  createIntrospectorClient,
+  createWorkerClient,
+} from '../src/lib/server/oauth/worker-admin';
 import { DEVICE_ID_TOKEN_TYPE, JWT_TOKEN_TYPE } from '../src/lib/server/oauth/constants';
 
 const SUBJECT_TOKEN_TYPES: Record<string, string> = {
@@ -76,6 +84,15 @@ try {
     });
     console.log(`client_id: ${clientId}`);
     console.log(`client_secret: ${secret}`);
+  } else if (command === 'introspector') {
+    if (!values.id || !values.name) fail('introspector needs --id and --name');
+    const { clientId, secret } = await createIntrospectorClient(db, {
+      id: values.id,
+      name: values.name,
+    });
+    console.log(`client_id: ${clientId}`);
+    console.log(`client_secret: ${secret}`);
+    console.error(`Add ${clientId} to OAUTH_WORKER_INTROSPECTION_CLIENT_IDS to let it introspect.`);
   } else if (command === 'block') {
     const deviceId = Number(values.device);
     if (!Number.isInteger(deviceId) || !values.reason)
@@ -83,7 +100,7 @@ try {
     const { tokensDeleted } = await blockWorkerDevice(db, deviceId, values.reason);
     console.log(`Blocked device ${deviceId}; deleted ${tokensDeleted} live token(s).`);
   } else {
-    fail('Usage: pnpm run worker-client create|block [options]');
+    fail('Usage: pnpm run worker-client create|introspector|block [options]');
   }
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));
