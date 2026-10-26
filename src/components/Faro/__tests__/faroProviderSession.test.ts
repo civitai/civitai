@@ -90,15 +90,16 @@ const setWindow = (present: boolean) => {
  * should reach `initializeFaro` needs new module state. MUST be awaited: the dynamic import
  * defers the whole render past the current microtask.
  */
-const renderProvider = async (region: string | null | undefined) => {
+const renderProvider = async (region: string | null | undefined, shell?: boolean) => {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
-  return renderToStaticMarkup(createElement(FaroProvider, { region }));
+  return renderToStaticMarkup(createElement(FaroProvider, { region, shell }));
 };
 
 const initOptions = () =>
   initializeFaro.mock.calls[0][0] as {
     sessionTracking: { samplingRate: number; session?: { attributes: Record<string, string> } };
+    pageTracking?: { page?: { attributes?: Record<string, string> } };
   };
 
 beforeEach(() => {
@@ -167,5 +168,22 @@ describe('FaroProvider — session-attributes wiring', () => {
     renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
     renderToStaticMarkup(createElement(FaroProvider, { region: 'US' }));
     expect(initializeFaro).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('FaroProvider — render-mode page attribute wiring', () => {
+  it('a shell document (`shell` prop true) reaches initializeFaro as page attribute `shell`', async () => {
+    await renderProvider('US', true);
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({ render_mode: 'shell' });
+  });
+
+  it('a full render (no `shell` prop) reaches initializeFaro as page attribute `ssr`', async () => {
+    await renderProvider('US');
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({ render_mode: 'ssr' });
+  });
+
+  it('is a PAGE attribute, never a session one (a session outlives the hard load)', async () => {
+    await renderProvider('US', true);
+    expect(initOptions().sessionTracking.session?.attributes).not.toHaveProperty('render_mode');
   });
 });

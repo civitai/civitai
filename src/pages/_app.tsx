@@ -350,7 +350,10 @@ function MyApp(props: CustomAppProps) {
                         `FaroProvider` accepts `undefined | null`
                         by design; pinned by
                         src/tests/pages/app-region-optional-chain.test.ts. */}
-                    <FaroProvider region={region?.countryCode} />
+                    {/* `shell` is `bootedShell`, fixed for the document, so the RUM render-mode
+                        tag describes the hard load (→ Loki page_attr_render_mode); see
+                        src/utils/faro/renderMode.ts. */}
+                    <FaroProvider region={region?.countryCode} shell={bootedShell} />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
