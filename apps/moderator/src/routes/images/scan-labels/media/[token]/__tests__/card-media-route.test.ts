@@ -133,7 +133,7 @@ describe('GET /images/scan-labels/media/[token]', () => {
     }
   );
 
-  it.each([429, 500, 503])('keeps a CDN %i an empty 502', async (status) => {
+  it.each([400, 403, 429, 500, 503])('keeps a CDN %i an empty 502', async (status) => {
     const r = await call({ fetch: vi.fn(async () => upstream(status)) }).res;
     expect(r.status).toBe(502);
     expect(await r.text()).toBe('');
