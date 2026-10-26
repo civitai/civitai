@@ -289,7 +289,13 @@ export const getModelHandler = async ({
       ? (await loadKyselyDb()).kyselyRead
       : null;
     const postsInput = { modelVersionIds, userId: model.user.id };
-    const posts = kyselyRead
+    // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets
+    // `posts: []` on every version without the read — every reader of the field is owner/mod-only.
+    const skipOwnerPosts =
+      !isOwner && (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_GETBYID_SKIP_OWNER_POSTS));
+    const posts: Awaited<ReturnType<typeof readModelPagePostsViaKysely>> = skipOwnerPosts
+      ? []
+      : kyselyRead
       ? await readModelPagePostsViaKysely(kyselyRead, postsInput)
       : await readModelPagePostsViaPrisma(dbRead, postsInput);
     const tagsOnModels = await modelTagCache.fetch(model.id);
