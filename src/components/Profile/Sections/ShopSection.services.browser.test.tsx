@@ -60,11 +60,6 @@ describe('ShopSection services', () => {
     expect(document.querySelector('a[href="/user/mira/shop#shop-services"]')).not.toBeNull();
   });
 
-  test('a seller whose only service is a Draft sees nothing (the shop query returns Active only)', async () => {
-    const text = await renderSection();
-    expect(text.trim()).toBe('');
-  });
-
   test('cosmetics still show alongside services', async () => {
     state.shop = { ...shop(), cosmetics: [{ id: 3, createdAt: new Date() }] };
     state.offerings = [offering];

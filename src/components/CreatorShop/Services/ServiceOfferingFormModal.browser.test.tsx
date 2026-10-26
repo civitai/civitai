@@ -17,6 +17,7 @@ const inputTop = (label: string) => {
     .find((l) => l.textContent?.startsWith(label))
     ?.closest('.mantine-InputWrapper-root')
     ?.querySelector('input');
+  expect(input, `no input found for "${label}"`).toBeTruthy();
   return Math.round(input!.getBoundingClientRect().top);
 };
 
