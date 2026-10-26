@@ -70,7 +70,22 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return how;
     },
   });
+  /** What `echo` was asked with: every user message's words, per request. */
+  const echoed: string[][] = [];
   const scripts: Record<string, () => ReturnType<typeof scriptedModel>> = {
+    // Says back the latest message's own words (the turn's context goes before them).
+    echo: () =>
+      scriptedModel((prompt) => {
+        const users = prompt
+          .filter((message) => message.role === 'user')
+          .map((message) =>
+            (Array.isArray(message.content) ? message.content : [])
+              .map((part: { text?: string }) => part.text ?? '')
+              .join('')
+          );
+        echoed.push(users);
+        return { text: `Heard: ${users.at(-1)!.split('\n\n').at(-1)}` };
+      }),
     long: () => scriptedModel(() => ({ text: LONG_TEXT }), { chunkDelayMs: 1 }),
     tools: () =>
       scriptedModel((prompt) =>
@@ -679,7 +694,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       await fetch(`${base}/runs?conversationId=c-lookup`, { headers: as('u-lookup-other') }).then(
         (response) => response.json()
       )
-    ).toEqual({ v: 1, run: null });
+    ).toEqual({ v: 1, run: null, features: ['edit'] });
     expect(
       (await fetch(`${base}/runs/${runId}/events`, { headers: as('u-lookup-other') })).status
     ).toBe(404);
@@ -694,7 +709,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       await fetch(`${base}/runs?conversationId=c-lookup`, { headers: as(user) }).then((response) =>
         response.json()
       )
-    ).toEqual({ v: 1, run: null });
+    ).toEqual({ v: 1, run: null, features: ['edit'] });
   });
 
   it('a retry of a failed turn carries on from its finished steps without running their tools again', async () => {
@@ -723,6 +738,202 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const started = entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>;
     expect(started.parts).toMatchObject([{ kind: 'tool', toolName: 'record', state: 'done' }]);
     expect(rebuild(entries).at(-1)).toEqual({ kind: 'text', text: 'Recovered.' });
+  });
+
+  it('an edit replaces the latest message and drops its reply; the model hears only the edited words', async () => {
+    const user = 'u-edit';
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit', model: 'echo', content: 'Tell me about otters.' })
+    );
+    expect(first.body).toMatchObject({ features: ['edit'] });
+    expect(ended(await events(first.body!.runId as string, user)).status).toBe('done');
+    const asked = echoed.length;
+
+    const body = startBody({
+      conversationId: 'c-edit',
+      model: 'echo',
+      content: 'Tell me about beavers.',
+    });
+    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    expect(edit.status).toBe(201);
+    expect(edit.body).toMatchObject({ seq: 1, features: ['edit'] });
+    const entries = await events(edit.body!.runId as string, user);
+    const started = entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>;
+    expect(started).toMatchObject({
+      seq: 1,
+      user: { content: 'Tell me about beavers.' },
+      parts: [],
+    });
+    expect(ended(entries).status).toBe('done');
+    expect(rebuild(entries)).toEqual([{ kind: 'text', text: 'Heard: Tell me about beavers.' }]);
+    // Asked once, with one user message: the edited one, and nothing of the old exchange.
+    expect(echoed.slice(asked)).toHaveLength(1);
+    expect(echoed.at(-1)).toHaveLength(1);
+    expect(echoed.at(-1)![0]).toContain('Tell me about beavers.');
+    expect(JSON.stringify(echoed.at(-1))).not.toContain('otters');
+
+    const head = await store.load(user, 'c-edit');
+    expect(head).toMatchObject({
+      v: 2,
+      title: 'Tell me about beavers.',
+      titleSource: 'first-message',
+    });
+    expect(head!.turns).toHaveLength(1);
+    expect(head!.turns[0]).toMatchObject({
+      seq: 1,
+      user: { content: 'Tell me about beavers.', attachments: [] },
+      assistant: { status: 'done' },
+    });
+    expect(head!.turns[0]!.assistant!.messages).toEqual(ended(entries).messages);
+    expect(JSON.stringify(head)).not.toContain('otters');
+  });
+
+  it('an edit of a failed reply starts the turn afresh: nothing carries on from its saved steps', async () => {
+    const user = 'u-edit-failed';
+    flaky.failNext = true;
+    const recordsBefore = calls.record;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-failed', model: 'flaky', content: 'Record it.' })
+    );
+    expect(ended(await events(first.body!.runId as string, user))).toMatchObject({
+      status: 'error',
+      resumable: true,
+      steps: 1,
+    });
+    expect(calls.record).toBe(recordsBefore + 1);
+
+    const body = startBody({
+      conversationId: 'c-edit-failed',
+      model: 'flaky',
+      content: 'Record it twice.',
+    });
+    // `retry` beside `edit` changes nothing: an edit is never a retry.
+    const edit = await post('/runs', as(user), {
+      ...body,
+      turn: { ...body.turn, edit: true, retry: true },
+    });
+    expect(edit.status).toBe(201);
+    const entries = await events(edit.body!.runId as string, user);
+    // A retry would show the saved step and not run it again; an edit shows none and runs it anew.
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toEqual([]);
+    expect(ended(entries).status).toBe('done');
+    expect(calls.record).toBe(recordsBefore + 2);
+    const head = await store.load(user, 'c-edit-failed');
+    expect(
+      head!.turns.map((turn) => [turn.seq, turn.user.content, turn.assistant?.status])
+    ).toEqual([[1, 'Record it twice.', 'done']]);
+  });
+
+  it('a retry after an edit whose run was cancelled never carries on from the old message’s reply', async () => {
+    const user = 'u-edit-cancelled';
+    flaky.failNext = true;
+    const recordsBefore = calls.record;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-cancelled', model: 'flaky', content: 'Record it.' })
+    );
+    // The old message's reply failed with a step it could carry on from.
+    expect(ended(await events(first.body!.runId as string, user))).toMatchObject({
+      status: 'error',
+      resumable: true,
+    });
+
+    const body = startBody({
+      conversationId: 'c-edit-cancelled',
+      model: 'hang',
+      content: 'Wait instead.',
+    });
+    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    const editRun = edit.body!.runId as string;
+    await events(editRun, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+    // The edit's run ends without SUCCESS, so the newest SUCCESS run of this seq is the old message's.
+    await DBOS.cancelWorkflow(editRun);
+    await events(editRun, user);
+
+    const retry = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-edit-cancelled',
+        model: 'flaky',
+        content: 'Wait instead.',
+        retry: true,
+      })
+    );
+    expect(retry.status).toBe(201);
+    const entries = await events(retry.body!.runId as string, user);
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toEqual([]);
+    expect(ended(entries).status).toBe('done');
+    // The old reply's step is not carried on: its tool runs again for the edited message.
+    expect(calls.record).toBe(recordsBefore + 2);
+    const head = await store.load(user, 'c-edit-cancelled');
+    expect(head!.turns.map((turn) => [turn.user.content, turn.assistant?.status])).toEqual([
+      ['Wait instead.', 'done'],
+    ]);
+  });
+
+  it('refuses a retry that carries another message than the head holds, and saves nothing', async () => {
+    const user = 'u-retry-other';
+    flaky.failNext = true;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-retry-other', model: 'flaky', content: 'Record it.' })
+    );
+    expect(ended(await events(first.body!.runId as string, user)).status).toBe('error');
+    const before = await store.load(user, 'c-retry-other');
+
+    const other = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record something else.',
+        retry: true,
+      })
+    );
+    expect(other).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+    expect(await store.load(user, 'c-retry-other')).toEqual(before);
+    // The same message asked again is the ordinary retry (the control).
+    const same = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record it.',
+        retry: true,
+      })
+    );
+    expect(same.status).toBe(201);
+    expect(ended(await events(same.body!.runId as string, user)).status).toBe('done');
+  });
+
+  it('refuses an edit of a turn that is not the latest', async () => {
+    const user = 'u-edit-stale';
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'One.' })
+    );
+    await events(first.body!.runId as string, user);
+    const second = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'Two.', seq: 2 })
+    );
+    await events(second.body!.runId as string, user);
+    const body = startBody({ conversationId: 'c-edit-stale', model: 'echo', content: 'Uno.' });
+    const stale = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    expect(stale).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+    const head = await store.load(user, 'c-edit-stale');
+    expect(head!.turns.map((turn) => turn.user.content)).toEqual(['One.', 'Two.']);
   });
 
   it('writes a patch into the head', async () => {
@@ -846,7 +1057,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       const retry = await post(
         '/runs',
         as(user),
-        startBody({ conversationId, model: 'tools', retry: true })
+        // The message the head holds: a retry asks again for the reply to it.
+        startBody({ conversationId, model: 'tools', retry: true, content: 'Parked.' })
       );
       expect(retry.status).toBe(201);
       const runB = retry.body!.runId as string;
@@ -1073,7 +1285,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const retry = await post(
       '/runs',
       as(user),
-      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true })
+      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true, content: 'Old run.' })
     );
     expect(retry.status).toBe(201);
     const entries = await events(retry.body!.runId as string, user);

@@ -7,6 +7,8 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import classes from './ModelURN.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DsCode, DsTooltip } from '~/components/AppLayout/ShellDs/ContentDs';
+import { ShellButton } from '~/components/AppLayout/ShellDs/ShellDs';
 
 export const ModelURN = ({
   baseModel,
@@ -16,6 +18,7 @@ export const ModelURN = ({
   fileId,
   fileType,
   withCopy = true,
+  ds,
 }: Props) => {
   const { copied, copy } = useClipboard();
   const urn = useMemo(
@@ -23,6 +26,44 @@ export const ModelURN = ({
     [baseModel, type, modelId, modelVersionId, fileId, fileType]
   );
   if (!urn) return null;
+
+  if (ds) {
+    const part = (label: string, value: number) => (
+      <DsTooltip label={withCopy && copied ? 'Copied' : label}>
+        <DsCode className={classes.code} blue onClick={withCopy ? () => copy(value) : undefined}>
+          {value}
+        </DsCode>
+      </DsTooltip>
+    );
+    return (
+      <div className="flex flex-row flex-wrap items-center justify-start gap-[calc(0.25rem*var(--mantine-scale))]">
+        <div className="flex flex-row flex-wrap items-center justify-start gap-0">
+          <DsCode className={classes.code}>civitai:</DsCode>
+          {part('Model ID', modelId)}
+          <DsCode className={classes.code}>@</DsCode>
+          {part('Version ID', modelVersionId)}
+          {fileId !== undefined && (
+            <>
+              <DsCode className={classes.code}>+</DsCode>
+              {part('File ID', fileId)}
+            </>
+          )}
+        </div>
+        {withCopy && (
+          <ShellButton
+            variant="subtle-gray"
+            icon="xs"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              copy(urn);
+            }}
+          >
+            {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}
+          </ShellButton>
+        )}
+      </div>
+    );
+  }
 
   return (
     <Group gap={4}>
@@ -165,4 +206,6 @@ type Props = {
    * correct AIR type segment (`diffusionmodel`) instead of `checkpoint`. */
   fileType?: string;
   withCopy?: boolean;
+  /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
+  ds?: boolean;
 };

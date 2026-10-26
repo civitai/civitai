@@ -2,7 +2,7 @@ import { redirect, fail, error } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
-import { carriesClientCredentialsOnlyScope, scopeLabels } from '$lib/server/oauth/scope';
+import { carriesNonUserScope, scopeLabels } from '$lib/server/oauth/scope';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import {
@@ -14,6 +14,7 @@ import {
 } from '$lib/server/auth/device';
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
+import { NO_FRAMING } from '$lib/server/auth/same-origin';
 
 // Consent screen for the OAuth authorization_code flow. The §D /authorize endpoint redirects here
 // (303) when a user has no stored consent for the requested (client, scope). Approve POSTs straight
@@ -35,7 +36,8 @@ const AUTH_PARAMS = [
   'nonce',
 ] as const;
 
-export const load: PageServerLoad = async ({ url, locals, cookies }) => {
+export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders }) => {
+  setHeaders(NO_FRAMING);
   // Must be signed in to consent — bounce to login and return here afterward.
   if (!locals.user) {
     redirect(303, `/login?returnUrl=${encodeURIComponent(url.pathname + url.search)}`);
@@ -68,7 +70,7 @@ export const load: PageServerLoad = async ({ url, locals, cookies }) => {
   // UserRead is the forced baseline — reflect it in the displayed + submitted scope.
   const scope =
     (parseInt(params.scope ?? url.searchParams.get('scope') ?? '0', 10) || 0) | TokenScope.UserRead;
-  if (carriesClientCredentialsOnlyScope(scope)) return { invalid: true as const };
+  if (carriesNonUserScope(scope)) return { invalid: true as const };
   const scopes = scopeLabels(scope);
 
   // Hidden-field values for the Approve form (normalized scope incl. UserRead). Typed as a Record so
@@ -117,13 +119,8 @@ export const actions: Actions = {
   // BOTH an active session AND the target being linked to THIS browser's device set and fresh (<30d) — never
   // a client-supplied credential. All the original auth params are forwarded as hidden fields and copied
   // back onto the consent redirect so the in-flight request survives the round-trip.
+  // hooks.server.ts refuses a POST here that doesn't come from a hub page.
   switch: async ({ request, cookies, locals, url }) => {
-    // SameSite=Lax on civ-token already blocks a cross-site POST from carrying the session (→ 401), but
-    // app-wide `csrf.checkOrigin` is off (machine OAuth endpoints need it off), so add an explicit
-    // same-origin guard for this session-mutating action. A present-but-mismatched Origin is rejected; a
-    // missing Origin (some same-origin POSTs omit it) falls through to the session + device-link gates.
-    const origin = request.headers.get('origin');
-    if (origin && origin !== url.origin) error(403, 'cross-site request forbidden');
     if (!locals.user) error(401, 'active session required');
     const data = await request.formData();
     const deviceId = getDeviceId(cookies);

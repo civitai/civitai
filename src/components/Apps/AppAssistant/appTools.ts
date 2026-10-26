@@ -9,5 +9,6 @@ export {
   RUNNING_LIMIT,
   appOpenFailure,
   createAppTools,
+  isKeepLimitResult,
 } from '@civitai/app-assistant';
 export type { AppTools, AppToolsOptions } from '@civitai/app-assistant';

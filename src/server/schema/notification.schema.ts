@@ -50,6 +50,12 @@ export const togglePushSettingInput = z.object({
 });
 export type TogglePushSettingInput = z.infer<typeof togglePushSettingInput>;
 
+export const toggleEmailSettingInput = z.object({
+  type: z.string().array().min(1),
+  enabled: z.boolean(),
+});
+export type ToggleEmailSettingInput = z.infer<typeof toggleEmailSettingInput>;
+
 export const markReadNotificationInput = z.object({
   id: z.coerce.bigint().optional(),
   all: z.boolean().optional(),

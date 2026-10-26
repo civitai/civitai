@@ -60,7 +60,10 @@ vi.mock('$lib/server/oauth/model', () => ({
 
 import { POST } from '../+server';
 
-function approve(scope: number) {
+function approve(
+  scope: number,
+  headers: Record<string, string> = { origin: 'https://auth.civitai.com' }
+) {
   const body = new URLSearchParams({
     client_id: 'game-frame',
     redirect_uri: 'https://games.example.com/cb',
@@ -74,7 +77,7 @@ function approve(scope: number) {
   });
   const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
   return POST({
-    request: new Request(url, { method: 'POST', body }),
+    request: new Request(url, { method: 'POST', body, headers }),
     url,
     locals: { user: { id: 7 } },
     getClientAddress: () => '203.0.113.9',
@@ -97,11 +100,49 @@ describe('authorize — client_credentials-only scopes', () => {
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
+  it('refuses WorkerRegister before storing any consent or issuing a code', async () => {
+    const res = await approve(TokenScope.UserRead | TokenScope.WorkerRegister);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
   it('stores the consent for an ordinary scope (positive control)', async () => {
     h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
     await Promise.resolve(approve(TokenScope.UserRead)).catch(() => undefined);
     expect(h.inserts).toEqual([
       expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: TokenScope.UserRead }),
     ]);
+  });
+});
+
+describe('authorize — approval comes from the consent page', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('refuses an approval from another origin before storing consent or issuing a code', async () => {
+    const res = await approve(TokenScope.UserRead, { origin: 'https://evil.example' });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('access_denied');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('refuses an approval naming no origin', async () => {
+    const res = await approve(TokenScope.UserRead, {});
+    expect(res.status).toBe(403);
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('accepts an approval whose Referer is the consent page', async () => {
+    await Promise.resolve(
+      approve(TokenScope.UserRead, {
+        referer: 'https://auth.civitai.com/login/oauth/authorize?x=1',
+      })
+    ).catch(() => undefined);
+    expect(h.inserts).toHaveLength(1);
   });
 });

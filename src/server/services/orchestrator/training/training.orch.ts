@@ -1,6 +1,7 @@
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsBaseModelList } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
@@ -401,6 +402,8 @@ export const createTrainingWorkflow = async ({
     throw throwBadRequestError(
       'This model has been blocked from training - please try another one.'
     );
+  if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
+    throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];

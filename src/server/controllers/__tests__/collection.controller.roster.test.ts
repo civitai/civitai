@@ -73,7 +73,10 @@ function arrangePermissions({ manage = false }: { manage?: boolean } = {}) {
 }
 
 function callHandler() {
-  const ctx = { user: { id: VIEWER_ID, isModerator: false } } as unknown as Context;
+  const ctx = {
+    user: { id: VIEWER_ID, isModerator: false },
+    features: {},
+  } as unknown as Context;
   return getCollectionByIdHandler({ ctx, input: { id: COLLECTION_ID } });
 }
 

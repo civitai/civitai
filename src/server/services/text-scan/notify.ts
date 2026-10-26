@@ -38,7 +38,7 @@ export async function notifyTextScanRatingRaised({
 }) {
   await createNotification({
     userId,
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     type: TEXT_SCAN_RATING_RAISED,
     key: textScanRatingRaisedKey({ entityType, entityId, level, workflowId }),
     details: { entityType, entityId, level, title, url },

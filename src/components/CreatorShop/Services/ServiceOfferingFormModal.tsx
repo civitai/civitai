@@ -1,5 +1,7 @@
 import { Button, Group, Modal, SimpleGrid, Stack } from '@mantine/core';
+import { useState } from 'react';
 import type * as z from 'zod';
+import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
@@ -18,11 +20,16 @@ import {
   SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MAX,
 } from '~/shared/constants/creator-service.constants';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ServiceOfferingStatus, ServicePreviewKind } from '~/shared/utils/prisma/enums';
 
-const formSchema = upsertServiceOfferingSchema.omit({ id: true, publish: true });
+const formSchema = upsertServiceOfferingSchema.omit({
+  id: true,
+  publish: true,
+  affirmedTermsVersion: true,
+});
 type FormValues = z.infer<typeof formSchema>;
 
 const previewKindOptions = [
@@ -58,9 +65,17 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
   });
 
   const isActive = offering?.status === ServiceOfferingStatus.Active;
+  const needsAffirmation = !offering?.termsAffirmed;
+  const [affirmed, setAffirmed] = useState(false);
+  const canPublish = !needsAffirmation || affirmed;
   const save = (publish: boolean) =>
     form.handleSubmit(async (values: FormValues) => {
-      await upsert.mutateAsync({ ...values, id: offering?.id, publish });
+      await upsert.mutateAsync({
+        ...values,
+        id: offering?.id,
+        publish,
+        affirmedTermsVersion: publish && affirmed ? SERVICES_TERMS_VERSION : undefined,
+      });
       dialog.onClose();
     });
 
@@ -124,6 +139,9 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             data={ratingOptions}
             withAsterisk
           />
+          {!isActive && needsAffirmation && (
+            <SellerAffirmationCheckbox checked={affirmed} onChange={setAffirmed} />
+          )}
           <Group justify="flex-end">
             <Button variant="default" onClick={dialog.onClose}>
               Cancel
@@ -137,7 +155,12 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
                 <Button variant="light" onClick={save(false)} loading={upsert.isPending}>
                   {offering?.status === ServiceOfferingStatus.Paused ? 'Save' : 'Save draft'}
                 </Button>
-                <Button color="yellow" onClick={save(true)} loading={upsert.isPending}>
+                <Button
+                  color="yellow"
+                  onClick={save(true)}
+                  loading={upsert.isPending}
+                  disabled={!canPublish}
+                >
                   Publish service
                 </Button>
               </>
