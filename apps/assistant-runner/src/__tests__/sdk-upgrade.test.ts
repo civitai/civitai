@@ -126,33 +126,53 @@ const pkgTabs = (range: string) =>
 interface AppState {
   /** `my-app/package.json`'s text. */
   pkg: string;
+  /** `my-app/package-lock.json`'s text, `null` when there is none. */
+  lock: string | null;
   /** The installed SDK's version, `null` when none is installed. */
   installed: string | null;
   devRunning: boolean;
   devCommand: string | null;
   /** Every text written to `my-app/package.json`, in order. */
   writes: string[];
+  /** How many installs ran at once, at most. */
+  maxConcurrentInstalls: number;
+  /** Each install's start and end, in order of starting. */
+  installSpans: { start: number; end?: number }[];
 }
 
+/** The lockfile an install leaves for a declared range (what the fake's npm writes). */
+const lockFor = (range: string) => `{\n  "lockfileVersion": 3,\n  "sdk": "${range}"\n}\n`;
+/** The app's own lockfile before any upgrade: not one the fake's npm would write. */
+const ORIGINAL_LOCK = '{\n  "lockfileVersion": 2,\n  "sdk": "resolved-by-hand"\n}\n';
+
 /**
- * A stateful app in the fake sandbox: its `package.json` is read and written through the file
- * tools, an install puts the SDK the declared range starts at into `node_modules` (`install` may
- * answer otherwise), and the dev server runs until stopped.
+ * A stateful app in the fake sandbox: its `package.json` and `package-lock.json` are read and
+ * written through the file tools, an install puts the SDK the declared range starts at into
+ * `node_modules` and rewrites the lockfile (`install` may answer otherwise), and the dev server runs
+ * until stopped.
  */
 function app(
-  initial: { pkg: string; installed?: string | null; devRunning?: boolean },
+  initial: { pkg: string; installed?: string | null; devRunning?: boolean; lock?: string | null },
   install?: (call: number, signal: AbortSignal) => Promise<string> | string
 ): AppState {
   const state: AppState = {
     pkg: initial.pkg,
+    lock: initial.lock === undefined ? ORIGINAL_LOCK : initial.lock,
     installed: initial.installed === undefined ? '0.19.1' : initial.installed,
     devRunning: initial.devRunning ?? true,
     devCommand: initial.devRunning === false ? null : `cd my-app && ${DEV_SERVER_COMMAND}`,
     writes: [],
+    maxConcurrentInstalls: 0,
+    installSpans: [],
   };
   let installs = 0;
+  let running = 0;
   fake.tools.set('read_file', (args) => {
     if (args.path === 'my-app/package.json') return fileOf(args.path, state.pkg);
+    if (args.path === 'my-app/package-lock.json') {
+      if (state.lock === null) throw new Error('ENOENT: no such file');
+      return fileOf(args.path, state.lock);
+    }
     if (args.path === INSTALLED) {
       if (state.installed === null) throw new Error('ENOENT: no such file');
       return fileOf(args.path, JSON.stringify({ name: '@civitai/sdk', version: state.installed }));
@@ -166,17 +186,38 @@ function app(
       state.pkg = String(args.content);
       state.writes.push(state.pkg);
     }
+    if (args.path === 'my-app/package-lock.json') state.lock = String(args.content);
     return JSON.stringify({ path: args.path, bytesWritten: String(args.content).length });
   });
   fake.tools.set('run_command', async (args, signal) => {
-    if (args.command !== INSTALL) return ran(0);
+    const command = String(args.command);
+    if (command === 'cd my-app && rm -f package-lock.json') {
+      state.lock = null;
+      return ran(0);
+    }
+    if (command.includes('[ -e package-lock.json ]'))
+      return ran(0, state.lock === null ? 'absent\n' : 'present\n');
+    if (command !== INSTALL) return ran(0);
     installs++;
-    if (install) return install(installs, signal);
-    const range = JSON.parse(state.pkg) as Record<string, Record<string, string>>;
-    const declared =
-      range.dependencies?.['@civitai/sdk'] ?? range.devDependencies?.['@civitai/sdk'];
-    state.installed = String(declared).replace(/^[\^~]/, '');
-    return ran(0, 'added 1 package');
+    running++;
+    state.maxConcurrentInstalls = Math.max(state.maxConcurrentInstalls, running);
+    const span: { start: number; end?: number } = { start: Date.now() };
+    state.installSpans.push(span);
+    try {
+      if (install) return await install(installs, signal);
+      const parsed = JSON.parse(state.pkg) as Record<string, Record<string, string>>;
+      const declared = String(
+        parsed.dependencies?.['@civitai/sdk'] ?? parsed.devDependencies?.['@civitai/sdk']
+      );
+      // A kept lockfile wins, as npm keeps a locked version that still satisfies the range.
+      const locked = state.lock === ORIGINAL_LOCK && declared === STALE;
+      state.installed = locked ? '0.19.1' : declared.replace(/^[\^~]/, '');
+      if (!locked) state.lock = lockFor(declared);
+      return ran(0, 'added 1 package');
+    } finally {
+      running--;
+      span.end = Date.now();
+    }
   });
   const status = () =>
     JSON.stringify({ running: state.devRunning, command: state.devCommand, lastExit: null });
@@ -190,10 +231,14 @@ function app(
     state.devCommand = String(args.command);
     return status();
   });
+  fake.tools.set('dev_server_restart', () => {
+    state.devRunning = true;
+    return status();
+  });
   return state;
 }
 
-/** The tools the runner called, in order, without its reads and its port probes. */
+/** The tools the runner called, in order, without its reads, its looks and its port probes. */
 const actions = () =>
   fake.calls
     .filter(
@@ -206,6 +251,8 @@ const actions = () =>
         ? `run_command ${String(call.args.command)}`
         : call.tool === 'dev_server_start'
         ? `dev_server_start ${String(call.args.command)}`
+        : call.tool === 'write_file'
+        ? `write_file ${String(call.args.path)}`
         : call.tool
     );
 
@@ -237,20 +284,22 @@ describe('the runner upgrades an app on an old @civitai/sdk itself', () => {
     expect(state.pkg).toBe(pkg4(CURRENT));
     expect(state.installed).toBe(CURRENT_VERSION);
     expect(actions()).toEqual([
-      'write_file',
+      'write_file my-app/package.json',
       `run_command ${INSTALL}`,
       'dev_server_stop',
       `dev_server_start cd my-app && ${DEV_SERVER_COMMAND}`,
     ]);
     expect(state.devRunning).toBe(true);
-    // The install has a bound of its own in the sandbox.
+    expect(state.lock).toBe(lockFor(CURRENT));
+    // The install has a bound of its own in the sandbox: it kills the install, and answers, past it.
     const install = fake.calls.find((c) => c.args.command === INSTALL)!;
-    expect(typeof install.args.timeout_ms).toBe('number');
+    expect(install.args.timeout_ms).toBe(90_000);
 
     // One line for the user; no steps for the assistant to take again.
     expect(tools.instructions).toContain(USER_LINE);
-    expect(tools.instructions).not.toContain(`Run ${INSTALL}`);
-    expect(tools.instructions).not.toContain('npm install');
+    // (The turn's own instructions say `cd <blockId> && npm install`; the upgrade names no step.)
+    expect(tools.instructions).not.toContain('cd my-app && npm install');
+    expect(tools.instructions).not.toContain('SDK upgrade, before the rest of this reply');
     expect(tools.instructions).toContain(REMOTE_PREVIEW);
     // The page's gate hears of the install, as of any command that changed files.
     expect(reported).toContainEqual(
@@ -279,7 +328,22 @@ describe('the runner upgrades an app on an old @civitai/sdk itself', () => {
     const state = app({ pkg: pkg4(STALE), devRunning: false });
     const tools = await open(provider());
     expect(state.pkg).toBe(pkg4(CURRENT));
-    expect(actions()).toEqual(['write_file', `run_command ${INSTALL}`]);
+    expect(actions()).toEqual(['write_file my-app/package.json', `run_command ${INSTALL}`]);
+    expect(tools.instructions).toContain(USER_LINE);
+  });
+
+  it('a dev server started some other way is restarted with its own command', async () => {
+    fake.add('my-app');
+    const state = app({ pkg: pkg4(STALE) });
+    state.devCommand = 'npm --prefix my-app run dev';
+    const tools = await open(provider());
+    expect(state.pkg).toBe(pkg4(CURRENT));
+    expect(actions()).toEqual([
+      'write_file my-app/package.json',
+      `run_command ${INSTALL}`,
+      'dev_server_restart',
+    ]);
+    expect(fake.calls.find((c) => c.tool === 'dev_server_restart')!.args).toEqual({});
     expect(tools.instructions).toContain(USER_LINE);
   });
 
@@ -324,11 +388,13 @@ describe('a failed upgrade puts package.json back', () => {
     expect(state.pkg).toBe(pkg4(STALE));
     expect(state.writes).toEqual([pkg4(CURRENT), pkg4(STALE)]);
     expect(actions()).toEqual([
-      'write_file',
+      'write_file my-app/package.json',
       `run_command ${INSTALL}`,
-      'write_file',
+      'write_file my-app/package.json',
+      'write_file my-app/package-lock.json',
       `run_command ${INSTALL}`,
     ]);
+    expect(state.lock).toBe(ORIGINAL_LOCK);
     expect(state.devRunning).toBe(true);
     expect(failed()).toEqual([
       expect.objectContaining({
@@ -353,26 +419,52 @@ describe('a failed upgrade puts package.json back', () => {
     expectNoSdkWords(tools.instructions);
   });
 
-  it('an install past the upgrade’s time budget is abandoned and rolled back', async () => {
+  it('an install that ends past the budget is rolled back once it answered, never beside it', async () => {
     fake.add('my-app');
-    const state = app({ pkg: pkg4(STALE) }, (call, signal) =>
-      call === 1
-        ? new Promise<string>((resolve) =>
-            signal.addEventListener('abort', () => resolve(ran(137, 'killed')))
-          )
-        : ran(0, 'up to date')
-    );
-    const started = Date.now();
-    const tools = await open(provider({ sdkUpgradeTimeoutMs: 300 }));
-    // Well under the default budget: an upgrade that ignored the option would wait that out.
-    expect(Date.now() - started).toBeLessThan(10_000);
+    const state = app({ pkg: pkg4(STALE) }, async (call) => {
+      if (call === 1) {
+        // Slower than the budget, and it does finish: cutting it off would not stop it in the sandbox.
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        state.installed = CURRENT_VERSION;
+        state.lock = lockFor(CURRENT);
+        return ran(0, 'added 1 package');
+      }
+      state.installed = state.lock === ORIGINAL_LOCK ? '0.19.1' : 'wrong';
+      return ran(0, 'up to date');
+    });
+    const tools = await open(provider({ sdkUpgradeTimeoutMs: 800 }));
+    expect(state.installSpans).toHaveLength(2);
+    // The rollback's install began only after the upgrade's had answered.
+    expect(state.installSpans[1]!.start).toBeGreaterThanOrEqual(state.installSpans[0]!.end!);
+    expect(state.maxConcurrentInstalls).toBe(1);
     expect(state.pkg).toBe(pkg4(STALE));
     expect(state.writes).toEqual([pkg4(CURRENT), pkg4(STALE)]);
-    expect(installCount()).toBe(2);
+    expect(state.lock).toBe(ORIGINAL_LOCK);
+    expect(state.installed).toBe('0.19.1');
+    // No restart: the budget ran out before it.
+    expect(fake.callsTo('dev_server_stop')).toBe(0);
     expect(failed()).toEqual([
-      expect.objectContaining({ object: expect.objectContaining({ reason: 'timeout' }) }),
+      expect.objectContaining({
+        object: expect.objectContaining({ stage: 'install', reason: 'timeout', rolledBack: true }),
+      }),
     ]);
     expectNoSdkWords(tools.instructions);
+  });
+
+  it('an app with no lockfile has none again after a rollback', async () => {
+    fake.add('my-app');
+    const state = app({ pkg: pkg4(STALE), lock: null }, (call) => {
+      // Every npm install writes a lockfile, failed or not.
+      state.lock = lockFor('written-by-npm');
+      return call === 1 ? ran(1, 'npm ERR!') : ran(0, 'up to date');
+    });
+    await open(provider());
+    expect(installCount()).toBe(2);
+    expect(state.pkg).toBe(pkg4(STALE));
+    expect(state.lock).toBeNull();
+    expect(failed()).toEqual([
+      expect.objectContaining({ object: expect.objectContaining({ rolledBack: true }) }),
+    ]);
   });
 
   it('a dev server that does not come back after the upgrade rolls it back and starts the old one', async () => {
@@ -391,6 +483,7 @@ describe('a failed upgrade puts package.json back', () => {
     });
     const tools = await open(provider());
     expect(state.pkg).toBe(pkg4(STALE));
+    expect(state.lock).toBe(ORIGINAL_LOCK);
     expect(state.installed).toBe('0.19.1');
     expect(starts).toBe(2);
     expect(state.devRunning).toBe(true);
@@ -417,7 +510,53 @@ describe('a failed upgrade puts package.json back', () => {
   });
 });
 
+describe('one upgrade at a time, and never for a stopped run', () => {
+  it('two replies opening the same app at once install once, one after the other', async () => {
+    fake.add('my-app');
+    const state = app({ pkg: pkg4(STALE) });
+    const tools = provider();
+    const [first, second] = await Promise.all([
+      open(tools),
+      open(tools, { runId: 'run-2', conversationId: 'conv-2' }),
+    ]);
+    expect(state.maxConcurrentInstalls).toBe(1);
+    // The second found the pin current once the first was done.
+    expect(installCount()).toBe(1);
+    expect(state.writes).toEqual([pkg4(CURRENT)]);
+    expect(
+      [first.instructions, second.instructions].filter((i) => i?.includes(USER_LINE))
+    ).toHaveLength(1);
+  });
+
+  it('a run already stopped changes nothing', async () => {
+    fake.add('my-app');
+    const state = app({ pkg: pkg4(STALE) });
+    const stopped = new AbortController();
+    stopped.abort();
+    await open(provider(), { signal: stopped.signal }).catch(() => null);
+    expect(state.writes).toEqual([]);
+    expect(installCount()).toBe(0);
+  });
+});
+
 describe('when the runner cannot upgrade, it changes nothing', () => {
+  it('a lockfile it cannot keep whole: no write, no install', async () => {
+    fake.add('my-app');
+    const state = app({ pkg: pkg4(STALE) });
+    const read = fake.tools.get('read_file')!;
+    fake.tools.set('read_file', (args, signal) =>
+      args.path === 'my-app/package-lock.json'
+        ? JSON.stringify({ path: args.path, size: 5_000_000, truncated: true, content: '{' })
+        : read(args, signal)
+    );
+    await open(provider());
+    expect(state.writes).toEqual([]);
+    expect(installCount()).toBe(0);
+    expect(failed()).toEqual([
+      expect.objectContaining({ object: expect.objectContaining({ stage: 'backup' }) }),
+    ]);
+  });
+
   it('a sandbox that lists no exec tool: no write, no install, and a log line', async () => {
     fake.add('my-app');
     fake.hiddenTools.add('run_command');
