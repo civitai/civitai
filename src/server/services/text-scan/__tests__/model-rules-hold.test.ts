@@ -22,7 +22,17 @@ const subject = (name: string) => ({
   declared: {},
   fields: [{ heading: 'Name', text: name }],
 });
-const RULES = [{ id: 3, subject: 'Example Franchise', description: '', aliases: ['Hero One'] }];
+const REFERENCES = [{ url: 'https://example.com/ref', label: 'Official art' }];
+const RULES = [
+  {
+    id: 3,
+    subject: 'Example Franchise',
+    description: '',
+    aliases: ['Hero One'],
+    category: 'ip' as const,
+    references: REFERENCES,
+  },
+];
 const base = { modelId: 7, versionIds: [11] };
 
 beforeEach(() => {
@@ -33,7 +43,14 @@ beforeEach(() => {
 });
 
 const MATCH = { ruleId: 3, term: 'Hero One', field: 'Name', fieldIndex: 0, start: 0, end: 8 };
-const RULE_SNAPSHOT = { id: 3, subject: 'Example Franchise', description: '', aliases: ['Hero One'] };
+const RULE_SNAPSHOT = {
+  id: 3,
+  subject: 'Example Franchise',
+  description: '',
+  aliases: ['Hero One'],
+  category: 'ip',
+  references: REFERENCES,
+};
 
 describe('checkModelRulesLiteralHold', () => {
   it('returns a literal hit in active mode, with the hash of the text a rescan will see', async () => {
@@ -126,6 +143,16 @@ describe('checkModelRulesLiteralHold', () => {
     expect(hold).toMatchObject({ ruleIds: [4], textHash, reason: 'Other Name' });
     expect(hold?.matches.map((m) => m.ruleId)).toEqual([4]);
     expect(hold?.rules.map((r) => r.id)).toEqual([4]);
+  });
+
+  it('snapshots a rule cached before category and references existed with no references', async () => {
+    getEnabledModelRules.mockResolvedValue([
+      { id: 3, subject: 'Example Franchise', description: '', aliases: ['Hero One'] },
+    ]);
+    const hold = await checkModelRulesLiteralHold(base);
+    expect(hold?.rules).toEqual([
+      { id: 3, subject: 'Example Franchise', description: '', aliases: ['Hero One'], references: [] },
+    ]);
   });
 
   it('does nothing when there are no rules', async () => {

@@ -86,10 +86,46 @@ describe('save', () => {
     });
     expect(service.updateModelRule).toHaveBeenCalledWith(
       3,
-      { subject: 'Example', description: '', aliases: ['One', 'Two'], note: '' },
+      { subject: 'Example', description: '', aliases: ['One', 'Two'], references: [], note: '' },
       1,
       { baseUpdatedAt: '2026-09-01T10:00:00.000Z' }
     );
+  });
+
+  it('passes the category and references the editor posted, dropping blank rows', async () => {
+    service.updateModelRule.mockResolvedValue({ cacheStale: false });
+    await post('save', {
+      id: '3',
+      subject: 'Example',
+      category: 'likeness',
+      references: JSON.stringify([
+        { url: ' https://example.com/a ', label: ' Profile ' },
+        { url: '', label: '' },
+      ]),
+    });
+    expect(service.updateModelRule).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({
+        category: 'likeness',
+        references: [{ url: 'https://example.com/a', label: 'Profile' }],
+      }),
+      1,
+      expect.anything()
+    );
+  });
+
+  it.each([
+    ['a non-http link', { references: JSON.stringify([{ url: 'javascript:alert(1)' }]) }],
+    ['an unknown category', { category: 'celebrity' }],
+    ['malformed references', { references: '{' }],
+    ['a label without a link', { references: JSON.stringify([{ url: ' ', label: 'Orphan' }]) }],
+    [
+      'the same link twice',
+      { references: JSON.stringify([{ url: 'https://example.com/a' }, { url: 'https://example.com/a' }]) },
+    ],
+  ])('returns 400 for %s', async (_name, extra) => {
+    expect(await post('save', { subject: 'Example', ...extra })).toMatchObject({ status: 400 });
+    expect(service.createModelRule).not.toHaveBeenCalled();
   });
 
   it('returns 409 for a draft written against an older rule', async () => {
@@ -110,17 +146,19 @@ describe('saveAll', () => {
     service.createModelRule.mockResolvedValue({ id: 11, cacheStale: false });
     service.updateModelRule.mockRejectedValue(new ModelRuleStaleError());
     const rules = [
-      { draftId: -1, subject: 'New', description: '', aliases: '', note: '' },
+      { draftId: -1, subject: 'New', description: '', aliases: '', category: '', references: [], note: '' },
       {
         draftId: 3,
         id: 3,
         subject: 'Example',
         description: '',
         aliases: '',
+        category: '',
+        references: [],
         note: '',
         baseUpdatedAt: 'x',
       },
-      { draftId: -2, subject: '   ', description: '', aliases: 'X', note: '' },
+      { draftId: -2, subject: '   ', description: '', aliases: 'X', category: '', references: [], note: '' },
     ];
     expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
       status: 422,
@@ -131,9 +169,42 @@ describe('saveAll', () => {
     });
   });
 
+  it('carries each draft’s category and references, and reports a bad link on that draft', async () => {
+    service.createModelRule.mockResolvedValue({ id: 11, cacheStale: false });
+    const rules = [
+      {
+        draftId: -1,
+        subject: 'New',
+        description: '',
+        aliases: '',
+        category: 'legal',
+        references: [{ url: 'https://example.com/x' }],
+        note: '',
+      },
+      {
+        draftId: -2,
+        subject: 'Bad',
+        description: '',
+        aliases: '',
+        category: '',
+        references: [{ url: 'ftp://example.com' }],
+        note: '',
+      },
+    ];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 422,
+      data: { saved: [{ draftId: -1 }], failed: [{ draftId: -2 }] },
+    });
+    expect(service.createModelRule).toHaveBeenCalledTimes(1);
+    expect(service.createModelRule).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'legal', references: [{ url: 'https://example.com/x' }] }),
+      1
+    );
+  });
+
   it('succeeds when every draft saved', async () => {
     service.createModelRule.mockResolvedValue({ id: 11, cacheStale: false });
-    const rules = [{ draftId: -1, subject: 'New', description: '', aliases: '', note: '' }];
+    const rules = [{ draftId: -1, subject: 'New', description: '', aliases: '', category: '', references: [], note: '' }];
     expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
       success: true,
       saved: [{ draftId: -1, id: 11 }],
@@ -146,7 +217,14 @@ describe('saveAll as the alias approval path', () => {
     service.updateModelRule
       .mockResolvedValueOnce({ cacheStale: false })
       .mockRejectedValueOnce(new ModelRuleStaleError());
-    const base = { subject: 'Example', description: '', note: '', baseUpdatedAt: 't1' };
+    const base = {
+      subject: 'Example',
+      description: '',
+      category: '',
+      references: [],
+      note: '',
+      baseUpdatedAt: 't1',
+    };
     const rules = [
       { ...base, draftId: 3, id: 3, aliases: 'Old\nNew' },
       { ...base, draftId: 4, id: 4, aliases: 'Other' },
@@ -204,7 +282,17 @@ describe('saveAll refusals', () => {
     subject: `Rule ${draftId}`,
     description: '',
     aliases: '',
+    category: '',
+    references: [],
     note: '',
+  });
+
+  it('refuses an entry that omits category or references, so an old client cannot wipe them', async () => {
+    const { category: _c, references: _r, ...omitted } = draft(3, 3);
+    expect(await post('saveAll', { rules: JSON.stringify([omitted]) })).toMatchObject({
+      status: 400,
+    });
+    expect(service.updateModelRule).not.toHaveBeenCalled();
   });
 
   it('reports an unexpected error for one rule and keeps saving the rest', async () => {

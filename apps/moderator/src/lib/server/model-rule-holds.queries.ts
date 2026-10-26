@@ -241,7 +241,7 @@ export type ModelRuleHoldHistoryEntry = {
   decidedAt: Date | null;
   decidedByUsername: string | null;
   decisionNote: string | null;
-  subjects: string[];
+  rules: Pick<StoredModelRuleSnapshot, 'id' | 'subject' | 'category' | 'references'>[];
   /** Its ruling cleared the matched rules for the text instead of restoring the model. */
   clearsRules: boolean;
 };
@@ -291,7 +291,12 @@ export async function getModelRuleHoldHistory(
       decidedByUsername: row.decidedByUsername ?? null,
       decision: parsed.decision ?? null,
       mode: parsed.mode,
-      subjects: parsed.rules.map((rule) => rule.subject),
+      rules: parsed.rules.map(({ id, subject, category, references }) => ({
+        id,
+        subject,
+        category,
+        references,
+      })),
     };
   });
 }
