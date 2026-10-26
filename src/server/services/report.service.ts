@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
+import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -474,6 +475,11 @@ export const createReport = async ({
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
     castsNoTagVotes;
+  // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
+  // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
+  const details = data.details as MixedObject;
+  if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
+  else delete details[NO_REPORT_REWARD_KEY];
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -481,7 +487,7 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
-          details: data.details as MixedObject,
+          details,
           pendingOnly: castsNoTagVotes,
           tx: callerTx,
         })
@@ -707,7 +713,7 @@ export async function bulkSetReportStatus({
 
   const reports = await dbRead.report.findMany({
     where: { id: { in: ids }, status: { not: status } },
-    select: { id: true, userId: true, alsoReportedBy: true },
+    select: { id: true, userId: true, alsoReportedBy: true, details: true },
   });
 
   if (!reports) return;
@@ -745,7 +751,7 @@ export async function bulkSetReportStatus({
         });
     const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
-      const excluded = noRewardFor(report.id);
+      const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,
         userIds: [report.userId, ...report.alsoReportedBy].filter(
