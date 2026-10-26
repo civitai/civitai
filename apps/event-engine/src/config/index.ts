@@ -170,7 +170,7 @@ export const config = {
     embedMaxRetries: vectorInt('VECTOR_EMBED_MAX_RETRIES', 8, 0),
     // Wait before re-sending a submit that may have been accepted (ephemeral workflows don't dedupe).
     embedResubmitDelaySeconds: vectorInt('VECTOR_EMBED_RESUBMIT_DELAY_SECONDS', 120, 0, 3600),
-    // How long after a batch's first submit an outage (expired, canceled, all failed) may be re-submitted.
+    // How long after a batch's first attempt an outage (expired, canceled, all failed) may be re-submitted.
     embedOutageRetrySeconds: vectorInt('VECTOR_EMBED_OUTAGE_RETRY_SECONDS', 900, 0, 7200),
     // Inputs per workflow, 1 to 128.
     embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),

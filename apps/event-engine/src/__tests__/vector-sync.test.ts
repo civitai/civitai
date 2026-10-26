@@ -1676,12 +1676,13 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
       sleep: async (ms) => void (clock += ms),
       fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
         posts++;
-        clock += 20 * 60_000; // the queue held it until its steps expired
+        clock += 10 * 60_000; // the queue held it until its steps expired
         return failedWorkflow(init, 'expired');
       }) as unknown as typeof fetch,
     });
     const result = await e.embed(inputs(2));
-    expect(posts).toBe(1);
+    expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
+
     expect(result.failed.sort()).toEqual([1, 2]);
     expect(result.error).toBeUndefined();
   });

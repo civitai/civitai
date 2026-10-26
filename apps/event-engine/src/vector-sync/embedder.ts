@@ -249,7 +249,7 @@ export type EmbedderOptions = {
   waitSeconds?: number;
   /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
   resubmitDelayMs?: number;
-  /** No outage re-submit starts this long after a batch's first submit (see looksLikeOutage). */
+  /** No outage re-submit starts this long after a batch's first attempt (see looksLikeOutage). */
   outageRetryForMs?: number;
 };
 
@@ -441,11 +441,12 @@ export class Embedder {
     // (reconcile retries them) rather than a flush that never moves on. Only the unfinished
     // inputs go again; the steps that succeeded are kept below.
     const outage = failed.length > 0 && looksLikeOutage(workflow, batch.length);
+    const backoff = Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2);
     // Bounded by time as well as attempts: one expiry can take the whole 30-minute step timeout.
     const retryOutage =
       outage &&
       outageRetries < this.opts.maxRetries &&
-      this.now() - started < (this.opts.outageRetryForMs ?? DEFAULT_OUTAGE_RETRY_FOR_MS);
+      this.now() + backoff - started < (this.opts.outageRetryForMs ?? DEFAULT_OUTAGE_RETRY_FOR_MS);
     if (retryOutage) {
       logger.warn(
         { workflow: workflow.id, status: workflow.status, ids: failed, attempt: outageRetries },
@@ -479,7 +480,7 @@ export class Embedder {
       for (const [id, vector] of accepted) call.result.vectors.set(id, vector);
     }
     if (retryOutage) {
-      await this.sleep(Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2));
+      await this.sleep(backoff);
       const unfinished = new Set(failed);
       const again = batch.filter((input) => unfinished.has(input.id));
       await this.embedSplitting(again, call, depth, outageRetries + 1, started);

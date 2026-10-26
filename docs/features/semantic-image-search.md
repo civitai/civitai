@@ -99,10 +99,11 @@ locally until the orchestration client ships it.
   times, to isolate the bad input. A workflow that ends expired or canceled, or failed with no
   step succeeding across several images, is an outage rather than bad inputs: the vectors that did
   finish are kept, and the unfinished inputs are re-submitted with backoff up to
-  `VECTOR_EMBED_MAX_RETRIES`, and only while the batch is within
-  `VECTOR_EMBED_OUTAGE_RETRY_SECONDS` (default 900) of its first submit. Then they are counted as
-  failed (logged at error level) for the reconciler to retry. One flush is held at most that window
-  plus the last attempt, which can take a step's full 30-minute timeout.
+  `VECTOR_EMBED_MAX_RETRIES`, and only while a re-submit would start within
+  `VECTOR_EMBED_OUTAGE_RETRY_SECONDS` (default 900) of the batch's first attempt; time spent
+  waiting out 429s counts. Then they are counted as failed (logged at error level) for the
+  reconciler to retry. Outage re-submits hold one batch for at most that window plus the last
+  attempt, which can take a step's full 30-minute timeout and, if rate-limited, the 429 budget too.
 - When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
   workflows not yet submitted are skipped. The vectors already returned are stored before the
   error is raised, so a retry pays only for what is missing.
