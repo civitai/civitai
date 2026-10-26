@@ -63,6 +63,7 @@ import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
+import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -206,6 +207,10 @@ function MyApp(props: CustomAppProps) {
   // Fixed for the tab: the shell machinery stays mounted after navigating off the shell page, so
   // the tree above the page never remounts.
   const [bootedShell] = useState(() => shell === true);
+  // The hard load's viewer, for the RUM page attributes (src/utils/faro/pageAttributes.ts).
+  const [bootedSignedIn] = useState(() =>
+    isHardLoadSignedIn({ session, hasAuthCookie: pageHasAuthCookie })
+  );
   const {
     cookies,
     hasAuthCookie,
@@ -350,10 +355,12 @@ function MyApp(props: CustomAppProps) {
                         `FaroProvider` accepts `undefined | null`
                         by design; pinned by
                         src/tests/pages/app-region-optional-chain.test.ts. */}
-                    {/* `shell` is `bootedShell`, fixed for the document, so the RUM render-mode
-                        tag describes the hard load (→ Loki page_attr_render_mode); see
-                        src/utils/faro/renderMode.ts. */}
-                    <FaroProvider region={region?.countryCode} shell={bootedShell} />
+                    {/* RUM page attributes: see src/utils/faro/pageAttributes.ts. */}
+                    <FaroProvider
+                      region={region?.countryCode}
+                      shell={bootedShell}
+                      signedIn={bootedSignedIn}
+                    />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>

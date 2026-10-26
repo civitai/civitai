@@ -15,7 +15,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
 import { buildRumGeoAttributes } from '~/utils/faro/geoAttributes';
 import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
-import { buildRumPageAttributes } from '~/utils/faro/renderMode';
+import { buildRumPageAttributes } from '~/utils/faro/pageAttributes';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
@@ -196,13 +196,7 @@ interface InitFaroOptions {
    * no session falls out of a Loki logfmt grouping. See geoAttributes.ts.
    */
   geoAttributes: Record<string, string>;
-  /**
-   * Page attributes (`render_mode` = `shell` | `ssr`, from `buildRumPageAttributes`): how THIS
-   * document's hard load was rendered. Set as `pageTracking.page.attributes`, NOT as a session
-   * attribute — a session spans many hard loads and keeps its first load's attributes. Rides on
-   * `meta.page.attributes` of every beacon of the document (→ Loki `page_attr_render_mode`).
-   * See renderMode.ts.
-   */
+  /** Per-document `render_mode` / `viewer` page attributes; see pageAttributes.ts. */
   pageAttributes: Record<string, string>;
 }
 
@@ -281,9 +275,7 @@ function initFaro({
         ? { session: { attributes: sessionAttributes } }
         : {}),
     },
-    // Per-DOCUMENT page attributes (`render_mode`). The web-sdk's page meta getter merges this
-    // static object over the live `location.href` on every beacon, so `page_url` stays current
-    // while `page_attr_render_mode` keeps describing the hard load. See renderMode.ts.
+    // Per-document page attributes (→ Loki `page_attr_*`); see pageAttributes.ts.
     pageTracking: { page: { attributes: pageAttributes } },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
@@ -348,15 +340,13 @@ function initFaro({
 
 export function FaroProvider({
   region,
-  shell,
+  shell = false,
+  signedIn = false,
 }: {
   region?: string | null;
-  /**
-   * Whether THIS document's hard load was the static shell — `_app`'s `bootedShell`, frozen from
-   * the shell-only `pageProps.shell` marker. Not a feature flag: a shell carries flags evaluated
-   * with no user until its page data arrives. Read once at init, like `region`.
-   */
+  /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
   shell?: boolean;
+  signedIn?: boolean;
 }) {
   const features = useFeatureFlags();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
@@ -368,7 +358,7 @@ export function FaroProvider({
           resourceTimingCohort: !!features.faroResourceTiming,
           experimentAttributes: buildRumExperimentAttributes(features),
           geoAttributes: buildRumGeoAttributes(region),
-          pageAttributes: buildRumPageAttributes(shell),
+          pageAttributes: buildRumPageAttributes({ shell, signedIn }),
         });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();

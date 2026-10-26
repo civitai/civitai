@@ -90,10 +90,13 @@ const setWindow = (present: boolean) => {
  * should reach `initializeFaro` needs new module state. MUST be awaited: the dynamic import
  * defers the whole render past the current microtask.
  */
-const renderProvider = async (region: string | null | undefined, shell?: boolean) => {
+const renderProvider = async (
+  region: string | null | undefined,
+  hardLoad: { shell?: boolean; signedIn?: boolean } = {}
+) => {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
-  return renderToStaticMarkup(createElement(FaroProvider, { region, shell }));
+  return renderToStaticMarkup(createElement(FaroProvider, { region, ...hardLoad }));
 };
 
 const initOptions = () =>
@@ -171,19 +174,27 @@ describe('FaroProvider — session-attributes wiring', () => {
   });
 });
 
-describe('FaroProvider — render-mode page attribute wiring', () => {
-  it('a shell document (`shell` prop true) reaches initializeFaro as page attribute `shell`', async () => {
-    await renderProvider('US', true);
-    expect(initOptions().pageTracking?.page?.attributes).toEqual({ render_mode: 'shell' });
+describe('FaroProvider — page attributes wiring', () => {
+  it('a signed-in shell hard load reaches initializeFaro as `shell` + `signed-in`', async () => {
+    await renderProvider('US', { shell: true, signedIn: true });
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({
+      render_mode: 'shell',
+      viewer: 'signed-in',
+    });
   });
 
-  it('a full render (no `shell` prop) reaches initializeFaro as page attribute `ssr`', async () => {
+  it('a hard load with neither prop reaches initializeFaro as `ssr` + `anon`', async () => {
     await renderProvider('US');
-    expect(initOptions().pageTracking?.page?.attributes).toEqual({ render_mode: 'ssr' });
+    expect(initOptions().pageTracking?.page?.attributes).toEqual({
+      render_mode: 'ssr',
+      viewer: 'anon',
+    });
   });
 
-  it('is a PAGE attribute, never a session one (a session outlives the hard load)', async () => {
-    await renderProvider('US', true);
-    expect(initOptions().sessionTracking.session?.attributes).not.toHaveProperty('render_mode');
+  it('they are PAGE attributes, never session ones (a session outlives the hard load)', async () => {
+    await renderProvider('US', { shell: true, signedIn: true });
+    const sessionAttrs = initOptions().sessionTracking.session?.attributes;
+    expect(sessionAttrs).not.toHaveProperty('render_mode');
+    expect(sessionAttrs).not.toHaveProperty('viewer');
   });
 });
