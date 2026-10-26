@@ -191,6 +191,7 @@ const MAX_SPLIT_DEPTH = 4;
  * than one workflow can run (30 min), since another process may hold the account's quota.
  */
 const RATE_LIMITED_FOR_MS = 2 * 60 * 60_000;
+const DEFAULT_OUTAGE_RETRY_FOR_MS = 15 * 60_000;
 /** Longer than a workflow's steps usually take, so a re-send finds them cached. */
 const DEFAULT_RESUBMIT_DELAY_MS = 2 * 60_000;
 /** Retries of a poll after a network error or 5xx; the workflow keeps running meanwhile. */
@@ -248,6 +249,8 @@ export type EmbedderOptions = {
   waitSeconds?: number;
   /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
   resubmitDelayMs?: number;
+  /** No outage re-submit starts this long after a batch's first submit (see looksLikeOutage). */
+  outageRetryForMs?: number;
 };
 
 type EmbedCall = {
@@ -321,6 +324,7 @@ export class Embedder {
       maxRetries: embedMaxRetries,
       batchSize: config.vectorSync.embedBatchSize,
       resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
+      outageRetryForMs: config.vectorSync.embedOutageRetrySeconds * 1000,
       priority,
     });
   }
@@ -382,7 +386,8 @@ export class Embedder {
     batch: EmbedInput[],
     call: EmbedCall,
     depth: number,
-    outageRetries = 0
+    outageRetries = 0,
+    started = this.now()
   ): Promise<void> {
     let workflow: Workflow;
     try {
@@ -436,7 +441,11 @@ export class Embedder {
     // (reconcile retries them) rather than a flush that never moves on. Only the unfinished
     // inputs go again; the steps that succeeded are kept below.
     const outage = failed.length > 0 && looksLikeOutage(workflow, batch.length);
-    const retryOutage = outage && outageRetries < this.opts.maxRetries;
+    // Bounded by time as well as attempts: one expiry can take the whole 30-minute step timeout.
+    const retryOutage =
+      outage &&
+      outageRetries < this.opts.maxRetries &&
+      this.now() - started < (this.opts.outageRetryForMs ?? DEFAULT_OUTAGE_RETRY_FOR_MS);
     if (retryOutage) {
       logger.warn(
         { workflow: workflow.id, status: workflow.status, ids: failed, attempt: outageRetries },
@@ -473,7 +482,7 @@ export class Embedder {
       await this.sleep(Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2));
       const unfinished = new Set(failed);
       const again = batch.filter((input) => unfinished.has(input.id));
-      await this.embedSplitting(again, call, depth, outageRetries + 1);
+      await this.embedSplitting(again, call, depth, outageRetries + 1, started);
     }
   }
 
