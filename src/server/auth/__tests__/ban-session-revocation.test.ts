@@ -33,6 +33,9 @@ const h = vi.hoisted(() => {
       hashes.set(k, m);
     },
     hExpire: async () => {},
+    hDel: async (k: string, fields: string[]) => {
+      for (const f of fields) hashes.get(k)?.delete(f);
+    },
     hGet: async (k: string, f: string) => hashes.get(k)?.get(f) ?? null,
     get: async (k: string) => strings.get(k) ?? null,
     set: async (k: string, v: string) => {
@@ -61,6 +64,17 @@ vi.mock('~/server/redis/atomic', () => ({
   hSetMultiWithTTL: async (_c: unknown, key: string, fields: Record<string, string | number>) => {
     const m = h.hashes.get(key) ?? new Map<string, string>();
     for (const [f, v] of Object.entries(fields)) m.set(f, String(v));
+    h.hashes.set(key, m);
+  },
+  hSetMultiWithTTLUnlessValue: async (
+    _c: unknown,
+    key: string,
+    fields: Record<string, string | number>,
+    _ttlMs: number,
+    keepValue: string
+  ) => {
+    const m = h.hashes.get(key) ?? new Map<string, string>();
+    for (const [f, v] of Object.entries(fields)) if (m.get(f) !== keepValue) m.set(f, String(v));
     h.hashes.set(key, m);
   },
 }));
