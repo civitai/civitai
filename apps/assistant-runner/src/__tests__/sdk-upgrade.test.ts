@@ -40,7 +40,7 @@ const log = {
   error: (object: object, message?: string) => logs.push({ level: 'error', object, message }),
 };
 
-function provider(options: { sdkPinReadTimeoutMs?: number } = {}) {
+function provider(options: { sdkPinReadTimeoutMs?: number; wakeTimeoutMs?: number } = {}) {
   return new AppAssistantTools({
     sandboxUrl: fake.url,
     // TEST-ONLY stand-in for a minted token: never a real credential.
@@ -66,13 +66,26 @@ async function open(tools: AppAssistantTools, overrides: Partial<ToolContext> = 
   return result;
 }
 
-/** The app's `package.json`, as `sandbox__read_file` answers a file: JSON with its text in `content`. */
-function appPackage(content: () => string) {
-  fake.tools.set('read_file', (args) =>
-    args.path === 'my-app/package.json'
-      ? JSON.stringify({ path: args.path, size: content().length, content: content() })
-      : 'export {}'
-  );
+const INSTALLED = 'my-app/node_modules/@civitai/sdk/package.json';
+
+/** A file as `sandbox__read_file` answers it: JSON with its text in `content`. */
+const fileOf = (path: unknown, content: string) =>
+  JSON.stringify({ path, size: content.length, content });
+
+/**
+ * The app's `package.json`, and, when `installed` gives a version, the installed SDK's own
+ * `package.json` under `node_modules` (otherwise that read fails, as for a missing file).
+ */
+function appPackage(content: () => string, installed: () => string | null = () => null) {
+  fake.tools.set('read_file', (args) => {
+    if (args.path === 'my-app/package.json') return fileOf(args.path, content());
+    if (args.path === INSTALLED) {
+      const version = installed();
+      if (version === null) throw new Error('ENOENT: no such file');
+      return fileOf(args.path, JSON.stringify({ name: '@civitai/sdk', version }));
+    }
+    return 'export {}';
+  });
 }
 
 const pkg = (range: string, field: 'dependencies' | 'devDependencies' = 'dependencies') =>
@@ -195,17 +208,78 @@ describe('the runner nudges an app on an old @civitai/sdk to upgrade', () => {
     );
     const started = Date.now();
     const tools = await open(provider({ sdkPinReadTimeoutMs: 200 }));
-    expect(Date.now() - started).toBeLessThan(10_000);
+    // Well under the 5 s default: a check that ignored the option would wait that out.
+    expect(Date.now() - started).toBeLessThan(2_500);
     expectNoNudge(tools.instructions);
   });
+
+  it('a sandbox that never answers MCP initialize does not hold the turn past its tools’ own wait', async () => {
+    fake.add('my-app');
+    fake.hangInitialize = true;
+    appPackage(() => pkg(STALE));
+    const started = Date.now();
+    const tools = await open(provider({ sdkPinReadTimeoutMs: 200 }));
+    // The tools' list gives up at 15 s (LIST_TIMEOUT_MS); the pin check adds at most its own bound,
+    // never MCP initialize's 60 s.
+    expect(Date.now() - started).toBeLessThan(18_000);
+    expectNoNudge(tools.instructions);
+    expect(fake.callsTo('read_file')).toBe(0);
+  }, 90_000);
 
   it('a paused app that does not wake is not read, and opens as before', async () => {
     fake.add('my-app', 'suspended');
     fake.startsAfter = Infinity;
     appPackage(() => pkg(STALE));
-    const tools = await open(provider({ sdkPinReadTimeoutMs: 200 }), {}).catch(() => null);
+    const tools = await open(provider({ sdkPinReadTimeoutMs: 200, wakeTimeoutMs: 200 }), {}).catch(
+      () => null
+    );
     if (tools) expectNoNudge(tools.instructions);
     expect(fake.callsTo('read_file')).toBe(0);
+  });
+});
+
+describe('the installed @civitai/sdk counts too', () => {
+  it('a current range with an older SDK still installed (an install that did not finish) gets the nudge', async () => {
+    fake.add('my-app');
+    appPackage(
+      () => pkg(CURRENT),
+      () => '0.19.1'
+    );
+    const tools = await open(provider());
+    expectNudge(tools.instructions, CURRENT);
+    expect(tools.instructions).toContain('0.19.1');
+    expect(fake.calls).toContainEqual({
+      sandbox: 'sb-my-app-1',
+      tool: 'read_file',
+      args: { path: INSTALLED },
+    });
+  });
+
+  it('a current range with the current SDK installed gets none', async () => {
+    fake.add('my-app');
+    appPackage(
+      () => pkg(CURRENT),
+      () => CURRENT.slice(1)
+    );
+    expectNoNudge((await open(provider())).instructions);
+  });
+
+  it('a still-stale install after a nudged turn is told again, once per change', async () => {
+    fake.add('my-app');
+    let range = STALE;
+    let installed = '0.19.1';
+    appPackage(
+      () => pkg(range),
+      () => installed
+    );
+    const tools = provider();
+    expectNudge((await open(tools)).instructions, STALE);
+    // package.json was bumped but npm install did not finish: told again, once.
+    range = CURRENT;
+    expectNudge((await open(tools, { runId: 'run-2' })).instructions, CURRENT);
+    expectNoNudge((await open(tools, { runId: 'run-3' })).instructions);
+    installed = CURRENT.slice(1);
+    expectNoNudge((await open(tools, { runId: 'run-4' })).instructions);
   });
 });
 
