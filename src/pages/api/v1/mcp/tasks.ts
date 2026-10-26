@@ -18,36 +18,47 @@ import { Flags } from '~/shared/utils/flags';
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Method not allowed' });
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
   }
 
   const config = getTaskRouterConfig('mcp');
-  if (!config) return res.status(404).json({ error: 'Not found' });
+  if (!config) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
 
   const authHeader = req.headers.authorization;
   const token = authHeader?.toLowerCase().startsWith('bearer ')
     ? authHeader.slice('bearer '.length).trim()
     : '';
-  if (!token) return res.status(401).json({ error: 'Missing or malformed Bearer token' });
+  if (!token) {
+    res.status(401).json({ error: 'Missing or malformed Bearer token' });
+    return;
+  }
   const session = await getSessionFromBearerToken(token);
-  if (!session?.user) return res.status(401).json({ error: 'Invalid token' });
+  if (!session?.user) {
+    res.status(401).json({ error: 'Invalid token' });
+    return;
+  }
   if (!Flags.hasFlag(session.tokenScope, TokenScope.AIServicesWrite)) {
-    return res.status(403).json({ error: 'This token lacks the AI services write scope' });
+    res.status(403).json({ error: 'This token lacks the AI services write scope' });
+    return;
   }
 
-  const caller: McpCaller = {
-    userId: session.user.id,
-    token,
-    subject: session.subject,
-  };
+  const caller: McpCaller = { userId: session.user.id, token, subject: session.subject };
   if (
     !isMcpCallerAllowed(config, caller) ||
     !(await isAppBlocksTaskKindEnabled({ user: session.user as SessionUser }))
   ) {
-    return res.status(403).json({ error: 'Tasks are not enabled for this account' });
+    res.status(403).json({ error: 'Tasks are not enabled for this account' });
+    return;
   }
 
   const reply = await handleMcpMessage(config, caller, req.body);
-  if (!reply) return res.status(202).end();
-  return res.status(200).json(reply);
+  if (!reply) {
+    res.status(202).end();
+    return;
+  }
+  res.status(200).json(reply);
 });
