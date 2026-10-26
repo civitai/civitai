@@ -5,6 +5,10 @@
  *        [--floor <id>] [--span 5000] [--pages 2] [--name images] [--cursor-file path]
  *        [--without-image-cdc] [--max-rate <writes/s>] [--window HH:MM-HH:MM (UTC)]
  *   node dist/vector-sync/backfill.js pause|resume|status|reset [--name images]
+ *   node dist/vector-sync/backfill.js set-inflight|set-steps-per-second <n|clear> [--name images]
+ *
+ * set-* lower a running backfill's in-flight jobs or step rate within a minute, without a
+ * restart; they never raise it above VECTOR_EMBED_MAX_IN_FLIGHT / VECTOR_EMBED_MAX_STEPS_PER_SECOND.
  *
  * Pages are id windows, not LIMIT queries, so a page's cost is bounded by its span however
  * sparse eligibility is there. The cursor (the exclusive upper id of the next page) only moves
@@ -16,7 +20,7 @@ import type { Pool } from 'pg';
 import { assertVectorSyncConfig, config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
-import { fileRunState, redisRunState, type RunState } from './cursor';
+import { fileRunState, redisRunState, type RunLimits, type RunState } from './cursor';
 import { Embedder } from './embedder';
 import { VectorStore } from './qdrant';
 import { getImageRowsInRange } from './source';
@@ -252,6 +256,36 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
   return total;
 }
 
+const LIMIT_COMMANDS: Record<string, keyof RunLimits | undefined> = {
+  'set-inflight': 'inFlight',
+  'set-steps-per-second': 'stepsPerSecond',
+};
+
+/** Re-read so `set-*` reach a running backfill without a restart. */
+const LIMITS_EVERY_MS = 30_000;
+
+/** Applies the run's `set-*` limits now and every LIMITS_EVERY_MS; returns a stop function. */
+export async function watchRunLimits(
+  state: Pick<RunState, 'getLimits'>,
+  embedder: Pick<Embedder, 'setLimits'>,
+  everyMs = LIMITS_EVERY_MS
+) {
+  let last = '';
+  const apply = async () => {
+    const limits = await state.getLimits();
+    embedder.setLimits(limits);
+    if (JSON.stringify(limits) !== last) {
+      last = JSON.stringify(limits);
+      logger.info({ limits }, 'vector-backfill: runtime limits');
+    }
+  };
+  await apply();
+  const timer = setInterval(() => {
+    apply().catch((err) => logger.warn({ err }, 'vector-backfill: reading limits failed'));
+  }, everyMs);
+  return () => clearInterval(timer);
+}
+
 function parseArgs(argv: string[]) {
   const [command = 'run', ...rest] = argv;
   const flags: Record<string, string | true> = {};
@@ -281,7 +315,10 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   assertVectorSyncConfig();
-  const { command, flags, int, positive } = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // set-* take their value as a positional argument.
+  const limitValue = argv[0]?.startsWith('set-') ? argv.splice(1, 1)[0] : undefined;
+  const { command, flags, int, positive } = parseArgs(argv);
   const name = String(flags.name ?? 'images');
   // Logged by every command: pause or status run with another VECTOR_COLLECTION addresses
   // another run.
@@ -299,9 +336,28 @@ async function main() {
     }
     if (command === 'status') {
       logger.info(
-        { ...run, cursor: await state.getCursor(), paused: await state.isPaused() },
+        {
+          ...run,
+          cursor: await state.getCursor(),
+          paused: await state.isPaused(),
+          limits: await state.getLimits(),
+          ceilings: {
+            inFlight: config.vectorSync.embedMaxInFlight,
+            stepsPerSecond: config.vectorSync.embedMaxStepsPerSecond,
+          },
+        },
         'vector-backfill: status'
       );
+      return;
+    }
+    const limitName = LIMIT_COMMANDS[command];
+    if (limitName) {
+      const value = limitValue === 'clear' ? null : Number(limitValue);
+      if (value !== null && !(Number.isInteger(value) && value >= 1)) {
+        throw new Error(`${command} needs a positive integer or "clear"`);
+      }
+      await state.setLimit(limitName, value);
+      logger.info({ ...run, [limitName]: value }, `vector-backfill: ${command}`);
       return;
     }
     if (command === 'reset') {
@@ -349,6 +405,8 @@ async function main() {
         stopping = true;
       });
     }
+    const embedder = dryRun ? null : Embedder.fromConfig('low');
+    const stopWatching = embedder ? await watchRunLimits(state, embedder) : () => undefined;
     try {
       await runBackfill(
         {
@@ -363,7 +421,7 @@ async function main() {
         {
           pg,
           store,
-          embedder: dryRun ? null : Embedder.fromConfig('low'),
+          embedder,
           dryRun,
           state,
           gateCheck,
@@ -371,6 +429,7 @@ async function main() {
         }
       );
     } finally {
+      stopWatching();
       await pg.end();
     }
   } finally {

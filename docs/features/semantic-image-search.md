@@ -77,7 +77,11 @@ locally until the orchestration client ships it.
 - **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
   `Retry-After` (at least 250 ms, at most an hour), and every submit on that process waits it out too. 429s
   are budgeted by time (2 h), not count, since another process can hold the account's quota
-  for a whole workflow. There is no other client-side throttling.
+  for a whole workflow.
+- **Step rate:** steps go out at a steady `VECTOR_EMBED_MAX_STEPS_PER_SECOND` per process
+  (default 10, 0 is unlimited), each workflow waiting its turn, with no burst. It also bounds
+  cache hits, which create no orchestrator job and so pass every job-based limit, and which
+  share the submodel queue with image scanning.
 - **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
   `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Ephemeral workflows are not
   deduplicated (the orchestrator ignores `externalId` for them, so none is sent), and a submit
@@ -205,13 +209,19 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 - The cursor is kept in Redis (`vector-sync:{backfill:<collection>:<name>}:cursor`), so it
   survives restarts,
   deploys and reschedules. It moves past a page only once every page above it is written.
-  Points that already exist are not re-embedded, so resuming over a page costs payload writes
-  only. `--cursor-file` keeps it in a local file instead, for runs without Redis.
+  Within a page, each workflow's vectors are written as it returns, so a run killed mid-page
+  loses only its workflows still in flight. Points that already exist are not re-embedded, so
+  resuming over a page costs payload writes only. `--cursor-file` keeps it in a local file
+  instead, for runs without Redis.
 - `--dry-run` writes nothing, Qdrant or cursor, and reports what it would embed. `--limit N`
   stops after about N eligible images (it can overshoot by up to `--pages × --span` ids).
 - `pause` / `resume` set a flag the run checks before each page. They, `status` and `reset`
   address the run for `VECTOR_COLLECTION` in their own env, and log it. `status` prints the cursor.
-  `reset` clears it. SIGTERM finishes in-flight pages and stops.
+  `reset` clears it and the limits below. SIGTERM finishes in-flight pages and stops.
+- `set-inflight <n|clear>` and `set-steps-per-second <n|clear>` change a running backfill's
+  in-flight jobs and step rate within 30 s, with no restart. They only lower:
+  `VECTOR_EMBED_MAX_IN_FLIGHT` and `VECTOR_EMBED_MAX_STEPS_PER_SECOND` stay the ceiling.
+  `status` prints both, and the ceilings.
 - A run holds a lease (`...:lease` beside the cursor, renewed every 30 s, lapsing 2 minutes
   after the run dies), so a second copy of the same backfill refuses to start instead of
   paying for every page twice. A run that loses its lease stops and no longer writes the cursor.

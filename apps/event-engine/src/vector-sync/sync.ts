@@ -163,21 +163,32 @@ export async function syncRows(
   }
   if (!inputs.length) return stats;
 
+  // Each workflow's vectors are stored as it returns, so a process killed mid-page loses only
+  // the workflows still in flight; a re-run finds the rest as existing points. The cursor still
+  // moves only once this whole call has returned.
+  const written = new Set<number>();
+  const store = async (vectors: Iterable<[number, number[]]>) => {
+    const points = [...vectors]
+      .filter(([id]) => payloads.has(id) && !written.has(id))
+      .map(([id, vector]) => ({ id, vector, payload: payloads.get(id)! }));
+    if (!points.length) return;
+    await deps.store.upsert(points);
+    for (const p of points) written.add(p.id);
+  };
   const result = await deps.embedder.embed(inputs, {
     acceptStamp: (stamp) => deps.store.assertModel(stamp),
+    onVectors: (vectors) => store(vectors),
   });
-  const points = [...result.vectors]
-    .filter(([id]) => payloads.has(id))
-    .map(([id, vector]) => ({ id, vector, payload: payloads.get(id)! }));
-  await deps.store.upsert(points);
-  stats.embedded = points.length;
+  // Whatever was not stored as it came (an embedder without onVectors, or a failed early write).
+  await store(result.vectors);
+  stats.embedded = written.size;
   stats.failed = result.failed.length;
 
   // The rows were read before a slow embed. A change made meanwhile may already have been
   // applied by another worker, which this upsert would undo: a block (its delete) or an
   // nsfwLevel or tag change (its payload). Re-reading after the write closes that window; any
   // change committed later arrives as its own event, and by then the point exists.
-  const embeddedIds = points.map((p) => p.id);
+  const embeddedIds = [...written];
   const now = await getImageRows(deps.pg as Pool, embeddedIds);
   const stillEligible = now.filter(isEligible);
   const eligibleIds = new Set(stillEligible.map((r) => r.id));
