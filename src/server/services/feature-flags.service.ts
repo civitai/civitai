@@ -127,6 +127,9 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // The generator's phone layout (docs/plans/mobile-generator.md). Dark until the Flipt
+  // `mobile-generator` ramp; OFF = today's generator on phones, unchanged.
+  mobileGenerator: { availability: [], fliptKey: 'mobile-generator' },
   // SSR-CPU trial on `/models/[id]/[[...slug]]`: when ON, the model page's below-the-fold,
   // non-SEO sidebar sections (creator card, license/permissions, collection-showcase body) render
   // client-side after hydration behind fixed-height placeholders. `getServerSideProps` still

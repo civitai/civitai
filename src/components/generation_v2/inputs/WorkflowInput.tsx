@@ -461,6 +461,7 @@ export function SelectedWorkflowDisplay({
           {onBack && (
             <UnstyledButton
               onClick={onBack}
+              data-tap-target
               className="flex shrink-0 items-center rounded p-0.5 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-dark-0"
               aria-label="Back to previous workflow"
             >
@@ -613,7 +614,7 @@ export function WorkflowInput({
   // Mobile: use dialogStore modal — same segmented layout, click-to-open
   if (isMobile) {
     return (
-      <div className={segmentedContainerClass}>
+      <div className={segmentedContainerClass} data-tap-target="group">
         <WorkflowSegmentButton
           icon={<IconPhoto size={16} />}
           label="Image"

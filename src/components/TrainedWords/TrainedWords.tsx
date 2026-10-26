@@ -36,6 +36,7 @@ export function TrainedWords({
           color="gray"
           style={{ cursor: 'pointer' }}
           onClick={() => setShowAll(true)}
+          data-tap-target
         >
           +{trainedWords.length - limit} more
         </Badge>
@@ -63,6 +64,7 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             color={copied ? 'green' : 'violet'}
             style={{ cursor: 'pointer', height: 'auto' }}
             onClick={copy}
+            data-tap-target
             pr={2}
             {...badgeProps}
           >

@@ -12,6 +12,10 @@ import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceResidency';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { HideDevToolsInMobileGenerator } from '~/components/generation_v2/HideDevToolsInMobileGenerator';
+import { isDev } from '~/env/other';
+import phoneControls from '~/components/generation_v2/PhoneControls.module.scss';
 const GenerationPanel = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 export function useGenerationSidebarState() {
@@ -65,14 +69,16 @@ export function GenerationColumn({
 
 /** What the generator renders into, whether it is a column or the whole viewport. */
 export function GenerationSurface({ children }: { children: ReactNode }) {
+  const mobileGenerator = useMobileGenerator();
   return (
-    <div data-tour="gen:start" className="size-full">
+    <div data-tour="gen:start" className={clsx('size-full', mobileGenerator && phoneControls.root)}>
       <ContainerProvider
         containerName={GENERATION_SIDEBAR_NAME}
         className="bg-gray-0 dark:bg-dark-7"
       >
         {children}
       </ContainerProvider>
+      {isDev && mobileGenerator && <HideDevToolsInMobileGenerator />}
     </div>
   );
 }

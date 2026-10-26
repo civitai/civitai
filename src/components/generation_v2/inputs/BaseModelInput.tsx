@@ -113,6 +113,7 @@ const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
         onClick={onClick}
         disabled={disabled}
         title={label}
+        data-tap-target
         className={clsx(
           'relative flex h-8 min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md border px-2 transition-colors sm:max-w-[240px] sm:flex-none',
           'border-gray-3 bg-white text-gray-7 hover:border-blue-3',

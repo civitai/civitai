@@ -1,0 +1,69 @@
+// Touch sizes inside the mobile generator. The class is applied only while the mobile generator is
+// showing (`useMobileGenerator`), so nothing here needs its own media query. Our own components carry
+// their layout; these are the Mantine primitives they are built from, which are shared app-wide.
+.root {
+  --touch-slider-band: 44px;
+  --touch-slider-thumb: 28px;
+
+  // 16px stops iOS zooming the page when an input takes focus.
+  :global(.mantine-Input-input) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  :global(.mantine-SegmentedControl-label) {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  :global(.mantine-Checkbox-body),
+  :global(.mantine-Switch-body),
+  :global(.mantine-Radio-body) {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  :global(.mantine-Chip-label),
+  [data-tap-target] {
+    min-height: 44px;
+  }
+
+  // Buttons clip their overflow, so they can't take the invisible tap area icon buttons get; they
+  // grow to 44px instead. A pill radius on a short label (Swap) would then turn into a circle, so
+  // they square off and keep enough side padding to stay wider than tall.
+  :global(.mantine-Button-root) {
+    min-height: 44px;
+    border-radius: var(--mantine-radius-md);
+    padding-inline: max(var(--button-padding-x, 0px), 14px);
+  }
+
+  // Inside a Button.Group (Generate + Buzz) Mantine squares off the inner corners; fall back to
+  // its own radius and padding so the group still reads as one control.
+  :global(.mantine-ButtonGroup-group) :global(.mantine-Button-root) {
+    border-radius: revert-layer;
+    padding-inline: revert-layer;
+  }
+
+  // A bordered group of segments: 44px inside a 1px border.
+  [data-tap-target='group'] {
+    min-height: 46px;
+  }
+
+  :global(.mantine-CloseButton-root) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  // Small icon buttons (info, remove, swap) keep their look but get a 44px tap area.
+  :global(.mantine-ActionIcon-root) {
+    position: relative;
+  }
+
+  :global(.mantine-ActionIcon-root)::after {
+    content: '';
+    position: absolute;
+    inset: min(0px, calc((100% - 44px) / 2));
+  }
+}

@@ -93,6 +93,7 @@ export function PriorityInput({
       <Tooltip label="Request Priority" position="top" withArrow>
         <Menu.Target>
           <UnstyledButton
+            data-tap-target
             className={clsx(
               'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
               'bg-gray-1 hover:bg-gray-2',
