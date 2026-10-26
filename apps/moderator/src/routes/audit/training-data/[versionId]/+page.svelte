@@ -61,7 +61,12 @@
         </p>
       {/if}
     {:else if loaded}
-      <p class="text-sm text-amber-200">Could not read the dataset: {loaded.error}</p>
+      <p class="mb-3 text-sm text-amber-200">Could not read the dataset: {loaded.error}</p>
+      <!-- An expired run's dataset survives only as the zip archived from it after publish. -->
+      <TrainingAssetViewer
+        versionId={detail.versionId}
+        columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+      />
     {/if}
   {:catch}
     <p class="text-sm text-amber-200">Could not read the dataset from the training workflow.</p>
