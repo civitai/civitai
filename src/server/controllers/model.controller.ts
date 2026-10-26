@@ -286,7 +286,7 @@ export const getModelHandler = async ({
     // `kysely-hot-reads-3`, evaluated once for this request: the posts, the suggested-resource count
     // and the owner's settings below read through Kysely on the replica, as they read `dbRead`.
     const kyselyRead = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-      ? (await loadKyselyDb()).kyselyWrite
+      ? (await loadKyselyDb()).kyselyRead
       : null;
     const postsInput = { modelVersionIds, userId: model.user.id };
     const posts = kyselyRead
