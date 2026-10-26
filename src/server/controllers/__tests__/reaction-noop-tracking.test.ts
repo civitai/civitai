@@ -53,6 +53,7 @@ vi.mock('~/server/services/metric-excluded-users.service', () => ({
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
+import { encouragementReward, goodContentReward } from '~/server/rewards';
 
 const input = { entityType: 'image', entityId: 1, reaction: 'Like' } as const;
 
@@ -95,6 +96,32 @@ describe('toggleReactionHandler — a delete that removed nothing', () => {
     expect(mockUpdateEntityMetric).toHaveBeenCalledWith(
       expect.objectContaining({ metricType: 'ReactionLike', amount: -1 })
     );
+  });
+});
+
+describe('toggleReactionHandler — a toggle the reverse-toggle guard ignored', () => {
+  it('emits no tracker event, metric, reward or notification', async () => {
+    mockToggleReaction.mockResolvedValue('ignored');
+    mockNotificationExists.mockResolvedValue(false);
+    const ctx = makeCtx();
+
+    const result = await toggleReactionHandler({ ctx, input });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result).toBe('ignored');
+    expect(ctx.track.reaction).not.toHaveBeenCalled();
+    expect(mockUpdateEntityMetric).not.toHaveBeenCalled();
+    expect(encouragementReward.apply).not.toHaveBeenCalled();
+    expect(goodContentReward.apply).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  // API-key callers reach this handler over tRPC; they keep the result set they have today.
+  it('reports noop to an API-key caller', async () => {
+    mockToggleReaction.mockResolvedValue('ignored');
+    const ctx = Object.assign(makeCtx(), { apiKeyId: 12 });
+
+    expect(await toggleReactionHandler({ ctx, input })).toBe('noop');
   });
 });
 

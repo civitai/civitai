@@ -1,4 +1,4 @@
-import type { FC, MutableRefObject, Ref } from 'react';
+import type { FC, MutableRefObject, ReactNode, Ref } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
 import type {
@@ -36,6 +36,7 @@ const ChatTag = 'civitai-chat' as unknown as FC<{
   ref: Ref<HTMLElement>;
   scope: string;
   className?: string;
+  children?: ReactNode;
 }>;
 
 export interface AppAssistantChatProps {
@@ -62,6 +63,12 @@ export interface AppAssistantChatProps {
    * unset keeps them in the browser, exactly as before.
    */
   remoteRunner?: ChatRemoteRunner;
+  /** Called once the chat has started (`chatRef` is set). */
+  onReady?: () => void;
+  /** The page's own content just above the message box (the chat's `composer-top` slot). */
+  composerTop?: ReactNode;
+  /** The page's own content after the last message, in the thread's scroll (`thread-end` slot). */
+  threadEnd?: ReactNode;
 }
 
 export function AppAssistantChat({
@@ -78,6 +85,9 @@ export function AppAssistantChat({
   onChatChange,
   subagents,
   remoteRunner,
+  onReady,
+  composerTop,
+  threadEnd,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
   // The page's flags cannot change while it is open, so these are read once, at setup.
@@ -85,6 +95,11 @@ export function AppAssistantChat({
   const remoteRunnerAtStart = useRef(remoteRunner);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (ready) onReadyRef.current?.();
+  }, [ready]);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,7 +207,11 @@ export function AppAssistantChat({
           <Loader size="sm" />
         </Center>
       )}
-      <ChatTag ref={ref} scope="app-assistant" className={classes.chat} />
+      <ChatTag ref={ref} scope="app-assistant" className={classes.chat}>
+        {/* Light-DOM children the chat shows in its named slots; the page's styles apply to them. */}
+        {composerTop ? <div slot="composer-top">{composerTop}</div> : null}
+        {threadEnd ? <div slot="thread-end">{threadEnd}</div> : null}
+      </ChatTag>
     </div>
   );
 }

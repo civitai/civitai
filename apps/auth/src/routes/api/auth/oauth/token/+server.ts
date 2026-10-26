@@ -7,7 +7,13 @@ import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { logAxiomError } from '$lib/server/axiom';
 import { OriginNotAllowedError } from '$lib/server/oauth/errors';
-import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
+import {
+  ACCESS_TOKEN_TTL,
+  ACCESS_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  WORKER_TOKEN_TTL,
+} from '$lib/server/oauth/constants';
+import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope } from '$lib/server/oauth/scope';
 import {
@@ -19,7 +25,8 @@ import {
 } from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
 
-// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants.
+// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, and the
+// worker token-exchange grant (lib/server/oauth/worker-grant.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -33,6 +40,13 @@ export const OPTIONS: RequestHandler = () => {
   return new Response(null, { status: 204, headers });
 };
 
+// The client id in a Basic Authorization header, parsed as the OAuth library's `basic-auth` dependency parses it.
+function basicAuthClientId(header: string | null): string | undefined {
+  const match = /^ *(?:[Bb][Aa][Ss][Ii][Cc]) +([A-Za-z0-9._~+/-]+=*) *$/.exec(header ?? '');
+  if (!match) return undefined;
+  return /^([^:]*):(.*)$/.exec(Buffer.from(match[1], 'base64').toString())?.[1];
+}
+
 export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const clientId =
@@ -42,15 +56,32 @@ export const POST: RequestHandler = async ({ request }) => {
   const clientIp = getClientIp(request);
   const ip = clientIp ?? 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
+  const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
-  // fresh bucket each request.
-  if (!(await checkOAuthRateLimit('token', clientIp))) {
+  // fresh bucket each request. The worker exchange has its own, larger bucket: a pool of workers can
+  // share one egress IP.
+  if (!(await checkOAuthRateLimit(isWorkerExchange ? 'worker-token' : 'token', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);
     return json(
       { error: 'rate_limited', error_description: 'Too many token requests' },
       { status: 429, headers }
+    );
+  }
+
+  // The library authenticates the Basic header's client and ignores a body client_id, so a different one
+  // there would name a client that never authenticated.
+  const basicClientId = basicAuthClientId(request.headers.get('authorization'));
+  if (basicClientId !== undefined && body.client_id && body.client_id !== basicClientId) {
+    const headers = new Headers({ 'WWW-Authenticate': 'Basic realm="Service"' });
+    setWildcardCors(headers);
+    return json(
+      {
+        error: 'invalid_client',
+        error_description: 'client_id does not match the authenticated client',
+      },
+      { status: 401, headers }
     );
   }
 
@@ -72,7 +103,9 @@ export const POST: RequestHandler = async ({ request }) => {
   );
 
   const oauthReq = toOAuthRequest({ method: 'POST', headers: oauthHeaders, body });
-  const respHeaders = new Headers();
+  const workerGrant: WorkerGrantRequestContext = { clientIp };
+  Object.assign(oauthReq, { workerGrant });
+  const respHeaders = new Headers({ 'Cache-Control': 'no-store', Pragma: 'no-cache' }); // RFC 6749 §5.1
 
   try {
     const token = await oauthServer.token(oauthReq, newOAuthResponse());
@@ -106,6 +139,19 @@ export const POST: RequestHandler = async ({ request }) => {
       setWildcardCors(respHeaders);
     }
 
+    if (isWorkerExchange) {
+      return json(
+        {
+          access_token: token.accessToken,
+          issued_token_type: ACCESS_TOKEN_TYPE,
+          token_type: 'Bearer',
+          expires_in: WORKER_TOKEN_TTL,
+          scope: String(TokenScope.WorkerRegister),
+        },
+        { headers: respHeaders }
+      );
+    }
+
     const grantType = body.grant_type;
     const scopeNum = token.scope
       ? parseInt(Array.isArray(token.scope) ? token.scope[0] : token.scope, 10)
@@ -137,7 +183,7 @@ export const POST: RequestHandler = async ({ request }) => {
       if (ctx.nonce) {
         idToken = await idTokenSigner.mintIdToken({
           sub: token.user.id,
-          aud: clientId,
+          aud: token.client.id,
           nonce: ctx.nonce,
           authTime: ctx.authTime,
           expiresIn: token.accessTokenLifetime ?? ACCESS_TOKEN_TTL,

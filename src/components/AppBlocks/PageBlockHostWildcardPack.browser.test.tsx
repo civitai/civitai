@@ -47,6 +47,7 @@ vi.mock('~/utils/trpc', () => ({
     },
     generation: {
       resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.resolve }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },

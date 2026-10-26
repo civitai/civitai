@@ -919,7 +919,12 @@ export const publishModelVersionHandler = async ({
             meta: version.model.meta as ModelMeta | null,
           })
         : null;
-    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    const updatedVersion = await publishModelVersionById({
+      ...input,
+      meta,
+      republishing,
+      enforceTakedown: !ctx.user.isModerator,
+    });
     let held = false;
     if (literalHold) {
       try {
@@ -1481,6 +1486,7 @@ export async function publishPrivateModelVersionHandler({
       publishedAt: new Date(),
       availability: Availability.Private,
     },
+    enforceTakedown: !ctx.user.isModerator,
   });
 
   await dataForModelsCache.refresh(version.model.id);

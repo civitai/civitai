@@ -144,6 +144,8 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
         );
       try {
         const { payload } = await verifyAsymmetric(token);
+        // Session tokens carry no `aud`; without a configured audience, tokens with one are not sessions.
+        if (!cfg.audience && payload.aud !== undefined) return null;
         claims = payload as SessionClaims;
       } catch {
         return null; // bad signature / expired / wrong issuer

@@ -10,11 +10,11 @@
   },
   "dependencies": {
     "cluster-key-slot": "^1.1.2",
-    "lodash-es": "^4.17.21",
+    "lodash-es": "^4.18.0",
     "msgpackr": "^1.10.2",
     "redis": "6.3.0",
     "slugify": "^1.6.5",
-    "zod": "^4.0.17",
+    "zod": "^4.6.6",
     "lru-cache": "^11.2.2"
   },
   "devDependencies": {

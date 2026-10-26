@@ -149,7 +149,7 @@ export const getDepositAddress = async (userId: number, chain = 'evm') => {
   return result;
 };
 
-const userIdFromOrderId = (orderId: string | null | undefined) => {
+export const userIdFromOrderId = (orderId: string | null | undefined) => {
   if (!orderId?.startsWith('user:')) return null;
   const userId = parseInt(orderId.split(':')[1], 10);
   return userId && !isNaN(userId) ? userId : null;
@@ -185,7 +185,9 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
 export const processDeposit = async (
   paymentId: number,
   webhookStatus: string,
-  event: NOWPayments.WebhookEvent
+  event: NOWPayments.WebhookEvent,
+  /** A moderator crediting by hand; recorded on the ledger row. */
+  actor?: { modUserId: number; ticketId?: string }
 ) => {
   const userId = userIdFromOrderId(event.order_id);
   if (!userId) {
@@ -258,6 +260,7 @@ export const processDeposit = async (
             externalTransactionId: `np-deposit-${paymentId}`,
             provider: 'nowpayments',
             paymentId: event.payment_id,
+            ...(actor && { creditedBy: actor.modUserId, ticketId: actor.ticketId }),
           });
         }
 
@@ -496,24 +499,24 @@ export const reprocessDeposit = async (paymentId: number) => {
     throw new Error(`Payment ${paymentId} has invalid order_id: ${orderId}`);
   }
 
-  // Build a webhook-like event from the GET response
-  const event: NOWPayments.WebhookEvent = {
-    payment_id:
-      typeof payment.payment_id === 'string'
-        ? parseInt(payment.payment_id, 10)
-        : payment.payment_id,
-    payment_status: payment.payment_status,
-    order_id: payment.order_id,
-    outcome_amount: payment.outcome_amount,
-    actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-    pay_currency: payment.pay_currency,
-    pay_address: payment.pay_address,
-    parent_payment_id: payment.parent_payment_id,
-    payin_hash: payment.payin_hash,
-  };
-
-  return processDeposit(paymentId, payment.payment_status, event);
+  return processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
 };
+
+/** A webhook-like event built from NowPayments' own record of the payment (GET /payment/:id). */
+export const eventFromPayment = (
+  payment: NOWPayments.CreatePaymentResponse
+): NOWPayments.WebhookEvent => ({
+  payment_id:
+    typeof payment.payment_id === 'string' ? parseInt(payment.payment_id, 10) : payment.payment_id,
+  payment_status: payment.payment_status,
+  order_id: payment.order_id,
+  outcome_amount: payment.outcome_amount,
+  actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+  pay_currency: payment.pay_currency,
+  pay_address: payment.pay_address,
+  parent_payment_id: payment.parent_payment_id,
+  payin_hash: payment.payin_hash,
+});
 
 /** Max concurrent requests to NP API when fetching individual payments */
 const RECONCILE_FETCH_CONCURRENCY = 5;

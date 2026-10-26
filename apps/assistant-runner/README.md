@@ -29,6 +29,19 @@ See [Not built yet](#not-built-yet).
 
   Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched), always at the root.
 
+  Beyond 0.25.0's types (`src/protocol.ts`, until the runner is bumped to a chat package that types
+  them): every start's and lookup's answer lists `features: ['edit']`, and a start may carry
+  `turn.edit`: the user edited their latest message, so `turn.user` replaces the saved message of
+  turn `seq` (the head's latest, or the next when the head ends just before it), the reply that
+  followed it is dropped, and the turn is replied to afresh (nothing carries on from the old reply,
+  and a chat named after its first message is named after the edited one). An edit is a new reply,
+  charged as one. A page shows Edit only once a runner lists `edit`; it sends `edit` without
+  `retry`, so a runner without this answers `stale-turn` instead of replying to the old message.
+  A retry carries on only from a run that answered the message the turn holds now, and a retry
+  carrying another message than the head holds is refused as `stale-turn`. Rolling back to
+  a runner without this while an edit's run is queued and has not begun would reply to the edited
+  message but keep the old one in the head (`WORKFLOW_VERSION` is unchanged).
+
 - **Where it is served.** The run API lives under `RUNNER_BASE_PATH`, e.g. `/api/assistant-runner`,
   so the page reaches it on its own origin (its `remoteRunner.url`);
   routing that path to the runner is the deployment's job. Empty serves it at the root.
@@ -338,7 +351,9 @@ Known gaps:
 - The page learns of a runner's preview only from the live `tool-reported` event, which a reload
   or another device does not replay: the pane then shows nothing until a later reply starts or
   restarts the dev server, or the user asks to reopen it and the assistant calls `start_preview`
-  (the instructions keep it for that). Asking civitai's
+  (the instructions keep it for that), or the user clicks the pane's Restart preview
+  (`POST apps/:app/preview`, no reply and no Buzz; `src/app-assistant/preview-restart.ts`), which
+  first starts the dev server when it is not running, as after every pause. Asking civitai's
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.

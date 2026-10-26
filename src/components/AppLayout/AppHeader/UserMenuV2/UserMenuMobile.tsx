@@ -98,7 +98,7 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
 
 function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
   const [path, setPath] = useState<GroupNode[]>([]);
-  const [direction, setDirection] = useState<'in' | 'back'>('in');
+  const [direction, setDirection] = useState<'in' | 'back' | 'none'>('in');
   const [switching, setSwitching] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
@@ -120,27 +120,40 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     setPath((current) => [...current, group]);
     focusFirst();
   };
-  const back = () => {
+  // A swipe has already shown the level behind, so it lands without sliding in again.
+  const back = ({ slide = true } = {}) => {
     const left = path[path.length - 1];
-    setDirection('back');
+    setDirection(slide ? 'back' : 'none');
     setPath((current) => current.slice(0, -1));
-    window.requestAnimationFrame(() =>
-      container.current?.querySelector<HTMLElement>(`[data-group-row="${left?.id}"]`)?.focus()
-    );
+    focusGroupRow(left?.id);
   };
+  // After a swipe the level that is landing may not have committed yet, and the copy of it still
+  // behind the panel is inert and cannot take focus.
+  const focusGroupRow = (id: string | undefined, attempts = 3): number =>
+    window.requestAnimationFrame(() => {
+      const row = [
+        ...(container.current?.querySelectorAll<HTMLElement>(`[data-group-row="${id}"]`) ?? []),
+      ].find((candidate) => !candidate.closest('[inert]'));
+      if (row) row.focus();
+      else if (attempts > 1) focusGroupRow(id, attempts - 1);
+    });
 
   const toggle = signedIn ? pinActions.toggle : undefined;
 
-  // The current panel, re-read from the resolved tree so its badges stay live.
-  const panel = path.reduce<GroupNode | undefined>(
-    (parent, step) =>
-      (parent ? parent.children : nodes).find(
-        (node): node is GroupNode => node.kind === 'group' && node.id === step.id
-      ),
-    undefined
-  );
+  // The panel `depth` levels down the path, re-read from the resolved tree so its badges stay live.
+  const panelAt = (depth: number) =>
+    path
+      .slice(0, depth)
+      .reduce<GroupNode | undefined>(
+        (parent, step) =>
+          (parent ? parent.children : nodes).find(
+            (node): node is GroupNode => node.kind === 'group' && node.id === step.id
+          ),
+        undefined
+      );
+  const panel = panelAt(path.length);
 
-  const swipe = useSwipeBack(back, path.length > 0);
+  const swipe = useSwipeBack({ enabled: path.length > 0, onBack: () => back({ slide: false }) });
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
@@ -158,6 +171,30 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     else close();
   };
 
+  const level = (shown: GroupNode | undefined) =>
+    shown ? (
+      <>
+        <UnstyledButton className={ROW} onClick={() => back()} data-panel-row>
+          <IconChevronLeft />
+          <span className="text-sm font-semibold leading-none">{shown.label}</span>
+        </UnstyledButton>
+        <Divider />
+        <MobileNodes nodes={shown.children} pins={pins} onToggle={toggle} onEnter={enter} />
+      </>
+    ) : (
+      <TopLevel
+        signedIn={signedIn}
+        events={events}
+        pinned={pinned}
+        nodes={nodes}
+        pins={pins}
+        onToggle={toggle}
+        onEnter={enter}
+        close={close}
+        announce={announce}
+      />
+    );
+
   if (switching)
     return (
       <div className="flex flex-1 flex-col" onKeyDown={onKeyDown}>
@@ -167,43 +204,43 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
 
   return (
     <BadgeMuteCtx.Provider value={toggleMute}>
-      <div ref={container} className="flex flex-1 flex-col overflow-hidden" onKeyDown={onKeyDown}>
+      <div
+        ref={container}
+        className="relative flex flex-1 flex-col overflow-hidden"
+        onKeyDown={onKeyDown}
+      >
         {region}
         <div
           key={path.map((step) => step.id).join('/') || 'top'}
+          ref={swipe.ref}
           className={clsx(
             'flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin',
-            path.length || direction === 'back'
+            direction !== 'none' && (path.length || direction === 'back')
               ? classes[direction === 'in' ? 'panelIn' : 'panelBack']
-              : undefined
+              : undefined,
+            // Opaque, so the level behind a dragged panel shows only where the panel has moved off it.
+            path.length > 0 && 'relative z-10 bg-[var(--mantine-color-body)]'
           )}
           // A vertical pan still scrolls; the browser leaves the horizontal swipe to us.
           style={path.length ? { touchAction: 'pan-y' } : undefined}
-          {...swipe}
+          {...swipe.bind}
         >
-          {panel ? (
-            <>
-              <UnstyledButton className={ROW} onClick={back} data-panel-row>
-                <IconChevronLeft />
-                <span className="text-sm font-semibold leading-none">{panel.label}</span>
-              </UnstyledButton>
-              <Divider />
-              <MobileNodes nodes={panel.children} pins={pins} onToggle={toggle} onEnter={enter} />
-            </>
-          ) : (
-            <TopLevel
-              signedIn={signedIn}
-              events={events}
-              pinned={pinned}
-              nodes={nodes}
-              pins={pins}
-              onToggle={toggle}
-              onEnter={enter}
-              close={close}
-              announce={announce}
-            />
-          )}
+          {level(panel)}
         </div>
+        {swipe.dragging && (
+          // Not a second menu: a picture of the level the swipe is going back to.
+          <div
+            ref={swipe.behindRef}
+            aria-hidden
+            {...{ inert: '' }}
+            className="pointer-events-none absolute inset-0 flex flex-col"
+          >
+            <div className="flex flex-1 flex-col overflow-hidden p-1">
+              {level(panelAt(path.length - 1))}
+            </div>
+            {path.length === 1 && <UserMenuFooter onSwitchAccount={() => undefined} />}
+          </div>
+        )}
         {!panel && (
           <UserMenuFooter
             onSwitchAccount={() => {

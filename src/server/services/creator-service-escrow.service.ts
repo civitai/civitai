@@ -14,6 +14,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
+import { notifyServiceDeal } from '~/server/services/creator-service-deal-notify';
 import {
   BUZZ_CALL_TIMEOUT_MS,
   LEG_RETRY_BACKOFF_MINUTES,
@@ -28,7 +29,11 @@ import {
   SERVICE_DEAL_HOLD_RECONCILE_LOOKBACK_MS,
   serviceDealTransactionId,
 } from '~/shared/constants/creator-services.constants';
-import type { ServiceBuzzType, ServiceDealLeg } from '~/shared/utils/prisma/enums';
+import type {
+  ServiceBuzzType,
+  ServiceDealLeg,
+  ServiceDealStatus,
+} from '~/shared/utils/prisma/enums';
 
 /**
  * Creator Services escrow: buyer -> account 0 on hold, account 0 -> buyer on refund (and, in P3,
@@ -69,9 +74,9 @@ type LegRow = {
 
 export const holdPrefix = (dealId: number) => serviceDealTransactionId(dealId, 'hold');
 
-const ledgerEntry = (dealId: number, description: string) => ({
+const ledgerEntry = (dealId: number, description: string, details?: Record<string, number>) => ({
   description,
-  details: { entityType: 'ServiceDeal', entityId: dealId },
+  details: { entityType: 'ServiceDeal', entityId: dealId, ...details },
 });
 
 /**
@@ -365,14 +370,17 @@ export async function runDealLeg(
 export const isDecline = (status: number | undefined) =>
   status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409;
 
+/** Returns the deal's status when this call marked it held, null when it already was. */
 async function markHeld(tx: Db, dealId: number) {
-  const marked = await tx.$executeRaw`
+  const [marked] = await tx.$queryRaw<{ status: ServiceDealStatus }[]>`
     UPDATE "ServiceDeal" SET "heldAt" = now(), "updatedAt" = now()
-    WHERE "id" = ${dealId}::int AND "heldAt" IS NULL`;
-  if (marked > 0)
+    WHERE "id" = ${dealId}::int AND "heldAt" IS NULL
+    RETURNING "status"`;
+  if (marked)
     await tx.$executeRaw`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type")
       VALUES (${dealId}::int, -1, 'Held'::"ServiceDealEventType")`;
+  return marked?.status ?? null;
 }
 
 async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released') {
@@ -383,6 +391,7 @@ async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released
     await tx.$executeRaw`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type")
       VALUES (${dealId}::int, -1, ${event}::"ServiceDealEventType")`;
+  return marked > 0;
 }
 
 export type HoldOutcome = 'held' | 'refused' | 'unknown';
@@ -554,17 +563,19 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
         .reduce((sum, leg) => sum + leg.amount, 0);
 
       if (charged >= hold.amount) {
-        await dbWrite.$transaction(async (tx) => {
+        const marked = await dbWrite.$transaction(async (tx) => {
           await lockDeal(tx, hold.dealId);
           await tx.$executeRaw`
             UPDATE "ServiceDealTransaction"
             SET "transactionId" = ${hold.externalTransactionId}::text, "lastError" = NULL
             WHERE "dealId" = ${hold.dealId}::int AND "leg" = 'Hold'::"ServiceDealLeg"
               AND "transactionId" IS NULL`;
-          await markHeld(tx, hold.dealId);
+          return markHeld(tx, hold.dealId);
         });
         held++;
         if (hold.status !== 'Requested') await refundDeal(hold.dealId);
+        else if (marked === 'Requested')
+          await notifyServiceDeal({ dealId: hold.dealId, notice: 'requested', to: 'seller' });
       } else if (charged === 0) {
         if (hold.status === 'Requested') {
           const closed = await dbWrite.$transaction(async (tx) => {
@@ -661,14 +672,17 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
  */
 export async function releaseDeal(dealId: number) {
   if ((await dbWrite.$transaction((tx) => claimRelease(tx, dealId))) === 'held') return false;
+  let settled = false;
   const paid = await runDealLeg(
     dealId,
     'Release',
     async (row) => {
-      const [{ sellerId, payable }] = await dbWrite.$queryRaw<
-        { sellerId: number; payable: boolean }[]
+      const [{ sellerId, buyerId, heldAt, payable }] = await dbWrite.$queryRaw<
+        { sellerId: number; buyerId: number; heldAt: Date; payable: boolean }[]
       >`
-        SELECT d."sellerId", ${sellerCanBePaid(Prisma.sql`d."sellerId"`)} AS "payable"
+        SELECT d."sellerId", d."buyerId", d."heldAt", ${sellerCanBePaid(
+          Prisma.sql`d."sellerId"`
+        )} AS "payable"
         FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
       // A claimed leg is paid regardless; this only tells a moderator it happened.
       if (!payable)
@@ -690,7 +704,12 @@ export async function releaseDeal(dealId: number) {
             toAccountType: row.buzzType,
             type: TransactionType.ServiceEscrow,
             externalTransactionId: row.externalTransactionId,
-            ...ledgerEntry(dealId, 'Creator service: released to the seller'),
+            // Bankable netting charges the release to this buyer, unless the hold predates the
+            // cutover balance; without `buyerId` the release is not bankable.
+            ...ledgerEntry(dealId, 'Creator service: released to the seller', {
+              buyerId,
+              heldAt: Math.floor(heldAt.getTime() / 1000),
+            }),
           },
           BUZZ_CALL_OPTIONS
         ));
@@ -711,8 +730,11 @@ export async function releaseDeal(dealId: number) {
         `creator service escrow: release for deal ${dealId} is not confirmed on the ledger`
       );
     },
-    (tx) => markSettled(tx, dealId, 'Released')
+    async (tx) => {
+      settled = await markSettled(tx, dealId, 'Released');
+    }
   );
+  if (settled) await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
   return paid !== null;
 }
 

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -10,6 +11,7 @@ const { mockTx, checkModelRulesLiteralHold, holdModelForLiteralRules } = vi.hois
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -90,6 +92,7 @@ vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRules
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ holdModelForLiteralRules }));
 
 const logToAxiom = loggingMock.logToAxiom;
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { publishModelById, publishPrivateModel } from '~/server/services/model.service';
 
 const MODEL_ID = 42;
@@ -110,6 +113,8 @@ beforeEach(() => {
     status: 'Published',
   });
   mockTx.$executeRaw.mockResolvedValue(0);
+  // None of the listed versions is taken down.
+  mockTx.$queryRaw.mockResolvedValue([]);
   // The requested versions are this model's own.
   dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
     where,
@@ -222,7 +227,10 @@ describe('publishPrivateModel — Model rules literal hold', () => {
       status: 'Published',
       meta: { foo: 1 },
     });
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 100 }, { id: 101 }]);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }, { id: 101 }]);
+    // The in-transaction re-read: both versions still Published, the model not taken down.
+    mockTx.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? [{ id: 100 }, { id: 101 }] : []) as never);
     dbMock.dbWrite.post.findMany.mockResolvedValue([
       { modelVersionId: 100 },
       { modelVersionId: 101 },
@@ -283,5 +291,40 @@ describe('publishPrivateModel — Model rules literal hold', () => {
     checkModelRulesLiteralHold.mockResolvedValue(HOLD);
     await publishPrivateModel({ ...input, publishVersions: false }, { enforceModelRules: true });
     expect(checkModelRulesLiteralHold).not.toHaveBeenCalled();
+  });
+});
+
+describe('publishModelById with a taken-down version in the list', () => {
+  const publish = (enforceModelRules: boolean) =>
+    publishModelById({ id: MODEL_ID, versionIds: [100, 101], enforceModelRules });
+
+  beforeEach(() => {
+    mockTx.$queryRaw.mockResolvedValue([
+      { status: 'Published' },
+      { status: 'UnpublishedViolation' },
+    ]);
+  });
+
+  it('refuses the owner and publishes no version', async () => {
+    await expect(publish(true)).rejects.toThrow(/not authorized/);
+    expect(publishModelVersionsWithEarlyAccess).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator republish it', async () => {
+    await publish(false);
+    expect(publishModelVersionsWithEarlyAccess).toHaveBeenCalledTimes(1);
+  });
+
+  // Keep the status out of the WHERE: a locking read filtered on it skips, without waiting, a row
+  // whose committed status still reads live while a take-down is changing it, and the race reopens.
+  it('locks every listed version, not only the taken-down ones', async () => {
+    await publish(true).catch(() => undefined);
+
+    const [strings, ...values] = mockTx.$queryRaw.mock.calls[0] as [string[], ...never[]];
+    const { text } = Prisma.sql(strings, ...values);
+    // The whole WHERE, so any added predicate fails it, however it is written.
+    expect(text).toMatch(
+      /WHERE\s+id IN \(\$\d+(,\s*\$\d+)*\)\s+AND "modelId" = \$\d+\s+FOR SHARE\s*$/
+    );
   });
 });

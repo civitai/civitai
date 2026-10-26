@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
+import { PostEditBackLink } from '~/components/Post/EditV2/PostEditBackLink';
 import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   usePendingSave,
@@ -112,6 +113,13 @@ export function PostEditForm() {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this post."
         }
       />
+      {post && (
+        <PostEditBackLink
+          modelId={post.parentModelId}
+          modelVersionId={post.modelVersionId}
+          modelName={post.parentModelName}
+        />
+      )}
       <InputTextArea
         data-tour="post:title"
         name="title"

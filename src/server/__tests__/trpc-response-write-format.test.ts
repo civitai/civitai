@@ -3,8 +3,10 @@ import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { parse as devalueParse, stringify as devalueStringify } from 'devalue';
 import superjson from 'superjson';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The tRPC HTTP response WRITE format is chosen per request
@@ -28,6 +30,14 @@ const PAYLOAD = {
   tags: new Map([['a', 1]]),
 };
 
+/** Plain objects, arrays, Dates and undefined only: the shape the fast superjson walk handles. */
+const PLAIN = {
+  id: 43,
+  at: new Date('2026-03-04T05:06:07.000Z'),
+  gone: undefined,
+  items: [{ name: 'a', when: new Date(0), next: null }],
+};
+
 /** Not a POJO: devalue refuses it, which is what drives the fail-open fallback. */
 class NotAPojo {
   constructor(public readonly id: number) {}
@@ -49,6 +59,19 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
     return h.writeDevalue;
   },
 }));
+/**
+ * The `trpc-fast-superjson-write` Flipt flag, read per access. `null` is what `isFliptSync`
+ * returns for an unknown key or an uninitialized client, the state before the key exists.
+ */
+const flag = vi.hoisted(() => ({ fastSuperjson: null as boolean | null }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
+      key === 'trpc-fast-superjson-write' ? flag.fastSuperjson : actual.isFliptSync(key, ...rest),
+  };
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/createContext', () => ({
   createContext: ({ req, res }: { req: NextApiRequest; res: NextApiResponse }) => ({
@@ -70,6 +93,7 @@ vi.mock('~/server/routers', async () => {
   return {
     appRouter: router({
       payload: publicProcedure.query(() => PAYLOAD),
+      plain: publicProcedure.query(() => PLAIN),
       notAPojo: publicProcedure.query(() => new NotAPojo(7)),
       // A block-token query path (BLOCK_TOKEN_QUERY_PROCEDURES): always answered `no-store`.
       blocks: router({ listMyWorkflows: publicProcedure.query(() => PAYLOAD) }),
@@ -137,6 +161,35 @@ function containsPayload(value: unknown): boolean {
 function singleData(served: Served): unknown {
   expect(served.status).toBe(200);
   return JSON.parse(served.text).result.data;
+}
+
+/**
+ * `civitai_app_trpc_fast_superjson_writes_total`, read from the shared registry by name, as
+ * `{ 'path|outcome': value }`. A missing metric reads as no series, so a case that expects the
+ * counter to move fails when the counter is not registered.
+ */
+async function fastWriteCounts(): Promise<Record<string, number>> {
+  const metric = instrumentationRegistry.getSingleMetric(
+    'civitai_app_trpc_fast_superjson_writes_total'
+  );
+  if (!metric) return {};
+  const { values } = await metric.get();
+  return Object.fromEntries(
+    values.map((v) => [`${String(v.labels.path)}|${String(v.labels.outcome)}`, v.value])
+  );
+}
+
+/** How the counter moved while `fn` ran: only the series that changed, by how much. */
+async function fastWriteDelta(fn: () => Promise<unknown>): Promise<Record<string, number>> {
+  const before = await fastWriteCounts();
+  await fn();
+  const after = await fastWriteCounts();
+  const delta: Record<string, number> = {};
+  for (const [key, value] of Object.entries(after)) {
+    const moved = value - (before[key] ?? 0);
+    if (moved !== 0) delta[key] = moved;
+  }
+  return delta;
 }
 
 const asDevalue = (value: unknown) => devalueStringify(value);
@@ -216,10 +269,13 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(JSON.parse(served.text)[0].result.data).toEqual(asSuperjson(PAYLOAD));
   });
 
-  it('marks every devalue response private itself, without relying on the proxy default', async () => {
-    // This harness runs the route without the proxy middleware, so a superjson response
-    // carries no Cache-Control at all (control); a devalue one must carry the private default.
-    expect((await get('payload')).headers.get('cache-control')).toBeNull();
+  it('marks every devalue response private without relying on the proxy', async () => {
+    // This harness runs the route without the proxy middleware. The route applies the private
+    // default itself (applyApiRequestPolicy), so a superjson response carries it too; a devalue
+    // response must never come out without it.
+    expect((await get('payload')).headers.get('cache-control')).toBe(
+      'max-age=0, private, no-cache'
+    );
     const single = await get('payload', CAPABLE_WEB);
     expect(singleData(single)).toEqual(asDevalue(PAYLOAD));
     expect(single.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
@@ -245,9 +301,143 @@ describe('TRPC_WRITE_DEVALUE=false — superjson always', () => {
     h.writeDevalue = false;
   });
 
-  it('writes superjson even to a capable web bundle, with the route adding no header', async () => {
+  it('writes superjson even to a capable web bundle, with only the route default header', async () => {
     const served = await get('payload', CAPABLE_WEB);
     expect(singleData(served)).toEqual(asSuperjson(PAYLOAD));
-    expect(served.headers.get('cache-control')).toBeNull();
+    // The route's own private default (applyApiRequestPolicy); nothing format-specific.
+    expect(served.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
+  });
+});
+
+describe('trpc-fast-superjson-write — the superjson write without superjson.serialize', () => {
+  // Expected bodies are computed before any spy is installed.
+  const plainSuperjson = asSuperjson(PLAIN);
+  const plainDevalue = asDevalue(PLAIN);
+  const payloadSuperjson = asSuperjson(PAYLOAD);
+
+  beforeEach(() => {
+    h.writeDevalue = true;
+    flag.fastSuperjson = true;
+  });
+  afterEach(() => {
+    flag.fastSuperjson = null;
+    vi.restoreAllMocks();
+  });
+
+  it('writes the identical superjson body for an edge-cacheable response, without superjson.serialize', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    const served = await get('plain', { ...CAPABLE_WEB, 'x-test-cacheable': '1' });
+    expect(served.headers.get('cache-control')).toContain('s-maxage=60');
+    expect(singleData(served)).toEqual(plainSuperjson);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('writes the identical superjson body to a request with no client headers, without superjson.serialize', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('plain'))).toEqual(plainSuperjson);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('still uses superjson.serialize for a payload outside the fast walk (a Map)', async () => {
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('payload'))).toEqual(payloadSuperjson);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a devalue response devalue', async () => {
+    expect(singleData(await get('plain', CAPABLE_WEB))).toEqual(plainDevalue);
+  });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])('uses superjson.serialize when the flag is %s', async (_label, value) => {
+    flag.fastSuperjson = value;
+    const spy = vi.spyOn(superjson, 'serialize');
+    expect(singleData(await get('plain'))).toEqual(plainSuperjson);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('trpc-fast-superjson-write — the outcome counter', () => {
+  beforeEach(() => {
+    h.writeDevalue = true;
+    flag.fastSuperjson = true;
+  });
+  afterEach(() => {
+    flag.fastSuperjson = null;
+  });
+
+  it('counts a write the walk handled as fast, under the procedure path', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+    });
+    expect(delta).toEqual({ 'plain|fast': 1 });
+  });
+
+  it('counts a payload the walk handed to superjson (a Map) as bail', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('payload'))).toEqual(asSuperjson(PAYLOAD));
+    });
+    expect(delta).toEqual({ 'payload|bail': 1 });
+  });
+
+  it('counts a write while a superjson registration disables the walk as registry_off', async () => {
+    superjson.registerCustom<string, string>(
+      {
+        isApplicable: (v): v is string => typeof v === 'string' && v.startsWith('money:'),
+        serialize: (v) => v.slice('money:'.length),
+        deserialize: (v) => `money:${v}`,
+      },
+      'test-money-route'
+    );
+    try {
+      const delta = await fastWriteDelta(async () => {
+        expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+      });
+      expect(delta).toEqual({ 'plain|registry_off': 1 });
+    } finally {
+      delete (
+        superjson as unknown as {
+          defaultInstance: { customTransformerRegistry: { transfomers: Record<string, unknown> } };
+        }
+      ).defaultInstance.customTransformerRegistry.transfomers['test-money-route'];
+    }
+    // Control: with the registration gone the same request is fast again.
+    expect(await fastWriteDelta(() => get('plain'))).toEqual({ 'plain|fast': 1 });
+  });
+
+  it('labels a multi-procedure batch as batch, one count per procedure', async () => {
+    // `{}`: neither call carries an input, as in the one-call batch above.
+    const delta = await fastWriteDelta(async () => {
+      const served = await get(`plain,plain?batch=1&input=${encodeURIComponent('{}')}`);
+      expect(served.status).toBe(200);
+    });
+    expect(delta).toEqual({ 'batch|fast': 2 });
+  });
+
+  it('folds a path that names no procedure into other (the URL is client-controlled)', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect((await get('no.such.procedure')).status).toBe(404);
+    });
+    // The 404 error body is still a superjson write; its label must not be the raw path.
+    expect(Object.keys(delta).length).toBeGreaterThan(0);
+    expect(Object.keys(delta).every((key) => key.startsWith('other|'))).toBe(true);
+  });
+
+  it('does not move for a devalue response', async () => {
+    expect(await fastWriteDelta(() => get('plain', CAPABLE_WEB))).toEqual({});
+  });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])('does not move when the flag is %s', async (_label, value) => {
+    flag.fastSuperjson = value;
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+      expect(singleData(await get('payload'))).toEqual(asSuperjson(PAYLOAD));
+    });
+    expect(delta).toEqual({});
   });
 });

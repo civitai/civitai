@@ -1,12 +1,17 @@
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
+/** One text for every image or account state that stops a move. */
+export const IMAGES_NOT_MOVABLE = 'These images cannot be moved right now';
+
 export type MovePostRow = {
   id: number;
   userId: number;
   publishedAt: Date | null;
   tosViolation: boolean;
   isContest: boolean;
+  /** A storyline chapter's post: emptying it would delete the chapter's content. */
+  isChapter: boolean;
 };
 
 export type MoveImageRow = {
@@ -15,6 +20,7 @@ export type MoveImageRow = {
   postId: number | null;
   tosViolation: boolean;
   ingestion: ImageIngestionStatus;
+  needsReview: string | null;
 };
 
 export type ImageMoveRefusal =
@@ -40,6 +46,7 @@ export function getImageMoveRefusal({
   source,
   target,
   images,
+  sourceImageCount,
   targetImageCount,
   now = new Date(),
 }: {
@@ -48,6 +55,7 @@ export function getImageMoveRefusal({
   source: MovePostRow | undefined;
   target: MovePostRow | null | undefined;
   images: MoveImageRow[];
+  sourceImageCount: number;
   targetImageCount: number;
   now?: Date;
 }): ImageMoveRefusal | null {
@@ -67,8 +75,13 @@ export function getImageMoveRefusal({
     return { kind: 'bad-request', message: 'Images in contest posts cannot be moved' };
   if (source.tosViolation || target?.tosViolation)
     return { kind: 'bad-request', message: 'This post cannot be changed' };
-  if (images.some((i) => i.tosViolation || i.ingestion === ImageIngestionStatus.Blocked))
-    return { kind: 'bad-request', message: 'Blocked images cannot be moved' };
+  if (
+    images.some(
+      (i) =>
+        i.tosViolation || i.needsReview !== null || i.ingestion !== ImageIngestionStatus.Scanned
+    )
+  )
+    return { kind: 'bad-request', message: IMAGES_NOT_MOVABLE };
 
   if (!isLive(source, now))
     return { kind: 'bad-request', message: 'Images can only be moved out of a published post' };
@@ -84,6 +97,9 @@ export function getImageMoveRefusal({
         message: 'Images can only be moved into a post published at the same time or earlier',
       };
   }
+
+  if (source.isChapter && images.length >= sourceImageCount)
+    return { kind: 'bad-request', message: 'A storyline chapter must keep at least one image' };
 
   if (targetImageCount + images.length > POST_IMAGE_LIMIT)
     return {

@@ -23,9 +23,11 @@ interface ConnectorStatus {
   type: string;
 }
 
+export const CONNECTOR_NAME = 'civitai-postgres-connector';
+
 export class DebeziumManager {
   private static instance: DebeziumManager;
-  private readonly connectorName = 'civitai-postgres-connector';
+  private readonly connectorName = CONNECTOR_NAME;
   private readonly debeziumUrl: string;
   private readonly kafka: Kafka;
   private isConfigured = false;
@@ -186,7 +188,7 @@ export class DebeziumManager {
         'database.password': password,
         'database.dbname': database,
         'database.server.name': 'civitai',
-        'table.include.list': config.kafka.monitoredTables.join(','),
+        'table.include.list': DebeziumManager.getConnectorTables().join(','),
         'plugin.name': 'pgoutput',
         'publication.name': 'debezium_publication',
         'publication.autocreate.mode': 'filtered',
@@ -331,7 +333,7 @@ export class DebeziumManager {
       }
 
       // Add data topics
-      for (const table of config.kafka.monitoredTables) {
+      for (const table of DebeziumManager.getConnectorTables()) {
         const tableName = table.replace('public.', '');
         const topicName = `postgres.${tableName}`;
 
@@ -362,6 +364,11 @@ export class DebeziumManager {
       // Don't throw - topics might be auto-created by Kafka
       logger.warn('⚠️ Topic creation failed, but continuing (topics may be auto-created)');
     }
+  }
+
+  /** Every table the connector streams: the watcher's tables plus the opt-in CDC-only ones. */
+  public static getConnectorTables(): string[] {
+    return [...config.kafka.monitoredTables, ...config.kafka.cdcOnlyTables];
   }
 
   /**

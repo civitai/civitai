@@ -6,15 +6,18 @@ import {
   deletePushSubscriptionInput,
   getUserNotificationsSchema,
   markReadNotificationInput,
+  toggleEmailSettingInput,
   toggleNotificationSettingInput,
   togglePushSettingInput,
   upsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
 import {
   deletePushSubscription,
+  getUserEmailSettings,
   getUserPushSettings,
   getUserPushSubscriptions,
   markNotificationsRead,
+  toggleEmailSetting,
   togglePushSetting,
   upsertPushSubscription,
 } from '~/server/services/notification.service';
@@ -58,4 +61,11 @@ export const notificationRouter = router({
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(togglePushSettingInput)
     .mutation(({ input, ctx }) => togglePushSetting({ ...input, userId: ctx.user.id })),
+  getEmailSettings: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsRead })
+    .query(({ ctx }) => getUserEmailSettings({ userId: ctx.user.id })),
+  updateEmailSettings: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsWrite })
+    .input(toggleEmailSettingInput)
+    .mutation(({ input, ctx }) => toggleEmailSetting({ ...input, userId: ctx.user.id })),
 });

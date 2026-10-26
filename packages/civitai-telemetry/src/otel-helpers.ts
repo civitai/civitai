@@ -22,9 +22,10 @@ export function setActiveSpanAttributes(attrs: Record<string, string | number | 
  * CURRENTLY ACTIVE span, ready to merge into an outbound request's headers.
  *
  * WHY this exists as a manual helper rather than an auto-instrumentation: this app runs
- * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (instrumentation.node.ts)
- * — outbound client spans, and with them traceparent injection, are deliberately suppressed
- * on Node core http/https for their per-request `async_hooks` cost. The orchestrator and
+ * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (or none at all, with
+ * `OTEL_HTTP_INSTRUMENTATION=off`; see src/server/otel-instrumentations.ts) — outbound client
+ * spans, and with them traceparent injection, are deliberately suppressed on Node core
+ * http/https for their per-request `async_hooks` cost. The orchestrator and
  * meilisearch clients use fetch/undici and were NEVER auto-instrumented at all, so no
  * outbound call anywhere in the app currently carries a traceparent and no trace crosses a
  * service boundary. Injecting per-call — only at the boundaries we care about — buys the
