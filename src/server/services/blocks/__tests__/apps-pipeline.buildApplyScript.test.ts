@@ -22,7 +22,10 @@ import { describe, expect, it } from 'vitest';
  * Pure function → no mocks needed.
  */
 
-import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  buildApplyReviewScript,
+  buildApplyScript,
+} from '~/server/services/blocks/apps-pipeline.service';
 
 describe('buildApplyScript', () => {
   const NS = 'civitai-apps';
@@ -104,6 +107,22 @@ describe('buildApplyScript', () => {
     // The mixed-content port-leak guard rejects any :8080 in a redirect Location.
     expect(script).toContain("grep -q ':8080'");
     expect(script).toContain('leaks the in-pod port');
+  });
+
+  it('runs the optional platform publish step after the smoke test and before the apply', () => {
+    const hook = 'if [ -f /templates/publish.sh ]; then\n  bash /templates/publish.sh\nfi';
+    const hookIdx = script.indexOf(hook);
+    expect(hookIdx).toBeGreaterThan(-1);
+    // exactly once, and guarded by the existence test (absent script => no-op)
+    expect(script.split('bash /templates/publish.sh').length - 1).toBe(1);
+    expect(hookIdx).toBeGreaterThan(script.indexOf('smoke test: PASSED'));
+    expect(hookIdx).toBeLessThan(script.indexOf('kubectl apply -f /tmp/rendered.yaml'));
+    // not swallowed: under `set -e` a non-zero publish must abort the apply
+    expect(script).not.toMatch(/publish\.sh\s*\|\|/);
+  });
+
+  it('never publishes a mod-review build', () => {
+    expect(buildApplyReviewScript(NS)).not.toContain('publish.sh');
   });
 
   it('applies the rendered manifest and waits for the rollout last', () => {
