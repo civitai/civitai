@@ -1,6 +1,7 @@
 import { ActionIcon, Alert, Button, Container, Skeleton, Text, Title } from '@mantine/core';
 import {
   IconBook2,
+  IconFiles,
   IconPlayerPlayFilled,
   IconPlus,
   IconSettings,
@@ -14,6 +15,7 @@ import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
+import { openStorylineFirstChapterModal } from '~/components/Storyline/openStorylineFirstChapterModal';
 import {
   StorylineCeilingChip,
   StorylineClosedChip,
@@ -201,6 +203,18 @@ function StorylineHeader({
               leftSection={<IconPlus size={18} />}
             >
               Write chapter 1
+            </Button>
+          )}
+          {!startLink && storyline.chapterCount === 0 && storyline.viewerRole === 'owner' && (
+            <Button
+              variant="default"
+              size="lg"
+              // Its own row on a phone, after Manage, so neither label is cut off.
+              className="order-last grow basis-full sm:order-none sm:grow-0 sm:basis-auto"
+              leftSection={<IconFiles size={18} />}
+              onClick={() => openStorylineFirstChapterModal({ storylineId: storyline.id })}
+            >
+              Use a post you&apos;ve published
             </Button>
           )}
           {lastPostId && terms?.open && storyline.status !== 'Complete' && (

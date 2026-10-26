@@ -1,4 +1,5 @@
-import { Button, Drawer, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Button, Drawer, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -10,35 +11,49 @@ import {
   StorylineOpenToAnyoneChip,
   StorylinePriceChip,
 } from '~/components/Storyline/StorylineChips';
-import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
+import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NsfwLevel } from '~/server/common/enums';
+import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function openStartStorylineModal() {
-  dialogStore.trigger({ component: StartStorylineModal });
+export function openStartStorylineModal(post?: StorylineSourcePost) {
+  dialogStore.trigger({ component: StartStorylineModal, props: { post } });
 }
 
 /**
- * Starts an empty storyline, then hands the author to the post editor to write chapter 1. A bottom
- * sheet on a phone.
+ * Starts a storyline. Without `post` it starts empty and hands the author to the post editor to
+ * write chapter 1; with one, that published post is chapter 1. A bottom sheet on a phone.
  */
-export function StartStorylineModal() {
+export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
   const dialog = useDialogContext();
   const router = useRouter();
   const utils = trpc.useUtils();
   const mobile = useIsMobile({ type: 'media' });
-  const [title, setTitle] = useState('');
-  const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(NsfwLevel.PG13);
+  // Chapter 1 is already rated, so only the ceilings it fits are offered.
+  const allowed = post
+    ? STORYLINE_CEILING_LEVELS.filter((level) =>
+        storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel: level })
+      )
+    : STORYLINE_CEILING_LEVELS;
+  const canStart = allowed.length > 0;
+  const [title, setTitle] = useState(post?.title ?? '');
+  const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(
+    allowed.find((level) => level >= NsfwLevel.PG13) ?? allowed[0] ?? NsfwLevel.PG13
+  );
   const [whoCanContinue, setWhoCanContinue] = useState<StorylineWhoCanContinue>('Anyone');
 
   const create = trpc.storyline.create.useMutation({
     onSuccess: async ({ id }) => {
-      await utils.storyline.getInfinite.invalidate();
+      await Promise.all([
+        utils.storyline.getInfinite.invalidate(),
+        post && utils.storyline.getForPosts.invalidate(),
+      ]);
       dialog.onClose();
-      await router.push(storylineWriteChapterUrl(id));
+      await router.push(post ? storylineUrl(id) : storylineWriteChapterUrl(id));
     },
     onError: (error) =>
       showErrorNotification({
@@ -49,10 +64,16 @@ export function StartStorylineModal() {
 
   const trimmed = title.trim();
 
-  const form = (
+  const form = !canStart ? (
+    <Alert color="yellow" icon={<IconAlertTriangle />}>
+      This post hasn&apos;t been rated yet. Try again once its images have been scanned.
+    </Alert>
+  ) : (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        Name it and set the terms, then you&apos;ll write chapter 1 as a post.
+        {post
+          ? 'This post becomes chapter 1. Name the storyline and set the terms.'
+          : "Name it and set the terms, then you'll write chapter 1 as a post."}
       </Text>
       <TextInput
         label="Title"
@@ -66,10 +87,15 @@ export function StartStorylineModal() {
         <Text size="sm" fw={500}>
           Max rating
         </Text>
-        <StorylineRatingInput value={maxNsfwLevel} onChange={setMaxNsfwLevel} />
+        <StorylineRatingInput
+          value={maxNsfwLevel}
+          onChange={setMaxNsfwLevel}
+          isAllowed={post ? (level) => allowed.includes(level) : undefined}
+        />
         <Text size="xs" c="dimmed">
-          Continuations rated above this can&apos;t be added. If chapter 1 needs a higher rating,
-          the maximum is raised to fit it.
+          {post
+            ? "Continuations rated above this can't be added. It can't be lower than chapter 1's rating."
+            : "Continuations rated above this can't be added. If chapter 1 needs a higher rating, the maximum is raised to fit it."}
         </Text>
       </Stack>
       <Stack gap={2}>
@@ -96,7 +122,9 @@ export function StartStorylineModal() {
         <Button
           disabled={!trimmed}
           loading={create.isPending}
-          onClick={() => create.mutate({ title: trimmed, maxNsfwLevel, whoCanContinue })}
+          onClick={() =>
+            create.mutate({ postId: post?.id, title: trimmed, maxNsfwLevel, whoCanContinue })
+          }
         >
           Start storyline
         </Button>

@@ -9,6 +9,7 @@ import {
   moveStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
+  setFirstChapterSchema,
   setStorylineImageCaptionSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
@@ -51,6 +52,7 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   setCanonChapter,
+  setFirstChapter,
   setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
@@ -239,6 +241,10 @@ export const storylineRouter = router({
     .mutation(({ input, ctx }) =>
       setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+
+  setFirstChapter: storylineWriteProcedure
+    .input(setFirstChapterSchema)
+    .mutation(({ input, ctx }) => setFirstChapter({ ...input, userId: ctx.user.id })),
 
   addChapter: storylineWriteProcedure
     .input(addOwnerChapterSchema)

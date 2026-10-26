@@ -6,34 +6,22 @@ import {
   IconClock,
   IconShieldHalf,
 } from '@tabler/icons-react';
-import clsx from 'clsx';
-import { useId } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  StorylinePostPicker,
+  type StorylineContinuePost,
+} from '~/components/Storyline/continue/StorylinePostPicker';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
-  STORYLINE_CONTINUE_POST_LIMIT,
   storylinePriceLabel,
   storylineSubmitVerdict,
   type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
-import { formatDate } from '~/utils/date-helpers';
-
-export type StorylineContinuePost = {
-  id: number;
-  title: string | null;
-  nsfwLevel: number;
-  publishedAt?: Date | null;
-  imageCount?: number;
-  cover?: StorylineThumbImage | null;
-};
 
 export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
-
-/** Sizes the tile's image request. */
-const TILE_WIDTH = 140;
 
 const refusalCopy = {
   ownStoryline: 'This is your storyline. Add your next chapter from the storyline page instead.',
@@ -111,7 +99,6 @@ export function StorylineContinueForm({
     asOwner: ownerAdd,
   });
 
-  const pickerLabelId = useId();
   // The same rule as the refusal below, so a tile is marked exactly when picking it would be refused.
   const isAboveCeiling = (postLevel: number) => {
     const tileVerdict = storylineSubmitVerdict({
@@ -182,60 +169,18 @@ export function StorylineContinueForm({
         </Stack>
       </Group>
 
-      <Stack gap={6}>
-        <Text size="sm" fw={500} id={pickerLabelId}>
-          Your post
-        </Text>
-        {postsLoading ? (
-          <div className="grid grid-cols-3 gap-2">
-            {Array.from({ length: 6 }, (_, i) => (
-              <StorylineThumb key={i} image={undefined} width={TILE_WIDTH} fluid />
-            ))}
-          </div>
-        ) : postsError ? (
-          <Text size="sm" c="red">
-            Couldn&apos;t load your posts.
-          </Text>
-        ) : !posts.length ? (
-          <Text size="sm" c="dimmed">
-            {alreadyChapters
-              ? 'All your recent posts are already chapters. Make a new post to continue the story.'
-              : 'You have no published posts.'}{' '}
-            <Anchor component={Link} href="/posts/create">
-              Create a post
-            </Anchor>
-          </Text>
-        ) : (
-          <div
-            role="radiogroup"
-            aria-labelledby={pickerLabelId}
-            className="-m-1 grid max-h-[55vh] grid-cols-3 gap-2 overflow-y-auto p-1"
-          >
-            {posts.map((candidate) => (
-              <StorylinePostTile
-                key={candidate.id}
-                post={candidate}
-                ceiling={ceiling}
-                aboveCeiling={isAboveCeiling(candidate.nsfwLevel)}
-                selected={candidate.id === postId}
-                onSelect={() => onPostChange(candidate.id)}
-              />
-            ))}
-          </div>
-        )}
-        {alreadyChapters > 0 && posts.length > 0 && (
-          <Text size="xs" c="dimmed">
-            {alreadyChapters === 1
-              ? '1 of your posts is already a chapter, so it isn’t listed.'
-              : `${alreadyChapters} of your posts are already chapters, so they aren’t listed.`}
-          </Text>
-        )}
-        {morePosts && (
-          <Text size="xs" c="dimmed">
-            Your {STORYLINE_CONTINUE_POST_LIMIT} most recent published posts.
-          </Text>
-        )}
-      </Stack>
+      <StorylinePostPicker
+        posts={posts}
+        postsLoading={postsLoading}
+        postsError={postsError}
+        alreadyChapters={alreadyChapters}
+        allChaptersText="All your recent posts are already chapters. Make a new post to continue the story."
+        morePosts={morePosts}
+        postId={postId}
+        onPostChange={onPostChange}
+        ceiling={ceiling}
+        isAboveCeiling={isAboveCeiling}
+      />
 
       {post && !verdict.allowed && verdict.reason === 'notRated' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
@@ -297,68 +242,6 @@ export function StorylineContinueForm({
         </Button>
       </Group>
     </Stack>
-  );
-}
-
-function StorylinePostTile({
-  post,
-  ceiling,
-  aboveCeiling,
-  selected,
-  onSelect,
-}: {
-  post: StorylineContinuePost;
-  ceiling: string;
-  aboveCeiling: boolean;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const name = post.title || (post.publishedAt ? formatDate(post.publishedAt) : `Post ${post.id}`);
-  const rating = post.nsfwLevel ? getBrowsingLevelLabel(post.nsfwLevel) : 'Not rated yet';
-
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={
-        aboveCeiling
-          ? `${name}, above this storyline's ${ceiling} limit`
-          : `${name}, ${post.nsfwLevel ? `rated ${rating}` : 'not rated yet'}`
-      }
-      onClick={onSelect}
-      className={clsx(
-        'flex min-w-0 flex-col gap-1 rounded-lg p-1 text-left outline-none',
-        'focus-visible:ring-2 focus-visible:ring-blue-5/50',
-        selected && 'ring-2 ring-blue-5 focus-visible:ring-blue-5'
-      )}
-    >
-      <StorylineThumb image={post.cover ?? null} width={TILE_WIDTH} fluid dimmed={aboveCeiling}>
-        {aboveCeiling && (
-          <span className="absolute inset-x-1 bottom-1 rounded-full bg-black/55 px-2 py-0.5 text-center text-xs font-semibold text-white backdrop-blur-sm">
-            Above {ceiling}
-          </span>
-        )}
-        {selected && (
-          <span className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-blue-6 text-white">
-            <IconCheck size={14} stroke={3} />
-          </span>
-        )}
-      </StorylineThumb>
-      <Text size="xs" fw={500} lineClamp={1}>
-        {name}
-      </Text>
-      <div className="flex items-center gap-1.5">
-        <Badge variant="light" color="gray" size="xs" radius="xl">
-          {rating}
-        </Badge>
-        {!!post.imageCount && (
-          <Text size="xs" c="dimmed" lineClamp={1} data-testid="storyline-post-image-count">
-            {post.imageCount} {post.imageCount === 1 ? 'image' : 'images'}
-          </Text>
-        )}
-      </div>
-    </button>
   );
 }
 

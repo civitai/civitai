@@ -1,0 +1,195 @@
+import { useRouter } from 'next/router';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { renderWithProviders } from '../../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
+import type * as DialogProviderMod from '~/components/Dialog/DialogProvider';
+import type * as NotificationsMod from '~/utils/notifications';
+import { NsfwLevel } from '~/server/common/enums';
+import StorylineFirstChapterModal from '~/components/Storyline/StorylineFirstChapterModal';
+
+/**
+ * The owner of an empty storyline picks one of their published posts as its chapter 1 (see
+ * StorylineFirstChapterModal.tsx). The server's refusals are in storyline-first-chapter.sql.
+ */
+
+const OWNER = 5;
+const DAY = 86_400_000;
+
+const mocks = vi.hoisted(() => ({
+  items: [] as Record<string, unknown>[],
+  ownerMaxNsfwLevel: 0,
+  chapters: {} as Record<number, unknown>,
+  mutate: vi.fn(),
+  error: null as { message: string } | null,
+  options: {} as {
+    onSuccess?: (data: { ceilingRaisedTo?: number }) => Promise<void>;
+  },
+  onClose: vi.fn(),
+  invalidate: vi.fn(),
+  notify: vi.fn(),
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {
+        'storyline.getById': {
+          useQuery: () => ({
+            data: {
+              id: 3,
+              title: 'The Patch',
+              maxNsfwLevel: NsfwLevel.PG13,
+              ownerMaxNsfwLevel: mocks.ownerMaxNsfwLevel,
+            },
+            isLoading: false,
+          }),
+        },
+        'post.getInfinite': {
+          useInfiniteQuery: () => ({
+            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+            isLoading: false,
+            isError: false,
+          }),
+        },
+        'storyline.getForPosts': {
+          useQuery: () => ({ data: mocks.chapters, isLoading: false }),
+        },
+        'storyline.setFirstChapter': {
+          useMutation: (options: typeof mocks.options) => {
+            mocks.options = options;
+            return { mutate: mocks.mutate, isPending: false, error: mocks.error };
+          },
+        },
+      },
+      { useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }) }
+    ),
+  };
+});
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: OWNER, username: 'owner' }),
+}));
+vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
+  ...(await orig<typeof DialogProviderMod>()),
+  useDialogContext: () => ({ opened: true, onClose: mocks.onClose, zIndex: 200 }),
+}));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showSuccessNotification: mocks.notify,
+}));
+
+const postItem = (
+  id: number,
+  { nsfwLevel = NsfwLevel.PG, publishedAt = new Date(Date.now() - DAY), userId = OWNER } = {}
+) => ({
+  id,
+  title: `Post ${id}`,
+  nsfwLevel,
+  publishedAt,
+  imageCount: 1,
+  user: { id: userId },
+  images: [],
+});
+
+const tile = (id: number) => page.getByRole('radio', { name: new RegExp(`^Post ${id},`) });
+const submit = () => page.getByRole('button', { name: 'Make it chapter 1' });
+
+beforeEach(() => {
+  mocks.items = [];
+  mocks.ownerMaxNsfwLevel = NsfwLevel.PG13;
+  mocks.chapters = {};
+  mocks.error = null;
+  mocks.mutate.mockReset();
+  mocks.onClose.mockReset();
+  mocks.notify.mockReset();
+  vi.mocked(useRouter().push).mockClear();
+});
+
+describe('StorylineFirstChapterModal', () => {
+  test('makes the picked post chapter 1 of this storyline', async () => {
+    mocks.items = [postItem(10), postItem(11)];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await expect.element(submit()).toBeDisabled();
+    await tile(11).click();
+    await submit().click();
+
+    expect(mocks.mutate).toHaveBeenCalledWith({ storylineId: 3, postId: 11 });
+  });
+
+  test('offers only published posts that are not chapters yet', async () => {
+    mocks.items = [
+      postItem(10),
+      postItem(12, { publishedAt: new Date(Date.now() + DAY) }),
+      postItem(13),
+    ];
+    mocks.chapters = { 13: { storylineId: 9, chapterId: 1, depth: 0 } };
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await expect.element(tile(10)).toBeVisible();
+    expect(tile(12).elements()).toHaveLength(0);
+    expect(tile(13).elements()).toHaveLength(0);
+    await expect
+      .element(page.getByText('1 of your posts is already a chapter, so it isn’t listed.'))
+      .toBeVisible();
+  });
+
+  test('says the ceiling goes up for a post rated above it, and still lets it through', async () => {
+    mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R })];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await tile(10).click();
+    await expect
+      .element(page.getByText(/goes up from PG-13 to fit it/))
+      .toHaveTextContent(/rated R/);
+    await expect.element(submit()).toBeEnabled();
+  });
+
+  // The owner set R, but a title held to safe for work caps it at PG-13, which no raise lifts.
+  test('a post above a capped ceiling is marked and refused, not promised a raise', async () => {
+    mocks.ownerMaxNsfwLevel = NsfwLevel.R;
+    mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R })];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('radio', { name: /above this storyline's PG-13 limit/ }).click();
+    await expect.element(page.getByText(/rated above this storyline's maximum/)).toBeVisible();
+    expect(page.getByText(/goes up from/).elements()).toHaveLength(0);
+    await expect.element(submit()).toBeDisabled();
+  });
+
+  test('an unrated post cannot be picked yet', async () => {
+    mocks.items = [postItem(10, { nsfwLevel: 0 })];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await tile(10).click();
+    await expect.element(page.getByText(/has not been rated yet/)).toBeVisible();
+    await expect.element(submit()).toBeDisabled();
+  });
+
+  test("shows the server's refusal", async () => {
+    mocks.items = [postItem(10)];
+    mocks.error = { message: 'This storyline already has its first chapter' };
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await expect
+      .element(page.getByText('This storyline already has its first chapter'))
+      .toBeVisible();
+  });
+
+  test('once done, closes, says so, and opens the storyline', async () => {
+    mocks.items = [postItem(10)];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    await expect.element(submit()).toBeVisible();
+
+    await mocks.options.onSuccess?.({ ceilingRaisedTo: NsfwLevel.R });
+
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    expect(mocks.onClose).toHaveBeenCalledTimes(1);
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('raised to R') })
+    );
+    expect(useRouter().push).toHaveBeenCalledWith('/storylines/3');
+  });
+});
