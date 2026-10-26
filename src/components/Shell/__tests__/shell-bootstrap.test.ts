@@ -33,6 +33,9 @@ const router = {
 };
 /** Every cookie the referral provider writes, in order. */
 const { cookieWrites } = vi.hoisted(() => ({ cookieWrites: [] as [string, unknown][] }));
+/** Faro's pause, observed: an abandoned shell must stop its RUM beacons before it leaves. */
+const { pauseRum } = vi.hoisted(() => ({ pauseRum: vi.fn() }));
+vi.mock('~/utils/faro/pauseRum', () => ({ pauseRum }));
 vi.mock('~/utils/cookies-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof CookiesHelpersModule>();
   return {
@@ -506,6 +509,7 @@ beforeEach(() => {
   pageDataAnswer = async () => json(payload());
   stubFetch();
   navigate = vi.spyOn(shellNavigation, 'replace').mockImplementation(() => undefined);
+  pauseRum.mockClear();
 });
 
 afterEach(() => {
@@ -812,6 +816,9 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     await render(shellPageProps(), { strict: true });
     expect(navigate.mock.calls).toEqual([[to]]);
     expect(last().shellReady).toBe(false);
+    // RUM is paused once, BEFORE the navigation, so the abandoned shell sends no more beacons.
+    expect(pauseRum).toHaveBeenCalledTimes(1);
+    expect(pauseRum.mock.invocationCallOrder[0]).toBeLessThan(navigate.mock.invocationCallOrder[0]);
   });
 
   it('keeps the query string when it adds the bypass', async () => {
@@ -867,6 +874,8 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     pageDataAnswer = async () => json({}, 500);
     await render(shellPageProps());
     expect(navigate).not.toHaveBeenCalled();
+    // The page stays, so its RUM keeps running.
+    expect(pauseRum).not.toHaveBeenCalled();
     expect(last()).toMatchObject({ shellReady: false, adsGated: true, flagsReady: false });
     expect(last().consent.allowed).toBe(false);
   });

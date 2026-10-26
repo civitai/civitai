@@ -42,6 +42,7 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
+  import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
 
   let { data }: { data: PageData } = $props();
 
@@ -202,6 +203,7 @@
 <header class="page-header">
   <h1>{reportEntityLabels[data.type]} reports</h1>
   <p>{data.totalItems} reports</p>
+  <LastWorked entity={data.type} />
 </header>
 
 

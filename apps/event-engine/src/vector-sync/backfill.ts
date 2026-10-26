@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { config } from '@/config';
+import { assertVectorSyncConfig, config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { fileRunState, redisRunState, type RunState } from './cursor';
@@ -280,6 +280,7 @@ function parseArgs(argv: string[]) {
 }
 
 async function main() {
+  assertVectorSyncConfig();
   const { command, flags, int, positive } = parseArgs(process.argv.slice(2));
   const name = String(flags.name ?? 'images');
   // Logged by every command: pause or status run with another VECTOR_COLLECTION addresses

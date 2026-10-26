@@ -90,7 +90,7 @@ const EXPECTED_SITES = [
 const EXEMPT_SITES = [
   'src/server/metrics/answer.metrics.ts:AnswerReaction',
   'src/server/metrics/question.metrics.ts:QuestionReaction',
-  'src/server/notifications/reaction.notifications.ts:CommentReaction',
+  'src/server/notifications/reaction.notifications.ts:CommentV3Reaction',
 ] as const;
 
 type Site = {

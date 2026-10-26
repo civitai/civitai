@@ -3137,6 +3137,9 @@ export type EvidenceHoldImage = {
   userId: number;
   postId: number | null;
   keptAt: Generated<Timestamp>;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 };
 export type EvidenceHoldPost = {
   postId: number;

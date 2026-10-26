@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import type { Snippet } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -14,6 +15,7 @@
     tagOptions,
     itemKeys,
     selected,
+    meta,
   }: {
     title: string;
     level: number;
@@ -23,6 +25,8 @@
     /** Every card key on screen — the select-all set. */
     itemKeys: (string | number)[];
     selected: SvelteSet<string | number>;
+    /** A line under the title. */
+    meta?: Snippet;
   } = $props();
 
   // Moderators filter on Blocked too (a mis-rated image can carry the Blocked bit).
@@ -62,7 +66,10 @@
 </script>
 
 <header class="page-header flex flex-wrap items-center justify-between gap-2">
-  <h1>{title}</h1>
+  <div>
+    <h1>{title}</h1>
+    {@render meta?.()}
+  </div>
   <div class="flex items-center gap-1">
     {#if itemKeys.length > 0}
       <button

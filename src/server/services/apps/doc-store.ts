@@ -57,6 +57,20 @@
 // author changes a shared doc, a private doc is the viewer's, and a counter
 // collection's doc is charged to the viewer whose increment created it.
 //
+// WHICH CEILINGS A DOCUMENT COUNTS TOWARD is decided by the key space it lives in
+// (`scope_uid`), never by the collection's current declaration: a SHARED document
+// (`scope_uid = 0`) counts toward the app's ceiling (`usage_app`) and its author's;
+// a PRIVATE document (`scope_uid` = its viewer) counts toward its viewer's ceiling
+// ONLY. Private writes need no trust gate, so were they charged to the app, a few
+// throwaway accounts could fill an app's whole ceiling and refuse every other user.
+// A private write still takes `usage_app`'s row lock and the next seq (a zero-byte
+// charge), so seq order and the lock order below are unchanged. Because the charge
+// follows the stored key space, a collection whose visibility changes between
+// manifest versions leaves every existing document where it was charged: the old
+// key space is no longer addressed by viewers, its documents stay on the ceilings
+// they were charged to, and the account wipe (which deletes by key space) refunds
+// exactly those ceilings.
+//
 // LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
 // one key being written, (1b) that document's tally and mark rows, (2)
 // `usage_app` for (app, ns), (3) the caller's `usage_user` row. Nothing takes a
@@ -70,6 +84,7 @@
 
 import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
 import type {
   AccountWipeNamespaceResult,
@@ -525,9 +540,10 @@ const SQL_SYNC_INDEX = `WITH gone AS (
   ON CONFLICT (app_id, ns, coll, scope_uid, key, name)
   DO UPDATE SET v_text = EXCLUDED.v_text, v_num = EXCLUDED.v_num, v_type = EXCLUDED.v_type`;
 
-// Charge the per-(app, ns) ceiling and take the next seq. Zero rows = over quota.
-// A negative delta always passes, so a delete or a shrink is never refused, even
-// over a ceiling that was lowered.
+// Charge the per-(app, ns) ceiling — shared documents only; a private write passes a
+// zero delta — and take the next seq. Zero rows = over quota. A zero or negative
+// delta always passes, so a private write, a delete or a shrink is never refused by
+// it, even over a ceiling that was lowered.
 // $1 app, $2 ns, $3 Δbytes, $4 Δdocs, $5 byte limit, $6 doc limit
 const SQL_CHARGE_APP = `INSERT INTO appdata.usage_app AS u (app_id, ns, bytes, docs, last_seq)
   SELECT $1, $2, $3::bigint, $4::int, 1
@@ -952,6 +968,18 @@ function decodeCursor(sort: SortSpec, cursor: string): { value: string; key: str
 type UsageDelta = { bytes: number; docs: number };
 type UserCharge = UsageDelta & { uid: number; ceiling: QuotaCeiling };
 
+/** The app-ceiling charge of a write that moves no shared bytes: it still takes the next seq. */
+const NO_APP_CHARGE: UsageDelta = { bytes: 0, docs: 0 };
+
+/**
+ * What a document change costs the APP's ceiling, by the key space it lives in (see WHICH
+ * CEILINGS in the module header): the whole delta for a shared document (`scope_uid = 0`),
+ * nothing for a private one. The single place that decides it.
+ */
+function appDelta(scope: number, delta: UsageDelta): UsageDelta {
+  return scope === 0 ? delta : NO_APP_CHARGE;
+}
+
 export type DocStore = ReturnType<typeof createDocStore>;
 export type DocStoreModeration = ReturnType<typeof createDocStoreModeration>;
 
@@ -1097,24 +1125,35 @@ function buildDocStore(deps: DocStoreDeps) {
     if (!deps.db) {
       throw new DocStoreError('storage_disabled', 'document storage is not configured');
     }
-    const client = await deps.db.connect();
+    let client: DocStoreClient;
+    try {
+      client = await deps.db.connect();
+    } catch (err) {
+      // An outage (the pool's connection timeout, a refused or dropped socket, too many
+      // connections, a server restarting) is retryable; misconfiguration is not.
+      throw isPgConnectionFault(err) ? connectionUnavailable(err) : connectConfigFault(err);
+    }
     let broken = false;
     try {
       await assertLeastPrivilege(client);
     } catch (err) {
       client.release();
-      throw err;
+      throw translatePgError(err);
     }
+    let committing = false;
     try {
       await client.query(begin);
       const out = await fn(client);
+      committing = true;
       await client.query('COMMIT');
       return out;
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {
         broken = true;
       });
-      throw translatePgError(err);
+      // A connection lost ON COMMIT has an unknown outcome — the write may have landed — so it
+      // is not translated into a retry invitation (create/increment are not idempotent).
+      throw translatePgError(err, { outcomeUnknown: committing });
     } finally {
       client.release(broken);
     }
@@ -1216,7 +1255,7 @@ function buildDocStore(deps: DocStoreDeps) {
           const res = await c.query(SQL_UPDATE_DOC, [...base, json, viewer]);
           const delta = Number(res.rows[0].size_bytes) - Number(existing.size_bytes);
           return finishWrite(c, ctx, coll, scope, key, indexRows, {
-            app: { bytes: delta, docs: 0 },
+            app: appDelta(scope, { bytes: delta, docs: 0 }),
             user: { uid: viewer, bytes: delta, docs: 0, ceiling: ceilingFor(coll) },
           });
         }
@@ -1228,7 +1267,7 @@ function buildDocStore(deps: DocStoreDeps) {
         if (ins.rows.length === 0) continue; // lost the race; re-read
         const size = Number(ins.rows[0].size_bytes);
         return finishWrite(c, ctx, coll, scope, key, indexRows, {
-          app: { bytes: size, docs: 1 },
+          app: appDelta(scope, { bytes: size, docs: 1 }),
           user: { uid: viewer, bytes: size, docs: 1, ceiling: ceilingFor(coll) },
         });
       }
@@ -1363,12 +1402,12 @@ function buildDocStore(deps: DocStoreDeps) {
         await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, coll.name, key]);
       }
       const size = Number(row.size_bytes);
-      const seq = await charge(
-        c,
-        ctx,
-        { bytes: -size, docs: -1 },
-        { uid: viewer, bytes: -size, docs: -1, ceiling: ceilingFor(coll) }
-      );
+      const seq = await charge(c, ctx, appDelta(scope, { bytes: -size, docs: -1 }), {
+        uid: viewer,
+        bytes: -size,
+        docs: -1,
+        ceiling: ceilingFor(coll),
+      });
       await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, coll.name, scope, key, seq]);
       return { deleted: true };
     });
@@ -1748,8 +1787,11 @@ function buildDocStore(deps: DocStoreDeps) {
       };
       /**
        * Delete the locked authored documents exactly as a moderator delete does (tallies, marks,
-       * app and author refunds, tombstones), then refund the app for the private documents. No
-       * user is charged for those: the account's own usage row is deleted below.
+       * app and author refunds, tombstones). The private documents refund nothing: the app's
+       * ceiling never carried them (`appDelta`), and the account's own usage row, which did, is
+       * deleted below. Their zero-byte charge is kept for its lock: it takes `usage_app` (LOCK
+       * ORDER (2)) before the usage-row delete takes (3), as it did when it refunded bytes, so
+       * an in-flight write by this user cannot hold (2) while waiting on a (3) the wipe holds.
        */
       const settle = async (pass: Awaited<ReturnType<typeof wipeDocs>>) => {
         result.sharedDocs += pass.authored.length;
@@ -1759,7 +1801,8 @@ function buildDocStore(deps: DocStoreDeps) {
           await charge(
             c,
             ctx,
-            { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs },
+            // Their key space is `scope_uid = userId` (`SQL_WIPE_PRIVATE_DOCS`).
+            appDelta(userId, { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs }),
             { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
           );
         }
@@ -1797,8 +1840,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * the document store, in every app and namespace they have rows in. Per namespace, in one
    * transaction:
    *   - their own dev namespace (`dev:<uid>`) is deleted outright;
-   *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
-   *     app; their marks — reports included — are deleted and each tally decremented; the shared
+   *   - elsewhere, their private documents are deleted (index rows with them; the app's usage
+   *     never carried them, so it is not refunded); their marks — reports included — are deleted and each tally decremented; the shared
    *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does
    *     (index rows, tallies, every user's marks on them, app and author refunds, tombstones);
    *     counter-created documents charged to them keep their counters but lose the uid; their
@@ -1870,7 +1913,115 @@ function buildDocStore(deps: DocStoreDeps) {
   };
 }
 
-function translatePgError(err: unknown): unknown {
+/**
+ * SQLSTATEs that say the server cannot serve this connection: too_many_connections,
+ * admin_shutdown, crash_shutdown, cannot_connect_now. Class 08 (connection exception) is
+ * matched by prefix in `isPgConnectionFault`, except 08P01 (below).
+ */
+const PG_CONNECTION_SQLSTATES = new Set(['53300', '57P01', '57P02', '57P03']);
+/**
+ * 08P01 protocol_violation is retryable ONLY with one of these PgBouncer messages. Postgres also
+ * raises 08P01 for a malformed message from US (e.g. "bind message supplies 1 parameters, but
+ * prepared statement requires 2") — a bug, which must stay a 500 — and PgBouncer uses it for
+ * permanent refusals too ("unsupported startup parameter"). Trade-off: a PgBouncer outage
+ * message not listed here is a 500 rather than a retryable 503; widen the list when one is seen,
+ * rather than matching 08P01 by code alone.
+ */
+const PGBOUNCER_TRANSIENT_08P01 =
+  /server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
+/**
+ * Node socket errors a broken or unreachable database connection surfaces as. Name-resolution
+ * failures (ENOTFOUND, EAI_AGAIN) are deliberately absent: they are a wrong host far more often
+ * than a blip, and a retry loop would hide the misconfiguration.
+ */
+const SOCKET_FAULT_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+]);
+/**
+ * The driver's own connection-loss messages, which carry no code: pg's `Connection terminated`
+ * (and `… unexpectedly`, and pg-pool's `… due to connection timeout`), pg-pool's checkout
+ * timeout, and pg refusing a query on a client it has already marked broken or closed.
+ */
+const CONNECTION_FAULT_MESSAGE =
+  /^(Connection terminated|timeout exceeded when trying to connect|Client has encountered a connection error and is not queryable|Client was closed and is not queryable)/;
+
+/**
+ * Whether `err` (or anything on its `cause` chain) says the database connection could not be
+ * had or was lost — an availability fault, retryable — as opposed to a fault in what we sent.
+ */
+function isPgConnectionFault(err: unknown): boolean {
+  let e: unknown = err;
+  for (let depth = 0; depth < 5 && e && typeof e === 'object'; depth++) {
+    const { code, message } = e as { code?: unknown; message?: unknown };
+    if (typeof code === 'string') {
+      if (code === '08P01') {
+        if (typeof message === 'string' && PGBOUNCER_TRANSIENT_08P01.test(message)) return true;
+      } else if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) {
+        // A SQLSTATE is exactly five characters; class 08 is its first two.
+        return true;
+      }
+      if (SOCKET_FAULT_CODES.has(code)) return true;
+    }
+    if (typeof message === 'string' && CONNECTION_FAULT_MESSAGE.test(message)) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * The retryable refusal for a database the store could not use. Its message names the cause for
+ * the store's internal callers, which log `err.message` (the account wipe, review cleanup); the
+ * storage route never sends it (`CLIENT_MESSAGE` in `doc-store-api.ts`), and `details` carries
+ * only the retry delay. The original is also logged here, because the route's own fault log
+ * only ever sees the translated error.
+ */
+function connectionUnavailable(err: unknown): unknown {
+  if (err instanceof DocStoreError) return err;
+  const cause = err instanceof Error ? err.message : String(err);
+  logToAxiom(
+    {
+      name: 'app-blocks-doc-store-connection-fault',
+      type: 'error',
+      error: err instanceof Error ? err.name : typeof err,
+      code: (err as { code?: unknown } | null)?.code,
+      message: cause,
+    },
+    'app-blocks'
+  ).catch(() => undefined);
+  return new DocStoreError('service_unavailable', `storage is temporarily unavailable: ${cause}`, {
+    retryAfter: 1,
+  });
+}
+
+/**
+ * A connect() rejection that is NOT a connection fault: a wrong password or auth rule (class 28),
+ * a missing database (3D000), a host that does not resolve, a pooler refusing a startup
+ * parameter, an ended pool. Retrying never helps, so it stays a 500 (rethrown as-is), logged
+ * under its own name so a broken deploy is not mistaken for an outage.
+ */
+function connectConfigFault(err: unknown): unknown {
+  logToAxiom(
+    {
+      name: 'app-blocks-doc-store-config-fault',
+      type: 'error',
+      error: err instanceof Error ? err.name : typeof err,
+      code: (err as { code?: unknown } | null)?.code,
+      message: err instanceof Error ? err.message : String(err),
+    },
+    'app-blocks'
+  ).catch(() => undefined);
+  return err;
+}
+
+function translatePgError(err: unknown, opts: { outcomeUnknown?: boolean } = {}): unknown {
+  if (err instanceof DocStoreError) return err;
+  if (!opts.outcomeUnknown && isPgConnectionFault(err)) return connectionUnavailable(err);
   const e = err as { code?: string; constraint?: string };
   // lock_not_available: waited LOCK_TIMEOUT on a lock (see LOCK_TIMEOUT).
   // Retryable; never park a pooled connection longer.

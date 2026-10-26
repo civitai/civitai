@@ -3026,15 +3026,15 @@ export const validateContestCollectionEntry = async ({
     }));
   if (isChallengeCollection) {
     const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
-      SELECT DISTINCT th."imageId"
-      FROM "Thread" th
-      JOIN "CommentV2" cm ON cm."threadId" = th.id
+      SELECT DISTINCT cm."entityId" AS "imageId"
+      FROM "CommentV3" cm
       JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
-      WHERE th."imageId" IN (${Prisma.join(imageIds)})
+      WHERE cm."entityType" = 'image' AND cm."parentId" IS NULL AND cm."deletedAt" IS NULL
+        AND cm."entityId" IN (${Prisma.join(imageIds)})
         AND NOT EXISTS (
           SELECT 1 FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
-            AND ci."imageId" = th."imageId"
+            AND ci."imageId" = cm."entityId"
             AND ci.status IN ('ACCEPTED', 'REVIEW')
         )
     `;

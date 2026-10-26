@@ -431,11 +431,9 @@ describe('the gate over REAL detector output, not a hand-copy of it', () => {
         .slice(0, take),
     countPosts: async (ids) => ({
       comments: [],
-      commentsV2: [],
       models: [],
       images: ids.map((userId) => ({ userId, count: imagesEach })),
       allComments: [],
-      allCommentsV2: [],
       allModels: [],
       allImages: ids.map((userId) => ({ userId, count: imagesEach })),
     }),

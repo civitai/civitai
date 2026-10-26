@@ -761,6 +761,47 @@ export async function updateStoryline({
 }
 
 /**
+ * Deletes a storyline that has never had a chapter, for its owner only. Chapter rows are never
+ * deleted (a removed or post-deleted chapter stays as a tombstone), so "no rows" means no chapter
+ * in any state, and with it no continuation placement or Buzz: every placement targets a chapter's
+ * post. A chapter-1 draft is unlinked by the cascade and stays an ordinary draft.
+ */
+export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
+  await dbWrite.$transaction(async (tx) => {
+    // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
+    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    `;
+    if (!owned) throw throwNotFoundError('Storyline not found');
+    if (owned.userId !== userId)
+      throw throwAuthorizationError('Only the owner can delete this storyline');
+    // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
+    // below would otherwise deadlock against a chapter-1 draft going live.
+    await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
+    // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
+    // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
+    // key takes KEY SHARE. Whatever committed first, the count below sees it.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
+      SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Storyline not found');
+    // Kept for moderation: deleting would drop the takedown and any appeal with it.
+    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+    const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${id}) AS "hasChapter"
+    `;
+    if (hasChapter) throw throwBadRequestError('Only a storyline with no chapters can be deleted');
+    // No foreign key: the owner's continuation price for this storyline would outlive it.
+    await tx.$executeRaw`
+      DELETE FROM "PlacementSpace"
+      WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
+    `;
+    await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+  });
+  return { id };
+}
+
+/**
  * A moderator's ruling on a storyline's title. `moderatorNsfwLevel` stands in for the scan's
  * rating (null hands it back to the scan). `liftScanTakedown` lifts a takedown the title scan
  * made, for the title the moderator reviewed, and records that text so a scan of it, a redelivered

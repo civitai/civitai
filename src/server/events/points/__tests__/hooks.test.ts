@@ -1,3 +1,4 @@
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Award from '~/server/events/points/award';
@@ -9,6 +10,31 @@ const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
   hatted: new Set<string>(),
 }));
 
+const kysely = vi.hoisted(() => {
+  const state = {
+    calls: [] as { table: string; where: unknown[][] }[],
+    answers: [] as unknown[],
+  };
+  const selectFrom = (table: string) => {
+    const call = { table, where: [] as unknown[][] };
+    state.calls.push(call);
+    const query = {
+      select: () => query,
+      where: (...a: unknown[]) => {
+        call.where.push(a);
+        return query;
+      },
+      executeTakeFirst: async () =>
+        state.answers.length > 1 ? state.answers.shift() : state.answers[0],
+    };
+    return query;
+  };
+  return { state, selectFrom };
+});
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyWrite: { selectFrom: kysely.selectFrom },
+}));
 // The engine's kill switch is on here; enabled.test.ts covers it off.
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => true,
@@ -40,6 +66,11 @@ import {
 
 const db = dbMock.dbWrite;
 const ACTOR = 5;
+
+beforeEach(() => {
+  kysely.state.calls.length = 0;
+  kysely.state.answers = [{ n: '0' }];
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -215,7 +246,7 @@ describe('comments', () => {
     db.thread.findMany.mockResolvedValue([
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
     ]);
-    db.commentV2.count.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
+    kysely.state.answers = [{ n: '2' }, { n: '0' }];
 
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
     expect(removeEventPoints).not.toHaveBeenCalled();
@@ -224,9 +255,6 @@ describe('comments', () => {
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ sourceId: `CommentV2:Image:7:${ACTOR}` }),
     ]);
-    expect(db.commentV2.count).toHaveBeenLastCalledWith({
-      where: { userId: ACTOR, thread: { OR: [{ id: 70 }, { rootThreadId: 70 }] } },
-    });
   });
 });
 
@@ -347,7 +375,7 @@ describe('round 1', () => {
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
       { id: 71, rootThreadId: 70, imageId: null, articleId: null, rootThread: { imageId: 7 } },
     ]);
-    db.commentV2.count.mockResolvedValue(0);
+    kysely.state.answers = [{ n: '0' }];
 
     await onCommentsRemoved([
       { userId: ACTOR, threadId: 70 },
@@ -357,7 +385,7 @@ describe('round 1', () => {
 
     expect(db.thread.findMany).toHaveBeenCalledTimes(1);
     expect(db.thread.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: [70, 71] } } });
-    expect(db.commentV2.count).toHaveBeenCalledTimes(1);
+    expect(kysely.state.calls).toHaveLength(1);
     expect(removeEventPoints).toHaveBeenCalledTimes(1);
   });
 
@@ -366,7 +394,7 @@ describe('round 1', () => {
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
     ]);
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
-    expect(db.commentV2.count).not.toHaveBeenCalled();
+    expect(kysely.state.calls).toHaveLength(0);
     expect(removeEventPoints).not.toHaveBeenCalled();
   });
 

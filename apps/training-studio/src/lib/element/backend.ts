@@ -13,7 +13,6 @@ import type {
 } from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
-import * as label from '$lib/autolabel-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
@@ -35,6 +34,11 @@ export interface StudioElementHost {
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
    *  and the element shows no status banner and leaves Start enabled. */
   getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
+  /** Auto-label is free to the user, so it must run on the host's system-paid path: a workflow
+   *  submitted with the user's token is charged to the user. A host without these makes
+   *  auto-label unavailable rather than charge for it. */
+  autoLabelSubmit?: StudioBackend['autoLabelSubmit'];
+  autoLabelPoll?: StudioBackend['autoLabelPoll'];
   config: {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
@@ -82,6 +86,8 @@ export interface StudioElementHost {
 }
 
 class UnauthorizedError extends Error {}
+
+const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
 
 export function elementBackend(host: StudioElementHost): StudioBackend {
   // Orchestrator tokens are short-lived and a watched training outlives them, so a 401 anywhere in a
@@ -166,11 +172,14 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     },
 
     autoLabelSubmit: (items, mode, media) =>
-      call(async (client) => ({
-        workflowId: await label.submitAutoLabel(client, mode, media, items),
-      })),
+      host.autoLabelSubmit
+        ? host.autoLabelSubmit(items, mode, media)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
-    autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
+    autoLabelPoll: (workflowId, signal) =>
+      host.autoLabelPoll
+        ? host.autoLabelPoll(workflowId, signal)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
     submitTraining: (runs) =>
       call((client) =>

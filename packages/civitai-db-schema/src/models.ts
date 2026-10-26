@@ -4137,6 +4137,9 @@ export interface EvidenceHoldImage {
   userId: number;
   postId: number | null;
   keptAt: Date;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 }
 
 export interface EvidenceHoldPost {

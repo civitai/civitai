@@ -88,6 +88,18 @@ describe('chatPreviewText', () => {
   it('does not invent a sender for a system row', () => {
     expect(say(-1, [ann, bob])).toBe('hi');
   });
+
+  it('shows the deal-accepted message without its markdown', () => {
+    const text = chatPreviewText({
+      message: {
+        content: 'Deal accepted: **A cat portrait**. [Open the deal](/services/deals/12)',
+        userId: -1,
+      },
+      viewerId: me,
+      otherMembers: [ann],
+    });
+    expect(text).toBe('Deal accepted: A cat portrait. Open the deal');
+  });
 });
 
 describe('showsChatModeratorMark', () => {
