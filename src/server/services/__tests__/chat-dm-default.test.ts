@@ -135,6 +135,42 @@ describe('resolveChatRecipients: saved DM policy', () => {
   });
 });
 
+describe('resolveChatRecipients: recipients with mixed settings', () => {
+  const SAVED = 30;
+  const UNSET = 40;
+
+  const routeBoth = async (recipientIds: number[]) => {
+    getUserSettings.mockImplementation(async (id: number) =>
+      id === SAVED ? { chat: { dmPolicy: 'everyone' } } : {}
+    );
+    getFeatureFlagsLazy.mockImplementation(() => ({ chatRedesign: true }));
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ createdAt: new Date('2020-01-01') });
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        isModerator: false,
+        onboarding: 0,
+        subscriptions: [],
+        membershipOverride: null,
+      }))) as never);
+
+    const { allowed, filteredIds } = await resolveChatRecipients({ userId: SENDER, recipientIds });
+    expect(allowed).toEqual(expect.arrayContaining([SAVED, UNSET]));
+    return { saved: filteredIds.has(SAVED), unset: filteredIds.has(UNSET) };
+  };
+
+  it("routes a saved 'everyone' to the inbox and an unset redesign recipient to Requests", async () => {
+    expect(await routeBoth([SAVED, UNSET])).toEqual({ saved: false, unset: true });
+  });
+
+  it('routes each recipient by their own settings in either order', async () => {
+    expect(await routeBoth([UNSET, SAVED])).toEqual({ saved: false, unset: true });
+  });
+});
+
 describe('chatRedesign evaluation for a recipient', () => {
   const evaluatedUser = () => getFeatureFlagsLazy.mock.calls[0]?.[0]?.user as SessionUser;
 
@@ -148,6 +184,12 @@ describe('chatRedesign evaluation for a recipient', () => {
       isEarlyAdopter: true,
       onboarding: 0,
     });
+  });
+
+  it('keeps a tier missing from the rank table, as a real session does', async () => {
+    setup({ tier: 'platinum' });
+    await route();
+    expect(evaluatedUser()).toMatchObject({ tier: 'platinum' });
   });
 
   it('is skipped for a recipient whose saved policy already decides', async () => {

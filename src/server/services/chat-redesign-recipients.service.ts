@@ -18,16 +18,18 @@ type RecipientRow = {
 };
 
 function highestTier({ subscriptions, membershipOverride }: RecipientRow) {
-  const rank = (tier: string | undefined) => (tier ? TIER_ORDER[tier] ?? 0 : 0);
   let highest: string | undefined;
+  // `!highest ||` keeps a tier missing from TIER_ORDER, as the session does.
+  const outranks = (tier: string) =>
+    !highest || (TIER_ORDER[tier] ?? 0) > (TIER_ORDER[highest] ?? 0);
   for (const sub of subscriptions) {
     if (!ACTIVE_STATUSES.includes(sub.status)) continue;
     const metadata = (sub.product.metadata ?? {}) as Record<string, unknown>;
     const tier = env.TIER_METADATA_KEY ? (metadata[env.TIER_METADATA_KEY] as string) : undefined;
-    if (tier && tier !== 'free' && rank(tier) > rank(highest)) highest = tier;
+    if (tier && tier !== 'free' && outranks(tier)) highest = tier;
   }
   const override = membershipOverride?.tier;
-  if (override && override !== 'free' && rank(override) > rank(highest)) highest = override;
+  if (override && override !== 'free' && outranks(override)) highest = override;
   return highest;
 }
 
@@ -37,8 +39,9 @@ function highestTier({ subscriptions, membershipOverride }: RecipientRow) {
  * carries. There is no request here, so host- and region-scoped availability cannot
  * apply; `chatRedesign` uses neither.
  *
- * Fails closed to "not in the redesign": a recipient this cannot place keeps the
- * pre-redesign routing rather than having invites filtered into a tab they cannot see.
+ * Fails open to 'everyone': a recipient this cannot place is treated as outside the
+ * redesign and keeps today's routing, rather than having invites filtered into a tab
+ * they cannot see.
  */
 export async function getChatRedesignRecipients({
   recipientIds,
