@@ -7,6 +7,7 @@ import type { Session } from '~/types/session';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -474,6 +475,9 @@ export class Tracker {
     // read it as delivered: `send` returns false, `updateEntityMetric` passes
     // that on, and the row stays queued instead of being stamped counted.
     if (!env.CLICKHOUSE_TRACKER_URL) return false;
+    // A local origin never reaches a tracker unless opted in: a tunnel on loopback can hide a real one.
+    if (!outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED))
+      return false;
     await this.resolveSession();
 
     const body =

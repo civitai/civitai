@@ -426,6 +426,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
 
   return [
     {
+      id: 'create-generate',
       href: '/generate',
       visible: !isMuted,
       rel: 'nofollow',
@@ -434,6 +435,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate',
     },
     {
+      id: 'create-post-images',
       href: '/posts/create',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -443,6 +445,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Images',
     },
     {
+      id: 'create-post-videos',
       href: '/posts/create?video=true',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -452,6 +455,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Videos',
     },
     {
+      id: 'create-model',
       href: '/models/create',
       visible: !isMuted && canCreate,
       redirectReason: 'upload-model',
@@ -463,6 +467,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     {
       // Opens the generation panel with the 3D Model tab selected. The
       // Model3D generator surface is gated separately by `model3dGenerator`.
+      id: 'create-model3d',
       href: '/generate?type=model3d',
       visible: !isMuted && features.model3dGenerator,
       rel: 'nofollow',
@@ -473,6 +478,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     {
       // The user-toggleable trainingStudioUi flag swaps the trainer entry for the new Training
       // Studio; the old wizard stays reachable by toggling it back off.
+      id: 'create-train',
       href: features.trainingStudioUi ? '/training-studio' : '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
@@ -483,6 +489,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-article',
       href: '/articles/create',
       visible: !isMuted && canCreate && features.articles,
       redirectReason: 'create-article',
@@ -492,6 +499,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Write an Article',
     },
     {
+      id: 'create-comic',
       href: '/comics/create',
       visible: !isMuted && canCreate && features.comicCreator,
       redirectReason: 'post-images',
@@ -501,6 +509,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Comic',
     },
     {
+      id: 'create-bounty',
       href: '/bounties/create',
       visible: !isMuted && canCreate && features.bounties,
       redirectReason: 'create-bounty',
@@ -511,6 +520,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-challenge',
       href: '/challenges/create',
       visible: !isMuted && canCreate && features.challengePlatform && features.userChallenges,
       redirectReason: 'create-challenge',

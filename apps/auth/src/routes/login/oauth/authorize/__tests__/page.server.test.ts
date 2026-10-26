@@ -42,10 +42,12 @@ function loadWith(scope: number) {
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
   url.searchParams.set('scope', String(scope));
-  return load({ url, locals: { user: { id: 7 } }, cookies: {} } as never) as Promise<
+  return load({ url, locals: { user: { id: 7 } }, cookies: {}, setHeaders } as never) as Promise<
     Record<string, unknown>
   >;
 }
+
+const setHeaders = vi.fn();
 
 describe('consent screen load', () => {
   it('treats a request for AppStoreCatalogWrite as invalid', async () => {
@@ -56,5 +58,14 @@ describe('consent screen load', () => {
   it('renders an ordinary request (positive control)', async () => {
     const page = await loadWith(TokenScope.UserRead);
     expect(page).toMatchObject({ invalid: false, scopes: ['Read profile, settings & email'] });
+  });
+
+  it('forbids framing the consent screen', async () => {
+    setHeaders.mockClear();
+    await loadWith(TokenScope.UserRead);
+    expect(setHeaders).toHaveBeenCalledWith({
+      'content-security-policy': "frame-ancestors 'none'",
+      'x-frame-options': 'DENY',
+    });
   });
 });

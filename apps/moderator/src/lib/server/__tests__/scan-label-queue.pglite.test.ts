@@ -37,6 +37,8 @@ const {
   getOpenFlaggerVersions,
   getVotedItemOwner,
   isControlFlaggerVersion,
+  itemForToken,
+  mediaForToken,
   sourceOrder,
 } = await import('../scan-label.service');
 
@@ -48,6 +50,7 @@ const MIGRATIONS = [
   '20261022130000_scan_label_queue',
   '20261022140000_scan_label_outcomes',
   '20261023130000_scan_label_reasons_copy',
+  '20261128120000_scan_label_claim_token',
 ].map((name) =>
   readFileSync(
     join(
@@ -138,10 +141,13 @@ describe('claimNext order', () => {
   it('gives a moderator their live lease back instead of taking a second one', async () => {
     const a = await seedItem(1);
     const b = await seedItem(2);
-    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    const first = (await claimNext(1, {}, NOW))!;
+    expect(first.itemId).toBe(a);
     // b is now partly voted, so a fresh claim would rank it first.
     await castVote({ itemId: b, userId: 2, choice: KEEP, msOnItem: 1 }, NOW);
-    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(a);
+    const again = (await claimNext(1, {}, later(1000)))!;
+    expect(again.itemId).toBe(a);
+    expect(again.token).toBe(first.token);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim" WHERE "userId" = 1`);
     expect(rows).toHaveLength(1);
   });
@@ -399,6 +405,180 @@ describe('claimNext source mix', { timeout: 60_000 }, () => {
   });
 });
 
+describe('claim tokens', () => {
+  it('keeps the token of a card whose lease is refreshed', async () => {
+    const it1 = await seedItem(1);
+    const first = (await claimNext(1, {}, NOW))!;
+    expect(first.itemId).toBe(it1);
+    const refreshed = (await claimNext(1, {}, later(LEASE_MS + 1)))!;
+    expect(refreshed.itemId).toBe(it1);
+    expect(refreshed.leaseExpiresAt.getTime()).toBeGreaterThan(first.leaseExpiresAt.getTime());
+    expect(refreshed.token).toBe(first.token);
+  });
+
+  it('mints a different token per claim', async () => {
+    const it1 = await seedItem(1);
+    const a = (await claimNext(1, {}, NOW))!;
+    const b = (await claimNext(2, {}, NOW))!;
+    expect([a.itemId, b.itemId]).toEqual([it1, it1]);
+    expect(a.token).not.toBe(b.token);
+  });
+
+  it('resolves a token only for the moderator it was minted for', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(await itemForToken(token, 2)).toBeNull();
+  });
+
+  it('lets a token whose lease ran out vote while a slot is free', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(
+      (
+        await castVote(
+          { itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token },
+          later(LEASE_MS + 1)
+        )
+      ).ok
+    ).toBe(true);
+  });
+
+  it('still finds the card for a repeat vote from a second tab', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    const cast = () =>
+      castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token }, NOW);
+    expect((await cast()).ok).toBe(true);
+    // The vote released the lease, so only the vote can say what the token was for.
+    expect(
+      (await pg.query(`SELECT 1 FROM "ScanLabelClaim" WHERE token = $1`, [token])).rows
+    ).toEqual([]);
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(await itemForToken(token, 2)).toBeNull();
+    expect(await cast()).toEqual({ ok: false, reason: 'already-voted' });
+  });
+});
+
+describe('card media', () => {
+  it('serves the media of a live claim to its holder only', async () => {
+    await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await mediaForToken(token, 1, NOW)).toEqual({ url: 'key-1', type: 'image', name: null });
+    expect(await mediaForToken(token, 2, NOW)).toBeNull();
+    expect(await mediaForToken('00000000-0000-4000-8000-000000000000', 1, NOW)).toBeNull();
+  });
+
+  // Media is served exactly while the vote would land: each state is asked of both, media first,
+  // then the vote itself, on its own fresh database.
+  const UNKNOWN = '00000000-0000-4000-8000-000000000000';
+  const states: [string, () => Promise<{ token: string; userId: number; at: Date }>, boolean][] = [
+    [
+      'live',
+      async () => {
+        await seedItem(1);
+        return { token: (await claimNext(1, {}, NOW))!.token, userId: 1, at: NOW };
+      },
+      true,
+    ],
+    [
+      'expired but votable',
+      async () => {
+        await seedItem(1);
+        return { token: (await claimNext(1, {}, NOW))!.token, userId: 1, at: later(LEASE_MS + 1) };
+      },
+      true,
+    ],
+    [
+      'expired, slots taken',
+      async () => {
+        await seedItem(1, { votes: 1 });
+        const { token } = (await claimNext(1, {}, NOW))!;
+        const at = later(LEASE_MS + 1);
+        expect((await claimNext(2, {}, at))?.itemId).toBeDefined();
+        expect((await claimNext(3, {}, at))?.itemId).toBeDefined();
+        return { token, userId: 1, at };
+      },
+      false,
+    ],
+    [
+      'voted',
+      async () => {
+        const it1 = await seedItem(1);
+        const { token } = (await claimNext(1, {}, NOW))!;
+        await castVote(
+          { itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token },
+          NOW
+        );
+        return { token, userId: 1, at: NOW };
+      },
+      false,
+    ],
+    [
+      'foreign',
+      async () => {
+        await seedItem(1);
+        return { token: (await claimNext(1, {}, NOW))!.token, userId: 2, at: NOW };
+      },
+      false,
+    ],
+    [
+      'unknown',
+      async () => {
+        await seedItem(1);
+        await claimNext(1, {}, NOW);
+        return { token: UNKNOWN, userId: 1, at: NOW };
+      },
+      false,
+    ],
+  ];
+
+  it.each(states)('agrees with the vote for a %s token', async (_, setup, lands) => {
+    const { token, userId, at } = await setup();
+    const media = await mediaForToken(token, userId, at);
+    const itemId = await itemForToken(token, userId);
+    const vote =
+      itemId === null
+        ? null
+        : await castVote({ itemId, userId, choice: KEEP, msOnItem: 1, claimToken: token }, at);
+    expect(media !== null).toBe(lands);
+    expect(vote?.ok === true).toBe(lands);
+  });
+
+  it('never serves media for a token the vote would not resolve', async () => {
+    const voted = await seedItem(3);
+    const spent = (await claimNext(3, {}, NOW))!;
+    expect(spent.itemId).toBe(voted);
+    await castVote(
+      { itemId: voted, userId: 3, choice: KEEP, msOnItem: 1, claimToken: spent.token },
+      NOW
+    );
+    await seedItem(1);
+    await seedItem(2);
+    const mine = (await claimNext(1, {}, NOW))!.token;
+    const theirs = (await claimNext(2, {}, NOW))!.token;
+    const cases = [
+      [mine, 1],
+      [mine, 2],
+      [theirs, 1],
+      [theirs, 2],
+      ['00000000-0000-4000-8000-000000000000', 1],
+      [spent.token, 3],
+      [spent.token, 1],
+    ] as const;
+    let served = 0;
+    for (const [token, userId] of cases) {
+      const media = await mediaForToken(token, userId, NOW);
+      if (media === null) continue;
+      served++;
+      // Media implies the vote's own resolver accepts the token, for the same moderator.
+      expect(await itemForToken(token, userId)).not.toBeNull();
+    }
+    expect(served).toBeGreaterThan(0);
+  });
+});
+
 describe('vote slots', () => {
   it('two claimers never share the last slot', async () => {
     const last = await seedItem(1, { votes: 2, blockVotes: 1 });
@@ -561,7 +741,17 @@ describe('owner reveal', () => {
     await ownedItem(1);
     const card = await claimNext(1, {}, NOW);
     expect(Object.keys(card!).sort()).toEqual(
-      ['itemId', 'imageId', 'url', 'type', 'name', 'width', 'height', 'leaseExpiresAt'].sort()
+      [
+        'itemId',
+        'imageId',
+        'token',
+        'url',
+        'type',
+        'name',
+        'width',
+        'height',
+        'leaseExpiresAt',
+      ].sort()
     );
   });
 

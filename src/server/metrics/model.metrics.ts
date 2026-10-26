@@ -683,13 +683,14 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       ctx,
       `-- get model comment metrics
       SELECT
-          c."modelId",
+          c."entityId" AS "modelId",
           COUNT(DISTINCT c."userId") AS "commentCount"
-      FROM "Comment" c
-      WHERE c."tosViolation" = false
-        AND c."modelId" = ANY($1::int[])
-        AND c."modelId" BETWEEN $2 AND $3
-      GROUP BY c."modelId"`,
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'model' AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" = ANY($1::int[])
+        AND c."entityId" BETWEEN $2 AND $3
+      GROUP BY c."entityId"`,
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');

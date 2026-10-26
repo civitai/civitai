@@ -96,6 +96,13 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(async () => undefined),
 }));
 
+// Hand-listed, as above: the takedown sync loads clients this file does not boot.
+vi.mock('~/server/services/cdn-access.service', () => ({
+  persistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
+  reserveTakedownRetractions: vi.fn(async () => null),
+  settleTakedownReservations: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: vi.fn(async () => undefined),
 }));
@@ -209,8 +216,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return touched;
   }
 
-  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): neither exists.
-  if (sql.includes('to_regclass')) return [{ present: false }];
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
+  // on prod. The marker holds nobody (below).
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
 
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {

@@ -71,6 +71,8 @@ export const trainingBaseModelTypesImage = [
   'ideogram4',
   'ming',
   'qwen21',
+  'mossimage',
+  'flux3klein',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -460,6 +462,40 @@ export const trainingModelInfo: {
     baseModel: 'Flux.2 Klein 9B-base',
     isNew: false,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
+  },
+  // Training Studio only: listed so its runs can be published as a model page, never trainable here.
+  mossimage_base: {
+    label: 'Base',
+    pretty: 'MOSS Image Base',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image base model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'base' },
+  },
+  mossimage_sft: {
+    label: 'SFT',
+    pretty: 'MOSS Image SFT',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image SFT model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'sft' },
+  },
+  flux3klein: {
+    label: 'Base',
+    pretty: 'Flux.3 Klein',
+    type: 'flux3klein',
+    description: 'Flux.3 Klein base model.',
+    air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+    baseModel: 'Flux.3 Klein-base',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'flux3klein' },
   },
   //
   ltx2: {

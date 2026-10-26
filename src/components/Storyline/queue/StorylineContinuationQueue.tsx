@@ -1,5 +1,7 @@
-import { Alert, Group, Loader, Text } from '@mantine/core';
+import { Alert, Group, Loader, Tabs, Text } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { StorylineSentList } from '~/components/Storyline/queue/StorylineSentList';
 import {
   StorylineQueueList,
   type StorylineQueueAction,
@@ -21,7 +23,38 @@ const successCopy: Record<StorylineQueueAction, { title: string; message: string
   decline: { title: 'Declined', message: "It won't appear in your storyline." },
 };
 
+const TABS = ['received', 'sent'] as const;
+type TabValue = (typeof TABS)[number];
+const isTabValue = (value: unknown): value is TabValue => TABS.includes(value as TabValue);
+
+/** Both directions: what waits on your storylines, and what you have sent to other people's. */
 export function StorylineContinuationQueue() {
+  const router = useRouter();
+  const tab: TabValue = isTabValue(router.query.tab) ? router.query.tab : 'received';
+  const setTab = (value: string | null) =>
+    router.replace(
+      { query: { ...router.query, tab: isTabValue(value) ? value : 'received' } },
+      undefined,
+      { shallow: true }
+    );
+
+  return (
+    <Tabs value={tab} onChange={setTab} keepMounted={false}>
+      <Tabs.List>
+        <Tabs.Tab value="received">Received</Tabs.Tab>
+        <Tabs.Tab value="sent">Sent</Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value="received" pt="md">
+        <StorylineReceivedQueue />
+      </Tabs.Panel>
+      <Tabs.Panel value="sent" pt="md">
+        <StorylineSentList />
+      </Tabs.Panel>
+    </Tabs>
+  );
+}
+
+function StorylineReceivedQueue() {
   const utils = trpc.useUtils();
   const queue = useStorylineQueue({ enabled: true });
   const { act } = useActOnStorylineContinuation();

@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { hydrate, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getCookies } from 'cookies-next';
+import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ShellPageData } from '~/components/Shell/shell-page-data';
@@ -10,12 +11,14 @@ import {
   shellFallbackUrl,
   shellNavigation,
 } from '~/components/Shell/shell-page-data';
+import { routeQueryPending, syncShellRouteQuery } from '~/components/Shell/shell-route-query';
 import type { AppShellUpgrade } from '~/providers/AppProvider';
 import type { FeatureFlagsSeed } from '~/providers/FeatureFlagsProvider';
 import type { SessionSeed } from '~/providers/SessionProvider';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
+import { pauseRum } from '~/utils/faro/pauseRum';
 import { trpc } from '~/utils/trpc';
 
 export type ShellStatus = 'pending' | 'ready' | 'failed';
@@ -38,6 +41,28 @@ export function ShellBootstrapProvider({
 export function useShellReady() {
   const context = useContext(ShellBootstrapContext);
   return !context || context.status === 'ready';
+}
+
+/**
+ * For a page with a route-level shell: true while it must keep showing its skeleton — the page
+ * data is not adopted yet, or the router still holds the shell's empty route query. Starts the
+ * query's restore from `location` (`syncShellRouteQuery`); if that fails the page leaves the shell
+ * for a full render, as a failed page-data read does. Always false outside a shell boot.
+ */
+export function useShellPagePending() {
+  const context = useContext(ShellBootstrapContext);
+  const router = useRouter();
+  const queryPending = !!context && routeQueryPending(router);
+  useEffect(() => {
+    if (!queryPending) return;
+    syncShellRouteQuery(router).catch(() => {
+      const to = shellFallbackUrl(0, window.location.href);
+      if (to) shellNavigation.replace(to);
+    });
+    // Once per pending period: the router object changes on every route update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryPending]);
+  return !!context && (context.status !== 'ready' || queryPending);
 }
 
 /** The `_app` values a shell boot replaces, as the current page passed them. */
@@ -88,6 +113,9 @@ function seedShellCaches(queryClient: QueryClient, data: ShellPageData) {
       getQueryKey(trpc.event.getNavBanners, undefined, 'query'),
       data.navBanners
     );
+  // The shell carries a `liveNow` the edge may have held for a minute; the page data's is current.
+  if (data.liveNow !== undefined)
+    queryClient.setQueryData(getQueryKey(trpc.system.getLiveNow, undefined, 'query'), data.liveNow);
 }
 
 /**
@@ -98,6 +126,10 @@ function seedShellCaches(queryClient: QueryClient, data: ShellPageData) {
  */
 export function useShellBootstrap(active: boolean, page: ShellPageInputs): ShellAppProps {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  // The same signal `useShellPagePending` waits on: until it clears, `router.query` is the shell's
+  // empty one, and the referral provider would record from it once and never again.
+  const queryPending = active && page.onShellPage && routeQueryPending(router);
   const [cookies, setCookies] = useState<ParsedCookies | null>(null);
   const [data, setData] = useState<ShellPageData | null>(null);
   const [failed, setFailed] = useState(false);
@@ -109,7 +141,10 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     const fallBack = (status: number) => {
       setFailed(true);
       const to = shellFallbackUrl(status, window.location.href);
-      if (to) shellNavigation.replace(to);
+      if (!to) return;
+      // The shell document is abandoned: its later RUM beacons must not count as a shell load.
+      pauseRum();
+      shellNavigation.replace(to);
     };
     void adoptShellPageData().then((result) => {
       if (cancelled) return;
@@ -162,7 +197,7 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     sessionSeed,
     flagsSeed,
     appShell,
-    referralsPending: !ready,
+    referralsPending: !ready || queryPending,
     status: ready ? 'ready' : failed ? 'failed' : 'pending',
   };
 }

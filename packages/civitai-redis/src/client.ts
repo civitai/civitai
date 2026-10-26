@@ -2319,6 +2319,20 @@ export const REDIS_SYS_KEYS = {
      */
     APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
     /**
+     * FORKABLE APPS — one server-side fork session per fork slug, keyed
+     * `system:blocks:fork-session:${forkSlug}`. JSON: who forked, the parent block and the
+     * approved parent commit, the parent listing, and the seed handed to the sandbox service.
+     * Written `SET NX` (the write is also the slug's reservation), TTL 30 days. The ONLY
+     * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
+     */
+    FORK_SESSION: 'system:blocks:fork-session',
+    /**
+     * FORKABLE APPS — per-user fork-start counters, keyed
+     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
+     * MULTI (always created with its TTL); fail-closed on a redis error.
+     */
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2501,6 +2515,10 @@ export const REDIS_SYS_KEYS = {
   },
   SYSTEM: {
     FEATURES: 'system:features',
+    /** Per-user daily notification-email counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    NOTIFICATION_EMAIL_USER_QUOTA: 'system:notification-email-user-quota',
+    /** Per-type hourly notification-email counters: `<prefix>:<type>:<YYYY-MM-DDTHH>`. */
+    NOTIFICATION_EMAIL_TYPE_QUOTA: 'system:notification-email-type-quota',
     PERMISSIONS: 'system:permissions',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
@@ -2617,9 +2635,13 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // Hash: field = creator userId, value = JSON { through, spent }: Buzz the creator paid other
+    // users from the bankable cutover up to `through`, a settled UTC day boundary. Only later days
+    // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
+    BANKABLE_SPENT: 'creator-program:bankable-spent',
     // String, Buzz. The smallest two-way amount between a creator and one user that the
-    // counterparty review files. Ops-owned and deliberately without a default in code: the review
-    // skips, and logs that it skipped, until it is set.
+    // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
+    // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
     // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
@@ -3177,6 +3199,14 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  REACTION: {
+    /*
+      Use: marks a reaction toggle arriving, so a reverse toggle on the same user, entity and
+      reaction inside the window is ignored as a client double-fire.
+      Structure: string '1' set NX PX, key = `reaction:toggle-guard:${userId}:${entityType}:${entityId}:${reaction}`.
+     */
+    TOGGLE_GUARD: 'reaction:toggle-guard',
   },
   RATING_REVIEW: {
     /*

@@ -36,7 +36,9 @@
     "./platform-feedback-version": "./src/platform-feedback-version.ts",
     "./reaction-privacy": "./src/reaction-privacy.ts",
     "./merge-permission": "./src/merge-permission.ts",
-    "./service-offering-takedown": "./src/service-offering-takedown.ts"
+    "./service-offering-takedown": "./src/service-offering-takedown.ts",
+    "./held-media": "./src/held-media.ts",
+    "./report-reward": "./src/report-reward.ts"
   },
   "scripts": {
     "test": "vitest run",

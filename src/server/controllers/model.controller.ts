@@ -143,6 +143,7 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
+import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
@@ -185,7 +186,6 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
-import { scanModelRules } from '~/server/services/text-scan/submit';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
@@ -659,17 +659,41 @@ export const getModelsInfiniteHandler = async ({
     // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
+    const queryOptions = {
+      user: ctx.user,
+      domain: getRequestBoardDomainColor(ctx.req),
+      imagesPerModel,
+      biasImageSlice: slim,
+      metricPrivacyEnabled,
+      // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+      eventDecorationViewer: ctx.user,
+    };
+
+    // Hot with a base-model filter leads with the official checkpoints for that base. They are
+    // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
+    // the first page through the same query, so every other filter still applies to them.
+    const pinnedIds =
+      input.sort === ModelSort.Hot && input.baseModels?.length && !input.query
+        ? ((await getOfficialModelIds()) ?? [])
+            .filter((m) => m.type === ModelType.Checkpoint)
+            .map((m) => m.id)
+        : [];
+    const pinned =
+      pinnedIds.length && !input.cursor
+        ? await getModelsWithImagesAndModelVersions({
+            ...queryOptions,
+            input: { ...input, limit: pinnedIds.length },
+            onlyModelIds: pinnedIds,
+          })
+        : undefined;
+    if (pinned?.isPrivate) isPrivate = true;
+
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
+        ...queryOptions,
         input,
-        user: ctx.user,
-        domain: getRequestBoardDomainColor(ctx.req),
-        imagesPerModel,
-        biasImageSlice: slim,
-        metricPrivacyEnabled,
-        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-        eventDecorationViewer: ctx.user,
+        excludeModelIds: pinnedIds,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -681,7 +705,7 @@ export const getModelsInfiniteHandler = async ({
     }
 
     if (isPrivate) ctx.cache.canCache = false;
-    return { items: results, nextCursor };
+    return { items: [...(pinned?.items ?? []), ...results], nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -865,6 +889,20 @@ export const publishModelHandler = async ({
     const { isModerator } = ctx.user;
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
+    // The model's status says nothing about its versions: one a moderator took down while the
+    // model stayed public must not come back because its id was in this list. Refused here, before
+    // publishModelById's literal-rules scan, which writes; publishModelById re-checks under a lock.
+    if (!isModerator && input.versionIds?.length) {
+      const downed = await dbWrite.modelVersion.count({
+        where: {
+          id: { in: input.versionIds },
+          modelId: input.id,
+          status: { in: constants.modPublishOnlyStatuses },
+        },
+      });
+      if (downed)
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+    }
 
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
@@ -887,7 +925,6 @@ export const publishModelHandler = async ({
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
-    if (!isModerator) scanModelRules(updatedModel.id);
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');

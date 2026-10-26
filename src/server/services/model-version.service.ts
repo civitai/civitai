@@ -30,6 +30,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
   preventModelVersionLag,
@@ -1645,7 +1646,12 @@ export const deleteVersionById = async ({
 export const updateModelVersionById = async ({
   id,
   data,
-}: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  enforceTakedown,
+}: GetByIdInput & {
+  data: Prisma.ModelVersionUpdateInput;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
+}) => {
   // Check if trying to publish a model version when model is marked as cannotPublish
   if (data.status === ModelStatus.Published) {
     const modelVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -1673,6 +1679,8 @@ export const updateModelVersionById = async ({
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
   const result = await dbWrite.$transaction(async (tx) => {
+    if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+      throw throwAuthorizationError('You are not authorized to publish this model version');
     const updated = await tx.modelVersion.update({ where: { id }, data: restData });
     if (publishedAt !== undefined) {
       const writeCount = await tx.$executeRaw`
@@ -1858,9 +1866,12 @@ export const publishModelVersionById = async ({
   publishedAt,
   meta,
   republishing,
+  enforceTakedown,
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
   republishing?: boolean;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
 }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -1933,6 +1944,11 @@ export const publishModelVersionById = async ({
 
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // Re-checked here, under a lock, because the caller's check ran before this transaction and
+      // a takedown can land in between.
+      if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
         // Materialize the timed gate's endsAt from the publish timestamp (see the EA publish path).

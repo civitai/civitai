@@ -1,6 +1,13 @@
 import { ActionIcon, Alert, Button, Group, Menu, Stack, Text, UnstyledButton } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconPlayerPause, IconPlus, IconTrash } from '@tabler/icons-react';
+import {
+  IconDotsVertical,
+  IconDownload,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -11,6 +18,8 @@ export const APP_STATUS: Record<Sandbox['state'], string> = {
   running: 'Running',
   starting: 'Starting…',
   suspended: 'Paused',
+  // A fork whose files never arrived (see `AppAssistantFork`).
+  seed_lost: 'Fork failed',
 };
 
 /** The apps' latest failure. A failed poll keeps the last list, so its error shows only when there is none. */
@@ -50,27 +59,56 @@ export function AppError({ error }: { error: unknown }) {
   );
 }
 
+/** The confirmation every delete of an app asks for first. */
+export function confirmDeleteApp(app: string, onConfirm: () => void) {
+  openConfirmModal({
+    title: `Delete ${app}?`,
+    children: (
+      <Text size="sm">
+        Everything in this app is deleted, including files the assistant has not shown you. This
+        cannot be undone.
+      </Text>
+    ),
+    labels: { confirm: 'Delete app', cancel: 'Keep it' },
+    confirmProps: { color: 'red' },
+    onConfirm,
+  });
+}
+
+/** The app other than `sandbox` that runs (or is starting), which starting `sandbox` pauses. */
+export function runningOtherApp(apps: Sandbox[], sandbox: Sandbox): Sandbox | null {
+  return apps.find((s) => s.name !== sandbox.name && s.state !== 'suspended') ?? null;
+}
+
 interface AppActions {
   sandboxes: SandboxesState;
   onRemoved: (name: string) => void;
+  /** Starts a paused app, pausing the one that runs. */
+  onStart: (sandbox: Sandbox) => void;
+  /** Downloads the app as a zip, starting it first when it is paused. */
+  onExport: (sandbox: Sandbox) => void;
+  /** The app being started (its key), for its menu's busy state. */
+  starting: string | null;
+  /** The sandbox being exported (its name), for its menu's busy state; one export at a time. */
+  exporting: string | null;
 }
 
-/** Pause and Delete for one app. */
-export function AppMenu({ sandbox, sandboxes, onRemoved }: AppActions & { sandbox: Sandbox }) {
+/** Start, Pause, Export and Delete for one app. */
+export function AppMenu({
+  sandbox,
+  sandboxes,
+  onRemoved,
+  onStart,
+  onExport,
+  starting,
+  exporting,
+}: AppActions & { sandbox: Sandbox }) {
   const { suspend, remove } = sandboxes;
   const confirmDelete = () =>
-    openConfirmModal({
-      title: `Delete ${sandbox.app}?`,
-      children: (
-        <Text size="sm">
-          Everything in this app is deleted, including files the assistant has not shown you. This
-          cannot be undone.
-        </Text>
-      ),
-      labels: { confirm: 'Delete app', cancel: 'Keep it' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => remove.mutate(sandbox.name, { onSuccess: () => onRemoved(sandbox.name) }),
-    });
+    confirmDeleteApp(sandbox.app, () =>
+      remove.mutate(sandbox.name, { onSuccess: () => onRemoved(sandbox.name) })
+    );
+  const pauses = runningOtherApp(sandboxes.list.data ?? [], sandbox);
 
   return (
     // Inside the app list's popover: a portalled dropdown would count as a click outside it.
@@ -83,13 +121,27 @@ export function AppMenu({ sandbox, sandboxes, onRemoved }: AppActions & { sandbo
           aria-label={`Actions for ${sandbox.app}`}
           loading={
             (suspend.isPending && suspend.variables === sandbox.name) ||
-            (remove.isPending && remove.variables === sandbox.name)
+            (remove.isPending && remove.variables === sandbox.name) ||
+            starting === sandbox.app ||
+            exporting === sandbox.name
           }
         >
           <IconDotsVertical size={18} />
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
+        {sandbox.state === 'suspended' && (
+          <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => onStart(sandbox)}>
+            <Text component="span" size="sm" display="block">
+              Start
+            </Text>
+            {pauses && (
+              <Text component="span" size="xs" c="dimmed" display="block">
+                {`${pauses.app} will be paused`}
+              </Text>
+            )}
+          </Menu.Item>
+        )}
         {sandbox.state !== 'suspended' && (
           <Menu.Item
             leftSection={<IconPlayerPause size={16} />}
@@ -98,6 +150,24 @@ export function AppMenu({ sandbox, sandboxes, onRemoved }: AppActions & { sandbo
             Pause
           </Menu.Item>
         )}
+        <Menu.Item
+          leftSection={<IconDownload size={16} />}
+          disabled={!!exporting}
+          onClick={() => onExport(sandbox)}
+        >
+          <Text component="span" size="sm" display="block">
+            Export
+          </Text>
+          <Text component="span" size="xs" c="dimmed" display="block">
+            Download as zip
+          </Text>
+          {/* A paused app is started to export it. */}
+          {sandbox.state === 'suspended' && pauses && (
+            <Text component="span" size="xs" c="dimmed" display="block">
+              {`${pauses.app} will be paused`}
+            </Text>
+          )}
+        </Menu.Item>
         <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
           Delete app
         </Menu.Item>
@@ -113,13 +183,13 @@ function statusLine(sandbox: Sandbox): string {
     : status;
 }
 
-/** The user's apps: open one, start a new one, or pause or delete one from its menu. */
+/** The user's apps: open one, start a new one, or start, pause, export or delete one from its menu. */
 export function YourAppsList({
   sandboxes,
   activeName,
   onOpen,
-  onRemoved,
   onNewApp,
+  ...actions
 }: AppActions & {
   activeName: string | null;
   onOpen: (sandbox: Sandbox) => void;
@@ -161,7 +231,7 @@ export function YourAppsList({
                   {isActive ? `Open now · ${statusLine(sandbox)}` : statusLine(sandbox)}
                 </Text>
               </UnstyledButton>
-              <AppMenu sandbox={sandbox} sandboxes={sandboxes} onRemoved={onRemoved} />
+              <AppMenu sandbox={sandbox} sandboxes={sandboxes} {...actions} />
             </Group>
           );
         })}

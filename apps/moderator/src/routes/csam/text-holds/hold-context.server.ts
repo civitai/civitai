@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import { getEntityCovers, type CsamHoldRow } from '$lib/server/csam-holds.queries';
 import type { AppealCoverImage } from '$lib/server/minor-hash.service';
-import { commentV2ThreadParents } from '$lib/server/user-account.service';
+import { commentParents } from '$lib/server/user-account.service';
 import {
   getProfilePictures,
   getProfiles,
@@ -176,7 +176,7 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
   const v2Ids = holds.filter((h) => h.entityType === 'CommentV2').map((h) => h.entityId);
-  const v2 = v2Ids.length ? await commentV2ThreadParents(v2Ids) : new Map<number, ParentRef>();
+  const v2 = v2Ids.length ? await commentParents(v2Ids) : new Map<number, ParentRef>();
   const refOf = (hold: HoldRef): ParentRef | null =>
     hold.entityType === 'CommentV2'
       ? v2.get(hold.entityId) ?? null

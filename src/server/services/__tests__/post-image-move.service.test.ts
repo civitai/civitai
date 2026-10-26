@@ -7,6 +7,7 @@ import type * as Caches from '~/server/redis/caches';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { moveImagesToPost } from '~/server/services/post-image-move.service';
+import { IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const mocks = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ const postRow = (over: Record<string, unknown> = {}) => ({
   publishedAt: SOURCE_PUBLISHED,
   tosViolation: false,
   isContest: false,
+  isChapter: false,
   modelVersionId: null,
   availability: Availability.Public,
   unlisted: false,
@@ -66,9 +68,31 @@ const imageRow = (id: number) => ({
   postId: 1,
   tosViolation: false,
   ingestion: ImageIngestionStatus.Scanned,
+  needsReview: null,
 });
 
 const db = dbMock.dbWrite;
+
+// The account check is the first raw query; the locked post rows are every one after it.
+const accountRow = (over: Record<string, unknown> = {}) => ({
+  report: false,
+  'image-review': false,
+  'image-blocked': false,
+  'reported-image': false,
+  markerView: false,
+  markerTable: false,
+  ...over,
+});
+function mockPosts(...rows: ReturnType<typeof postRow>[]) {
+  db.$queryRaw.mockResolvedValueOnce([accountRow()]).mockResolvedValue(rows);
+}
+
+function expectNothingWritten() {
+  expect(db.image.updateMany).not.toHaveBeenCalled();
+  expect(db.post.create).not.toHaveBeenCalled();
+  expect(jobQueueInserts()).toHaveLength(0);
+  expect(mocks.updatePostNsfwLevel).not.toHaveBeenCalled();
+}
 
 function jobQueueInserts() {
   return db.$executeRaw.mock.calls
@@ -82,14 +106,15 @@ beforeEach(() => {
   db.image.count.mockResolvedValue(3);
   db.image.aggregate.mockResolvedValue({ _max: { index: 4 } });
   db.post.create.mockResolvedValue({ id: 9 });
+  db.image.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe('moveImagesToPost', () => {
   it('repoints the images, appends them after the target images, and queues both posts', async () => {
-    db.$queryRaw.mockResolvedValue([
+    mockPosts(
       postRow(),
-      postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: 55 }),
-    ]);
+      postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: 55 })
+    );
 
     const result = await moveImagesToPost({
       imageIds: [101, 100],
@@ -99,9 +124,19 @@ describe('moveImagesToPost', () => {
     });
 
     expect(result).toEqual({ postId: 2 });
-    expect(db.image.update.mock.calls.map((c: unknown[]) => c[0])).toEqual([
-      { where: { id: 101 }, data: { postId: 2, index: 5 } },
-      { where: { id: 100 }, data: { postId: 2, index: 6 } },
+    // The review refusal reads this field; a select without it would refuse every move.
+    expect(db.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ needsReview: true }) })
+    );
+    expect(db.image.updateMany.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      {
+        where: expect.objectContaining({ id: 101, postId: 1 }),
+        data: { postId: 2, index: 5 },
+      },
+      {
+        where: expect.objectContaining({ id: 100, postId: 1 }),
+        data: { postId: 2, index: 6 },
+      },
     ]);
     expect(db.post.create).not.toHaveBeenCalled();
 
@@ -129,9 +164,7 @@ describe('moveImagesToPost', () => {
   });
 
   it('creates a new post at the source publish date and visibility when no target is given', async () => {
-    db.$queryRaw.mockResolvedValue([
-      postRow({ availability: Availability.Private, unlisted: true }),
-    ]);
+    mockPosts(postRow({ availability: Availability.Private, unlisted: true }));
     db.image.findMany.mockResolvedValue([imageRow(100)]);
     db.image.aggregate.mockResolvedValue({ _max: { index: null } });
 
@@ -140,45 +173,153 @@ describe('moveImagesToPost', () => {
     expect(result).toEqual({ postId: 9 });
     expect(db.post.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { userId: USER, availability: Availability.Private, unlisted: true },
+        data: {
+          userId: USER,
+          availability: Availability.Private,
+          unlisted: true,
+          modelVersionId: null,
+        },
       })
     );
     expect(db.post.update).toHaveBeenCalledWith({
       where: { id: 9 },
       data: { publishedAt: SOURCE_PUBLISHED },
     });
-    expect(db.image.update).toHaveBeenCalledWith({
-      where: { id: 100 },
+    expect(db.image.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 100 }),
       data: { postId: 9, index: 0 },
     });
     expect(mocks.createImageResources).not.toHaveBeenCalled();
   });
 
+  it('gives a new post the source post’s model version and keeps the images’ resources', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }));
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    expect(db.post.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ modelVersionId: 55 }) })
+    );
+    expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another version', 66],
+    ['no version', null],
+  ])(
+    'drops only the source version’s undetected resource when the target has %s',
+    async (_, targetVersionId) => {
+      mockPosts(
+        postRow({ modelVersionId: 55 }),
+        postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: targetVersionId })
+      );
+
+      await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+
+      expect(db.imageResourceNew.deleteMany).toHaveBeenCalledTimes(1);
+      expect(db.imageResourceNew.deleteMany).toHaveBeenCalledWith({
+        where: { imageId: { in: [100, 101] }, modelVersionId: 55, detected: false },
+      });
+    }
+  );
+
+  it.each([
+    ['the same version as the target', 55, 55],
+    ['no version', null, 66],
+  ])(
+    'leaves the resources alone when the source has %s',
+    async (_, sourceVersionId, targetVersionId) => {
+      mockPosts(
+        postRow({ modelVersionId: sourceVersionId }),
+        postRow({ id: 2, publishedAt: new Date('2025-06-01'), modelVersionId: targetVersionId })
+      );
+
+      await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+
+      expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+    }
+  );
+
   it('writes nothing when the move is refused', async () => {
-    db.$queryRaw.mockResolvedValue([
-      postRow(),
-      postRow({ id: 2, publishedAt: new Date('2026-05-01') }),
-    ]);
+    mockPosts(postRow(), postRow({ id: 2, publishedAt: new Date('2026-05-01') }));
 
     await expect(
       moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER })
     ).rejects.toThrow(/published at the same time or earlier/);
+    expectNothingWritten();
+  });
 
-    expect(db.image.update).not.toHaveBeenCalled();
-    expect(db.post.create).not.toHaveBeenCalled();
-    expect(jobQueueInserts()).toHaveLength(0);
+  it('refuses a restricted account, without saying why, and writes nothing', async () => {
+    db.$queryRaw
+      .mockResolvedValueOnce([accountRow({ report: true })])
+      .mockResolvedValue([postRow()]);
+
+    await expect(
+      moveImagesToPost({ imageIds: [100], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expectNothingWritten();
+  });
+
+  it('refuses when the account check cannot be read', async () => {
+    db.$queryRaw
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValue([postRow()]);
+
+    await expect(
+      moveImagesToPost({ imageIds: [100], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
+    expectNothingWritten();
+  });
+
+  it('moves some of a storyline chapter’s images', async () => {
+    mockPosts(postRow({ isChapter: true }));
+    db.image.count.mockResolvedValue(3);
+
+    const result = await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    expect(result).toEqual({ postId: 9 });
+    expect(db.image.count).toHaveBeenCalledWith({ where: { postId: 1 } });
+    expect(db.image.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails the move when an image changed after it was checked', async () => {
+    mockPosts(postRow());
+    db.image.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/changed while moving/);
+    // The rollback on that throw is the database's; here, only that the write was conditional.
+    expect(db.image.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          needsReview: null,
+          ingestion: ImageIngestionStatus.Scanned,
+          tosViolation: false,
+          userId: USER,
+        }),
+      })
+    );
     expect(mocks.updatePostNsfwLevel).not.toHaveBeenCalled();
   });
 
+  it('refuses a move that would empty a storyline chapter', async () => {
+    mockPosts(postRow({ isChapter: true }));
+    db.image.count.mockResolvedValue(2);
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/storyline chapter/);
+    expectNothingWritten();
+  });
+
   it('refuses another user’s target post', async () => {
-    db.$queryRaw.mockResolvedValue([
-      postRow(),
-      postRow({ id: 2, userId: 8, publishedAt: new Date('2025-06-01') }),
-    ]);
+    mockPosts(postRow(), postRow({ id: 2, userId: 8, publishedAt: new Date('2025-06-01') }));
 
     await expect(
       moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER })
     ).rejects.toThrow(/your own posts/);
-    expect(db.image.update).not.toHaveBeenCalled();
+    expect(db.image.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import {
   ALL_SCOPES,
   CLIENT_CREDENTIALS_MAX_SCOPE,
   CLIENT_CREDENTIALS_ONLY_SCOPES,
+  NON_USER_SCOPES,
   TokenScope,
   tokenScopeLabels,
 } from '@civitai/auth/token-scope';
@@ -20,6 +21,11 @@ export function carriesClientCredentialsOnlyScope(requested: number): boolean {
   return (requested & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0;
 }
 
+/** Whether `requested` carries a scope no grant acting for a user may mint. */
+export function carriesNonUserScope(requested: number): boolean {
+  return (requested & NON_USER_SCOPES) !== 0;
+}
+
 /** `client_credentials` (the client acting as itself) or any grant that acts for a user. */
 export type ScopeGrant = 'client_credentials' | 'user';
 
@@ -27,7 +33,8 @@ export type ScopeGrant = 'client_credentials' | 'user';
  * Whether a token for `requested` may be minted for a client whose ceiling is `allowedScopes`,
  * through `grant`. The one rule every mint site applies: within the ceiling (`UserRead` always
  * allowed), and a `client_credentials`-only bit only through `client_credentials`, which in turn
- * can carry nothing beyond `CLIENT_CREDENTIALS_MAX_SCOPE`.
+ * can carry nothing beyond `CLIENT_CREDENTIALS_MAX_SCOPE`. Worker-only bits pass neither grant: the
+ * worker token-exchange grant mints them itself.
  */
 export function isScopeGrantable(
   allowedScopes: number,
@@ -36,7 +43,7 @@ export function isScopeGrantable(
 ): boolean {
   if (!hasScope(allowedScopes | TokenScope.UserRead, requested)) return false;
   if (grant === 'client_credentials') return hasScope(CLIENT_CREDENTIALS_MAX_SCOPE, requested);
-  return !carriesClientCredentialsOnlyScope(requested);
+  return !carriesNonUserScope(requested);
 }
 
 /** Encode a scope bitmask as the library's string scope (single-element decimal-string array). */

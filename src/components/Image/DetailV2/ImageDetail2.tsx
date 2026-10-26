@@ -59,7 +59,7 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
+import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
 import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -624,17 +624,7 @@ export function ImageDetail2() {
                       </AlertWithIcon>
                     )}
                     {isAppealableImage(image) && isOwner && (
-                      <AlertWithIcon
-                        icon={<IconAlertTriangle />}
-                        color="yellow"
-                        iconColor="yellow"
-                        title="Blocked by moderators"
-                        radius={0}
-                        px="md"
-                      >
-                        This image has been blocked by our moderators.{' '}
-                        <AppealRemovalPrompt entityId={image.id} entityType={EntityType.Image} />
-                      </AlertWithIcon>
+                      <OwnerBlockedImageNotice imageId={image.id} />
                     )}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">

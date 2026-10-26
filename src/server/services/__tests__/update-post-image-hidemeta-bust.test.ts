@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HiddenMetaInvalidation from '~/server/services/hidden-meta-invalidation.service';
+import type * as ImageUtils from '~/utils/image-utils';
 
 /**
  * Wiring test for the image-delivery metadata cache bust in `updatePostImage`.
@@ -24,9 +26,12 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockBustImageDeliveryMetadataCache } = vi.hoisted(() => ({
-  mockBustImageDeliveryMetadataCache: vi.fn(),
-}));
+const { mockBustImageDeliveryMetadataCache, mockInvalidateHiddenImageMetadata } = vi.hoisted(
+  () => ({
+    mockBustImageDeliveryMetadataCache: vi.fn(),
+    mockInvalidateHiddenImageMetadata: vi.fn(),
+  })
+);
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
 // `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
@@ -96,6 +101,11 @@ vi.mock('~/server/services/image-delivery.service', () => ({
   bustImageDeliveryMetadataCache: mockBustImageDeliveryMetadataCache.mockResolvedValue(undefined),
 }));
 
+vi.mock('~/server/services/hidden-meta-invalidation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof HiddenMetaInvalidation>()),
+  invalidateHiddenImageMetadata: mockInvalidateHiddenImageMetadata,
+}));
+
 // Other sibling services post.service imports — mocked so their graphs aren't evaluated.
 vi.mock('~/server/services/collection.service', () => ({
   getCollectionById: vi.fn(),
@@ -122,7 +132,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 // isValidAIGeneration is called before shouldIngest; keep it deterministic. shouldIngest is
 // forced false via currentImage.blockedFor below, so its value doesn't affect the bust path.
 vi.mock('~/utils/image-utils', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/image-utils')>();
+  const actual = await importOriginal<typeof ImageUtils>();
   return { ...actual, isValidAIGeneration: vi.fn(() => true) };
 });
 
@@ -158,24 +168,21 @@ function updateData() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockBustImageDeliveryMetadataCache.mockResolvedValue(undefined);
+  mockInvalidateHiddenImageMetadata.mockResolvedValue(undefined);
 });
 
 describe('updatePostImage — image-delivery metadata cache bust wiring', () => {
-  it('busts on a false -> true hideMeta flip (privacy-sensitive direction)', async () => {
+  it('routes a false -> true flip through the ordered hidden-meta invalidation', async () => {
     wireCurrentImage(false); // stored hideMeta = false
 
     await updatePostImage({ id: IMAGE_ID, hideMeta: true } as any); // flip to true
 
-    expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledTimes(1);
-    expect(mockBustImageDeliveryMetadataCache).toHaveBeenCalledWith(KEY_URL);
-
-    // 🔴 SCOPED, and the scope is the whole point. This image stays LIVE — the flip re-keys it, so
-    // only the variants derived BEFORE the flip are stale. Passing the default ('all') here would
-    // also drop the variants the page is serving right now. Nothing else pins this argument, so
-    // without this assertion the caller could silently regress to a full purge of a live image.
-    expect(mockPurgeResizeCache).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: 'hidden-meta-orphans' })
+    expect(mockInvalidateHiddenImageMetadata).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateHiddenImageMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ id: IMAGE_ID, url: KEY_URL })
     );
+    // The invalidation does its own bust, first; a second, unordered one here would race it.
+    expect(mockBustImageDeliveryMetadataCache).not.toHaveBeenCalled();
   });
 
   it('ALSO busts on a true -> false hideMeta flip (both-direction guarantee)', async () => {

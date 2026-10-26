@@ -12,6 +12,41 @@ const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
+// Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
+// switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
+// caller that keeps re-selecting the same tiles stops after a bounded spend instead of draining the
+// user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
+export const MAX_SUBMITS_PER_MEDIA = 3;
+const submitsByMedia = new Map<string, number>();
+
+// Counted per blob, not per URL string: a re-signed URL for the same blob must not reset its count.
+function mediaKey(mediaUrl: string): string {
+  try {
+    const url = new URL(mediaUrl);
+    return url.origin + url.pathname;
+  } catch {
+    return mediaUrl;
+  }
+}
+
+/** Split `items` into those still under `cap` in `ledger` (counted as submitted now, before the
+ *  request, since a failed submit may still have been charged) and those refused. */
+export function claimSubmits(ledger: Map<string, number>, items: AutoLabelItem[], cap: number) {
+  const allowed: AutoLabelItem[] = [];
+  const refused: AutoLabelItem[] = [];
+  for (const item of items) {
+    const key = mediaKey(item.mediaUrl);
+    const count = ledger.get(key) ?? 0;
+    if (count >= cap) {
+      refused.push(item);
+      continue;
+    }
+    ledger.set(key, count + 1);
+    allowed.push(item);
+  }
+  return { allowed, refused };
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -89,16 +124,25 @@ async function runBatch(
   }
 }
 
-/** Auto-label every item, batched. `onResult` fires at most once per key as each image resolves.
- *  Resolves when all batches are terminal; rejects only on abort. */
+/** Auto-label every item, batched. `onResult` fires at most once per key as each image resolves;
+ *  items over the per-media cap fail without being sent. Resolves with how many items were sent once
+ *  all batches are terminal; rejects only on abort. */
 export async function runAutoLabel(
   mode: AutoLabelMode,
   media: Media,
   items: AutoLabelItem[],
   onResult: (r: AutoLabelResult) => void,
   signal: AbortSignal
-): Promise<void> {
+): Promise<number> {
+  const { allowed, refused } = claimSubmits(submitsByMedia, items, MAX_SUBMITS_PER_MEDIA);
+  if (refused.length) {
+    console.warn(
+      `[training-studio] auto-label refused ${refused.length} item(s) over the per-image cap`
+    );
+    for (const item of refused) onResult({ key: item.key, status: 'failed' });
+  }
   await Promise.all(
-    chunk(items, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))
+    chunk(allowed, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))
   );
+  return allowed.length;
 }

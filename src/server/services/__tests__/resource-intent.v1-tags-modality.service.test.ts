@@ -192,6 +192,12 @@ const ids = (r: { suggestions: { versionId: number }[] }) => r.suggestions.map((
 /** The baseModel term the v1 list was gated by. */
 const gatedBy = () =>
   (mockV1Candidates.mock.calls[0][0] as { baseModel: string | Map<string, string[]> }).baseModel;
+/** The LORA names an add-on list was gated by: a caller's ecosystem gates by its gate, as the tags' does. */
+const loraGate = () => {
+  const gate = gatedBy();
+  expect(gate).toBeInstanceOf(Map);
+  return (gate as Map<string, string[]>).get('LORA') ?? [];
+};
 
 beforeEach(() => {
   mockAskJev.mockReset();
@@ -277,18 +283,18 @@ describe('🔴 without a baseModel, the tags choose only an ecosystem that gener
   });
 });
 
-describe("with a caller's baseModel the tags choose no ecosystem (invariant guards)", () => {
-  it("the caller's ecosystem gates by its exact name, and the row says so", async () => {
+describe("with a caller's baseModel the tags choose no ecosystem", () => {
+  it("the caller's ecosystem gates by its compatible base models, and the row says so", async () => {
     const result = await getResourceIntent({ prompt: 'zephyr', baseModel: 'Illustrious' }, V1);
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });
     expect(result).not.toHaveProperty('ecosystems');
-    expect(gatedBy()).toBe('Illustrious');
+    expect(loraGate()).toEqual(expect.arrayContaining(['Illustrious', 'NoobAI']));
     expect(await shadowRow()).toMatchObject({ ecosystemSource: 'caller', ecosystemTop3: [] });
   });
 
   it("the modality rule does not override the caller's own ecosystem", async () => {
     await getResourceIntent({ prompt: 'quokka', baseModel: 'MiniMax H3' }, V1);
-    expect(gatedBy()).toBe('MiniMax H3');
+    expect(loraGate()).toContain('MiniMax H3');
     expect(await shadowRow()).toMatchObject({ ecosystemSource: 'caller', ecosystemTop3: [] });
   });
 
@@ -300,6 +306,6 @@ describe("with a caller's baseModel the tags choose no ecosystem (invariant guar
       ecosystemSource: 'caller',
       ecosystemTop3: [],
     });
-    expect(gatedBy()).toBe('Grok');
+    expect(loraGate()).toContain('Grok');
   });
 });

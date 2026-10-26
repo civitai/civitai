@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import React from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { constants } from '~/server/common/constants';
+import { stripStickerTokens } from '~/shared/utils/sticker-token';
 import { getModelUrl } from '~/utils/string-helpers';
 
 export const getLinkHref = (href: string | undefined) => {
@@ -73,3 +74,51 @@ export const linkifyOptions: Opts = {
 };
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
+
+/** Markdown the one-line preview would otherwise show raw: links, bold and inline code. */
+export const stripMarkdownForPreview = (text: string) =>
+  text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/`([^`]*)`/g, '$1');
+
+/**
+ * The last-message line in a chat list row, with who said it.
+ *
+ * A 1:1 message from the other person stays bare: the row's title already names them. Your own
+ * message is "You: …", and in a group the sender's username leads, since the title is the group.
+ */
+export const chatPreviewText = ({
+  message,
+  viewerId,
+  otherMembers,
+}: {
+  message: { content: string; userId: number };
+  viewerId: number | undefined;
+  otherMembers: { userId: number; user: { username: string | null } }[];
+}) => {
+  const text = stripMarkdownForPreview(stripStickerTokens(message.content));
+  if (message.userId === viewerId) return `You: ${text}`;
+  if (otherMembers.length > 1) {
+    const sender = otherMembers.find((cm) => cm.userId === message.userId)?.user.username;
+    if (sender) return `${sender}: ${text}`;
+  }
+  return text;
+};
+
+/** The 2023 seed row for the Moderator badge cosmetic (`Cosmetic.id`). */
+export const MODERATOR_BADGE_COSMETIC_ID = 5;
+
+/**
+ * Whether the chat header should add its own moderator mark beside a member's name. A moderator
+ * wearing the Moderator badge already shows that mark through their equipped badge, so a second one
+ * would double it; a non-moderator wearing the badge still gets nothing from the chat.
+ */
+export const showsChatModeratorMark = (user: {
+  isModerator?: boolean | null;
+  cosmetics?: { cosmetic: { id: number; type: string } | null }[];
+}) =>
+  user.isModerator === true &&
+  !user.cosmetics?.some(
+    ({ cosmetic }) => cosmetic?.type === 'Badge' && cosmetic.id === MODERATOR_BADGE_COSMETIC_ID
+  );

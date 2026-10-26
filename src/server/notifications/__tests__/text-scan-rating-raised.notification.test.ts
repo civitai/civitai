@@ -5,8 +5,9 @@ const render = (details: Record<string, unknown>) =>
   notificationProcessors['text-scan-rating-raised'].prepareMessage({ details } as never);
 
 describe('text-scan-rating-raised', () => {
-  it('is registered, not toggleable, and links to the entity', () => {
-    expect(notificationProcessors['text-scan-rating-raised'].toggleable).toBe(false);
+  it('is registered as a toggleable Moderation notification and links to the entity', () => {
+    expect(notificationProcessors['text-scan-rating-raised'].toggleable).not.toBe(false);
+    expect(notificationProcessors['text-scan-rating-raised'].category).toBe('Moderation');
     expect(
       render({ entityType: 'Post', entityId: 7, level: 4, title: 'Beach day', url: '/posts/7' })
     ).toEqual({

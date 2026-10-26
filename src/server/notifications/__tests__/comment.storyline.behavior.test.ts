@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { commentNotifications, threadUrlMap } from '~/server/notifications/comment.notifications';
 
@@ -22,15 +23,17 @@ const run = async () =>
   ).rows;
 
 beforeAll(async () => {
-  db = new PGlite();
+  db = new PGlite({ extensions: { ltree } });
   await db.exec(`
+    CREATE EXTENSION ltree;
     CREATE TABLE "User"(id int PRIMARY KEY, username text);
     CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
     CREATE TABLE "UserNotificationSettings"("userId" int, type text);
     CREATE TABLE "Storyline"(id int PRIMARY KEY, "userId" int, title text, "tosViolation" boolean NOT NULL DEFAULT false);
-    CREATE TABLE "Thread"(id int PRIMARY KEY, "storylineId" int, "commentId" int);
-    CREATE TABLE "CommentV2"(id int PRIMARY KEY, "userId" int, "threadId" int, "createdAt" timestamp(3));
-    CREATE TABLE "ThreadMute"("userId" int, "threadId" int);
+    CREATE TABLE "CommentV3"(id int PRIMARY KEY, "entityType" text, "entityId" int, "parentId" int,
+      "replyToId" int, path ltree, "userId" int, "createdAt" timestamp(3), "deletedAt" timestamp(3));
+    CREATE TABLE "CommentMute"("userId" int, "commentId" int);
+    CREATE TABLE "CommentTopicMute"("userId" int, "entityType" text, "entityId" int);
     INSERT INTO "User" VALUES (1, 'owner'), (2, 'reader');
   `);
 });
@@ -41,14 +44,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "UserEngagement", "UserNotificationSettings", "Storyline", "Thread", "CommentV2", "ThreadMute";
+    TRUNCATE "UserEngagement", "UserNotificationSettings", "Storyline", "CommentV3", "CommentMute", "CommentTopicMute";
     INSERT INTO "Storyline" VALUES (10, ${OWNER}, 'Night Train', false);
-    INSERT INTO "Thread" VALUES (100, 10, NULL);
   `);
 });
 
-const comment = (id: number, userId: number, createdAt = AFTER) =>
-  db.exec(`INSERT INTO "CommentV2" VALUES (${id}, ${userId}, 100, '${createdAt}')`);
+const comment = (id: number, userId: number, createdAt = AFTER, parentId: number | null = null) =>
+  db.exec(
+    `INSERT INTO "CommentV3" VALUES (${id}, 'storyline', 10, ${parentId}, NULL,
+      '${parentId ? `${parentId}.${id}` : id}', ${userId}, '${createdAt}', NULL)`
+  );
 
 describe('new-storyline-comment', () => {
   it("tells the owner about a reader's comment, linked to the comment on the storyline page", async () => {
@@ -82,10 +87,24 @@ describe('new-storyline-comment', () => {
       },
     ],
     [
-      'the owner muted the thread',
+      'the owner muted the storyline discussion',
       async () => {
-        await db.exec(`INSERT INTO "ThreadMute" VALUES (${OWNER}, 100)`);
+        await db.exec(`INSERT INTO "CommentTopicMute" VALUES (${OWNER}, 'storyline', 10)`);
         await comment(500, READER);
+      },
+    ],
+    [
+      'it is a reply, which the reply notifications cover',
+      async () => {
+        await comment(500, OWNER);
+        await comment(501, READER, AFTER, 500);
+      },
+    ],
+    [
+      'the comment is deleted',
+      async () => {
+        await comment(500, READER);
+        await db.exec(`UPDATE "CommentV3" SET "deletedAt" = now() WHERE id = 500`);
       },
     ],
     [

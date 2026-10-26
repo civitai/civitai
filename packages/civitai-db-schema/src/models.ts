@@ -106,7 +106,7 @@ export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHas
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
-export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
+export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
 export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
 
@@ -184,7 +184,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -573,6 +573,7 @@ export interface User {
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
+  emailOptOuts?: UserEmailNotificationOptOut[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -2147,6 +2148,8 @@ export interface ApiKey {
   clientId: string | null;
   client?: OauthClient | null;
   buzzLimit: JsonValue | null;
+  workerDeviceId: number | null;
+  workerDevice?: WorkerDevice | null;
 }
 
 export interface OauthClient {
@@ -2175,6 +2178,32 @@ export interface OauthClient {
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
+  workerClient?: WorkerClient | null;
+  workerDevices?: WorkerDevice[];
+}
+
+export interface WorkerClient {
+  clientId: string;
+  client?: OauthClient;
+  provider: string;
+  subjectTokenTypes: string[];
+  saladContainerGroupIds: string[];
+  createdAt: Date;
+}
+
+export interface WorkerDevice {
+  id: number;
+  clientId: string;
+  client?: OauthClient;
+  issuer: string;
+  subject: string;
+  status: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  lastIp: string | null;
+  blockedAt: Date | null;
+  blockedReason: string | null;
+  tokens?: ApiKey[];
 }
 
 export interface UserRole {
@@ -2900,6 +2929,13 @@ export interface PushSubscription {
 }
 
 export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
+}
+
+export interface UserEmailNotificationOptOut {
   userId: number;
   user?: User;
   type: string;
@@ -4744,6 +4780,19 @@ export interface ScanLabelFlag {
   createdAt: Date;
 }
 
+export interface ImageAudioScan {
+  imageId: number;
+  workflowId: string;
+  status: string;
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: JsonValue | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
@@ -4752,12 +4801,14 @@ export interface ScanLabelVote {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Date;
+  claimToken: string | null;
 }
 
 export interface ScanLabelClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;
+  token: string | null;
 }
 
 export interface ScanLabelCopyObject {
@@ -6620,6 +6671,7 @@ export interface ServiceOffering {
   removedDetails: string | null;
   removedAt: Date | null;
   removedById: number | null;
+  sellerAffirmation: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
@@ -6709,6 +6761,10 @@ export interface ServiceDealFile {
   processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
+  malwareScanWorkflowId: string | null;
+  malwareScanStartedAt: Date | null;
+  malwareScanSubmittedAt: Date | null;
+  malwareScanAttempts: number;
   unpackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;

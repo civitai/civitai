@@ -69,11 +69,20 @@ export class FakeSandboxService {
   readonly abandoned: string[] = [];
   /** The next N `tools/call` requests are answered 503, as a paused sandbox's address is. */
   failCalls = 0;
+  /**
+   * MCP `initialize` is accepted and never answered (until the client hangs up), as a sandbox that
+   * listens but is wedged: the connect every tool call waits on never completes.
+   */
+  hangInitialize = false;
   /** How many looks at a starting sandbox it takes to run. */
   startsAfter = 1;
   /** Apps deleted just before their next open: the open then makes a new, empty one (201). */
   readonly deleteBeforeOpen = new Set<string>();
+  /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
+  keepLimit = Infinity;
   readonly tools = new Map<string, FakeToolBody>();
+  /** Tools this sandbox does not list, as an older sandbox image without them. */
+  readonly hiddenTools = new Set<string>();
   #server: HttpServer | undefined;
   #base = '';
   #looks = new Map<string, number>();
@@ -174,6 +183,8 @@ export class FakeSandboxService {
         if (found.state === 'suspended') found.state = 'starting';
         return json(200, this.#view(found));
       }
+      if (this.sandboxes.length >= this.keepLimit)
+        return json(409, { error: `sandbox limit (${this.keepLimit}) reached; delete one first` });
       return json(201, this.#view(this.add(app, 'starting')));
     }
     const item = /^\/v1\/sandboxes\/([a-z0-9-]+)(\/suspend)?$/.exec(url.pathname);
@@ -193,6 +204,10 @@ export class FakeSandboxService {
       const record = this.sandboxes.find((s) => s.name === mcp[1]);
       if (!record || record.state !== 'running') return json(503, { error: 'not running' });
       const message = body as { method?: string; id?: unknown } | undefined;
+      if (message?.method === 'initialize' && this.hangInitialize) {
+        await new Promise<void>((resolve) => res.on('close', () => resolve()));
+        return;
+      }
       if (message?.method === 'tools/call' && this.failCalls > 0) {
         this.failCalls--;
         return json(503, { error: 'not running' });
@@ -219,7 +234,7 @@ export class FakeSandboxService {
       { capabilities: { tools: {} } }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS.map((tool) => ({
+      tools: TOOLS.filter((tool) => !this.hiddenTools.has(tool.name)).map((tool) => ({
         ...tool,
         inputSchema: { type: 'object', properties: {}, additionalProperties: true },
       })),

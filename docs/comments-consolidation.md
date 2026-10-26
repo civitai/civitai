@@ -45,12 +45,23 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: the challenge
+  and resource-review counts (were `Thread.commentCount`), the collection judged check and the
+  metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
+  replies and tombstones; model-comment notifications keep the v1 detail shape and `comment:v1:`
+  dedupe key and address comments by `legacyV1Id` until the model surface flips (_Notifications
+  impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
+  block guard, the block hide sweep and the v2 lock check (_Thread mute_); the moderator
+  report-queue joins and `csam-holds.queries.ts` stay on the old link tables until `ReportEntity.CommentV3`
+  (_Moderator app impact_); two `createdAt` indexes (`CommentV3`, `CommentV3Reaction`) are added for
+  the per-minute notification cursors; CommentV3 is read through Kysely or raw SQL, never the
+  Prisma delegate (decision 8).
 - **2026-10-21 — the Phase 3 backfill is built** as steps of one admin endpoint that reuse the
   mirror's row functions, with an `unmirrored` report (skipped rows by reason), a `parity`
   report (the old-versus-new checks in the checklist, as counts with sample ids) and the two
   residue sweeps. Run on prod 2026-10-21, converged with parity all zero. The parity monitor job
-  and the reverse-copy script (not yet proven on a prod sample) followed the same day; the reader
-  re-point is still open (_Phase 3_).
+  and the reverse-copy script (not yet proven on a prod sample) followed the same day, and the
+  reader re-point on 2026-10-22.
 - **2026-10-20 — the Phase 2 mirror is built (`20261120120000_comment_v3_mirror`), and the
   moderation work moves to Phase 4.** The lock pair (`toggleLockCommentsThread`) and the mutes
   (`toggleThreadMute`/`toggleSectionMute`) are mirrored by triggers on `Thread` and `ThreadMute`,
@@ -929,7 +940,7 @@ Plan:
   space — no headroom guessing, no `setval` choreography at each flip, and dual-written rows carry
   the same id on both sides by construction.
 - **Legacy v1 rows get new ids**, with the original id in `legacyV1Id` (unique). The notification
-  detail-fetcher's `version !== 2` branch resolves via `legacyV1Id` — that shim is permanent (old
+  detail fetcher resolves a model-page row through `legacyV1Id` — that shim is permanent (old
   notification rows never go away) but tiny. A v1 row allocated by the shared sequence (id above
   `commentv3_v1_id_floor()`, the old sequences' frozen position) holds an id that is unique
   across all three tables, so the mirror keeps it as the V3 id with `legacyV1Id` set to the same
@@ -1311,8 +1322,11 @@ Per-surface cutover checklist additions from the residue sweep:
   chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
   also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it moves onto the
   unified service with this flip.
-- **crucible flip**: the newest surface (#5780); `getCommentThreadCrucibleId` and the
-  `new-crucible-comment` notification go with it.
+- **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
+  with it (#5780).
+- **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /
+  `getCommentStorylineId` (the v2 read gate's thread walk) and the `new-storyline-comment`
+  notification go with it.
 
 **Phase 5 — downstream re-point.** Ordering note: the **read-only** consumers in this phase
 (notification queries, moderator app reads, creator-studio, metrics jobs, the challenge gate) move
@@ -1329,8 +1343,8 @@ moderator app are the two largest consumers and get their own sections below. Th
 - Metrics jobs (`article/bounty/post/model3d.metrics.ts`): count from CommentV3.
   Preserve `ModelMetric.commentCount` = **distinct commenters** semantics. `question/answer.metrics.ts`
   retire with that surface.
-- Creator-studio analytics (`analytics.ts` all-time tile + per-image series): single-table query;
-  model comments become visible there for the first time (feature win, note it in release comms).
+- Creator-studio analytics (`analytics.ts` all-time tile + per-image series): one `CommentV3` query
+  each since Phase 3, still scoped to the creator's images (`entityType = 'image'`).
 - Unify exclusion logic (`boundExcludedUserIds` + hidden/blocked handling) into one shared helper —
   today it's duplicated between v1 and v2 with subtle drift.
 - Cron jobs touching the tables directly (beyond the metrics jobs above):
@@ -1353,7 +1367,7 @@ moderator app are the two largest consumers and get their own sections below. Th
     the `(userId, id)` index only for small per-user sets; if slow, extend `(entityType, entityId,
 id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** already go
     through `upsertComment`, so dual-write covers them; `getJudgeCommentForImage` in
-    `commentsv2.service.ts` is the matching read to port. Flip these with the `image` surface.
+    `commentsv2.service.ts` is the matching read; both read CommentV3 since Phase 3.
   - `src/server/jobs/job-queue.ts` — `EntityType.Comment`/`CommentV2` mappings are marked
     `// unused`; delete them in Phase 6 rather than porting.
   - `src/server/jobs/update-user-score.ts` — touches comments only via `ArticleMetric.commentCount`
@@ -1373,17 +1387,14 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   literals alongside `CommentV3_*`. Client twin: the `commentOld` key in
   `src/components/Reaction/Reactions.tsx`.
 - Raw-SQL stragglers found in the full sweep, each a contained rewrite:
-  `src/server/services/resourceReview.service.ts` (**owns** its Thread — creates one eagerly on
-  review create and reads `thread.commentCount` through `resourceReview.selector.ts` into
-  `ResourceReviewCard`/`ResourceReviewDetail`; replace with lazy `CommentTopic` joined on
-  `entityType = 'review' AND entityId = r.id` (both columns, so the join prunes to one
-  partition) + `COALESCE(0)`,
-  a client-visible shape change), `src/server/services/collection.service.ts` (Thread-join
-  count → `CommentTopic` on both columns), `src/server/services/challenge.service.ts` (four raw
-  `Thread.commentCount` reads by `challengeId` → `entityType = 'challenge' AND entityId`),
-  `src/server/metrics/post.metrics-old.ts` (live sibling of `post.metrics.ts`
-  — migrate or delete), `src/pages/api/mod/daily-challenge/re-review.ts`,
-  `src/server/notifications/report.notifications.ts` (CASE over both report join tables), and the
+  `src/server/services/resourceReview.service.ts` (**owns** its Thread: creates one eagerly on
+  review create, dropped in Phase 5; its two `thread.commentCount` reads count live top-level
+  `CommentV3` rows since Phase 3, not `CommentTopic.commentCount`, which counts replies and
+  tombstones), `src/server/services/collection.service.ts` (judged check) and
+  `src/server/services/challenge.service.ts` (four counts), both on `CommentV3` the same way,
+  `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3), `src/pages/api/mod/daily-challenge/re-review.ts`,
+  `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
+  `CommentV3Report` arm since Phase 3), and the
   Q&A thread `_count` reads in `answer.controller.ts`/`question.controller.ts` (retire with the
   surface, decision 1).
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
@@ -1408,41 +1419,37 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 
 ### Notifications impact (Phase 5 detail)
 
-`src/server/notifications/comment.notifications.ts` defines ~16 notification types. On the current
-schema they fall into three shapes; all three simplify:
+`src/server/notifications/comment.notifications.ts` defines 18 notification types. Before Phase 3
+they fell into three shapes:
 
-- **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the `"Comment"`
-  join in `reaction.notifications.ts`): move from `"Comment"` + `parentId` self-joins to
-  `CommentV3 WHERE entityType = 'model'`. The permalink they emit
-  (`?dialog=commentThread&highlight=<id>`) must carry the **new** id — the client dialog reads it
-  against the live table, so nothing else changes.
+- **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
+  `reaction.notifications.ts`): read v1-shaped model rows of CommentV3 (with a `legacyV1Id`) since Phase 3. Until the
+  model surface flips, its dialog reads the v1 `Comment` table, so they keep the v1 detail shape and
+  `comment:v1:` dedupe namespace and address comments by their old id in `legacyV1Id` (a v1 row from
+  the shared sequence carries its own id there). They switch to the v3 id with the
+  model flip.
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
-  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`,
-  `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`):
-  each is today a `CommentV2 → Thread` join on one entity FK (reply variants double-join through the
-  child thread's `commentId`). All become `WHERE entityType = X AND parentId IS [NOT] NULL` on one
-  table — near-mechanical rewrites, and candidates for one parameterized query builder instead of a
-  dozen near-copies.
-- **Both-table UNIONs** (`new-thread-response` here, and `mention.notifications.ts`): the UNION
-  disappears; thread-participant fanout becomes `ARRAY_AGG(userId) ... WHERE parentId = c.parentId`
-  (siblings) instead of one arm each for `parentId` (v1) and `threadId` (v2).
+  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`, `new-storyline-comment`,
+  `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since
+  Phase 3 each is `WHERE entityType = X AND parentId IS [NOT] NULL` on CommentV3, the near-copies the
+  Phase 5 builder collapses.
+- **Both-table UNIONs** (`new-thread-response`, `mention.notifications.ts`): one CommentV3 query
+  each since Phase 3. Thread participants are a comment's siblings: for a top-level comment the
+  entity's other top-level comments of the same shape (v2 comments on a model thread never shared a
+  thread with the v1 ones), for a reply everyone answering the same comment.
 
 Two things must hold through the transition:
 
-- **Historical rows are forever.** `Notification.details` carries `version: 2` (absent = v1) and old
-  comment ids. `comment.detail-fetcher.ts` keeps its split permanently: `version === 2` resolves by
-  id directly (ids preserved), otherwise via `legacyV1Id`. New notifications write `version: 3` with
-  new ids so the fetcher stays unambiguous.
+- **Historical rows are forever.** `Notification.details` carries `version: 3` (since Phase 3),
+  `version: 2`, or no version (v1), with the ids of their day. `comment.detail-fetcher.ts` reads
+  all of them from CommentV3 permanently: a model-page row (versionless, one of the three model-page types, or a `new-thread-response`
+  or `new-mention` with no `threadType`) by its old id in `legacyV1Id`, anything else by id (v2 ids are preserved).
 - **Cutover alignment.** Notification `prepareQuery`s run off `lastSent` windows against whichever
   table they query. Because CommentV3 is complete during dual-write, the simple safe order is:
   rewrite **all** notification queries against CommentV3 once, during the dual-write window, before
   any surface's write flip. No per-surface flag coupling needed — a query on CommentV3 sees every
   comment regardless of which side wrote it. The only forbidden state is a query still on an old
   table after that surface's writes flipped.
-
-Also fix in passing: `reaction.notifications.ts` links `?dialog=commentThread&commentId=<rootId>` —
-verify the root-resolution logic against `rootId` on the new row (it currently self-joins to find
-the v1 root).
 
 ### Thread mute (Phase 5 detail)
 
@@ -1453,15 +1460,17 @@ plan above predates it, so everything in this section is new scope, not a restat
 What v2 has today:
 
 - `ThreadMute (userId, threadId)`, FK'd to `Thread` with `ON DELETE CASCADE` on both sides.
-- `muteableThreadsCte` in `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
+- `muteableThreadsCte` (since Phase 3 `threadAncestorsCte`, the block guard's only) in
+  `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
   `Thread.commentId → CommentV2.threadId`, capped at `MAX_THREAD_CHAIN_DEPTH = 100`.
-- `notThreadMuted(recipient, threadId)` in `base.notifications.ts`, applied at **14 sites** in
-  `comment.notifications.ts` (crucible added the 14th), producer-side.
+- The mute filter at **15 sites** in `comment.notifications.ts` (storyline added the 15th),
+  producer-side: `notThreadMuted(recipient, threadId)` over the walk until Phase 3, now
+  `notCommentMuted(recipient, alias)` in `base.notifications.ts` over CommentV3.
 - Two controls: per-comment (overflow menu) via `toggleThreadMute`, and section-level (beside the
   top-level composer) via `toggleSectionMute`, which is the only writer that targets an entity-root
   thread.
-- `getThreadMuted` / `getSectionMuted` read the same shared CTE so the menu label and the
-  suppression cannot disagree.
+- `getThreadMuted` / `getSectionMuted` read the suppression's own predicate (`notCommentMuted`;
+  `CommentTopicMute` for the section), so the menu label and the suppression agree (past the depth clamp, one hop only).
 - A convention guard, `no-unmuteable-comment-processor`, wired into `test:lint-rules`.
 
 #### What consolidation changes
@@ -1469,12 +1478,13 @@ What v2 has today:
 **The recursive walk disappears.** v2 has to climb thread-by-thread because nesting is modeled as a
 child `Thread` per comment. In CommentV3 ancestry _is_ `path`, so suppression is one `@>` GiST
 containment test — the identical shape as the lock check, and a natural row in the interactions
-table above. That deletes `thread-chain.ts` outright and takes three properties with it:
+table above. That took the mute check off `thread-chain.ts` in Phase 3 (the file itself goes with
+the v2 write path), with three consequences:
 
 - **The depth cap stops being a correctness hole.** `MAX_THREAD_CHAIN_DEPTH` is a bound on work, not
-  a proof; past it `notThreadMuted` fails open and sends. Measured on prod 2026-08-27: 149 chains are
-  past the cap, where a mute silently stops suppressing today. A containment test has no cap, and the
-  stored depth cap of 20 makes the question moot regardless.
+  a proof; past it `notThreadMuted` failed open and sent. Measured on prod 2026-08-27: 149 chains
+  were past the cap, where a mute silently stopped suppressing until the Phase 3 re-point. A containment test has no cap. The stored depth cap of 20 leaves one residue: past it,
+  `replyToId` carries a mute one hop only (checklist, Phase 3, Accepted).
 - **The `parentThreadId` exclusion becomes unnecessary.** The v2 walk deliberately refuses that edge
   because it is written from client input, so trusting it would let a replier steer their reply into
   a chain the recipient muted and have the notification dropped — a suppression operated by someone
@@ -1485,17 +1495,12 @@ table above. That deletes `thread-chain.ts` outright and takes three properties 
   `hasThread: false` and does nothing on an entity with no comments yet. `CommentTopicMute` keys off
   `(entityType, entityId)` and needs no row to exist, so it works before the first comment.
 
-**The 14 filter sites ride on the notification rewrite.** Phase 3 re-points every notification
-`prepareQuery` at CommentV3, and Phase 5 offers to collapse the per-entity queries into one
-parameterized builder. Both must carry the mute filter — a rewrite that drops it reads as a clean
-diff and silently un-mutes every user who set a mute, with no failing test unless the guard is
-re-pointed in the same change. Do the collapse _because_ of this rather than as optional cleanup:
-one builder is one place the filter can be missing.
-
-**`no-unmuteable-comment-processor` must be re-pointed in lockstep.** It asserts over the v2 SQL
-text. Left alone it either fails on the rewrite or, worse, passes vacuously against v3 SQL it no
-longer recognises. It also pins one deliberate _exclusion_ — `new-mention` is intentionally not
-muteable — which is a product decision the rewrite must preserve, not a gap.
+**The mute filter rides on every notification rewrite.** Phase 3 carried it to all 15 sites, and
+`no-unmuteable-comment-processor` was re-pointed in the same change (it also fails on a
+comment-family query that reads an old table). A rewrite that drops the filter reads as a clean diff
+and silently un-mutes everyone, so the Phase 5 builder is not optional: one builder is one place it
+can be missing. The guard pins two deliberate exclusions: `new-mention` (a product decision, not a
+gap) and the three model-page processors, which have no mute control until the model surface flips.
 
 🔴 **`ThreadMute` cascades to nothing in Phase 6.** The teardown drops `Thread`, and
 `ThreadMute_threadId_fkey` is `ON DELETE CASCADE` — so unless mutes are migrated first, teardown
@@ -1541,20 +1546,19 @@ until a notification they muted arrives.
 so the two can share query shapes) has the v1/v2 split baked into six modules; consolidation
 deletes about half of each:
 
-- `user-account.service.ts`: `getComments()` (v1) and `getCommentsV2()` (v2, hand-built
-  `coalesce` over `THREAD_TARGETS` that **omits** challenge/comicChapter/model3d/appListing/crucible
-  — those render with a null entity today) merge into one query reading `entityType`/`entityId`
-  off the row.
-  The merge fixes the missing-entity bug for free; keep the surfaces list exhaustive via the enum.
-- `user-lookup.service.ts`: `COUNT_SOURCES` collapses "Model comments" + "Image comments" into one
-  CommentV3 count (optionally grouped by entityType); `getCommentFlags()` extends from v1-only to
-  all comments — a **behavior change to flag to the mod team**, since flag counts will rise.
-- `user-signals.service.ts::getCommentBurst`: two-table sum becomes one count.
+- `user-account.service.ts`: `getComments()` (model, by old id) and `getCommentsV2()` (everything
+  else) both read CommentV3 since Phase 3. Reading `entityType`/`entityId` off the row fixed the null
+  entity the hand-built `THREAD_TARGETS` coalesce gave challenge/comicChapter/model3d/appListing/
+  crucible comments. The two merge into one query with the single checkbox list below.
+- `user-lookup.service.ts`: the "Model comments" / "Image comments" counts read CommentV3 since
+  Phase 3, still as two rows (model vs everything else). `getCommentFlags()` reads CommentV3 but
+  stays model-only; extending it to all comments is a **behavior change to flag to the mod team**,
+  since flag counts will rise.
 - `reports.service.ts::commentContextUrl`: the 10-branch Thread-FK `CASE` + `rootThreadId` fallback
   becomes a single `entityType` switch on the row.
-- `report-entities.ts`: the two `{ reportTable, table }` entries collapse to one
-  `{ 'CommentV3Report', 'CommentV3' }` entry once the report backfill lands (Phase 3 maps
-  `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here).
+- `report-entities.ts`: gains a `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two with
+  `ReportEntity.CommentV3` at the first write flip; the old two go in Phase 6 (the report backfill
+  maps `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here).
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
   collapse to one builder; the "Model comments"/"Other comments" panels and the separate
   `commentIds`/`commentV2Ids` checkbox groups become one list. The backing mod endpoints
@@ -1564,7 +1568,9 @@ deletes about half of each:
 
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
-after flips would leave mod tooling blind to new comments on flipped surfaces). Its old-table code
+after flips would leave mod tooling blind to new comments on flipped surfaces), except the
+report-queue joins and `csam-holds.queries.ts`, which move with `ReportEntity.CommentV3` at the first
+write flip. Its old-table code
 paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.
 

@@ -122,34 +122,34 @@ describe('publishModelVersionById — H3 attestation', () => {
   it('refuses an unattested H3 LoRA before anything is written', async () => {
     seed();
 
-    await expect(publishModelVersionById({ id: VERSION_ID })).rejects.toThrowError(
-      /right to train and share/
-    );
+    await expect(
+      publishModelVersionById({ id: VERSION_ID, enforceTakedown: false })
+    ).rejects.toThrowError(/right to train and share/);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('checks the meta the publish is about to write, not only the stored one', async () => {
     seed({ meta: attestedMeta() });
 
-    await expect(publishModelVersionById({ id: VERSION_ID, meta: {} })).rejects.toThrowError(
-      /right to train and share/
-    );
+    await expect(
+      publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, meta: {} })
+    ).rejects.toThrowError(/right to train and share/);
   });
 
   it('lets an attested H3 LoRA through to the write', async () => {
     seed({ meta: attestedMeta() });
 
-    await expect(publishModelVersionById({ id: VERSION_ID })).rejects.toThrowError(
-      'reached the write'
-    );
+    await expect(
+      publishModelVersionById({ id: VERSION_ID, enforceTakedown: false })
+    ).rejects.toThrowError('reached the write');
   });
 
   it('lets a non-H3 LoRA through without one (control)', async () => {
     seed({ baseModel: 'SDXL 1.0' });
 
-    await expect(publishModelVersionById({ id: VERSION_ID })).rejects.toThrowError(
-      'reached the write'
-    );
+    await expect(
+      publishModelVersionById({ id: VERSION_ID, enforceTakedown: false })
+    ).rejects.toThrowError('reached the write');
   });
 });
 

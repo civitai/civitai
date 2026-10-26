@@ -21,10 +21,6 @@
   }
 }
 
-.gridRow {
-  grid-auto-flow: row;
-}
-
 .grid {
   display: grid;
   grid-auto-flow: column;
@@ -50,6 +46,13 @@
     width: 28px;
   }
 
+  // Compounded so it outranks `.grid` wherever the two are declared; as a bare class it tied, lost
+  // on source order, and the cards fell into columns of two. The narrow carousels below restate
+  // column flow on it.
+  &.gridRow {
+    grid-auto-flow: row;
+  }
+
   &.gridRow::after {
     display: none;
   }
@@ -64,6 +67,10 @@
     // Every card has a column here, and the scroller should end at the last one.
     &::after {
       display: none;
+    }
+
+    &.gridRow {
+      grid-auto-flow: column;
     }
   }
 
@@ -81,6 +88,10 @@
 
     & > * {
       scroll-snap-align: center;
+    }
+
+    &.gridRow {
+      grid-auto-flow: column;
     }
   }
 }

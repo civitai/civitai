@@ -26,7 +26,7 @@ Run it via `nix flake check` or `nix run .#doctor`, or directly:
 
     python3 scripts/nix/check-node-pin.py \
       --nvmrc .nvmrc --package-json package.json \
-      --flake-node 24.19.0 --flake-pnpm 10.34.5
+      --flake-node 24.22.1 --flake-pnpm 10.34.5
 
 Every failure is tagged with a stable id (N1..N3) so a test can assert that a
 specific guard fired rather than merely that *something* failed.

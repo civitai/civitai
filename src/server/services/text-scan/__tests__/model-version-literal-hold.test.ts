@@ -115,7 +115,7 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(mockTrack).not.toHaveBeenCalled();
     expect(mockProcessEngagement).not.toHaveBeenCalled();
     expect(mockRefresh).not.toHaveBeenCalled();
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: false });
   });
 
   it('logs and carries on as a normal publish when the takedown throws', async () => {
@@ -127,7 +127,7 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(mockLog).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
     );
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: false });
     expect(mockTrack).toHaveBeenCalledTimes(1);
     expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
   });
@@ -149,14 +149,14 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
     expect(result).toMatchObject({ held: false });
     expect(mockTrack).toHaveBeenCalledTimes(1);
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: false });
   });
 
   it('never checks a moderator', async () => {
     await call({ isModerator: true });
     expect(checkModelRulesLiteralHold).not.toHaveBeenCalled();
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
-    // The content scan still runs; only the rules scan skips a moderator.
+    // The content scan still runs; the literal check already ran before the publish.
     expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: false });
   });
 
