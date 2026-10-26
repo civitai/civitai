@@ -74,7 +74,15 @@ export const ServicesRow = ({
 }) => (
   <Stack gap="xs">
     {offerings.map((offering) => (
-      <Paper key={offering.id} component={Link} href={href} withBorder radius="md" p="sm">
+      <Paper
+        key={offering.id}
+        component={Link}
+        href={href}
+        withBorder
+        radius="md"
+        p="sm"
+        style={{ color: 'inherit', textDecoration: 'none' }}
+      >
         <Text fw={600} lineClamp={1}>
           {offering.title}
         </Text>
