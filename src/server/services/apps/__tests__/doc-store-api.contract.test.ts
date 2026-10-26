@@ -1161,6 +1161,56 @@ describe('route faults and CORS', () => {
     });
   });
 
+  it.each([
+    [
+      'the pool cannot hand out a connection',
+      { connect: new Error('timeout exceeded when trying to connect') },
+    ],
+    [
+      'the connection drops inside the transaction',
+      { query: Object.assign(new Error('terminating connection'), { code: '57P01' }) },
+    ],
+  ])(
+    '%s: a retryable 503 service_unavailable with Retry-After, not a 500',
+    async (_name, fault: { connect?: Error; query?: Error }) => {
+      const { A } = freshApps();
+      // The REAL store over a pool that fails: the seam is the store's translation AND the
+      // route's status/header mapping, so neither is stubbed.
+      h.store = createDocStore({
+        db: {
+          connect: async () => {
+            if (fault.connect) throw fault.connect;
+            const real = await harness.db.connect();
+            return {
+              query: async (sql: string, params?: unknown[]) => {
+                if (
+                  fault.query &&
+                  !sql.startsWith('BEGIN') &&
+                  sql !== 'ROLLBACK' &&
+                  !sql.includes('pg_roles')
+                ) {
+                  throw fault.query;
+                }
+                return real.query(sql, params);
+              },
+              release: (arg?: Error | boolean) => real.release(arg),
+            };
+          },
+        },
+      });
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({ token: t, method: 'GET', path: '/prefs/k' });
+      expect(r.status).toBe(503);
+      expect(r.headers['retry-after']).toBe('1');
+      expect(r.body).toEqual({
+        code: 'service_unavailable',
+        message: 'storage is temporarily unavailable',
+        error: 'storage is temporarily unavailable',
+        details: { retryAfter: 1 },
+      });
+    }
+  );
+
   it('the preflight from an opaque origin allows PUT and DELETE', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
@@ -1402,6 +1452,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
   it.each([
     ['a raw database error', () => new Error('connection refused')],
     ['storage_disabled', () => new DocStoreError('storage_disabled', 'disabled')],
+    [
+      'a database the store could not reach (service_unavailable)',
+      () => new DocStoreError('service_unavailable', 'unavailable', { retryAfter: 1 }),
+    ],
     [
       'lock contention',
       () => new DocStoreError('rate_limited', 'busy', { reason: 'contention', retryAfter: 1 }),
