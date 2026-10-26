@@ -125,6 +125,30 @@ describe('reordering chapters on the map', () => {
     expect(reorderButtons()).toBe(0);
   });
 
+  describe('the reorder hint', () => {
+    const hint = () => page.getByTestId('storyline-reorder-hint');
+    const hintShown = () => !!document.querySelector('[data-testid="storyline-reorder-hint"]');
+
+    test('tells the owner when reordering opens up while nothing is movable', async () => {
+      mocks.graph = graphOf([121]);
+      renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
+      await expect.element(hint()).toHaveTextContent('three or more of your own run in a row');
+    });
+
+    test('is gone once the owner has a run to reorder', async () => {
+      renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
+      await expect.element(menuOf(2)).toBeInTheDocument();
+      expect(hintShown()).toBe(false);
+    });
+
+    test('is never shown to a reader', async () => {
+      mocks.graph = graphOf([121]);
+      renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
+      await expect.element(page.getByTestId('storyline-lanes')).toBeVisible();
+      expect(hintShown()).toBe(false);
+    });
+  });
+
   test("the server's refusal is shown", async () => {
     mocks.error = 'This chapter has a continuation waiting for review; answer it first';
     renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
