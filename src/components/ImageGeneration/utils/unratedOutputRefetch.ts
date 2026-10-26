@@ -69,6 +69,10 @@ export function createUnratedOutputWatcher({
   refetch: (workflowIds: string[]) => Promise<unknown>;
 }) {
   const watching = new Set<string>();
+  // Watches that ended for good: a blocked verdict's one workflow re-read, or the give-up.
+  // `watch()` runs on every cache change, including the refetch's own, so a released output whose
+  // workflow still reads unrated would otherwise restart at once, for as long as the tab is open.
+  const settled = new Set<string>();
   // Outputs of one workflow share a single refetch.
   const refetching = new Map<string, Promise<unknown>>();
 
@@ -94,8 +98,10 @@ export function createUnratedOutputWatcher({
         const verdict = await readVerdict(url).catch(() => null);
         if (verdict) {
           // The output's blocked state comes from the workflow, which a header can't reproduce.
-          if (verdict.blockedReason || !verdict.nsfwLevel) await refetch([workflowId]);
-          else applyRating(outputId, verdict.nsfwLevel);
+          if (verdict.blockedReason || !verdict.nsfwLevel) {
+            settled.add(outputId);
+            await refetch([workflowId]);
+          } else applyRating(outputId, verdict.nsfwLevel);
           return;
         }
         // A long wait cut off (an API pod shutting down in a deploy) is not a run of failures.
@@ -106,6 +112,7 @@ export function createUnratedOutputWatcher({
         }
         if (Date.now() - watchedAt >= UNRATED_GIVE_UP_MS) {
           console.warn('[generation] gave up waiting for an output rating', outputId);
+          settled.add(outputId);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, unratedRetryDelay(failures++)));
@@ -120,7 +127,7 @@ export function createUnratedOutputWatcher({
 
   return function watch() {
     for (const [outputId, output] of selectUnratedOutputs(readWorkflows())) {
-      if (watching.has(outputId)) continue;
+      if (watching.has(outputId) || settled.has(outputId)) continue;
       watching.add(outputId);
       void follow(outputId, output);
     }
