@@ -4,7 +4,9 @@
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import UserCard from '$lib/components/user-card/UserCard.svelte';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
+  import { reportReasonLabel } from '$lib/reports';
   import { urlWith } from '$lib/url';
   import type { HoldAuthor } from './hold-author';
   import { decisionLabel, entityLabel } from './hold-entity';
@@ -38,6 +40,7 @@
   {:then author}
     {@const counts = author.counts?.filter((c) => c.count > 0) ?? []}
     {@const reported = author.reportedContent?.filter((c) => c.count > 0) ?? []}
+    {@const recent = author.recentReports ?? []}
     {@const others = author.holds.others.slice(0, SHOWN)}
     {@const pendingTotal = author.holds.pendingTotal}
     <div class="space-y-3">
@@ -72,6 +75,35 @@
             {/if}
           </FactRow>
         </dl>
+      {/if}
+
+      {#if author.recentReports}
+        <div>
+          <p class="m-0 mb-1.5 text-dark-0">
+            {recent.length ? 'Latest reports on their content' : 'No human reports on their content.'}
+          </p>
+          {#if recent.length}
+            <ul class="m-0 list-none space-y-1 p-0">
+              {#each recent as r (r.id)}
+                {@const href = entityUrl(page.data.civitaiUrl, r.type, r.entityId)}
+                <li class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dark-0">
+                  {#if href}
+                    <a {href} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+                      {r.entityType} #{r.entityId}
+                    </a>
+                  {:else}
+                    <span>{r.entityType}{r.entityId ? ` #${r.entityId}` : ''}</span>
+                  {/if}
+                  <span>{reportReasonLabel(r.details, r.reason)}</span>
+                  <span class="text-dark-2">{shortAge(r.createdAt)} ago</span>
+                </li>
+              {/each}
+            </ul>
+            <a href={userLookupUrl(author.userId, 'reports')} class="mt-1 inline-block text-xs {LINK_CLASS}">
+              All reports in User Lookup
+            </a>
+          {/if}
+        </div>
       {/if}
 
       <div>
