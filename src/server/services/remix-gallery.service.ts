@@ -1574,7 +1574,7 @@ async function getViewerPendingSubmissions({
     limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   };
   const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-    ? await readViewerPendingPlacementsViaKysely((await loadKyselyDb()).kyselyRead, pendingInput)
+    ? await readViewerPendingPlacementsViaKysely((await loadKyselyDb()).kyselyWrite, pendingInput)
     : await readViewerPendingPlacementsViaPrisma(dbRead, pendingInput);
 
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
