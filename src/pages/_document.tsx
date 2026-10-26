@@ -5,6 +5,10 @@ import clsx from 'clsx';
 import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
 import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
+import { shellPageDataPrefetchScript } from '~/components/Shell/shell-page-data';
+import type { ShellRouteName } from '~/server/shell/shell-mode';
+import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
+import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
@@ -16,6 +20,16 @@ export default class _Document extends Document {
       Document.getInitialProps(ctx)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
+    // Reached only once the page rendered, so a shell render that throws never carries these; and
+    // only when the page's own getServerSideProps took the shell branch, not on `_app`'s mark alone.
+    const marks = ctx.req as {
+      [SHELL_REQ_KEY]?: ShellRouteName;
+      [SHELL_RENDERED_REQ_KEY]?: ShellRouteName;
+    };
+    const shellRoute = marks[SHELL_REQ_KEY];
+    if (shellRoute && marks[SHELL_RENDERED_REQ_KEY] === shellRoute && ctx.res) {
+      applyShellEdgeHeaders(ctx.res, shellRoute);
+    }
     // Not awaited: a flag evaluation or log write must never delay the response.
     void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);
     return initialProps;
@@ -45,6 +59,10 @@ export default class _Document extends Document {
             }}
           />
           <ColorSchemeScript />
+          {/* A static shell page starts its page-data request here, before the bundles load. */}
+          {pageProps.shell && (
+            <script dangerouslySetInnerHTML={{ __html: shellPageDataPrefetchScript() }} />
+          )}
         </Head>
         <body
           className={clsx(pageProps.colorScheme, {

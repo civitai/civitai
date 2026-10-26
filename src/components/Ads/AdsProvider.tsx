@@ -7,6 +7,8 @@ import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { env } from '~/env/client';
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -136,7 +138,8 @@ export function AdsProvider({
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
     ? false
-    : !browserBlocked &&
+    : outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_ADS_ENABLED) &&
+      !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&

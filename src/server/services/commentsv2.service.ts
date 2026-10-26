@@ -23,6 +23,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { getImageThread } from '@civitai/db-queries/hot-reads';
 import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
@@ -824,7 +827,10 @@ export async function bulkSetCommentV2TosViolation({
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Actioned}::"ReportStatus"
+      UPDATE "Report" r SET
+        status = ${enums.ReportStatus.Actioned}::"ReportStatus",
+        "statusSetAt" = now(),
+        "statusSetBy" = ${actor.id}
       FROM "CommentV2Report" c
       WHERE c."reportId" = r.id
         AND c."commentV2Id" = ${id}
@@ -879,10 +885,27 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
 }: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
+  const viaKysely = await readImageThreadViaKysely(entityType, entityId);
+  if (viaKysely !== undefined) return viaKysely;
   return dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
+}
+
+/**
+ * An IMAGE's thread on the replica through Kysely when `kysely-hot-reads-2` is on: `{ id, locked }`,
+ * or `null` when the image has none, exactly as the Prisma `findUnique` answers. `undefined` means
+ * "not taken": the flag is off or the entity is not an image, and the caller reads Prisma as before.
+ * Only images, the hot shape; every other entity type stays on Prisma.
+ */
+async function readImageThreadViaKysely(
+  entityType: string,
+  entityId: number
+): Promise<{ id: number; locked: boolean } | null | undefined> {
+  if (entityType !== 'image') return undefined;
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))) return undefined;
+  return (await getImageThread((await loadKyselyDb()).kyselyRead, entityId)) ?? null;
 }
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
@@ -1155,10 +1178,14 @@ export async function getCommentsInfinite({
 }: GetCommentsInfiniteInput & { excludedUserIds?: number[]; isModerator?: boolean }) {
   return withSpan('commentv2:getInfinite', async () => {
     // 1. Get thread metadata
-    const mainThread = await dbRead.thread.findUnique({
-      where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-      select: { id: true },
-    });
+    const imageThread = await readImageThreadViaKysely(entityType, entityId);
+    const mainThread =
+      imageThread !== undefined
+        ? imageThread && { id: imageThread.id }
+        : await dbRead.thread.findUnique({
+            where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+            select: { id: true },
+          });
     if (!mainThread) return null;
 
     // 2. Fetch pinned comments (only when no cursor = first page)

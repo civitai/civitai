@@ -118,7 +118,9 @@ beforeEach(async () => {
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL,
       "userId" INTEGER, "type" TEXT NOT NULL DEFAULT 'LORA', "poi" BOOLEAN NOT NULL DEFAULT false,
-      "minor" BOOLEAN NOT NULL DEFAULT false);
+      "minor" BOOLEAN NOT NULL DEFAULT false,
+      "uploadType" TEXT NOT NULL DEFAULT 'Created',
+      "availability" TEXT NOT NULL DEFAULT 'Public', "deletedAt" TIMESTAMP(3));
   `);
   await db.query(
     `INSERT INTO "User" ("id","username") VALUES (10,'owner_a'), (11,'Mod_Person'), (12,'owner_b')`
@@ -234,6 +236,30 @@ describe('listModelRuleHolds', () => {
     expect(row.fields).toHaveLength(1);
   });
 
+  it('says whether a ruling clears the rules instead of restoring the model', async () => {
+    await seed([{ id: 1, meta: meta({ source: 'training' }) }, { id: 2 }, { id: 3 }]);
+    await db.exec(`INSERT INTO "Model" ("id","name","status")
+      VALUES (10,'Draft one','Draft'), (20,'Published one','Published'), (30,'Taken down','UnpublishedViolation')`);
+    const byId = new Map((await listModelRuleHolds(PENDING)).items.map((i) => [i.id, i]));
+    expect(byId.get(1)?.clearsRules).toBe(true);
+    expect(byId.get(2)?.clearsRules).toBe(false);
+    expect(byId.get(3)?.clearsRules).toBe(false);
+  });
+
+  it('says whether a training run raised the hold and whether the model was trained on Civitai', async () => {
+    await seed([
+      { id: 1, meta: meta({ source: 'training' }) },
+      { id: 2, meta: meta({ source: 'elsewhere' }) },
+      { id: 3 },
+    ]);
+    await db.exec(`INSERT INTO "Model" ("id","name","status","uploadType")
+      VALUES (10,'Trained one','Draft','Trained'), (20,'Uploaded one','Draft','Created')`);
+    const byId = new Map((await listModelRuleHolds(PENDING)).items.map((i) => [i.id, i]));
+    expect(byId.get(1)).toMatchObject({ source: 'training', uploadType: 'Trained' });
+    expect(byId.get(2)).toMatchObject({ source: null, uploadType: 'Created' });
+    expect(byId.get(3)).toMatchObject({ source: null, uploadType: null });
+  });
+
   it('pages with hasMore', async () => {
     await seed([{ id: 1 }, { id: 2 }, { id: 3 }]);
     const page = await listModelRuleHolds({ ...PENDING, limit: 2 });
@@ -284,6 +310,20 @@ describe('history and owner holds', () => {
       decision: 'dismiss_allowed',
       decidedByUsername: 'Mod_Person',
     });
+  });
+
+  it('says per earlier hold whether its ruling cleared rules rather than restored the model', async () => {
+    await seed([
+      { id: 1, entityId: 7, status: 'Dismissed', meta: meta({ source: 'training' }) },
+      { id: 2, entityId: 7, status: 'Dismissed', meta: meta({ decision: 'dismiss_allowed' }) },
+      { id: 3, entityId: 7 },
+    ]);
+    await db.exec(
+      `INSERT INTO "Model" ("id","name","status") VALUES (7,'Taken down','UnpublishedViolation')`
+    );
+    const byId = new Map((await getModelRuleHoldHistory(3)).map((e) => [e.id, e]));
+    expect(byId.get(1)?.clearsRules).toBe(true);
+    expect(byId.get(2)?.clearsRules).toBe(false);
   });
 
   it('lists the owner’s other pending holds with their hashes', async () => {

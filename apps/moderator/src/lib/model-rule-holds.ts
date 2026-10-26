@@ -84,8 +84,30 @@ export const STRIKE_GRANT = 'user.strike';
 export const expectedStatus = (decision: ModelRuleHoldDecision) =>
   decision === 'confirm' || decision === 'confirm_strike' ? 'Confirmed' : 'Dismissed';
 
+/**
+ * Whether a ruling clears the matched rules for the text instead of restoring the model: the condition
+ * the main app's `clearsRulesInsteadOfRestoring` applies, so the copy promises what the server does.
+ */
+export function holdClearsRules(hold: {
+  source: 'training' | null;
+  modelStatus: string | null;
+  modelAvailability: string | null;
+  modelDeleted: boolean;
+}): boolean {
+  if (hold.modelStatus === null || hold.modelDeleted || hold.modelStatus === 'Deleted')
+    return false;
+  if (hold.source === 'training') return true;
+  const live =
+    (hold.modelStatus === 'Published' || hold.modelStatus === 'Scheduled') &&
+    hold.modelAvailability !== 'Private';
+  return !live && hold.modelStatus !== 'UnpublishedViolation';
+}
+
 /** The button copy follows what the decision does to the model in the mode the hold was detected in. */
-export function decisionButtons(mode: HoldMode): {
+export function decisionButtons(
+  mode: HoldMode,
+  clearsRules = false
+): {
   decision: ModelRuleHoldDecision;
   label: string;
   tone?: 'red' | 'dark-red';
@@ -94,27 +116,43 @@ export function decisionButtons(mode: HoldMode): {
   return [
     {
       decision: 'confirm',
-      label: auto ? 'Confirm — keep down' : 'Confirm — unpublish',
+      label: clearsRules ? 'Confirm' : auto ? 'Confirm — keep down' : 'Confirm — unpublish',
       tone: 'red',
     },
     {
       decision: 'confirm_strike',
-      label: auto ? 'Confirm — keep down + strike' : 'Confirm — unpublish + strike',
+      label: clearsRules
+        ? 'Confirm + strike'
+        : auto
+        ? 'Confirm — keep down + strike'
+        : 'Confirm — unpublish + strike',
       tone: 'dark-red',
     },
     {
       decision: 'dismiss_not_subject',
-      label: auto ? 'Dismiss — republish (not this subject)' : 'Dismiss — not this subject',
+      label:
+        auto && !clearsRules
+          ? 'Dismiss — republish (not this subject)'
+          : 'Dismiss — not this subject',
     },
     {
       decision: 'dismiss_allowed',
-      label: auto ? 'Dismiss — republish (allowed use)' : 'Dismiss — allowed use',
+      label: auto && !clearsRules ? 'Dismiss — republish (allowed use)' : 'Dismiss — allowed use',
     },
   ];
 }
 
-export function decisionOutcome(decision: ModelRuleHoldDecision, mode: HoldMode): string {
+export function decisionOutcome(
+  decision: ModelRuleHoldDecision,
+  mode: HoldMode,
+  clearsRules = false
+): string {
   const auto = mode === 'active';
+  if (clearsRules) {
+    if (decision === 'confirm') return 'Confirmed';
+    if (decision === 'confirm_strike') return 'Confirmed, owner struck';
+    return 'Dismissed — cleared for this text';
+  }
   if (decision === 'confirm') return auto ? 'Model kept down' : 'Model unpublished';
   if (decision === 'confirm_strike')
     return auto ? 'Model kept down, owner struck' : 'Model unpublished, owner struck';
@@ -136,9 +174,10 @@ export function heldOutcome(hold: {
   status: string;
   decision: string | null;
   mode: HoldMode;
+  clearsRules?: boolean;
 }): string {
   if (hold.decision && (MODEL_RULE_HOLD_DECISIONS as readonly string[]).includes(hold.decision))
-    return decisionOutcome(hold.decision as ModelRuleHoldDecision, hold.mode);
+    return decisionOutcome(hold.decision as ModelRuleHoldDecision, hold.mode, hold.clearsRules);
   return hold.status === 'Confirmed' ? 'Confirmed' : 'Dismissed';
 }
 

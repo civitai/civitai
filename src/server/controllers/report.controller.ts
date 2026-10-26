@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type {
@@ -51,6 +52,7 @@ export async function createReportHandler({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      emailVerificationRequired: requiresEmailVerification(ctx.user),
     });
 
     if (result) {

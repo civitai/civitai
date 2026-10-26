@@ -144,6 +144,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
+  REVIEW_FALLBACK_MODEL: 'fallback-model',
   estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateArticle: vi.fn(),
   generateCollectionDetails: vi.fn(),

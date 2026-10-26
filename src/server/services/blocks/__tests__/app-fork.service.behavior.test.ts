@@ -406,6 +406,30 @@ describe('with the migration applied', () => {
       ).resolves.toBe(false);
     });
 
+    it('🔴 refuses a pending request for an EXISTING app — only a first version (no block yet) takes provenance', async () => {
+      // PLAIN_REQUEST is a pending update of OTHER_BLOCK, an existing app unrelated to the parent.
+      // Stamping it would turn OTHER_BLOCK into a "fork" of PARENT_BLOCK on its next approve.
+      await expect(
+        setPublishRequestForkProvenance(db, {
+          publishRequestId: PLAIN_REQUEST,
+          forkOfAppBlockId: PARENT_BLOCK,
+          forkOfCommitSha: PARENT_SHA,
+        })
+      ).resolves.toBe(false);
+      const req = await pg.query<{ p: string | null; s: string | null }>(
+        `SELECT "fork_of_app_block_id" AS p, "fork_of_commit_sha" AS s FROM "app_block_publish_requests" WHERE "id" = '${PLAIN_REQUEST}'`
+      );
+      expect(req.rows[0]).toEqual({ p: null, s: null });
+      // Positive control: the first-version request (no block yet) still takes it.
+      await expect(
+        setPublishRequestForkProvenance(db, {
+          publishRequestId: FORK_REQUEST,
+          forkOfAppBlockId: PARENT_BLOCK,
+          forkOfCommitSha: PARENT_SHA,
+        })
+      ).resolves.toBe(true);
+    });
+
     it('the database refuses a listing that names itself as its parent', async () => {
       await expect(
         pg.query(`UPDATE "app_listings" SET "fork_of_listing_id" = "id" WHERE "id" = $1`, [

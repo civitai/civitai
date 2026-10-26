@@ -701,8 +701,9 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
  * a badge cannot count items the queue never shows.
  *
  * `getCollectionItemsByCollectionId` hydrates REVIEW rows through the feed services as a moderator
- * with `browsingLevel` = `allBrowsingLevelsFlag`, and drops every row whose target does not come
- * back. Each branch mirrors the clauses that decide that:
+ * at the request's `browsingLevel`, and drops every row whose target does not come back. The review
+ * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
+ * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
  *   Archived); `getModelsWithImagesAndModelVersions` drops TakenDown.
  * - Image: `getAllImages` with `pending` keeps any image on an existing post, unrated ones included,
@@ -711,20 +712,19 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
  * - Article: `getArticles` requires Published with a publish date.
  * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
  *
- * The browsing level is `allBrowsingLevelsFlag`, which has no Blocked bit: a Blocked-only target
- * never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
+ * No browsing level has the Blocked bit: a Blocked-only target never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
  * The CASE order is hydration's: a row with two target columns is judged by the first one only.
  *
  * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
  * images, a post with no images). Those cost a join per row and are rare states; the queue can
  * still show slightly fewer items than the count for them.
  */
-const reviewQueueVisibleTargetSql = Prisma.sql`(CASE
+const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
   WHEN ci."modelId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "ModelMetric" rv_mm
     WHERE rv_mm."modelId" = ci."modelId"
       AND rv_mm."status" = ${ModelStatus.Published}::"ModelStatus"
-      AND (rv_mm."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+      AND (rv_mm."nsfwLevel" & ${levels}) != 0
       AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
         ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
       ))
@@ -733,13 +733,13 @@ const reviewQueueVisibleTargetSql = Prisma.sql`(CASE
     SELECT 1 FROM "Post" rv_p
     WHERE rv_p.id = ci."postId"
       AND rv_p."publishedAt" <= now()
-      AND (rv_p."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+      AND (rv_p."nsfwLevel" & ${levels}) != 0
   )
   WHEN ci."imageId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "Image" rv_i
     JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
     WHERE rv_i.id = ci."imageId"
-      AND ((rv_i."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0 OR rv_i."nsfwLevel" = 0)
+      AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
       AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
   )
   WHEN ci."articleId" IS NOT NULL THEN EXISTS (
@@ -747,18 +747,19 @@ const reviewQueueVisibleTargetSql = Prisma.sql`(CASE
     WHERE rv_a.id = ci."articleId"
       AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
       AND rv_a."publishedAt" IS NOT NULL
-      AND (rv_a."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+      AND (rv_a."nsfwLevel" & ${levels}) != 0
   )
   ELSE false
 END)`;
 
-export async function getPendingReviewCount(collectionId: number) {
+/** `levels`: what the requesting domain can serve, `domainServableLevels(ctx)`. */
+export async function getPendingReviewCount(collectionId: number, levels: number) {
   const [row] = await dbRead.$queryRaw<{ pending: number }[]>`
     SELECT count(*)::int AS pending
     FROM "CollectionItem" ci
     WHERE ci."collectionId" = ${collectionId}
       AND ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus"
-      AND ${reviewQueueVisibleTargetSql}
+      AND ${reviewQueueVisibleTargetSql(levels)}
   `;
   return Number(row?.pending ?? 0);
 }
@@ -792,7 +793,14 @@ export async function getPendingReviewCount(collectionId: number) {
  * Not cached: it runs once per page load (`checkNotifications` is `staleTime: Infinity`) and on
  * explicit invalidation after a review action, never on a poll.
  */
-export async function getPendingCollectionReviewCounts({ userId }: { userId: number }) {
+export async function getPendingCollectionReviewCounts({
+  userId,
+  levels,
+}: {
+  userId: number;
+  /** What the requesting domain can serve, `domainServableLevels(ctx)`. */
+  levels: number;
+}) {
   const rows = await dbRead.$queryRaw<{ collectionId: number; pending: number }[]>`
     SELECT ci."collectionId", count(*)::int AS pending
     FROM "CollectionItem" ci
@@ -805,7 +813,7 @@ export async function getPendingCollectionReviewCounts({ userId }: { userId: num
            AND ${CollectionContributorPermission.MANAGE}::"CollectionContributorPermission"
                = ANY(cc."permissions")
       )
-      AND ${reviewQueueVisibleTargetSql}
+      AND ${reviewQueueVisibleTargetSql(levels)}
     GROUP BY ci."collectionId"
   `;
 
@@ -2019,8 +2027,12 @@ export const getCollectionItemsByCollectionId = async ({
         : Prisma.sql``;
     // Hydration would drop these rows anyway; filtering here keeps a page of dead rows from
     // rendering as an empty queue, and keeps the queue reading the same predicate as the counts.
+    // The level is the request's, already held to the domain cap; masked so a client-sent Blocked
+    // bit cannot let Blocked targets through.
     const reviewVisibleCondition = forReview
-      ? Prisma.sql`AND ${reviewQueueVisibleTargetSql}`
+      ? Prisma.sql`AND ${reviewQueueVisibleTargetSql(
+          (input.browsingLevel ?? allBrowsingLevelsFlag) & allBrowsingLevelsFlag
+        )}`
       : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)

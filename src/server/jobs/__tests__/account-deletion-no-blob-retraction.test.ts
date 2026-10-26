@@ -96,6 +96,13 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(async () => undefined),
 }));
 
+// Hand-listed, as above: the takedown sync loads clients this file does not boot.
+vi.mock('~/server/services/cdn-access.service', () => ({
+  persistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
+  reserveTakedownRetractions: vi.fn(async () => null),
+  settleTakedownReservations: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: vi.fn(async () => undefined),
 }));

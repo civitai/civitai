@@ -511,6 +511,16 @@ export function appBlockTag(appId: string): string {
 }
 
 /**
+ * The per-INSTANCE tag. Server-stamped at submit (`buildWorkflowTags`) from the
+ * VERIFIED token's `blockInstanceId`, never client input. Same single-source rule
+ * as `appBlockTag`: the stamp and `assertBlockWorkflowTaggedForInstance` both call
+ * this, so they cannot desync.
+ */
+export function appBlockInstanceTag(blockInstanceId: string): string {
+  return `app-block:instance:${blockInstanceId}`;
+}
+
+/**
  * The clean, wire-stable projection of an orchestrator Workflow the App Blocks
  * generator SUBQUEUE read (`blocks.queryAppWorkflows`) hands to a block. This is
  * the CONTRACT the SDK matches — keep it minimal + additive-only. It deliberately

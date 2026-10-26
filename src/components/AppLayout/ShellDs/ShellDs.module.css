@@ -158,6 +158,80 @@
     --shell-radius: var(--mantine-radius-xl);
   }
 
+  /* ---- The model page's buttons (flag `modelPageDesignSystemMarkup`) ---- */
+
+  .filledGray {
+    --shell-bg: var(--mantine-color-gray-filled);
+    --shell-hover: var(--mantine-color-gray-filled-hover);
+    --shell-color: var(--mantine-color-white);
+    --shell-bd: transparent;
+  }
+
+  .filledBlue {
+    --shell-bg: var(--mantine-color-blue-filled);
+    --shell-hover: var(--mantine-color-blue-filled-hover);
+    --shell-color: var(--mantine-color-white);
+    --shell-bd: transparent;
+  }
+
+  .filledGreen {
+    --shell-bg: var(--mantine-color-green-filled);
+    --shell-hover: var(--mantine-color-green-filled-hover);
+    --shell-color: var(--mantine-color-white);
+    --shell-bd: transparent;
+  }
+
+  .lightGray {
+    --shell-bg: var(--mantine-color-gray-light);
+    --shell-hover: var(--mantine-color-gray-light-hover);
+    --shell-color: var(--mantine-color-gray-light-color);
+    --shell-bd: transparent;
+  }
+
+  .lightGreen {
+    --shell-bg: var(--mantine-color-green-light);
+    --shell-hover: var(--mantine-color-green-light-hover);
+    --shell-color: var(--mantine-color-green-light-color);
+    --shell-bd: transparent;
+  }
+
+  .outlineGray {
+    --shell-bg: transparent;
+    --shell-hover: var(--mantine-color-gray-outline-hover);
+    --shell-color: var(--mantine-color-gray-outline);
+    --shell-bd: var(--mantine-color-gray-outline);
+  }
+
+  .transparentGray {
+    --shell-bg: transparent;
+    --shell-hover: transparent;
+    --shell-color: var(--mantine-color-gray-light-color);
+    --shell-bd: transparent;
+  }
+
+  .sizeCompactSm {
+    --shell-height: calc(1.625rem * var(--mantine-scale));
+    --shell-px: calc(0.5rem * var(--mantine-scale));
+    --shell-fz: var(--mantine-font-size-sm);
+  }
+
+  .iconXs {
+    --shell-px: 0;
+    --shell-fz: var(--mantine-font-size-md);
+    --shell-height: calc(1.125rem * var(--mantine-scale));
+    text-align: left;
+    font-weight: inherit;
+    white-space: inherit;
+    width: var(--shell-height);
+    min-width: var(--shell-height);
+    min-height: var(--shell-height);
+    gap: 0;
+  }
+
+  .fullWidth {
+    width: 100%;
+  }
+
   /* Mantine `Divider orientation="vertical"`. */
   .divider {
     align-self: stretch;

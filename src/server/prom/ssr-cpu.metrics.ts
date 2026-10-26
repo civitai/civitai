@@ -6,10 +6,11 @@ import {
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
 import { pageRouteLabel } from '~/server/utils/page-routes';
+import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const SSR_CPU_METRIC = PROM_PREFIX + 'ssr_cpu_seconds_total';
 
-export type SsrRequestKind = 'html' | 'data';
+export type SsrRequestKind = 'html' | 'data' | 'shell';
 
 function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
   return registerInstrumentationMetric(
@@ -20,7 +21,8 @@ function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
         help:
           'Main-thread CPU seconds (user + system) spent rendering a page (phase=render: ' +
           '_document.getInitialProps, which runs renderPage), by page route; kind is data for a ' +
-          '/_next/data request answered with a rendered page. Excludes V8 worker, libuv pool and ' +
+          '/_next/data request answered with a rendered page and shell for a static shell render. ' +
+          'Excludes V8 worker, libuv pool and ' +
           'Prisma engine threads; under concurrency a measurement also includes CPU of other ' +
           'requests interleaved on the event loop',
         labelNames: ['route', 'phase', 'kind'] as const,
@@ -29,17 +31,25 @@ function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
   );
 }
 
-type RequestLike = { url?: string; headers: Record<string, string | string[] | undefined> };
+type RequestLike = {
+  url?: string;
+  headers: Record<string, string | string[] | undefined>;
+  [SHELL_REQ_KEY]?: string;
+};
 
 /**
  * A page without getServerSideProps still renders a full document for a `/_next/data` request.
  * Next sets `x-nextjs-data` on such requests when the app has a proxy and leaves `req.url` as the
  * data URL; either marks the request.
  */
+export function isNextDataRequest(req: Omit<RequestLike, typeof SHELL_REQ_KEY>): boolean {
+  return req.headers['x-nextjs-data'] === '1' || !!req.url?.startsWith('/_next/data');
+}
+
+/** `shell` for a static shell render (`_app` marks the request), so its CPU reads apart from full renders. */
 export function ssrRequestKind(req: RequestLike): SsrRequestKind {
-  return req.headers['x-nextjs-data'] === '1' || req.url?.startsWith('/_next/data')
-    ? 'data'
-    : 'html';
+  if (isNextDataRequest(req)) return 'data';
+  return req[SHELL_REQ_KEY] ? 'shell' : 'html';
 }
 
 /**

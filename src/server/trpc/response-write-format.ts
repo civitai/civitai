@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { recordFastSuperjsonWrite } from '~/server/prom/trpc-fast-superjson.metrics';
 import { canDecodeDevalueResponse } from '~/server/utils/client-version-saturation';
+import { fastSuperjsonSerialize } from '~/server/trpc/superjson-fast-serialize';
 import { pickServerWriteSerialize, WRITE_DEVALUE } from '~/shared/utils/trpc-union-transformer';
 
 /**
@@ -60,7 +63,17 @@ export function pinResponseWriteToSuperjson(): void {
 /**
  * The server transformer's response write. devalue goes through the fail-open
  * `writeSerializeWithFallback` (superjson for a payload devalue cannot represent).
+ *
+ * A superjson response (every edge-cacheable one, and every response to a client that cannot
+ * read devalue) goes through `fastSuperjsonSerialize` when the `trpc-fast-superjson-write` Flipt
+ * flag is on: the same output as `superjson.serialize`, computed with a cheaper walk. Off, or
+ * the flag unknown, it is `superjson.serialize` as before. With the flag on, each attempt is
+ * counted by outcome (`civitai_app_trpc_fast_superjson_writes_total`, fast / bail /
+ * registry_off); with it off nothing is counted.
  */
 export function responseWriteSerialize(data: unknown): unknown {
-  return pickServerWriteSerialize(responseWritesDevalue())(data);
+  const devalue = responseWritesDevalue();
+  if (!devalue && isFliptSync(FLIPT_FEATURE_FLAGS.TRPC_FAST_SUPERJSON_WRITE) === true)
+    return fastSuperjsonSerialize(data, recordFastSuperjsonWrite);
+  return pickServerWriteSerialize(devalue)(data);
 }

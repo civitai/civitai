@@ -22,6 +22,7 @@ CREATE TYPE public."NotificationCategory" AS ENUM (
     'Creator',
     'Referral',
     'System',
+    'Moderation',
     'Other'
 );
 

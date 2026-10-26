@@ -38,7 +38,13 @@ type ImageTagModActivity = {
 
 export type ImageModActivity = {
   entityType: 'image';
-  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal' | 'setNsfwLevelKono';
+  activity:
+    | TagActivities
+    | 'review'
+    | 'setNsfwLevel'
+    | 'resolveAppeal'
+    | 'setNsfwLevelKono'
+    | 'heldMedia:view';
 };
 
 type ArticleModActivity = {
@@ -101,7 +107,8 @@ type UserModActivity = {
     | `creatorProgramBan:${string}`
     // A lost payment dispute on a payment this account made
     // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
-    | `chargeback:${string}`;
+    | `chargeback:${string}`
+    | `creditCryptoDeposit:${string}`;
 };
 
 type ComicProjectModActivity = {
@@ -130,6 +137,12 @@ type BountyEntryModActivity = {
   activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
+/** The CSAM report page opened an account's held media; the activity carries how many items. */
+type HeldMediaGridModActivity = {
+  entityType: 'user';
+  activity: `heldMedia:grid:${number}`;
+};
+
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
@@ -151,6 +164,7 @@ type ModActivity = {
   | FeedbackModActivity
   | BountyEntryModActivity
   | SiteAlertModActivity
+  | HeldMediaGridModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

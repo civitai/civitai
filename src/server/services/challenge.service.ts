@@ -105,6 +105,8 @@ import {
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
+  winnerImageFields,
+  winnerImageStateSql,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import {
   getChallengeExcludedUserIds,
@@ -141,6 +143,7 @@ import {
 } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   deriveChallengeNsfwLevel,
@@ -347,12 +350,12 @@ const challengeCardQuery = Prisma.sql`
 // The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
-// A cover the site's rating ceiling allows for this viewer, else null.
-function coverWithinSite<T extends { nsfwLevel: number }>(
-  cover: T | null | undefined,
-  site: SiteViewer
-): T | null {
-  if (!cover) return null;
+// A cover the site's rating ceiling allows for this viewer, else null. A blocked cover is withheld
+// on every site.
+function coverWithinSite<
+  T extends { nsfwLevel: number; ingestion: ImageIngestionStatus; blockedFor: string | null }
+>(cover: T | null | undefined, site: SiteViewer): T | null {
+  if (!cover || hasBlockMarker(cover)) return null;
   return site.isGreen && isImageHiddenFromGreenViewer(cover.nsfwLevel, site.viewerId)
     ? null
     : cover;
@@ -955,12 +958,10 @@ async function buildChallengeDetail(
         select: imageSelect,
       })
     : null;
-  const coverImage =
-    fetchedCover &&
-    green?.isGreen &&
-    isImageHiddenFromGreenViewer(fetchedCover.nsfwLevel, green.viewerId)
-      ? null
-      : fetchedCover;
+  const coverImage = coverWithinSite(fetchedCover, {
+    isGreen: green?.isGreen ?? false,
+    viewerId: green?.viewerId,
+  });
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -4264,6 +4265,9 @@ export async function getCompletedChallengesWithWinners(
       imageUrl: string | null;
       imageNsfwLevel: number | null;
       imageHash: string | null;
+      imageIngestion: ImageIngestionStatus | null;
+      imageBlockedFor: string | null;
+      imageReviewed: boolean | null;
       buzzAwarded: number;
       reason: string | null;
       collectionItemNote: string | null;
@@ -4278,6 +4282,7 @@ export async function getCompletedChallengesWithWinners(
       i.url as "imageUrl",
       i."nsfwLevel" as "imageNsfwLevel",
       i.hash as "imageHash",
+      ${winnerImageStateSql},
       cw."buzzAwarded",
       cw.reason,
       ci.note as "collectionItemNote"
@@ -4309,15 +4314,14 @@ export async function getCompletedChallengesWithWinners(
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
-    const hideThumb = isGreen && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
+    const image = winnerImageFields(w);
+    const hideThumb = isGreen && isImageHiddenFromGreenViewer(image.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
       username: w.username,
-      imageId: w.imageId,
-      imageUrl: hideThumb ? null : w.imageUrl,
-      imageNsfwLevel: w.imageNsfwLevel,
-      imageHash: w.imageHash,
+      ...image,
+      imageUrl: hideThumb ? null : image.imageUrl,
       buzzAwarded: w.buzzAwarded,
       reason: w.reason,
       judgeScore: parseJudgeScore(w.collectionItemNote),

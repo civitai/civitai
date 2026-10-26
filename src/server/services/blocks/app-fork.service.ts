@@ -348,8 +348,13 @@ export async function setAppBlockForkProvenance(
  * {@link applyForkProvenanceOnApprove} stamps the new block from the request, after which every
  * later version carries it automatically.
  *
- * Write-once and pending-only; returns `false` when nothing was written. Refuses a request whose
- * own block IS the claimed parent.
+ * Write-once and pending-only; returns `false` when nothing was written.
+ *
+ * 🔴 FIRST VERSIONS ONLY (`app_block_id IS NULL`). A request for an app that already exists is a
+ * pending UPDATE of that app; stamping it would make an existing, unrelated app a "fork" of the
+ * parent on its next approve. An existing fork's later requests get their provenance from its
+ * own block (`carryForkProvenanceToPublishRequest`), never from here. This also covers "a
+ * request whose own block IS the claimed parent".
  */
 export async function setPublishRequestForkProvenance(
   db: Pick<ForkRawClient, '$executeRaw'>,
@@ -362,9 +367,9 @@ export async function setPublishRequestForkProvenance(
             "fork_of_commit_sha" = ${args.forkOfCommitSha}
         WHERE "id" = ${args.publishRequestId}
           AND "status" = 'pending'
+          AND "app_block_id" IS NULL
           AND "fork_of_app_block_id" IS NULL
           AND "fork_of_commit_sha" IS NULL
-          AND ("app_block_id" IS NULL OR "app_block_id" <> ${args.forkOfAppBlockId})
           AND EXISTS (SELECT 1 FROM "app_blocks" p WHERE p."id" = ${args.forkOfAppBlockId})`
   );
   return count > 0;

@@ -1,6 +1,7 @@
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsBaseModelList } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
@@ -40,6 +41,7 @@ import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
@@ -367,9 +369,13 @@ export const createTrainingWorkflow = async ({
   if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+  const modelVersions = await dbWrite.$queryRaw<
+    (TrainingRequest & { modelId: number; modelMeta: ModelMeta | null })[]
+  >`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m.id        "modelId",
+           m.meta      "modelMeta",
            mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
@@ -401,6 +407,8 @@ export const createTrainingWorkflow = async ({
     throw throwBadRequestError(
       'This model has been blocked from training - please try another one.'
     );
+  if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
+    throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
@@ -465,6 +473,11 @@ export const createTrainingWorkflow = async ({
   await assertTrainingTriggerWordAllowed({
     triggerWord,
     log: { userId, source: 'trainer', modelVersionId },
+    model: {
+      id: modelVersion.modelId,
+      versionId: modelVersion.modelVersionId,
+      meta: modelVersion.modelMeta,
+    },
   });
 
   // Don't override the engine field in params - it needs to remain as the literal type

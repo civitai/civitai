@@ -474,6 +474,7 @@ export function createFakeDb() {
     // images a reader may see is storyline.service.test's subject, not this one's.
     if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
+    if (text.includes('FROM "Storyline"') && /FOR SHARE( OF st)?$/.test(text.trim())) return [];
     if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
       // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
       // while the statement carries both its filters, so one that drops either is refused.

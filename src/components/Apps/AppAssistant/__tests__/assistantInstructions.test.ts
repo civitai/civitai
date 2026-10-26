@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { assistantSystemPrompt } from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,
@@ -157,9 +158,28 @@ describe('buildAssistantSystemPrompt', () => {
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
+        "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
       ].join('\n')
     );
+  });
+});
+
+describe('pricing an estimate', () => {
+  // An app the assistant built treated `estimate.status !== 'succeeded'` as "no price", but a
+  // priced estimate comes back 'pending' with cost.total, so it showed "couldn't get a price"
+  // for every estimate. The whole line, on both runners and with or without subagents.
+  const ESTIMATE_RULE =
+    "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.";
+
+  it.each([
+    ['browser', false],
+    ['browser', true],
+    ['remote', false],
+    ['remote', true],
+  ] as const)('the %s system prompt (subagents: %s) tells the assistant how', (runner, subagents) => {
+    const lines = assistantSystemPrompt(runner, subagents)('BUILT-IN RULES').split('\n');
+    expect(lines.filter((line) => line.includes('estimate'))).toEqual([ESTIMATE_RULE]);
   });
 });
 

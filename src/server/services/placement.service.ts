@@ -1,5 +1,11 @@
 import { z } from 'zod';
+import {
+  countPendingPlacementsBySurface,
+  getUserPlacementScore,
+} from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -139,24 +145,32 @@ export type PlacementPriceRange = {
 export async function placementPriceRange(
   userId: number,
   surface: PlacementSurface,
-  config?: PlacementConfig
+  config?: PlacementConfig,
+  /** `kysely-placement-reads`, when the caller already evaluated it for this request. */
+  useKysely?: boolean
 ): Promise<PlacementPriceRange> {
+  const kysely = useKysely ?? (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS));
   const [scoreRow, capTier, resolvedConfig] = await Promise.all([
-    // Cast through `numeric`: `::int` raises on a fractional stored total rather
-    // than truncating it. Text that isn't a number at all still raises.
-    dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
-      FROM "User" WHERE id = ${userId}
-    `,
+    readUserScore(userId, kysely),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId),
+    getCapTier(userId, { useKysely: kysely }),
     config ?? getPlacementConfig(),
   ]);
 
   return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+async function readUserScore(userId: number, useKysely: boolean) {
+  if (useKysely) return getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId);
+  // Cast through `numeric`: `::int` raises on a fractional stored total rather
+  // than truncating it. Text that isn't a number at all still raises.
+  return dbRead.$queryRaw<{ score: number | null }[]>`
+    SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+    FROM "User" WHERE id = ${userId}
+  `;
 }
 
 function toPlacementPriceRange(
@@ -261,16 +275,23 @@ const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
  * slot and still expires, so counting it is the honest answer.
  */
 export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
-  const rows = await dbRead.placement.groupBy({
-    by: ['surface'],
-    where: { ownerId, status: 'pending' },
-    _count: { _all: true },
-  });
-
-  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+  const bySurface = new Map(await readPendingCounts(ownerId));
 
   return {
     sticker: bySurface.get('sticker') ?? 0,
     remix: bySurface.get('remixGallery') ?? 0,
   };
+}
+
+async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return (await countPendingPlacementsBySurface((await loadKyselyDb()).kyselyRead, ownerId)).map(
+      (row) => [row.surface, row.count]
+    );
+  const rows = await dbRead.placement.groupBy({
+    by: ['surface'],
+    where: { ownerId, status: 'pending' },
+    _count: { _all: true },
+  });
+  return rows.map((row) => [row.surface, row._count._all]);
 }

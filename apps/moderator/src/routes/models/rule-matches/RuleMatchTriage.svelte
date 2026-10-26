@@ -193,6 +193,8 @@
         <MetaChip tone={row.mode === 'active' ? 'amber' : 'blue'}>{modeLabel(row.mode)}</MetaChip>
         {#if row.applied}<MetaChip tone="red">applied</MetaChip>{/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.source === 'training'}<MetaChip tone="amber">Training</MetaChip>{/if}
+        {#if row.uploadType === 'Trained'}<MetaChip>Trained on Civitai</MetaChip>{/if}
         {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
         {#if row.userId !== null && row.otherPendingByOwner > 0}
           <OwnerGroupChip href={ownerHref(row.userId)} title="Show this owner’s pending matches">

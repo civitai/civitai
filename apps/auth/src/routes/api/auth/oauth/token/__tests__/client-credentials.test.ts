@@ -85,7 +85,11 @@ async function token(scope: number | null, secret = SECRET) {
       body,
     }),
   } as never);
-  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  return {
+    status: res.status,
+    headers: res.headers,
+    body: (await res.json()) as Record<string, unknown>,
+  };
 }
 
 beforeEach(() => {
@@ -101,6 +105,8 @@ describe('client_credentials grant', () => {
     expect(res.body.scope).toEqual([String(CATALOG | TokenScope.UserRead)]);
     expect(res.body.expires_in).toBe(3600);
     expect(res.body).not.toHaveProperty('refresh_token');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('pragma')).toBe('no-cache');
     expect(h.inserts).toHaveLength(1);
     expect(h.inserts[0]).toMatchObject({
       type: 'Access',
@@ -119,6 +125,17 @@ describe('client_credentials grant', () => {
 
   it('refuses a scope inside the client ceiling but outside the client_credentials cap', async () => {
     const res = await token(TokenScope.AIServicesWrite);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it('refuses WorkerRegister even when the client ceiling has it', async () => {
+    h.client = confidentialClient({
+      allowedScopes: TokenScope.UserRead | CATALOG | TokenScope.WorkerRegister,
+    });
+    const res = await token(TokenScope.WorkerRegister);
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_scope');

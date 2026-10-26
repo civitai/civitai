@@ -3,7 +3,8 @@ import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
+import { executeRefresh } from '~/server/metrics/metric-helpers';
+import { getCollectionItemCountTasks } from '~/server/metrics/collection-item-counts';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -22,7 +23,6 @@ export const modelCollectionMetrics = createMetricProcessor({
     ctx.updates = {};
     ctx.idKey = 'modelId';
 
-    // Get collection tasks - uses 5-minute agg boundary from getEntityMetricTasks
     const collectionTasks = await getCollectionTasks(ctx);
     log('modelCollectionMetrics update', collectionTasks.length, 'tasks');
     await limitConcurrency(collectionTasks, 2);
@@ -50,7 +50,7 @@ export const modelCollectionMetrics = createMetricProcessor({
 });
 
 async function getCollectionTasks(ctx: ModelCollectionMetricContext) {
-  return getEntityMetricTasks(ctx)('Model', 'collectedCount');
+  return getCollectionItemCountTasks(ctx)('Model');
 }
 
 async function bulkInsertCollectionMetrics(ctx: ModelCollectionMetricContext) {

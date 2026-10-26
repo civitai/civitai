@@ -762,6 +762,72 @@ export async function subtractImagesScores(
   return toScoreTotalTransitions(await query.result());
 }
 
+export type ImagesScoreRaise = { id: number; expected: number | null; next: number };
+export type ImagesScoreRaiseRow = ScoreTotalTransition & {
+  oldImages: number | null;
+  newImages: number;
+};
+
+/**
+ * Sets each owner's `images` score to `next` and stamps `stamp.key`, only where it still holds the
+ * `expected` value the caller read, `next` is above it, and the `checkpoint` key still holds
+ * `checkpoint.value`. The cron persists scores before it advances its checkpoint, so a run that lands
+ * between a caller's read and this write fails one guard or the other and the row is left for a retry.
+ */
+export async function raiseImagesScores(
+  pg: AugmentedPool,
+  rows: ImagesScoreRaise[],
+  {
+    checkpoint,
+    stamp,
+  }: { checkpoint: { key: string; value: number }; stamp: { key: string; at: Date } }
+): Promise<ImagesScoreRaiseRow[]> {
+  if (!rows.length) return [];
+  if (!/^[a-z:-]+$/.test(checkpoint.key))
+    throw new Error(`invalid checkpoint key: ${checkpoint.key}`);
+  if (!Number.isSafeInteger(checkpoint.value))
+    throw new Error('checkpoint value must be an integer');
+  if (!/^[A-Za-z]+$/.test(stamp.key)) throw new Error(`invalid score stamp key: ${stamp.key}`);
+  const dataJson = JSON.stringify(
+    rows.map(({ id, expected, next }) => ({
+      id: +id,
+      expected: expected == null ? null : +expected,
+      next: +next,
+    }))
+  );
+  const scores = `jsonb_build_object('images', d.next)`;
+  const query = await pg.cancellableQuery<
+    UserScoreUpdateRow & { oldImages: unknown; newImages: unknown }
+  >(`
+    WITH d AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "expected" numeric, "next" numeric))
+    UPDATE "User" u
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || ${scores} || jsonb_build_object('total',
+          ${totalSql(scores)}
+        )${stampSql({ keys: [stamp.key], at: stamp.at })}
+      )
+    FROM d
+    JOIN "User" prev ON prev.id = d.id
+    WHERE d.id = u.id
+      AND (u.meta->'scores'->>'images')::numeric IS NOT DISTINCT FROM d.expected
+      AND d.next > COALESCE((u.meta->'scores'->>'images')::numeric, 0)
+      AND EXISTS (SELECT 1 FROM "KeyValue" WHERE key = '${checkpoint.key}' AND value = to_jsonb(${
+    checkpoint.value
+  }::bigint))
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'images')::numeric AS "oldImages",
+      (u.meta->'scores'->>'images')::numeric AS "newImages",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
+  `);
+  const raw = await query.result();
+  return toScoreTotalTransitions(raw).map((transition, i) => ({
+    ...transition,
+    oldImages: raw[i].oldImages == null ? null : Number(raw[i].oldImages),
+    newImages: Number(raw[i].newImages),
+  }));
+}
+
 // #region [helpers]
 type ScoreMultipliers = {
   models: {
