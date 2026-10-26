@@ -17,12 +17,40 @@ describe('ruleVersionDiff', () => {
       ['Subject', false],
       ['Description', false],
       ['Aliases', true],
+      ['Category', false],
+      ['References', false],
       ['Internal note', false],
       ['Enabled', true],
       ['Needs attention', false],
     ]);
     expect(rows[2]).toMatchObject({ before: 'One\nTwo', after: 'One' });
-    expect(rows[4]).toMatchObject({ before: 'Yes', after: 'No' });
+    expect(rows[6]).toMatchObject({ before: 'Yes', after: 'No' });
+  });
+
+  it('shows a category or reference added between versions', () => {
+    const rows = ruleVersionDiff(
+      state(),
+      state({
+        category: 'artist',
+        references: [
+          { url: 'https://example.com/a', label: 'Portfolio' },
+          { url: 'https://example.org/b' },
+        ],
+      })
+    );
+    expect(rows.find((r) => r.field === 'Category')).toMatchObject({
+      before: '',
+      after: 'artist',
+      changed: true,
+    });
+    expect(rows.find((r) => r.field === 'References')).toMatchObject({
+      before: '',
+      after: 'Portfolio — https://example.com/a\nhttps://example.org/b',
+      changed: true,
+    });
+    expect(sameRuleState(state(), state({ references: [{ url: 'https://example.com/a' }] }))).toBe(
+      false
+    );
   });
 
   it('shows a needs-attention flag that appears or clears between versions', () => {
