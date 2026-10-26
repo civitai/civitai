@@ -10,6 +10,7 @@ paths:
 Root CLAUDE.md covers the stack, the `typecheck`-not-`check` rule and the prettier-svelte ban; this file has the detail. Each app's `CLAUDE.md` records only its deltas from [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
 - Review a segment with `svelte-correctness-review`, `svelte-idiom-review` and `svelte-abstraction-review`.
+- `apps/moderator`: a bulk-selection bar is `$lib/components/SelectionBar`, never a hand-rolled fixed footer, and every action in it is a `TipButton` (or `ConfirmSubmit` with `tip`).
 
 ## `typecheck` vs `check`
 

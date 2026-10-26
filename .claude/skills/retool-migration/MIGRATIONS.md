@@ -379,10 +379,12 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
-- [x] **Reviews / comments** — `ReviewList`, `ComboComments` as read-only lists in
-      `/api/user-account/[userId]`, with ToS/excluded/nsfw flags and links to the model.
+- [x] **Reviews / comments** — `ComboComments` as a list in `/api/user-account/[userId]`. `ReviewList`
+      moved to its own paged endpoint (2026-10-26), `/api/user-reviews/[userId]`: Written / Received
+      tabs, 50 rows a page, filters (owner, rating, flags, text) applied in the query, with
+      ToS/excluded/nsfw flags and links to the model.
       **Bulk delete and ToS actions are built** (2026-08-20; `bulkCommentAction`) — the "side effects
-      the spoke does not own" premise was wrong, see §D.
+      the spoke does not own" premise was wrong, see §D. Bulk review actions batch at 500 ids.
 - [x] **Cosmetics** — owned cosmetics with type and equipped state. `RemoveCosmetics` not ported for
       the same reason (destructive; the main app also refreshes entity caches and search indexes).
 - [x] **Support context** — `GetFreshdesk`. Contact lookup by email in `freshdesk.service.ts`, shown in
