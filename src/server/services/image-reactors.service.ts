@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { BlockedReason } from '~/server/common/enums';
 import { imageReactionListedToViewer } from '~/server/services/reaction-privacy.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -54,11 +55,19 @@ export async function getImageReactors({ imageId, userId }: { imageId: number; u
   if (!image || image.userId !== userId || hidesReactors(image))
     throw throwNotFoundError(`No image with id ${imageId}`);
 
+  // Reactors not counted in the reaction totals are left out so the list and the counts agree. Filtered in SQL
+  // rather than after, so the LIMIT still fills a page. Empty when unavailable: everyone is listed.
+  const notCounted = await getMetricExcludedUserIds();
   const rows = await dbRead.$queryRaw<ReactorRow[]>`
     SELECT "userId", reaction FROM "ImageReaction"
     WHERE "imageId" = ${imageId}
       AND reaction::text IN (${Prisma.join([...IMAGE_REACTOR_TYPES])})
       AND ${imageReactionListedToViewer(userId)}
+      ${
+        notCounted.length
+          ? Prisma.sql`AND NOT ("userId" = ANY(${notCounted}::int[]))`
+          : Prisma.empty
+      }
     ORDER BY "userId" DESC
     LIMIT ${IMAGE_REACTORS_LIMIT * IMAGE_REACTOR_TYPES.length}
   `;
