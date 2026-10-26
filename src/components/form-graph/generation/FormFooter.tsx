@@ -54,7 +54,7 @@ import {
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/Generation/footer-parts';
 import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
 import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { StepWarningsNotification } from '~/components/Generation/footer-parts';
@@ -809,7 +809,7 @@ export function FormFooter({
     setPreBoost,
     download,
   } = useWhatIfContext();
-  const isMobile = useIsMobile({ type: 'media' });
+  const isMobile = useGeneratorLayout() !== 'desktop';
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();

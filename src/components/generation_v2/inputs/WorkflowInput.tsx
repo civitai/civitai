@@ -2,12 +2,10 @@
  * WorkflowInput
  *
  * A form input for selecting generation features (workflows).
- * Displays inline menu cards for Image and Video features, each opening their own dropdown.
- * Uses Popover on desktop and dialogStore modal on mobile.
+ * One segment per category (image, video, audio, 3D), each opening its own picker.
  */
 
-import { Badge, Group, Modal, Popover, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
-import { useDisclosure, useMediaQuery } from '@mantine/hooks';
+import { Badge, Group, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
 import {
   IconArrowLeft,
   IconCheck,
@@ -18,10 +16,9 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { forwardRef, useMemo } from 'react';
+import { forwardRef, useMemo, useState } from 'react';
 
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import {
@@ -29,6 +26,7 @@ import {
   workflowConfigByKey,
   getWorkflowLabelForEcosystem,
 } from '~/shared/generation/config/workflows';
+import type { WorkflowCategory } from '~/shared/generation/config/types';
 import type { GateItemState } from '~/shared/generation/gates';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import {
@@ -294,6 +292,38 @@ WorkflowSegmentButton.displayName = 'WorkflowSegmentButton';
 /** Capped to the viewport so a long list scrolls instead of running off the bottom. */
 const DROPDOWN_CLASS = 'max-h-[70vh] overflow-y-auto';
 
+const SEGMENTS: {
+  category: WorkflowCategory;
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+}[] = [
+  {
+    category: 'image',
+    icon: <IconPhoto size={16} />,
+    label: 'Image',
+    title: 'Select Image Workflow',
+  },
+  {
+    category: 'video',
+    icon: <IconVideo size={16} />,
+    label: 'Video',
+    title: 'Select Video Workflow',
+  },
+  {
+    category: 'audio',
+    icon: <IconMusic size={16} />,
+    label: 'Audio',
+    title: 'Select Audio Workflow',
+  },
+  {
+    category: 'model3d',
+    icon: <IconCube size={16} />,
+    label: '3D Models',
+    title: 'Select 3D Model Workflow',
+  },
+];
+
 // =============================================================================
 // Workflow List Content (shared between Popover and Modal)
 // =============================================================================
@@ -359,59 +389,6 @@ function WorkflowListContent({
         />
       ))}
     </Stack>
-  );
-}
-
-// =============================================================================
-// Mobile Modal Component (for dialogStore)
-// =============================================================================
-
-interface WorkflowSelectModalProps {
-  title: string;
-  categories: WorkflowCategoryGroup[];
-  selectedValue?: string;
-  onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) => void;
-  isCompatible?: (optionId: string) => boolean;
-  isMember?: boolean;
-}
-
-function WorkflowSelectModal({
-  title,
-  categories,
-  selectedValue,
-  onSelect,
-  isCompatible,
-  isMember = false,
-}: WorkflowSelectModalProps) {
-  const dialog = useDialogContext();
-
-  const handleSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onSelect(graphKey, ecosystemIds, optionId);
-    dialog.onClose();
-  };
-
-  return (
-    <Modal
-      {...dialog}
-      onClose={dialog.onClose}
-      title={title}
-      fullScreen
-      styles={{
-        header: {
-          borderBottom: '1px solid var(--mantine-color-default-border)',
-        },
-      }}
-    >
-      <Stack gap="xs" pt="md">
-        <WorkflowListContent
-          categories={categories}
-          selectedValue={selectedValue}
-          onSelect={handleSelect}
-          isCompatible={isCompatible}
-          isMember={isMember}
-        />
-      </Stack>
-    </Modal>
   );
 }
 
@@ -495,328 +472,73 @@ export function WorkflowInput({
   isCompatible,
   isMember = false,
 }: WorkflowInputProps) {
-  const isMobile = useMediaQuery('(max-width: 768px)');
-  const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
-  const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
-  const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
-  const [model3dOpened, { close: closeModel3d, open: openModel3d }] = useDisclosure(false);
+  const [openSegment, setOpenSegment] = useState<WorkflowCategory | null>(null);
 
   const options = useAvailableWorkflowGroups();
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  // Separate image, video, audio, and 3D model categories
-  const imageCategories = options.filter((cat) => cat.category === 'image');
-  const videoCategories = options.filter((cat) => cat.category === 'video');
-  const audioCategories = options.filter((cat) => cat.category === 'audio');
-  const model3dCategories = options.filter((cat) => cat.category === 'model3d');
-
-  // Check if current selection is image, video, audio, or 3D model
-  const isImageWorkflow = selected && selected.category.category === 'image';
-  const isVideoWorkflow = selected && selected.category.category === 'video';
-  const isAudioWorkflow = selected && selected.category.category === 'audio';
-  const isModel3dWorkflow = selected && selected.category.category === 'model3d';
-
-  const handleImageSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onChange?.(graphKey, ecosystemIds, optionId);
-    closeImage();
-  };
-
-  const handleVideoSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onChange?.(graphKey, ecosystemIds, optionId);
-    closeVideo();
-  };
-
-  const handleAudioSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onChange?.(graphKey, ecosystemIds, optionId);
-    closeAudio();
-  };
-
-  const handleModel3dSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onChange?.(graphKey, ecosystemIds, optionId);
-    closeModel3d();
-  };
-
-  const openImageModal = () => {
-    dialogStore.trigger({
-      id: 'workflow-select-image',
-      component: WorkflowSelectModal,
-      props: {
-        title: 'Select Image Workflow',
-        categories: imageCategories,
-        selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
-          onChange?.(graphKey, ecosystemIds, optionId),
-        isCompatible,
-        isMember,
-      },
-    });
-  };
-
-  const openVideoModal = () => {
-    dialogStore.trigger({
-      id: 'workflow-select-video',
-      component: WorkflowSelectModal,
-      props: {
-        title: 'Select Video Workflow',
-        categories: videoCategories,
-        selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
-          onChange?.(graphKey, ecosystemIds, optionId),
-        isCompatible,
-        isMember,
-      },
-    });
-  };
-
-  const openAudioModal = () => {
-    dialogStore.trigger({
-      id: 'workflow-select-audio',
-      component: WorkflowSelectModal,
-      props: {
-        title: 'Select Audio Workflow',
-        categories: audioCategories,
-        selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
-          onChange?.(graphKey, ecosystemIds, optionId),
-        isCompatible,
-        isMember,
-      },
-    });
-  };
-
-  const openModel3dModal = () => {
-    dialogStore.trigger({
-      id: 'workflow-select-model3d',
-      component: WorkflowSelectModal,
-      props: {
-        title: 'Select 3D Model Workflow',
-        categories: model3dCategories,
-        selectedValue: selected?.workflow.id,
-        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
-          onChange?.(graphKey, ecosystemIds, optionId),
-        isCompatible,
-        isMember,
-      },
-    });
-  };
-
-  // Check if video/audio/3D workflows are available
-  const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
-  const hasAudioWorkflows = audioCategories.some((cat) => cat.workflows.length > 0);
-  const hasModel3dWorkflows = model3dCategories.some((cat) => cat.workflows.length > 0);
-
-  const segmentedContainerClass = clsx(
-    'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
-    'border-gray-3 dark:border-dark-4',
-    className
-  );
-
-  // Mobile: use dialogStore modal — same segmented layout, click-to-open
-  if (isMobile) {
-    return (
-      <div className={segmentedContainerClass} data-tap-target="group">
-        <WorkflowSegmentButton
-          icon={<IconPhoto size={16} />}
-          label="Image"
-          isActive={isImageWorkflow ?? false}
-          hasDivider={false}
-          disabled={disabled}
-          onClick={openImageModal}
-        />
-        {hasVideoWorkflows && (
-          <WorkflowSegmentButton
-            icon={<IconVideo size={16} />}
-            label="Video"
-            isActive={isVideoWorkflow ?? false}
-            hasDivider
-            disabled={disabled}
-            onClick={openVideoModal}
-          />
-        )}
-        {hasAudioWorkflows && (
-          <WorkflowSegmentButton
-            icon={<IconMusic size={16} />}
-            label="Audio"
-            isActive={isAudioWorkflow ?? false}
-            hasDivider
-            disabled={disabled}
-            onClick={openAudioModal}
-          />
-        )}
-        {hasModel3dWorkflows && (
-          <WorkflowSegmentButton
-            icon={<IconCube size={16} />}
-            label="3D Models"
-            isActive={isModel3dWorkflow ?? false}
-            hasDivider
-            disabled={disabled}
-            onClick={openModel3dModal}
-          />
-        )}
-      </div>
+  const byCategory = (category: WorkflowCategory) =>
+    options.filter((cat) => cat.category === category);
+  const segments = SEGMENTS.map((segment) => ({
+    ...segment,
+    categories: byCategory(segment.category),
+  }))
+    // Image always shows; the others only when they have a workflow to offer.
+    .filter(
+      (segment) =>
+        segment.category === 'image' || segment.categories.some((cat) => cat.workflows.length > 0)
     );
-  }
 
-  // Desktop: use Popover with click-to-open
-  const handleImageClick = () => {
-    if (disabled) return;
-    closeVideo();
-    closeAudio();
-    closeModel3d();
-    imageOpened ? closeImage() : openImage();
+  const handleSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
+    onChange?.(graphKey, ecosystemIds, optionId);
+    setOpenSegment(null);
   };
-
-  const handleVideoClick = () => {
-    if (disabled) return;
-    closeImage();
-    closeAudio();
-    closeModel3d();
-    videoOpened ? closeVideo() : openVideo();
-  };
-
-  const handleAudioClick = () => {
-    if (disabled) return;
-    closeImage();
-    closeVideo();
-    closeModel3d();
-    audioOpened ? closeAudio() : openAudio();
-  };
-
-  const handleModel3dClick = () => {
-    if (disabled) return;
-    closeImage();
-    closeVideo();
-    closeAudio();
-    model3dOpened ? closeModel3d() : openModel3d();
-  };
-
-  const hasSecondSegment = hasVideoWorkflows;
-  const hasThirdSegment = hasAudioWorkflows;
-  const hasFourthSegment = hasModel3dWorkflows;
 
   return (
-    <div className={segmentedContainerClass}>
-      <Popover
-        opened={imageOpened}
-        onChange={(isOpen) => !isOpen && closeImage()}
-        position="bottom-start"
-        width={300}
-        shadow="md"
-        withinPortal
-      >
-        <Popover.Target>
-          <WorkflowSegmentButton
-            icon={<IconPhoto size={16} />}
-            label="Image"
-            isActive={isImageWorkflow ?? false}
-            hasDivider={false}
-            disabled={disabled}
-            onClick={handleImageClick}
-          />
-        </Popover.Target>
-        <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
-          <WorkflowListContent
-            categories={imageCategories}
-            selectedValue={selected?.workflow.id}
-            onSelect={handleImageSelect}
-            isCompatible={isCompatible}
-            isMember={isMember}
-          />
-        </Popover.Dropdown>
-      </Popover>
-
-      {hasSecondSegment && (
-        <Popover
-          opened={videoOpened}
-          onChange={(isOpen) => !isOpen && closeVideo()}
-          position="bottom-start"
-          width={300}
-          shadow="md"
-          withinPortal
-        >
-          <Popover.Target>
-            <WorkflowSegmentButton
-              icon={<IconVideo size={16} />}
-              label="Video"
-              isActive={isVideoWorkflow ?? false}
-              hasDivider
-              disabled={disabled}
-              onClick={handleVideoClick}
-            />
-          </Popover.Target>
-          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
-            <WorkflowListContent
-              categories={videoCategories}
-              selectedValue={selected?.workflow.id}
-              onSelect={handleVideoSelect}
-              isCompatible={isCompatible}
-              isMember={isMember}
-            />
-          </Popover.Dropdown>
-        </Popover>
+    <div
+      className={clsx(
+        'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
+        'border-gray-3 dark:border-dark-4',
+        className
       )}
-
-      {hasThirdSegment && (
-        <Popover
-          opened={audioOpened}
-          onChange={(isOpen) => !isOpen && closeAudio()}
-          position="bottom-start"
-          width={300}
-          shadow="md"
-          withinPortal
-        >
-          <Popover.Target>
+      data-tap-target="group"
+    >
+      {segments.map((segment, index) => (
+        <PopoverOrSheet
+          key={segment.category}
+          opened={openSegment === segment.category}
+          onClose={() => setOpenSegment(null)}
+          title={segment.title}
+          narrow="fullscreen"
+          popoverProps={{ position: 'bottom-start', width: 300 }}
+          dropdownProps={{ p: 'xs', className: DROPDOWN_CLASS }}
+          target={
             <WorkflowSegmentButton
-              icon={<IconMusic size={16} />}
-              label="Audio"
-              isActive={isAudioWorkflow ?? false}
-              hasDivider
+              icon={segment.icon}
+              label={segment.label}
+              isActive={selected?.category.category === segment.category}
+              hasDivider={index > 0}
               disabled={disabled}
-              onClick={handleAudioClick}
+              onClick={() => {
+                if (disabled) return;
+                setOpenSegment((open) => (open === segment.category ? null : segment.category));
+              }}
             />
-          </Popover.Target>
-          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
-            <WorkflowListContent
-              categories={audioCategories}
-              selectedValue={selected?.workflow.id}
-              onSelect={handleAudioSelect}
-              isCompatible={isCompatible}
-              isMember={isMember}
-            />
-          </Popover.Dropdown>
-        </Popover>
-      )}
-
-      {hasFourthSegment && (
-        <Popover
-          opened={model3dOpened}
-          onChange={(isOpen) => !isOpen && closeModel3d()}
-          position="bottom-start"
-          width={300}
-          shadow="md"
-          withinPortal
+          }
         >
-          <Popover.Target>
-            <WorkflowSegmentButton
-              icon={<IconCube size={16} />}
-              label="3D Models"
-              isActive={isModel3dWorkflow ?? false}
-              hasDivider
-              disabled={disabled}
-              onClick={handleModel3dClick}
-            />
-          </Popover.Target>
-          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
-            <WorkflowListContent
-              categories={model3dCategories}
-              selectedValue={selected?.workflow.id}
-              onSelect={handleModel3dSelect}
-              isCompatible={isCompatible}
-              isMember={isMember}
-            />
-          </Popover.Dropdown>
-        </Popover>
-      )}
+          {(surface) => (
+            <Stack gap="xs" pt={surface === 'fullscreen' ? 'md' : undefined}>
+              <WorkflowListContent
+                categories={segment.categories}
+                selectedValue={selected?.workflow.id}
+                onSelect={handleSelect}
+                isCompatible={isCompatible}
+                isMember={isMember}
+              />
+            </Stack>
+          )}
+        </PopoverOrSheet>
+      ))}
     </div>
   );
 }

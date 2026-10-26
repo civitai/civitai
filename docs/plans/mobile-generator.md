@@ -1,7 +1,7 @@
 # Mobile generator
 
-> **Status: phase 1 committed on `feat/mobile-generator`, checked on an emulated Pixel 5;
-> real-device check pending. Phases 2–4 not started.**
+> **Status: phase 1 committed and phase 2 built on `feat/mobile-generator`, checked on an emulated Pixel 5;
+> real-device check pending. Phases 3–4 not started.**
 >
 > **Closes when** the `mobileGenerator` flag is on for everyone, the generator on a phone opens on
 > the queue with the form as a bottom sheet, the `feat/mobile-generator` PR is merged to `main`, and every phase's
@@ -85,7 +85,8 @@ individual inputs. Removing it later means deleting the legacy branch and nothin
 **Shared components, one version each.** Inputs are built once and used by both generators and by
 desktop. They do not have desktop and phone copies. Where the mobile generator needs something
 different, the component either reads it from the mobile generator's stylesheet (sizes) or makes one
-small decision on `useMobileGenerator()` (layout that styles cannot express). The slider is the
+small decision on `useMobileGenerator()` or, where the legacy generator on a narrow screen differs too,
+`useGeneratorLayout()` (layout that styles cannot express). The slider is the
 example: one `SliderInput` on one engine (`TouchSlider`) everywhere, with the mobile generator moving
 the presets under the track, swapping the number box for a tap-to-type value and adding steppers.
 
@@ -110,9 +111,10 @@ What it includes and leaves out:
 
 It is defined once (`PHONE_MEDIA_QUERY` in `src/utils/phone-layout.ts`) and read by one hook,
 `useMobileGenerator()` in `src/hooks/useMobileGenerator.ts`, which is true when the flag is on and
-the rule matches, and false outside the flag provider. Every phone decision uses it, including the two
-places that use a separate 768px check today (`FormFooter.tsx`, `ResourceAlerts.tsx`). Two other
-rules exist today and must not be used for this:
+the rule matches, and false outside the flag provider. Every phone decision uses it, directly or
+through `useGeneratorLayout()`, which also reports the legacy generator under 768px as `narrow` (the
+download alert in `ResourceAlerts.tsx` and Generate's confirm-first in `FormFooter.tsx` read it).
+Two other rules exist and must not be used for this:
 
 - `useGenerationPanelFullScreen` makes the panel full screen when the sidebar plus 320px of page
   does not fit the window. It answers "is there room for the page beside the sidebar", which depends
@@ -145,10 +147,12 @@ beats a module rule and the mobile generator's stylesheet cannot override it. So
 - Existing Tailwind components that only need a larger tap area are marked `data-tap-target` rather
   than converted.
 
-**One sheet primitive.** About 15 generator components already switch to a drawer or full-screen
-modal on phones by hand (for example `OverflowSegmentedControl` with `MobileMenuDrawer`, and the
-resource picker). Replace those with one component that is a popover in the legacy generator and a
-bottom sheet in the mobile generator, so the branching lives in one place.
+**One sheet primitive.** Three generator pickers switched to a drawer or full-screen modal on phones
+by hand (`OverflowSegmentedControl` with `MobileMenuDrawer`, and the base model and workflow pickers
+through `dialogStore`). `PopoverOrSheet` replaces those: a popover on desktop and a bottom sheet in
+the mobile generator. In the legacy generator under 768px each picker keeps its drawer or full-screen
+modal (`useGeneratorLayout()` reports `narrow`), so phones don't change before rollout apart from the
+boundary, which is now under 768px for every picker.
 
 ## Phases
 
@@ -181,11 +185,19 @@ replaced in phase 4.
 
 ### 2. One sheet primitive
 
-- A popover-or-sheet component, with the existing per-component phone branches moved onto it.
-- Sampler, scheduler, VAE and every select in the form open as sheets on phones.
+- `PopoverOrSheet` (`src/components/generation_v2/PopoverOrSheet.tsx`), with the base model,
+  workflow and overflow pickers moved onto it.
+- `useGeneratorLayout` (`mobile` / `narrow` / `desktop`) is the one layout rule; the download alert
+  and Generate's confirm-first use it too, so landscape phones in the mobile generator get the phone
+  behaviour. "Narrow" is under 768px for every picker (base model and workflow used 768 and under).
+- `SheetSelect`: in the mobile generator every select in the form (sampler, scheduler, the graph's
+  other selects, the ControlNet and preprocessor selects) shows as a field that opens a sheet;
+  everywhere else it is Mantine's Select. `SelectInput` now ties its wrapper label to the field.
+- Not covered here: the VAE and upscaler pickers are resource pickers, and the output format and
+  priority pickers are menus (all phase 4); the preset picker's select sits inside its own modal.
 
-**Done when** `grep -rn "useIsMobile" src/components/generation_v2 src/components/form-graph` finds
-no layout branches outside the primitive.
+**Done when** `grep -rnE "useIsMobile|useMediaQuery" src/components/generation_v2 src/components/form-graph`
+finds nothing outside test files, and the only layout decision is `useGeneratorLayout()`.
 
 ### 3. The mobile container
 
@@ -242,6 +254,11 @@ Chrome; and a first-time tester opens the form without being told how.
 - Cost sheet built from `GenerationCostPopover` content, reordered around tips.
 - Compact model and resource cards (`ResourceItemContent`): one header row plus one strength row.
 - Footer alerts as single-line strips above the footer row.
+- The VAE and upscaler pickers, and the output format and priority menus, open as sheets in the
+  mobile generator.
+- A resource's version picker (`ButtonGroupInput` in `ResourceSelectInput.tsx`) stays buttons up to
+  three versions and becomes a select above that (a sheet in the mobile generator), keeping the
+  experimental marker on each option.
 - Queue and grid tiles: four actions in the tile footer, the rest in the tile's ⋮ menu.
 
 **Done when** the footer fits at 360px wide with 12 images and a 5-digit cost, and no footer alert

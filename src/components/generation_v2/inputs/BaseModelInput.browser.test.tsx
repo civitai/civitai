@@ -1,121 +1,30 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as MantineHooks from '@mantine/hooks';
 import { renderWithProviders } from '../../../../test/component-setup';
 
-// =============================================================================
-// SELECTOR-FORM ZUSTAND STORE MOCK + MODAL-TRIGGER MOCK PATTERN
-// =============================================================================
-//
-// BaseModelInput is the highest-churn generation input (~889 lines). This rung
-// pins the PUBLIC `BaseModelInput` component's OWN behaviour and banks two
-// reusable mock templates: the SELECTOR-form zustand store mock (the new wrinkle
-// vs MetadataExtractionPanel's bare-call store) and the dialogStore modal-trigger
-// mock.
-//
-// SCOPE (be honest): these tests cover the PUBLIC component only —
-//   - the trigger button's `readableName` (Select / ecosystem displayName /
-//     GROUP displayName / raw-value fallback), derived from `value` + the
-//     basemodel constants,
-//   - the `disabled` state (button disabled attr; mobile click is a no-op path),
-//   - the mobile modal-open wiring (`dialogStore.trigger` called with the
-//     BaseModelSelectModal + the expected props) on click,
-//   - that selecting a GROUPED value drives `setLastUsedEcosystem(group.id,
-//     value)` via the value-change effect. (The selector-form store mock's
-//     correctness — that it APPLIES the selector rather than returning a fixed
-//     object — is enforced behaviorally: a `mockReturnValue` instead of
-//     `mockImplementation((s) => s(STATE))` would hand both selector calls the
-//     same object and break the GROUP-displayName + tracking tests — the two
-//     that fire the value-change effect.)
-// They DO NOT cover the internal sub-components (`BaseModelListContent`,
-// `BaseModelSelectModal` which needs `useDialogContext` from a real dialog
-// stack, the `TriggerButton` styling), the full ecosystem-list / family-grouping
-// / tab / search / recents flow, or the DESKTOP Popover-dropdown content (the
-// dropdown is portal-rendered list content out of scope here). Those need the
-// dialog stack + the full list machinery — a separate rung.
-//
-// -----------------------------------------------------------------------------
-// (1) SELECTOR-FORM ZUSTAND STORE MOCK  (the new reusable pattern)
-// -----------------------------------------------------------------------------
-// MetadataExtractionPanel called its store BARE (`useStore()` returns the whole
-// state). BaseModelInput instead calls it WITH A SELECTOR:
-//   useEcosystemGroupPreferencesStore((s) => s.getLastUsedEcosystem)
-//   useEcosystemGroupPreferencesStore((s) => s.setLastUsedEcosystem)
-// so the mock must APPLY the selector against a controlled STATE, not return a
-// fixed object:
-//   vi.mock('~/store/ecosystem-group-preferences.store', () => ({
-//     useEcosystemGroupPreferencesStore: vi.fn(),
-//   }));
-//   // per test:
-//   vi.mocked(useEcosystemGroupPreferencesStore).mockImplementation((sel) => sel(STATE));
-// where STATE carries the fields the component selects (getLastUsedEcosystem,
-// setLastUsedEcosystem). A bare mockReturnValue would return the SAME object for
-// both calls and break the selector contract (each call asks for a different
-// field), so the selector-applying mockImplementation is required.
-//
-// -----------------------------------------------------------------------------
-// (2) MODAL-TRIGGER MOCK  (dialogStore)
-// -----------------------------------------------------------------------------
-//   vi.mock('~/components/Dialog/dialogStore', () => ({
-//     dialogStore: { trigger: vi.fn(), closeById: vi.fn() },
-//   }));
-// The MOBILE branch opens the base-model select modal via dialogStore.trigger().
-// We assert it's called with { id, component, props } on click. (Desktop opens a
-// Mantine Popover via useDisclosure, NOT dialogStore — out of scope here.)
-//
-// -----------------------------------------------------------------------------
-// (3) MOBILE/DESKTOP CONTROL  (@mantine/hooks useMediaQuery)
-// -----------------------------------------------------------------------------
-// Which branch renders is decided by `useMediaQuery('(max-width: 768px)')`,
-// which reads the REAL browser viewport — non-deterministic for a test. We mock
-// `@mantine/hooks` via importActual and override ONLY useMediaQuery, keeping the
-// real useLocalStorage (real browser localStorage — fine here) and useDisclosure.
-// Each test sets isMobile explicitly so the dialogStore-trigger path is reachable
-// deterministically.
-//
-// CAVEATS (so a copier isn't misled):
-//   - SELECTOR-ARG TRUST: the store mock APPLIES the real selector against STATE,
-//     so reading the WRONG field would surface (selector returns undefined). But
-//     getLastUsedEcosystem/setLastUsedEcosystem in STATE are vi.fn()s that ignore
-//     their args; the "track the grouped value" contract is pinned by asserting
-//     setLastUsedEcosystem's call ARGS (group.id, value), not just that it fired.
-//   - `label` PROP IS DEAD: BaseModelInputProps declares `label`, but the public
-//     component body never reads it (the trigger shows `readableName` derived from
-//     `value`). No test asserts `label` rendering because the component ignores it.
-//   - DESKTOP CLICK opens a Popover (useDisclosure state), not dialogStore — only
-//     the MOBILE branch is asserted for the modal-trigger contract.
-//
-// We do NOT mock Mantine core (resolve.dedupe handles dual-React at the scaffold).
+// Mock notes:
+// - The store mock must APPLY the selector (`mockImplementation((sel) => sel(state))`). A fixed
+//   `mockReturnValue` hands both selector calls the same object and breaks the grouped-value tests.
+// - Which surface opens depends on media queries over the real viewport, so `@mantine/hooks` is
+//   mocked via importActual with only useMediaQuery overridden. `setMobile(true)` makes every query
+//   match; with no flag provider the mobile generator is off, so that is the legacy generator on a
+//   narrow screen. Which surface opens where is PopoverOrSheet's own test.
 
 vi.mock('~/store/ecosystem-group-preferences.store', () => ({
   useEcosystemGroupPreferencesStore: vi.fn(),
 }));
 
-// vi.mock replaces the WHOLE module. The component imports `useDialogContext`
-// from DialogProvider, which itself imports `useDialogStore`/`useIsLevelFocused`
-// from THIS module — so the mock must re-export those (as no-op stubs) or
-// DialogProvider's import fails (same lesson as MetadataExtractionPanel's
-// `trpcVanilla` co-export note).
-vi.mock('~/components/Dialog/dialogStore', () => ({
-  dialogStore: { trigger: vi.fn(), closeById: vi.fn() },
-  useDialogStore: vi.fn(() => []),
-  useIsLevelFocused: vi.fn(() => true),
+vi.mock('@mantine/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof MantineHooks>()),
+  useMediaQuery: vi.fn(() => false), // default: desktop; overridden per test
 }));
-
-vi.mock('@mantine/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@mantine/hooks')>('@mantine/hooks');
-  return {
-    ...actual,
-    useMediaQuery: vi.fn(() => false), // default: desktop; overridden per test
-  };
-});
 
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useMediaQuery } from '@mantine/hooks';
 
 const storeMock = vi.mocked(useEcosystemGroupPreferencesStore);
-const triggerMock = vi.mocked(dialogStore.trigger);
 const useMediaQueryMock = vi.mocked(useMediaQuery);
 
 // Controlled store STATE. The component selects getLastUsedEcosystem /
@@ -132,10 +41,9 @@ let state: ReturnType<typeof makeState>;
 
 const setMobile = (isMobile: boolean) => useMediaQueryMock.mockReturnValue(isMobile);
 
-describe('BaseModelInput (public component — selector-store + modal-trigger)', () => {
+describe('BaseModelInput (public component — selector-store + media-query)', () => {
   beforeEach(() => {
     storeMock.mockReset();
-    triggerMock.mockReset();
     useMediaQueryMock.mockReset();
     state = makeState();
     // Selector-FORM mock: apply the component's selector against STATE.
@@ -190,19 +98,18 @@ describe('BaseModelInput (public component — selector-store + modal-trigger)',
     await expect.element(btn).toBeDisabled();
   });
 
-  test('mobile: clicking the trigger opens the base-model modal via dialogStore.trigger', async () => {
-    setMobile(true); // force the mobile branch (dialogStore path)
+  test('narrow screen: the trigger opens the full-screen picker, ready to search', async () => {
+    setMobile(true); // the legacy generator under 768px
     renderWithProviders(<BaseModelInput value="SD1" onChange={vi.fn()} />);
 
     await page.getByRole('button', { name: /Stable Diffusion 1\.x/ }).click();
 
-    expect(triggerMock).toHaveBeenCalledTimes(1);
-    const [arg] = triggerMock.mock.calls.at(-1)!;
-    expect((arg as any).id).toBe('basemodel-select');
-    // Opens the BaseModelSelectModal component with the current value + handlers.
-    expect((arg as any).component).toBeDefined();
-    expect((arg as any).props.value).toBe('SD1');
-    expect(typeof (arg as any).props.onSelect).toBe('function');
+    await expect
+      .element(page.getByRole('dialog', { name: 'Select Base Model' }))
+      .toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(document.activeElement?.getAttribute('placeholder')).toBe('Search ecosystems...')
+    );
   });
 
   test('selecting a grouped value tracks it via setLastUsedEcosystem(group.id, value)', async () => {

@@ -2,29 +2,17 @@
  * BaseModelInput
  *
  * A form input component for selecting the base model group for generation.
- * Uses Popover on desktop and dialogStore modal on mobile.
  * When the base model changes, it notifies the ResourceDataProvider to
  * re-evaluate resource compatibility.
  */
 
-import {
-  Badge,
-  Group,
-  Modal,
-  Popover,
-  Stack,
-  Text,
-  TextInput,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
-import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { Badge, Group, Stack, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconChevronDown, IconArrowRight, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import {
   ecosystemByKey,
   ecosystemById,
@@ -138,7 +126,7 @@ const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
 TriggerButton.displayName = 'TriggerButton';
 
 // =============================================================================
-// List Content (shared between Popover and Modal)
+// List Content (the same on every surface)
 // =============================================================================
 
 export interface BaseModelListContentProps {
@@ -188,7 +176,7 @@ export function BaseModelListContent({
   const isSearching = searchValue.length > 0;
   const [activeIndex, setActiveIndex] = useState(-1);
 
-  // Auto-focus search input when requested (mobile)
+  // Auto-focus search input when requested
   useEffect(() => {
     if (autoFocusSearch) {
       // Small delay to ensure the input is mounted
@@ -197,9 +185,9 @@ export function BaseModelListContent({
     }
   }, [autoFocusSearch]);
 
-  // Auto-focus search input on any keypress while popover is open (desktop)
+  // Auto-focus search input on any keypress while the picker is open
   useEffect(() => {
-    if (autoFocusSearch) return; // mobile handles focus via the effect above
+    if (autoFocusSearch) return; // focused by the effect above
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!searchRef.current || document.activeElement === searchRef.current) return;
@@ -466,87 +454,6 @@ export function BaseModelListContent({
         ))}
       </div>
     </Stack>
-  );
-}
-
-// =============================================================================
-// Mobile Modal Component (for dialogStore)
-// =============================================================================
-
-interface BaseModelSelectModalProps {
-  value?: string;
-  recentItems: EcosystemDisplayItem[];
-  groupedByFamily: FamilyGroup[];
-  allGroupedByFamily: FamilyGroup[];
-  /** Get the target workflow label for an incompatible ecosystem */
-  getTargetWorkflow?: (ecosystemKey: string) => string;
-  onSelect: (key: string) => void;
-  disabledStateMap?: Map<string, GateItemState>;
-  hasIncompatibleItems?: boolean;
-  activeTab: TabValue;
-  onTabChange: (tab: TabValue) => void;
-  showRecentTab: boolean;
-}
-
-function BaseModelSelectModal({
-  value,
-  recentItems,
-  groupedByFamily,
-  allGroupedByFamily,
-  getTargetWorkflow,
-  onSelect,
-  disabledStateMap,
-  hasIncompatibleItems,
-  activeTab: initialTab,
-  onTabChange,
-  showRecentTab,
-}: BaseModelSelectModalProps) {
-  const dialog = useDialogContext();
-  const [searchValue, setSearchValue] = useState('');
-  // Local tab state so switching works within the modal (dialogStore props are snapshots)
-  const [localTab, setLocalTab] = useState<TabValue>(initialTab);
-
-  const handleTabChange = (tab: TabValue) => {
-    setLocalTab(tab);
-    onTabChange(tab); // persist preference
-  };
-
-  const handleSelect = (key: string) => {
-    onSelect(key);
-    dialog.onClose();
-  };
-
-  return (
-    <Modal
-      {...dialog}
-      onClose={dialog.onClose}
-      title="Select Base Model"
-      fullScreen
-      styles={{
-        header: {
-          borderBottom: '1px solid var(--mantine-color-default-border)',
-        },
-      }}
-    >
-      <div className="pt-4">
-        <BaseModelListContent
-          value={value}
-          recentItems={recentItems}
-          groupedByFamily={groupedByFamily}
-          allGroupedByFamily={allGroupedByFamily}
-          getTargetWorkflow={getTargetWorkflow}
-          onSelect={handleSelect}
-          disabledStateMap={disabledStateMap}
-          hasIncompatibleItems={hasIncompatibleItems}
-          activeTab={localTab}
-          onTabChange={handleTabChange}
-          showRecentTab={showRecentTab}
-          autoFocusSearch
-          searchValue={searchValue}
-          onSearchChange={setSearchValue}
-        />
-      </div>
-    </Modal>
   );
 }
 
@@ -836,7 +743,6 @@ export function BaseModelInput({
   getTargetWorkflow,
   outputType,
 }: BaseModelInputProps) {
-  const isMobile = useMediaQuery('(max-width: 768px)');
   const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
   const [searchValue, setSearchValue] = useState('');
 
@@ -865,85 +771,56 @@ export function BaseModelInput({
     },
   });
 
-  const openMobileModal = () => {
-    dialogStore.trigger({
-      id: 'basemodel-select',
-      component: BaseModelSelectModal,
-      props: {
-        value,
-        recentItems,
-        groupedByFamily,
-        allGroupedByFamily,
-        getTargetWorkflow,
-        disabledStateMap,
-        hasIncompatibleItems,
-        activeTab,
-        onTabChange: handleTabChange,
-        showRecentTab,
-        onSelect: handleSelect,
-      },
-    });
+  const close = () => {
+    closePopover();
+    setSearchValue('');
   };
 
-  // Mobile: use dialogStore modal
-  if (isMobile) {
-    return (
-      <TriggerButton
-        label={readableName}
-        disabled={disabled}
-        opened={false}
-        onClick={openMobileModal}
-      />
-    );
-  }
-
-  // Desktop: use Popover opened by click. Hover-to-open is unreliable here —
-  // the dropdown is rendered in a portal with an offset gap, so leaving the
-  // trigger closes (and unmounts) the dropdown before the cursor reaches it.
-  // Click-to-open/persist sidesteps the hover gap entirely.
+  // Click to open and close: hover-to-open was unreliable, because the popover's portal sits past an
+  // offset gap and leaving the trigger closed it before the cursor arrived.
   return (
-    <Popover
+    <PopoverOrSheet
       opened={popoverOpened}
-      onChange={(isOpen) => {
-        if (isOpen) openPopover();
-        else {
-          closePopover();
-          setSearchValue('');
-        }
-      }}
-      position="bottom-start"
-      shadow="md"
-      withinPortal
-    >
-      <Popover.Target>
+      onClose={close}
+      title="Select Base Model"
+      narrow="fullscreen"
+      tall
+      popoverProps={{ position: 'bottom-start' }}
+      dropdownProps={{ p: 'sm', className: 'max-h-[70vh] min-w-[280px] overflow-y-auto' }}
+      target={
         <TriggerButton
           label={readableName}
           disabled={disabled}
           opened={popoverOpened}
           onClick={() => {
             if (disabled) return;
-            if (popoverOpened) closePopover();
+            if (popoverOpened) close();
             else openPopover();
           }}
         />
-      </Popover.Target>
-      <Popover.Dropdown p="sm" className="max-h-[70vh] min-w-[280px] overflow-y-auto">
-        <BaseModelListContent
-          value={value}
-          recentItems={recentItems}
-          groupedByFamily={groupedByFamily}
-          allGroupedByFamily={allGroupedByFamily}
-          getTargetWorkflow={getTargetWorkflow}
-          onSelect={handleSelect}
-          disabledStateMap={disabledStateMap}
-          hasIncompatibleItems={hasIncompatibleItems}
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-          showRecentTab={showRecentTab}
-          searchValue={searchValue}
-          onSearchChange={setSearchValue}
-        />
-      </Popover.Dropdown>
-    </Popover>
+      }
+    >
+      {(surface) => (
+        <div className={clsx(surface === 'fullscreen' && 'pt-4')}>
+          <BaseModelListContent
+            value={value}
+            recentItems={recentItems}
+            groupedByFamily={groupedByFamily}
+            allGroupedByFamily={allGroupedByFamily}
+            getTargetWorkflow={getTargetWorkflow}
+            onSelect={handleSelect}
+            disabledStateMap={disabledStateMap}
+            hasIncompatibleItems={hasIncompatibleItems}
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            showRecentTab={showRecentTab}
+            // The full-screen picker opens to type in; in a sheet the keyboard would cover the list.
+            autoFocusSearch={surface === 'fullscreen'}
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+          />
+        </div>
+      )}
+    </PopoverOrSheet>
   );
 }
