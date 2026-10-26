@@ -203,6 +203,15 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
           {move.error}
         </Alert>
       )}
+      {moveRuns &&
+        !graph?.truncated &&
+        !rows.some((row) => row.canon && reorderOf(row.canon.chapterId)) && (
+          <Text size="xs" c="dimmed" mb="xs" data-testid="storyline-reorder-hint">
+            You can reorder chapters on the main path once three or more of your own run in a row at
+            its end, or four or more anywhere else on it, with no branches or other people&apos;s
+            chapters between them.
+          </Text>
+        )}
       <div className="flex">
         <div className="relative min-w-0 flex-1" style={{ height }}>
           {canonRows.length > 1 && (
@@ -329,15 +338,6 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
           Showing the first {map.nodes.length} chapters.
         </Text>
       )}
-      {moveRuns &&
-        !graph?.truncated &&
-        !rows.some((row) => row.canon && reorderOf(row.canon.chapterId)) && (
-          <Text size="xs" c="dimmed" mt="xs" data-testid="storyline-reorder-hint">
-            You can reorder chapters on the main path once three or more of your own run in a row at
-            its end, or four or more anywhere else on it, with no branches or other people&apos;s
-            chapters between them.
-          </Text>
-        )}
     </div>
   );
 }
