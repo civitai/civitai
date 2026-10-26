@@ -58,7 +58,7 @@ vi.mock('~/utils/signal-client', () => ({
 // The hand-grant scan runs against a fake ledger in nowpayments-credit.service.test.ts.
 vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
   ...(await importOriginal<typeof ManualCredit>()),
-  findHandGrantsForDeposit: vi.fn(async () => ({ covering: [], possible: [] })),
+  findHandGrantsForDeposit: vi.fn(async () => ({ covering: [], possible: [], overflowed: [] })),
 }));
 
 vi.mock('~/server/utils/distributed-lock', () => ({

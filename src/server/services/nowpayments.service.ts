@@ -249,6 +249,7 @@ export const processDeposit = async (
 
       try {
         let possibleHandGrants: ManualCreditMatch[] = [];
+        let unscanned: string[] = [];
         // Throwing here lands the deposit in buzz_failed, which the retry sweep picks up.
         const settle = async (): Promise<string | undefined> => {
           const payinHash = await resolvePayinHash(paymentId, event);
@@ -280,7 +281,7 @@ export const processDeposit = async (
             if (await getTransactionByExternalId(`np-deposit-${paymentId}`))
               return 'already_granted';
 
-            const { covering, possible } = await findHandGrantsForDeposit(userId, {
+            const { covering, possible, overflowed } = await findHandGrantsForDeposit(userId, {
               paymentId,
               payinHash,
               expectedBuzz: buzzAmount,
@@ -297,6 +298,7 @@ export const processDeposit = async (
               return HELD;
             }
             possibleHandGrants = possible;
+            unscanned = overflowed;
           }
 
           return grantBuzzPurchase({
@@ -329,6 +331,14 @@ export const processDeposit = async (
           transactionId = result?.settled;
         }
 
+        if (transactionId && transactionId !== 'already_granted' && unscanned.length)
+          await log({
+            type: 'warning',
+            message: 'Deposit credited: hand-grant scan incomplete',
+            paymentId,
+            userId,
+            unscanned,
+          });
         if (transactionId && transactionId !== 'already_granted' && possibleHandGrants.length)
           await log({
             type: 'warning',

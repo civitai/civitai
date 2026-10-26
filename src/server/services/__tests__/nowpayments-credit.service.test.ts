@@ -49,7 +49,8 @@ const { ledger, lookupPayment, grantBuzzPurchase, trackModActivity, lock, scan }
       ),
       trackModActivity: vi.fn(async () => undefined),
       lock: { held: false },
-      scan: { down: false },
+      // floodPages: pages of automated bank Refunds into the blue account, as heavy generators get.
+      scan: { down: false, floodPages: 0, reads: 0 },
     };
   }
 );
@@ -72,6 +73,29 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
       { accountType, query }: { accountType: string; query: { type: TransactionType } }
     ) => {
       if (scan.down) throw new Error('Buzz service unavailable');
+      if (accountType === 'blue' && query.type === TransactionType.Refund && scan.floodPages) {
+        // The cursor carries the page number; the fake ends on its own after floodPages.
+        const page = query.cursor ? query.cursor.getTime() : 0;
+        scan.reads++;
+        const refunds = Array.from({ length: 200 }, () => ({
+          type: 'Refund',
+          fromAccountId: 0,
+          fromAccountType: 'User',
+          toAccountId: accountId,
+          toAccountType: 'Generation',
+          amount: 25,
+          description: 'Generation refund',
+          date: '2026-10-24T12:00:00.000Z',
+        }));
+        const hand =
+          page === 0
+            ? ledger.filter((r) => r.type === 'Refund' && r.toAccountType === 'Generation')
+            : [];
+        return {
+          cursor: page + 1 < scan.floodPages ? new Date(page + 1) : null,
+          transactions: [...hand.map((r) => ({ ...r, fromAccountType: 'User' })), ...refunds],
+        };
+      }
       return {
         cursor: null,
         transactions: ledger
@@ -153,19 +177,21 @@ function grant({
   amount,
   from = 0,
   key,
+  toAccountType = 'User',
 }: {
   type: string;
   description: string;
   amount: number;
   from?: number;
   key?: string;
+  toAccountType?: string;
 }) {
   ledger.push({
     externalTransactionId: key,
     type,
     fromAccountId: from,
     toAccountId: USER_ID,
-    toAccountType: 'User',
+    toAccountType,
     amount,
     description,
     date: '2026-10-24T10:00:00.000Z',
@@ -178,6 +204,7 @@ const credit = (acknowledge?: string[]) =>
 
 beforeEach(() => {
   ledger.length = 0;
+  scan.floodPages = 0;
   lock.held = false;
   vi.clearAllMocks();
   dbMock.dbRead.user.findUnique.mockResolvedValue({ id: USER_ID, username: 'depositor' });
@@ -528,6 +555,48 @@ describe('automatic deposit credit (webhook, reconcile, sweep, reprocess)', () =
 
     expect(deposits()).toEqual([]);
     expect(row?.status).toBe('buzz_failed');
+  });
+
+  describe('for an account with more refunds since the payment than one scan reads', () => {
+    beforeEach(() => {
+      scan.floodPages = 50;
+      scan.reads = 0;
+    });
+
+    it('credits the deposit and flags the incomplete scan', async () => {
+      await ipn();
+
+      expect(deposits()).toHaveLength(1);
+      expect(scan.reads).toBe(20);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'warning',
+          message: 'Deposit credited: hand-grant scan incomplete',
+          unscanned: ['blue Refund'],
+        })
+      );
+    });
+
+    it('still holds a deposit a recent staff Refund citing the payment paid', async () => {
+      grant({
+        type: 'Refund',
+        description: `Refund for deposit ${PAYMENT_ID}`,
+        amount: 20_000,
+        toAccountType: 'Generation',
+      });
+
+      await ipn();
+
+      expect(deposits()).toEqual([]);
+      expect(row?.status).toBe('held');
+    });
+
+    it('is still refused by the moderator credit tool', async () => {
+      const result = await credit();
+
+      expect(result).toMatchObject({ credited: false, decision: 'refused' });
+      expect(deposits()).toEqual([]);
+    });
   });
 
   it('keeps a credited deposit credited when a citing grant appears later', async () => {

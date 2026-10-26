@@ -85,8 +85,11 @@ export function matchManualCredit(
   return null;
 }
 
-/** Every credit of a scanned type into the user's accounts since `start`, read live from the Buzz service. */
-async function getCreditsSince(userId: number, start: Date) {
+/**
+ * Every credit of a scanned type into the user's accounts since `start`. A pair with more than the
+ * page cap throws, unless `overflowed` is given: then it keeps the newest pages and is named there.
+ */
+async function getCreditsSince(userId: number, start: Date, overflowed?: string[]) {
   const pairs = SCANS.flatMap(([accountType, types]) =>
     types.map((type) => ({ accountType, type }))
   );
@@ -96,8 +99,12 @@ async function getCreditsSince(userId: number, start: Date) {
       const credits: ManualCredit[] = [];
       let cursor: Date | undefined;
       for (let page = 0; ; page++) {
-        if (page === SCAN_MAX_PAGES)
-          throw new Error(`Too many ${TransactionType[type]} transactions to scan`);
+        if (page === SCAN_MAX_PAGES) {
+          if (!overflowed)
+            throw new Error(`Too many ${TransactionType[type]} transactions to scan`);
+          overflowed.push(`${accountType} ${TransactionType[type]}`);
+          break;
+        }
         const data = await buzzService.getAccountTransactions(userId, {
           accountType,
           query: { type, start, cursor, limit: SCAN_PAGE_SIZE, descending: true },
@@ -128,9 +135,10 @@ async function getCreditsSince(userId: number, start: Date) {
 
 export async function findManualCredits(
   userId: number,
-  ctx: { paymentId: number; payinHash: string | null; expectedBuzz: number; since: Date }
+  ctx: { paymentId: number; payinHash: string | null; expectedBuzz: number; since: Date },
+  overflowed?: string[]
 ) {
-  const credits = await getCreditsSince(userId, ctx.since);
+  const credits = await getCreditsSince(userId, ctx.since, overflowed);
   const senderIds = [...new Set(credits.map((c) => c.fromAccountId).filter((id) => id !== 0))];
   const moderators = senderIds.length
     ? await dbRead.user.findMany({
@@ -171,7 +179,9 @@ export async function findHandGrantsForDeposit(
     .utc(ctx.paymentCreatedAt ?? dayjs.utc().subtract(SCAN_FALLBACK_DAYS, 'day'))
     .subtract(1, 'day')
     .toDate();
-  const matches = await findManualCredits(userId, { ...ctx, since });
+  // Failing closed would strand every deposit of an account with that many refunds a day.
+  const overflowed: string[] = [];
+  const matches = await findManualCredits(userId, { ...ctx, since }, overflowed);
   const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff);
-  return { covering, possible: covering.length ? [] : matches };
+  return { covering, possible: covering.length ? [] : matches, overflowed };
 }
