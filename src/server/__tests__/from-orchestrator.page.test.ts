@@ -75,9 +75,8 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
     mockGetWorkflow.mockResolvedValue(
       run('approved', {
         input: {
-          ecosystem: 'mossImage',
-          modelVariant: 'base',
-          model: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+          ecosystem: 'not-a-real-eco',
+          model: 'urn:air:other:checkpoint:civitai:1@1',
         },
       })
     );
