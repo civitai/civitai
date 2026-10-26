@@ -136,7 +136,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               onPriceChange={space.save}
               priceUnavailable={space.unavailable}
             />
-            {storyline.chapterCount === 0 && (
+            {storyline.chapterCount === 0 && !storyline.tosViolation && (
               <StorylineDeleteRow
                 deleting={remove.isPending}
                 onDelete={() => remove.mutate({ id: storylineId })}

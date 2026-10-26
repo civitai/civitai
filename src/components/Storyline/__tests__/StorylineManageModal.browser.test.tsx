@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   close: vi.fn(),
   chapterCount: 0,
+  tosViolation: false,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -38,6 +39,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             ownerMaxNsfwLevel: 4,
             whoCanContinue: 'Anyone',
             chapterCount: mocks.chapterCount,
+            tosViolation: mocks.tosViolation,
             collaborators: [],
             coverImage: null,
           },
@@ -76,6 +78,7 @@ beforeEach(() => {
   for (const fn of [mocks.update, mocks.remove, mocks.close]) fn.mockReset();
   vi.mocked(useRouter().push).mockClear();
   mocks.chapterCount = 0;
+  mocks.tosViolation = false;
 });
 
 describe('managing a storyline', () => {
@@ -110,6 +113,13 @@ describe('managing a storyline', () => {
 
   test('a storyline with a chapter offers no delete', async () => {
     mocks.chapterCount = 1;
+    renderWithProviders(<StorylineManageModal storylineId={2} />);
+    await expect.element(page.getByRole('textbox', { name: 'Title' })).toBeVisible();
+    expect(page.getByRole('button', { name: 'Delete storyline' }).query()).toBeNull();
+  });
+
+  test('a taken-down storyline offers no delete, which the server would refuse', async () => {
+    mocks.tosViolation = true;
     renderWithProviders(<StorylineManageModal storylineId={2} />);
     await expect.element(page.getByRole('textbox', { name: 'Title' })).toBeVisible();
     expect(page.getByRole('button', { name: 'Delete storyline' }).query()).toBeNull();

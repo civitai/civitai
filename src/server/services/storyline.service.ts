@@ -768,6 +768,9 @@ export async function updateStoryline({
  */
 export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
   await dbWrite.$transaction(async (tx) => {
+    // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
+    // below would otherwise deadlock against a chapter-1 draft going live.
+    await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
     // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
     // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
     // key takes KEY SHARE. Whatever committed first, the count below sees it.

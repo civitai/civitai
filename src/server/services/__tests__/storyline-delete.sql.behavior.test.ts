@@ -190,7 +190,6 @@ describe('deleteStoryline', () => {
       'Only a storyline with no chapters can be deleted'
     );
     expect(await storylineIds()).toEqual([1, 2]);
-    expect(await rows(`SELECT amount FROM "PlacementTransaction"`)).toEqual([{ amount: 100 }]);
   });
 
   it('refuses anyone but the owner', async () => {

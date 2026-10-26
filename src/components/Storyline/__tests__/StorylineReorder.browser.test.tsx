@@ -135,6 +135,15 @@ describe('reordering chapters on the map', () => {
       await expect.element(hint()).toHaveTextContent('three or more of your own run in a row');
     });
 
+    // Three in a row with someone else's chapter after them: the last cannot move, and the
+    // middle one has nowhere else to go.
+    test("shows for three of the owner's own followed by someone else's chapter", async () => {
+      mocks.graph = graphOf([150]);
+      renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
+      await expect.element(hint()).toHaveTextContent('four or more anywhere else');
+      expect(reorderButtons()).toBe(0);
+    });
+
     test('is gone once the owner has a run to reorder', async () => {
       renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
       await expect.element(menuOf(2)).toBeInTheDocument();
