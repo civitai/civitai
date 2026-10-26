@@ -2031,6 +2031,30 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(await pacedWaits(5)).toEqual([2000, 4000, 6000, 8000]);
   });
 
+  // Two pages share one embedder: a batch sized before its pace wait could overrun the quota
+  // that another page's responses lowered meanwhile.
+  test('a paced batch is sized from the quota left after its wait', async () => {
+    const sizes: number[] = [];
+    let e: Embedder;
+    e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 500,
+      maxRetries: 0,
+      batchSize: 10,
+      priority: 'low',
+      maxStepsPerSecond: 5,
+      now: () => 0,
+      sleep: async () => void (e.limits.remaining = 3),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        sizes.push(stepIds(init).length);
+        return new Response(workflowBody(stepIds(init)), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    await e.embed(inputs(20));
+    expect(sizes.slice(0, 2)).toEqual([10, 3]);
+  });
+
   test('a runtime step rate lowers the configured one but cannot raise it', async () => {
     expect(await pacedWaits(5, 1)).toEqual([10_000, 20_000, 30_000, 40_000]);
     expect(await pacedWaits(5, 1000)).toEqual([2000, 4000, 6000, 8000]);

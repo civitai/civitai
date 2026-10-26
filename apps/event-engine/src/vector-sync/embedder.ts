@@ -375,9 +375,17 @@ export class Embedder {
           await this.sleep(Math.max(this.limits.waitMs(this.now()), this.limits.minRetryAfterMs));
         continue;
       }
-      const batch = takeBatch(queue, size);
-      // Paced before the budget is taken, so a batch waiting its turn holds no jobs.
-      await this.paceSteps(batch.length);
+      // Paced before the batch is taken and the budget held: a batch waiting its turn holds no
+      // jobs, and is sized from what the quota says after the wait, not before it.
+      await this.paceSteps(size);
+      if (call.result.error) break;
+      const fresh = this.limits.allowance(
+        Math.min(this.batchSize, this.budget.capacity),
+        running.size === 0,
+        this.now()
+      );
+      if (fresh === 0) continue;
+      const batch = takeBatch(queue, Math.min(size, fresh));
       const held = await this.budget.acquire(batch.length);
       this.limits.reserve(batch.length);
       const task = (async () => {
