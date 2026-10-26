@@ -85,20 +85,46 @@ describe('Training Studio auto-label', () => {
       ['civitai.com as a subdomain', 'https://civitai.com.evil.net/v2/consumer/blobs/a.png'],
       ['a prefixed lookalike', 'https://evil-orchestration.civitai.com/v2/consumer/blobs/a.png'],
       ['a hyphen lookalike', 'https://orchestration-civitai.com/v2/consumer/blobs/a.png'],
+      ['an unlisted orchestration* host', 'https://orchestration-dashboard-new.civitai.com/a.png'],
+      ['the region proxy host', 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/a.png'],
       ['a non-media Civitai host', 'https://image.civitai.com/v2/consumer/blobs/a.png'],
       ['the main site', 'https://civitai.com/v2/consumer/blobs/a.png'],
-      ['userinfo', 'https://x@orchestration.civitai.com/v2/consumer/blobs/a.png'],
       ['a port', 'https://orchestration.civitai.com:8443/v2/consumer/blobs/a.png'],
+      [
+        'the default port spelled out',
+        'https://orchestration.civitai.com:443/v2/consumer/blobs/a.png',
+      ],
       ['a backslash', 'https://orchestration.civitai.com\\v2/consumer/blobs/a.png'],
       ['a CRLF', 'https://orchestration\r\n.civitai.com/v2/consumer/blobs/a.png'],
-      ['http', 'http://orchestration.civitai.com/v2/consumer/blobs/a.png'],
-      ['a blob: URL', 'blob:https://civitai.com/0b5f-4c1e'],
+      [
+        'a percent-encoded dot in the host',
+        'https://orchestration%2Ecivitai.com/v2/consumer/blobs/a.png',
+      ],
+      ['an ideographic full stop', 'https://orchestration。civitai.com/v2/consumer/blobs/a.png'],
+      ['fullwidth letters', 'https://ｏrchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['an uppercase host', 'https://ORCHESTRATION.civitai.com/v2/consumer/blobs/a.png'],
+      ['@ in the query', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png?@evil.com'],
+      ['@ in the fragment', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png#@evil.com'],
+      ['a fragment', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png#x'],
+      ['a trailing space', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png '],
+      ['no path', 'https://orchestration.civitai.com'],
     ])('refuses %s before submitting', async (_label, mediaUrl) => {
       await expect(submitOne(mediaUrl)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(orch.submitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('says why, so the Studio can tell the user to upload the file', async () => {
+    // Already refused before the host check existed (HTTPS refine / assertSafeMediaUrls); kept so a
+    // change to either doesn't quietly reopen them.
+    it.each([
+      ['userinfo', 'https://x@orchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['http', 'http://orchestration.civitai.com/v2/consumer/blobs/a.png'],
+      ['a blob: URL', 'blob:https://civitai.com/0b5f-4c1e'],
+    ])('regression guard: refuses %s', async (_label, mediaUrl) => {
+      await expect(submitOne(mediaUrl)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(orch.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('rejects with a message telling the user to upload the file', async () => {
       await expect(submitOne('https://example.com/a.png')).rejects.toThrow(
         /only accepts media uploaded to Civitai/
       );
@@ -122,8 +148,11 @@ describe('Training Studio auto-label', () => {
     it.each([
       ['image', 'https://orchestration.civitai.com/v2/consumer/blobs/a.png?sig=s&exp=e'],
       ['image', 'https://orchestration-new.civitai.com/v2/consumer/blobs/a.jpeg'],
-      ['image', 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/a.webp?sig=s'],
-      ['image', 'https://ORCHESTRATION.civitai.com/v1/consumer/blobs/a.png'],
+      ['image', 'https://orchestration-next.civitai.com/v1/consumer/blobs/a.webp?sig=s'],
+      [
+        'image',
+        'https://orchestration.civitai.com/v2/consumer/blobs/a.jpeg?sig=x&exp=2030-01-01T00:00:00Z',
+      ],
       ['video', 'https://orchestration.civitai.com/v2/consumer/blobs/a.mp4?sig=s&exp=e'],
       ['audio', 'https://orchestration.civitai.com/v2/consumer/blobs/a.mp3?sig=s&exp=e'],
     ] as const)('accepts %s at %s', async (media, mediaUrl) => {
