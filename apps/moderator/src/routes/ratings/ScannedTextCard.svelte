@@ -31,7 +31,11 @@
     {#each text.fields as field, i (i)}
       <div>
         <p class="m-0 text-[11px] font-semibold text-dark-2">{field.heading}</p>
-        <div class="wrap-anywhere"><HighlightedText text={field.text} highlight={phrases} /></div>
+        <HighlightedText
+          class="m-0 text-[13px] leading-[inherit] wrap-anywhere"
+          text={field.text}
+          highlight={phrases}
+        />
       </div>
     {/each}
   </div>

@@ -66,7 +66,7 @@ export async function freshRatingReviewDb(): Promise<PGlite> {
   return db;
 }
 
-export const ratingReviewKysely = (db: PGlite, log?: KyselyConfig["log"]): Kysely<DB> =>
+export const ratingReviewKysely = (db: PGlite, log?: KyselyConfig['log']): Kysely<DB> =>
   new Kysely<DB>({ dialect: pgliteDialect(db), log });
 
 export async function rows<T>(db: PGlite, text: string, params: unknown[] = []): Promise<T[]> {
