@@ -73,6 +73,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
+import { MatureContentRedirect } from '~/components/Gated/Gated';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -87,7 +88,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComicChapterStatus, ComicEngagementType } from '~/shared/utils/prisma/enums';
-import { formatRelativeDate } from '~/utils/comic-helpers';
+import { COMIC_ON_RED_ERROR, formatRelativeDate } from '~/utils/comic-helpers';
 import { slugitOr } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -119,6 +120,7 @@ function PublicComicReader() {
     data: project,
     isLoading,
     isError,
+    error,
   } = trpc.comics.getPublicProjectForReader.useQuery(
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
@@ -136,6 +138,21 @@ function PublicComicReader() {
         <div className={styles.spinner} />
       </div>
     );
+  } else if (
+    error?.message === COMIC_ON_RED_ERROR ||
+    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
+    // for ANY NSFW bits.
+    (project &&
+      features.isGreen &&
+      project.nsfwLevel !== 0 &&
+      Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag))
+  ) {
+    body = (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Meta title="Comic not available | Civitai" deIndex />
+        <MatureContentRedirect />
+      </div>
+    );
   } else if (isError || !project) {
     body = (
       <div className={styles.notFound}>
@@ -146,19 +163,6 @@ function PublicComicReader() {
           <IconArrowLeft size={16} />
           Browse Comics
         </Link>
-      </div>
-    );
-  } else if (
-    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
-    // for ANY NSFW bits.
-    features.isGreen &&
-    project.nsfwLevel !== 0 &&
-    Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
-  ) {
-    body = (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <Meta title="Comic not available | Civitai" deIndex />
-        <Text>This content is not available on this site</Text>
       </div>
     );
   } else if (chapterDbPos == null) {

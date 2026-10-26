@@ -256,7 +256,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   );
 }
 
-function MatureContentRedirect() {
+export function MatureContentRedirect() {
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
