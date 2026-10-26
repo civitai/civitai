@@ -95,29 +95,41 @@ export function ReactionButton({
     } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
-  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
+  // What the store held when this button last toggled; the revert target if the server says no.
+  const snapshot = useRef<boolean | undefined>(undefined);
+  // Mutation-level callbacks (not the ones passed to `mutate`) still run after this button unmounts.
+  const revert = (input: ToggleReactionInput) => {
+    const previous = snapshot.current;
+    if (previous === undefined) return;
+    const current = useStore.getState().reactions[getReactionKey(input)]?.[input.reaction];
+    // Another toggle may have moved the shared state on since: only undo our own change.
+    if (current === !previous) toggleReaction({ ...input, value: previous });
+  };
   // `isPending` lands a render late, so two clicks in one frame both passed it.
   const inFlight = useRef(false);
+  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation({
+    onSuccess(result, variables) {
+      if (result === 'ignored') revert(variables);
+    },
+    onError(_error, variables) {
+      revert(variables);
+    },
+    onSettled() {
+      inFlight.current = false;
+    },
+  });
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (inFlight.current) return;
     inFlight.current = true;
-    const revert = () => toggleReaction({ entityType, entityId, reaction, value: hasReacted });
-    toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-    mutate(
-      { entityId, entityType, reaction },
-      {
-        onSuccess(result) {
-          if (result === 'ignored') revert();
-        },
-        onError: revert,
-        onSettled() {
-          inFlight.current = false;
-        },
-      }
-    );
+    // Read the store, not the rendered value: a sibling button for the same entity may have toggled
+    // in this same frame.
+    const previous = useStore.getState().reactions[key]?.[reaction] ?? hasReactedInitial;
+    snapshot.current = previous;
+    toggleReaction({ entityType, entityId, reaction, value: !previous });
+    mutate({ entityId, entityType, reaction });
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;

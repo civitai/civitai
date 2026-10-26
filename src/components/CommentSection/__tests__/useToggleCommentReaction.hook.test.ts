@@ -6,7 +6,7 @@ import type * as TrpcUtils from '~/utils/trpc';
 
 type Options = {
   onSuccess?: (result: string, variables: { id: number }, context: unknown) => void;
-  onSettled?: () => void;
+  onSettled?: (data: unknown, error: unknown, variables: { id: number; reaction: string }) => void;
 };
 
 const h = vi.hoisted(() => ({
@@ -64,11 +64,21 @@ describe('useToggleCommentReaction — one toggle in flight at a time', () => {
     expect(h.mutate).toHaveBeenCalledWith({ id: 9, reaction: 'Like' });
   });
 
+  it('a Heart right after a Like is sent too', () => {
+    const hook = mount();
+    act(() => {
+      hook().toggle('Like');
+      hook().toggle('Heart');
+    });
+    expect(h.mutate).toHaveBeenCalledTimes(2);
+    expect(h.mutate).toHaveBeenLastCalledWith({ id: 9, reaction: 'Heart' });
+  });
+
   // Control: the lock must lift, or the case above passes by disabling reactions for good.
   it('a toggle after the first settles is sent', () => {
     const hook = mount();
     act(() => hook().toggle('Like'));
-    act(() => h.options?.onSettled?.());
+    act(() => h.options?.onSettled?.(undefined, null, { id: 9, reaction: 'Like' }));
     act(() => hook().toggle('Like'));
     expect(h.mutate).toHaveBeenCalledTimes(2);
   });

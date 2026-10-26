@@ -9,7 +9,8 @@ export function useToggleCommentReaction(commentId: number) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   // `isPending` lands a render late, so two clicks in one frame both passed it.
-  const inFlight = useRef(false);
+  // One lock per reaction: a quick Like then Heart are different toggles, only a repeat is dropped.
+  const inFlight = useRef(new Set<ReviewReactions>());
 
   const mutation = trpc.comment.toggleReaction.useMutation({
     async onMutate({ id, reaction }) {
@@ -53,14 +54,14 @@ export function useToggleCommentReaction(commentId: number) {
         context?.previousReactions
       );
     },
-    onSettled() {
-      inFlight.current = false;
+    onSettled(_data, _error, variables) {
+      inFlight.current.delete(variables.reaction);
     },
   });
 
   const toggle = (reaction: ReviewReactions) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    if (inFlight.current.has(reaction)) return;
+    inFlight.current.add(reaction);
     mutation.mutate({ id: commentId, reaction });
   };
 
