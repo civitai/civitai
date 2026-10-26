@@ -37,6 +37,7 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
   selectNewlyAddedModelIds,
@@ -44,12 +45,13 @@ import {
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   isTransientMeiliError,
@@ -112,7 +114,11 @@ import {
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import {
+  associatedResourceSelect,
+  modelWithDetailsSelect,
+} from '~/server/selectors/model.selector';
+import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
@@ -299,6 +305,20 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
+  // The model page's read (`getModelHandler`, the only caller passing this select). With
+  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
+  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
+  if (
+    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
+  ) {
+    const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
+    return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
+  }
+  return findModel(id, select);
+};
+
+async function findModel<TSelect extends Prisma.ModelSelect>(id: number, select: TSelect) {
   const db = await getDbWithoutLag('model', id);
   const result = await db.model.findFirst({
     where: {
@@ -308,7 +328,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   });
 
   return result;
-};
+}
 
 type ModelRaw = {
   id: number;
@@ -6194,7 +6214,7 @@ export const publishPrivateModel = async (
 
   assertPrivateFlowPublishable({ status: model.status, meta: model.meta, isModerator });
 
-  const versions = await dbRead.modelVersion.findMany({
+  const versions = await dbWrite.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true, baseModel: true, publishedAt: true, meta: true },
   });
@@ -6259,6 +6279,19 @@ export const publishPrivateModel = async (
   const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
 
   await dbWrite.$transaction(async (tx) => {
+    // Everything above ran before this transaction, and a takedown can land in between. Re-read
+    // under a lock that the writes below then hold: the model first, then its versions, the order
+    // a model takedown takes them. Filtered on Published, a version taken down meanwhile drops out.
+    if ((await readDownedModel(tx, modelId, 'update')) && !isModerator)
+      throw throwAuthorizationError('You are not authorized to publish this model');
+    const stillPublished = await tx.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "ModelVersion"
+      WHERE id IN (${Prisma.join(versionIds)}) AND status = 'Published'
+      FOR NO KEY UPDATE
+    `;
+    if (stillPublished.length !== versionIds.length)
+      throw throwAuthorizationError('You are not authorized to publish this model version');
+
     // Availability + demotion to null flip unconditionally; the publish
     // bump to `now` is routed through the anti-bump SQL guard below so an
     // already-public post (e.g. a Public→Private→Public flip) keeps its
@@ -6288,6 +6321,7 @@ export const publishPrivateModel = async (
           END,
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND "userId" = ${model.userId}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
     }

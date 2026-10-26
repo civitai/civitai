@@ -8,7 +8,11 @@ import {
 } from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
-import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  isImageHiddenFromGreenViewer,
+  winnerImageFields,
+  winnerImageStateSql,
+} from '~/server/games/daily-challenge/challenge-visibility';
 import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   challengeJudgingCategoriesSchema,
@@ -23,7 +27,7 @@ import {
   CHALLENGE_JOB_BATCH_SIZE,
   DEFAULT_CATEGORY_ROWS,
 } from '~/shared/constants/challenge.constants';
-import type { PoolTrigger } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus, PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
   ChallengeIngestionStatus,
@@ -722,6 +726,9 @@ export async function getChallengeWinners(
       imageUrl: string | null;
       imageNsfwLevel: number | null;
       imageHash: string | null;
+      imageIngestion: ImageIngestionStatus | null;
+      imageBlockedFor: string | null;
+      imageReviewed: boolean | null;
       place: number;
       buzzAwarded: number;
       pointsAwarded: number;
@@ -737,6 +744,7 @@ export async function getChallengeWinners(
       i.url as "imageUrl",
       i."nsfwLevel" as "imageNsfwLevel",
       i.hash as "imageHash",
+      ${winnerImageStateSql},
       cw.place,
       cw."buzzAwarded",
       cw."pointsAwarded",
@@ -753,14 +761,20 @@ export async function getChallengeWinners(
   `;
 
   const hideThumbs = green?.isGreen ?? false;
-  return rows.map(({ collectionItemNote, ...row }) => ({
-    ...row,
-    imageUrl:
-      hideThumbs && isImageHiddenFromGreenViewer(row.imageNsfwLevel, green?.viewerId)
-        ? null
-        : row.imageUrl,
-    judgeScore: parseJudgeScore(collectionItemNote),
-  }));
+  return rows.map(
+    ({ collectionItemNote, imageIngestion, imageBlockedFor, imageReviewed, ...row }) => {
+      const image = winnerImageFields({ ...row, imageIngestion, imageBlockedFor, imageReviewed });
+      return {
+        ...row,
+        ...image,
+        imageUrl:
+          hideThumbs && isImageHiddenFromGreenViewer(image.imageNsfwLevel, green?.viewerId)
+            ? null
+            : image.imageUrl,
+        judgeScore: parseJudgeScore(collectionItemNote),
+      };
+    }
+  );
 }
 
 /**

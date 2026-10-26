@@ -37,8 +37,9 @@ import type {
  * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
  * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
- * `flux3klein` (2026-10-15) is the one card with NO source entry — Flux.3 Klein
- * trains in the Training Studio only. `mossimage` (2026-10-16) likewise.
+ * `flux3klein` (2026-10-15) and `mossimage` (2026-10-16) train in the Training Studio
+ * only: their source entries are `disabled: true`, there so the main app can publish
+ * their runs, so a re-mirror must keep them here.
  */
 
 export type LabelType = 'tag' | 'caption';

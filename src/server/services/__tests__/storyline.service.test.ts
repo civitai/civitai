@@ -3047,6 +3047,29 @@ describe('covers and cast', () => {
     });
   });
 
+  it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+      {
+        id: 3,
+        depth: 1,
+        removedAt: null,
+        placementId: 8,
+        post: chapterPost(103, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.viaPlacement])).toEqual([
+      [1, null, false],
+      [2, null, true],
+      [3, 'removed', true],
+    ]);
+    expect(JSON.stringify(chapters)).not.toContain('placementId');
+  });
+
   describe('the storyline page', () => {
     const page = (viewer: { id: number; isModerator?: boolean } | undefined) =>
       getStoryline({ id: 10, viewer, browsingLevel: PG });

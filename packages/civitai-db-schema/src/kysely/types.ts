@@ -5251,6 +5251,11 @@ export type ServiceOffering = {
   removedDetails: string | null;
   removedAt: Timestamp | null;
   removedById: number | null;
+  /**
+   * The seller's agreement to the services terms when they published: userId, offeringId,
+   * affirmedAt, version and the statement verbatim. Null until first published.
+   */
+  sellerAffirmation: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5819,6 +5824,11 @@ export type UserCreatorMilestone = {
   milestoneKey: string;
   achievedAt: Generated<Timestamp>;
   seenAt: Timestamp | null;
+};
+export type UserEmailNotificationOptOut = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
 };
 export type UserEngagement = {
   userId: number;
@@ -6542,6 +6552,7 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserCreatorMilestone: UserCreatorMilestone;
+  UserEmailNotificationOptOut: UserEmailNotificationOptOut;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;

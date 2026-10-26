@@ -6,9 +6,9 @@ import {
 } from '~/server/notifications/utils.notifications';
 
 /**
- * DEFAULT_PUSH_TYPES is a list of raw strings materialized into UserPushSetting rows at
- * permission-grant time. Nothing at runtime validates them: a typo'd or renamed type would just be
- * a row no dispatcher ever matches — the "default" silently pushes nothing.
+ * DEFAULT_PUSH_TYPES (the processors with `defaultPush`) is materialized into UserPushSetting rows
+ * at permission-grant time. A default on a type the user cannot toggle could never be removed, and
+ * one on an opt-in type is a row fan-out never reaches.
  */
 describe('DEFAULT_PUSH_TYPES', () => {
   it('every entry is a real notification type', () => {

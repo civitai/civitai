@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as NextRouterModule from 'next/router';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -17,6 +18,11 @@ const { calls, addCollaborator, approve, queueRows } = vi.hoisted(() => ({
   queueRows: { value: [] as unknown[] },
 }));
 
+// The queue keeps its received/sent tab in the URL; these render it with no Next router mounted.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  useRouter: () => ({ query: {}, replace: vi.fn() }),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -231,7 +237,7 @@ describe('StorylineContinueForm', () => {
     const el = render(continueForm({ postId: 11, outcome: 'awaitingScan' }));
 
     expect(visibleText(el)).toContain(
-      'Submitted. It reaches the creator once your post finishes being rated.'
+      'It goes to the storyline owner once your post finishes being rated'
     );
   });
 });
@@ -499,7 +505,7 @@ describe('StorylineContinueForm copy', () => {
     act(() => root?.unmount());
 
     const pending = visibleText(render(continueForm({ postId: 11, outcome: 'pending' })));
-    expect(pending).toContain('Submitted. It is waiting for the creator to review.');
+    expect(pending).toContain("It is waiting for the storyline owner's approval");
     expect(pending).not.toContain('Added to the storyline.');
   });
 });

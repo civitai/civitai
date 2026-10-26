@@ -292,12 +292,16 @@ describe('the exemption ledger cannot outlive what it exempts', () => {
     }
   });
 
-  test('the ledger is exactly the two types whose failure reply the SDK would DROP', () => {
+  test('the ledger is exactly the types whose failure reply the SDK would DROP', () => {
     // Pinned as a SET, failing in both directions. A shrink means someone removed
     // an exemption without the SDK change that makes the NACK land; a growth means
     // a new dead end was accepted, and that should be a deliberate, reviewed act
     // rather than something that happens by editing a map.
-    expect(Object.keys(BRIDGE_NACK_EXEMPT).sort()).toEqual(['GET_WILDCARD_PACK', 'REQUEST_TOKEN']);
+    expect(Object.keys(BRIDGE_NACK_EXEMPT).sort()).toEqual([
+      'GET_RESOURCE_FILE',
+      'GET_WILDCARD_PACK',
+      'REQUEST_TOKEN',
+    ]);
   });
 });
 
@@ -349,5 +353,6 @@ describe('buildBridgeNackReply', () => {
     expect(buildBridgeNackReply('BLOCK_READY', 'rq', 'x')).toBeNull();
     expect(buildBridgeNackReply('TOTALLY_MADE_UP', 'rq', 'x')).toBeNull();
     expect(buildBridgeNackReply('GET_WILDCARD_PACK', 'rq', 'x')).toBeNull();
+    expect(buildBridgeNackReply('GET_RESOURCE_FILE', 'rq', 'x')).toBeNull();
   });
 });

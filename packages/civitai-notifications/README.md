@@ -11,8 +11,9 @@ single caller (see [`docs/plans/notifications-monorepo-migration.md`](../../docs
 - **`CreateNotificationPendingRow`** (`./schema`) — the zod contract for a producer payload. The
   `apps/notifications` producer API validates against it; callers type against it. Single source of
   truth, moved out of the monolith's `notification.schema.ts`.
-- **Category + signal constants** (`./constants`) — `NotificationCategory` / `notificationCategories`
-  and `newNotificationSignal` (`'notification:new'`), shared with the fan-out worker.
+- **Category + signal constants** (`./constants`) — `NotificationCategory` / `notificationCategories`,
+  `newNotificationSignal` (`'notification:new'`), and `emailNotificationTypes` (the types that send
+  email, pinned to the processors with `defaultEmail` by a main-app test), shared with the fan-out worker.
 - **`createNotificationsClient(config)`** (`./client`) — the client seam. Build one client bound to your
   endpoint/token/retry + failure sink; it validates then POSTs to the app's authed, internal-only API
   (create / bulk / query / count / mark / exists / cleanup). Swapping it for a direct write is a change

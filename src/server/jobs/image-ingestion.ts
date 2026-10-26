@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
@@ -7,6 +8,10 @@ import { createJob, type JobContext } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
+import {
+  MAX_IN_FLIGHT_RETRACTIONS,
+  newRetractionGate,
+} from '~/server/services/image-cacher-retraction';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -64,6 +69,18 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // run can't dump more than 20 in-flight submits on the rating scanner at once (the
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
+
+// remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
+// 30-minute lock: a second run taking the lock would double the retractions in flight. A chunk is
+// five rounds of `MAX_IN_FLIGHT_RETRACTIONS` rows, each a storage delete of up to
+// `RETRACTING_STORAGE_DELETE_TIMEOUT_MS` (30s), a slot wait of up to `RETRACTION_SLOT_WAIT_MS` (60s)
+// and a request of up to `IMAGE_CACHER_WAIT_MS` (70s): ~13.5 min. So the takedown phase ends within
+// this budget (5 min) + one chunk (~13.5 min) + the persist budget (1 min) = ~19.5 min, leaving
+// ~10.5 min of the lock for the reads before it and the non-retracting deletes after it.
+// Not bounded here: the chunk's DB DELETE and its cache and search-index updates, which run on the
+// database's and those clients' own timeouts.
+const TAKEDOWN_RETRACTION_BUDGET_MS = 5 * 60 * 1000;
+const TAKEDOWN_CHUNK_ROUNDS = 5;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -763,9 +780,9 @@ export const removeBlockedImages = createJob(
     // upload, making anything blocked more than a week after upload deletable on the next run.
     const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
     const images = await dbRead.$queryRaw<
-      { id: number; userId: number; blockedFor: string | null }[]
+      { id: number; userId: number; blockedFor: string | null; url: string | null }[]
     >`
-    SELECT id, "userId", "blockedFor"
+    SELECT id, "userId", "blockedFor", url
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -913,21 +930,106 @@ export const removeBlockedImages = createJob(
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
     const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
     const deleted: number[] = [];
-    if (takedowns.length > 0) {
-      const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
+    // Takedowns not started this run. Their queue rows stay, and being oldest they lead the next run.
+    const retractionDeferred: number[] = [];
+    let retractionStoppedBy: 'busy' | 'budget' | 'retry-queue-unavailable' | null = null;
+    // One gate for the run: a 429 or a timeout in any chunk stops the retractions after it.
+    const retractionGate = newRetractionGate();
+    const takedownChunkSize = MAX_IN_FLIGHT_RETRACTIONS * TAKEDOWN_CHUNK_ROUNDS;
+    const oldestFirst = [...takedowns].sort(
+      (a, b) => (blockedAt.get(a)?.getTime() ?? 0) - (blockedAt.get(b)?.getTime() ?? 0)
+    );
+    // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
+    const cdnAccess = takedowns.length
+      ? await import('~/server/services/cdn-access.service')
+      : null;
+    for (const ids of chunk(oldestFirst, takedownChunkSize)) {
+      if (retractionStoppedBy || !cdnAccess) {
+        retractionDeferred.push(...ids);
+        continue;
+      }
+      // 🔴 Before the rows are deleted: a run that dies after the DELETE and before the persist
+      // below would otherwise leave these images deleted with no record of their retraction (the
+      // next run files their queue rows as stale). Not written means not deleted.
+      let reservation: string | null;
+      try {
+        reservation = await cdnAccess.reserveTakedownRetractions(
+          ids.map((id) => ({ id, url: imageById.get(id)?.url }))
+        );
+      } catch (error) {
+        logToAxiom({
+          name: 'remove-blocked-images',
+          type: 'error',
+          message: 'could not queue takedown retractions; not deleting takedowns this run',
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+        retractionStoppedBy = 'retry-queue-unavailable';
+        retractionDeferred.push(...ids);
+        continue;
+      }
+      const rows = await deleteImages(ids, true, {
+        retractPublicBlobs: true,
+        onlyWhere,
+        retractionGate,
+      });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
       // and the retention window outlasts anything cached before the deny, so no CDN purge here.
-      // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
-      const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
-      await persistDeletedTakedowns(rows);
+      // A retraction that did not land replaces its reservation with a retry that is due now (or,
+      // when another run has reserved the image since, joins that run's reservation).
+      const persisted = await cdnAccess.persistDeletedTakedowns(rows, {
+        reservation: reservation ?? undefined,
+      });
+      if (reservation) {
+        // Kept back from settling, so its reservation stays the retry:
+        // - a row whose retry could not be written;
+        // - an image gone without this delete returning it (its owner deleted it in between): it is
+        //   deleted, so its retraction is still owed, and the reservation sends it once due.
+        // Everything else settles: retracted, nothing to retract (another row still uses the url),
+        // queued (that write already released this reservation), or kept by a hold (a held image
+        // must get no retraction).
+        const returned = new Set(rows.map((x) => x.id));
+        const notReturned = ids.filter((id) => !returned.has(id));
+        const stillThere = notReturned.length
+          ? new Set(
+              (
+                await dbWrite.$queryRaw<{ id: number }[]>`
+                  SELECT id FROM "Image" WHERE id = ANY(${notReturned}::int[])`
+              ).map((x) => x.id)
+            )
+          : new Set<number>();
+        const keep = new Set([
+          ...(persisted?.unqueued ?? []),
+          ...notReturned.filter((id) => !stillThere.has(id)),
+        ]);
+        await cdnAccess.settleTakedownReservations(
+          ids.filter((id) => !keep.has(id)),
+          reservation
+        );
+      }
+      // A 429 or a timeout means the image server is at its limit or slow: more now only add load.
+      if (retractionGate.busy || rows.some((x) => x.retraction === 'busy'))
+        retractionStoppedBy = 'busy';
+      else if (Date.now() - startedAt >= TAKEDOWN_RETRACTION_BUDGET_MS)
+        retractionStoppedBy = 'budget';
     }
+    if (retractionDeferred.length)
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'retracting deletes stopped for this run; the rest stay queued',
+        reason: retractionStoppedBy,
+        count: retractionDeferred.length,
+      }).catch(() => undefined);
     if (deletedWithoutRetraction.length > 0) {
       const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);
-    const heldAtDelete = takedownCandidateIds.filter((id) => !deletedSet.has(id));
+    const deferredSet = new Set(retractionDeferred);
+    const heldAtDelete = takedownCandidateIds.filter(
+      (id) => !deletedSet.has(id) && !deferredSet.has(id)
+    );
 
     // Remove processed and stale entries from queue. Anything the guard kept stays queued.
     const idsToRemove = [...deleted, ...staleIds];
@@ -940,6 +1042,19 @@ export const removeBlockedImages = createJob(
     `;
     }
 
+    // How far behind the job is, against what it got through this run.
+    const backlog = await dbWrite.$queryRaw<{ blockedQueue: number; retractionRetries: number }[]>`
+      SELECT
+        count(*) FILTER (WHERE type::text = ${JobQueueType.BlockedImageDelete})::int AS "blockedQueue",
+        count(*) FILTER (
+          WHERE type::text = ${JobQueueType.ImageCdnPersistRetry} AND data->>'retract' = 'true'
+        )::int AS "retractionRetries"
+      FROM "JobQueue"
+      WHERE type::text IN (${JobQueueType.BlockedImageDelete}, ${JobQueueType.ImageCdnPersistRetry})
+    `
+      .then((r) => (Array.isArray(r) ? r[0] : undefined))
+      .catch(() => undefined);
+
     return finished({
       deleted: deleted.length,
       heldAtDelete: heldAtDelete.length,
@@ -949,6 +1064,10 @@ export const removeBlockedImages = createJob(
       // account deletions plus every automated block plus every whole-library block.
       retracted: takedowns.filter((id) => deletedSet.has(id)).length,
       deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
+      retractionDeferred: retractionDeferred.length,
+      // -1 when the count could not be read.
+      blockedQueueRemaining: backlog?.blockedQueue ?? -1,
+      retractionRetriesQueued: backlog?.retractionRetries ?? -1,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
@@ -959,6 +1078,7 @@ export const removeBlockedImages = createJob(
     });
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
-  // grabbing the lock mid-run would double-delete and hit S3/DB twice.
-  { lockExpiration: 20 * 60 }
+  // grabbing the lock mid-run would double-delete and hit S3/DB twice. Sized by
+  // TAKEDOWN_RETRACTION_BUDGET_MS above, and under the hourly cadence.
+  { lockExpiration: 30 * 60 }
 );

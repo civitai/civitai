@@ -227,7 +227,10 @@ describe('publishPrivateModel — Model rules literal hold', () => {
       status: 'Published',
       meta: { foo: 1 },
     });
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 100 }, { id: 101 }]);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }, { id: 101 }]);
+    // The in-transaction re-read: both versions still Published, the model not taken down.
+    mockTx.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? [{ id: 100 }, { id: 101 }] : []) as never);
     dbMock.dbWrite.post.findMany.mockResolvedValue([
       { modelVersionId: 100 },
       { modelVersionId: 101 },

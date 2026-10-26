@@ -1404,6 +1404,213 @@ export async function insertStorylineChapter({
   return { chapterId };
 }
 
+const MOVE_REFUSAL = 'Only your own chapters in a single line can be moved';
+
+/**
+ * The owner (or a moderator for them) moves `chapterId` to sit straight after `afterChapterId`.
+ * Only within one run of the owner's own chapters, each the single way on from the one before:
+ * no fork, rejoin or contributor's chapter is moved past, so no placement's parent, no reader's
+ * route through a fork and no rejoin's depth changes. Returns the run's chapter ids in their new
+ * order. No chapter id changes, so links to any of them still resolve.
+ */
+export async function moveStorylineChapter({
+  storylineId,
+  chapterId,
+  afterChapterId,
+  userId,
+  isModerator,
+}: {
+  storylineId: number;
+  chapterId: number;
+  afterChapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  if (chapterId === afterChapterId) throw throwBadRequestError('A chapter cannot follow itself');
+  const { userId: ownerId } = await getOwnedStoryline({ storylineId, userId, isModerator });
+
+  const result = await dbWrite.$transaction(async (tx) => {
+    // Exclusive against links, inserts and other moves, and against adds (`lockStorylineForAdd`):
+    // nothing else changes which chapter follows which until the commit.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
+      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Storyline not found');
+    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+
+    const chapters = await tx.$queryRaw<
+      { id: number; depth: number; userId: number; placementId: number | null }[]
+    >`
+      SELECT id, depth, "userId", "placementId" FROM "StorylineChapter"
+      WHERE "storylineId" = ${storylineId}
+    `;
+    const edgeRows = await tx.$queryRaw<{ chapterId: number; parentChapterId: number }[]>`
+      SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"
+      WHERE "storylineId" = ${storylineId}
+    `;
+    const byId = new Map(chapters.map((c) => [c.id, c]));
+    const moved = byId.get(chapterId);
+    const after = byId.get(afterChapterId);
+    if (!moved || !after) throw throwNotFoundError('Chapter not found');
+    if (moved.depth === 0) throw throwBadRequestError('The first chapter cannot be moved');
+
+    const parentsOf = new Map<number, number[]>();
+    const childrenOf = new Map<number, number[]>();
+    for (const e of edgeRows) {
+      if (!parentsOf.has(e.chapterId)) parentsOf.set(e.chapterId, []);
+      if (!childrenOf.has(e.parentChapterId)) childrenOf.set(e.parentChapterId, []);
+      parentsOf.get(e.chapterId)?.push(e.parentChapterId);
+      childrenOf.get(e.parentChapterId)?.push(e.chapterId);
+    }
+    const parents = (id: number) => parentsOf.get(id) ?? [];
+    const children = (id: number) => childrenOf.get(id) ?? [];
+    const isOwners = (id: number) => {
+      const c = byId.get(id);
+      return !!c && c.userId === ownerId && c.placementId == null;
+    };
+    // `next` is in the same run as `id`: the only way on from it, reached by no other way in.
+    const linked = (id: number, next: number) =>
+      isOwners(id) &&
+      isOwners(next) &&
+      children(id).length === 1 &&
+      children(id)[0] === next &&
+      parents(next).length === 1;
+
+    let head = chapterId;
+    const seen = new Set([head]);
+    for (
+      let p = parents(head)[0];
+      p != null && linked(p, head) && !seen.has(p);
+      p = parents(p)[0]
+    ) {
+      head = p;
+      seen.add(p);
+    }
+    const run = [head];
+    for (
+      let c = children(head)[0];
+      c != null && linked(run[run.length - 1], c) && !run.includes(c);
+      c = children(c)[0]
+    )
+      run.push(c);
+    const tail = run[run.length - 1];
+
+    // A chapter at the end of the run takes or leaves its place only when nothing follows it: what
+    // follows a tail is a fork, a rejoin or someone else's chapter, which must not move with it.
+    const fitsAtEnd = (id: number) => id !== tail || children(id).length === 0;
+    if (
+      run[0] === chapterId ||
+      !run.includes(afterChapterId) ||
+      !fitsAtEnd(chapterId) ||
+      !fitsAtEnd(afterChapterId) ||
+      (after.depth !== 0 && parents(afterChapterId).length !== 1)
+    )
+      throw throwBadRequestError(MOVE_REFUSAL);
+
+    const order = run.filter((id) => id !== chapterId);
+    order.splice(order.indexOf(afterChapterId) + 1, 0, chapterId);
+    const oldParent = run[run.indexOf(chapterId) - 1];
+    if (oldParent === afterChapterId) return { chapterIds: run, changedParents: [] as number[] };
+
+    const oldChild = run[run.indexOf(chapterId) + 1] as number | undefined;
+    const afterChild = run[run.indexOf(afterChapterId) + 1] as number | undefined;
+    // Each parent whose way on is rewired, locked as `setCanonChapter` locks a parent, so its canon
+    // flag read below holds until the commit. In id order, as `lockLiveChapters` locks.
+    const rewired = [oldParent, chapterId, afterChapterId].sort((a, b) => a - b);
+    await tx.$queryRaw`
+      SELECT id FROM "StorylineChapter" WHERE id = ANY(${rewired}::int[]) ORDER BY id FOR NO KEY UPDATE
+    `;
+    const outEdges = await tx.$queryRaw<
+      { chapterId: number; parentChapterId: number; canon: boolean; createdAt: Date }[]
+    >`
+      SELECT "chapterId", "parentChapterId", canon, "createdAt" FROM "StorylineChapterEdge"
+      WHERE "parentChapterId" = ANY(${rewired}::int[])
+    `;
+    // A continuation waiting on one of these was written to follow it where it stood: approved
+    // after the move, it would land somewhere its author never saw (a paid "next chapter" at the
+    // end becoming a fork early in the story).
+    const [waiting] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT c.id FROM "StorylineChapter" c
+      WHERE c.id = ANY(${rewired}::int[])
+        AND (
+          EXISTS (
+            SELECT 1 FROM "Placement" pl
+            WHERE pl.surface = 'storyline' AND pl."targetType" = 'post'
+              AND pl."targetId" = c."postId" AND pl.status = 'pending'
+          )
+          OR EXISTS (SELECT 1 FROM "StorylinePendingChapter" d WHERE d."parentChapterId" = c.id)
+        )
+      LIMIT 1
+    `;
+    if (waiting)
+      throw throwBadRequestError(
+        'This chapter has a continuation waiting for review; answer it first'
+      );
+
+    const canonOutOf = (id: number) =>
+      outEdges.find((e) => e.parentChapterId === id)?.canon ?? true;
+    const afterEdge = outEdges.find((e) => e.parentChapterId === afterChapterId);
+
+    // Each parent keeps the canon flag of its one way on, so the main route stays where the owner
+    // put it. In this order so no parent has two canon children at any statement (one-canon index).
+    await tx.$executeRaw`
+      DELETE FROM "StorylineChapterEdge"
+      WHERE "parentChapterId" = ${oldParent} AND "chapterId" = ${chapterId}
+    `;
+    if (oldChild != null)
+      await tx.$executeRaw`
+        UPDATE "StorylineChapterEdge" SET "parentChapterId" = ${oldParent}, canon = ${canonOutOf(
+        oldParent
+      )}
+        WHERE "parentChapterId" = ${chapterId} AND "chapterId" = ${oldChild}
+      `;
+    if (afterChild != null)
+      await tx.$executeRaw`
+        UPDATE "StorylineChapterEdge" SET "parentChapterId" = ${chapterId}, canon = ${canonOutOf(
+        chapterId
+      )}
+        WHERE "parentChapterId" = ${afterChapterId} AND "chapterId" = ${afterChild}
+      `;
+    await tx.$executeRaw`
+      INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon, "createdAt")
+      VALUES (${storylineId}, ${chapterId}, ${afterChapterId}, ${canonOutOf(afterChapterId)},
+        ${afterEdge?.createdAt ?? new Date()})
+    `;
+
+    // The run keeps its head and its length, so its last place keeps its depth, and so does
+    // everything beyond it.
+    const headDepth = byId.get(head)?.depth ?? 0;
+    const depths = order.map((_, i) => headDepth + i);
+    await tx.$executeRaw`
+      UPDATE "StorylineChapter" c SET depth = v.depth
+      FROM unnest(${order}::int[], ${depths}::int[]) AS v(id, depth)
+      WHERE c.id = v.id AND c.depth <> v.depth
+    `;
+
+    // A reader's choice is recorded at any chapter, not only at a fork, so the three parents whose
+    // one way on changed point their readers' choice at the new one, or drop it at the run's end.
+    const changedParents = [oldParent, chapterId, afterChapterId];
+    for (const parentId of changedParents) {
+      const next = order[order.indexOf(parentId) + 1] as number | undefined;
+      if (next != null)
+        await tx.$executeRaw`
+          UPDATE "StorylineBranchChoice" SET "chapterId" = ${next} WHERE "parentChapterId" = ${parentId}
+        `;
+      else
+        await tx.$executeRaw`DELETE FROM "StorylineBranchChoice" WHERE "parentChapterId" = ${parentId}`;
+    }
+    return { chapterIds: order, changedParents };
+  });
+
+  // Committed; stale counts until the entries expire beat reporting the move as failed.
+  await Promise.all(
+    result.changedParents.map((id) =>
+      bustFetchThroughCache(forkCountsKey(id)).catch(() => undefined)
+    )
+  );
+  return { chapterIds: result.chapterIds };
+}
+
 const STORYLINE_LINK_TARGETS_LIMIT = 100;
 
 /**
@@ -1907,7 +2114,13 @@ export async function getStorylineGraph({
   const { storyline, blockedUserIds } = await getStorylineForRead(id, viewer, browsingLevel);
   const rows = await dbRead.storylineChapter.findMany({
     where: { storylineId: id },
-    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+    select: {
+      id: true,
+      depth: true,
+      removedAt: true,
+      placementId: true,
+      post: { select: chapterPostSelect },
+    },
     orderBy: [{ depth: 'asc' }, { id: 'asc' }],
     take: STORYLINE_GRAPH_LIMIT + 1,
   });
@@ -1934,7 +2147,10 @@ export async function getStorylineGraph({
     rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
     chapters: await withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      chapters.map((c) => toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)))
+      chapters.map((c) => ({
+        ...toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)),
+        viaPlacement: c.placementId != null,
+      }))
     ),
     edges: edges.filter((e) => ids.has(e.parentChapterId)),
     truncated: rows.length > STORYLINE_GRAPH_LIMIT,

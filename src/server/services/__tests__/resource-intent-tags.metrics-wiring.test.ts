@@ -18,23 +18,29 @@ type Spy = ReturnType<typeof vi.fn>;
 const findMany = dbMock.dbRead.keyValue.findMany as unknown as Spy;
 const queryRaw = dbMock.dbRead.$queryRaw as unknown as Spy;
 
-/** One scrape of the two database-reading gauges, then let their background reads settle. */
+const FLAG = 'resource-intent-tag-index-build';
+
+/** One scrape of the two database-reading gauges, waiting until each one's background read ended. */
 async function scrape() {
   // A fresh registration, as a pod's first import of the module makes it.
   instrumentationRegistry.clear();
   vi.resetModules();
-  const { TAG_INDEX_METRICS } = await import('~/server/prom/resource-intent-tags.metrics');
+  const { TAG_INDEX_METRICS, waitForTagIndexGaugeRead } = await import(
+    '~/server/prom/resource-intent-tags.metrics'
+  );
   const names = [TAG_INDEX_METRICS.newestReadyCreated, TAG_INDEX_METRICS.buildLastSuccess];
   // One gauge at a time: vitest can hand the second of two concurrent first imports of a mocked
   // module the unmocked one (measured here), which is a property of the test runner, not the code.
   for (const name of names) {
     const metric = instrumentationRegistry.getSingleMetric(name);
     expect(metric, name).toBeDefined();
-    await metric!.get();
-    // Let its background read settle (a flag read, then maybe a database read: both mocked).
-    await new Promise((r) => setTimeout(r, 300));
+    // The scrape starts the gauge's background read (collect runs as get() is called); wait for
+    // that read to finish (the flag read, and when it is on the imports and the database read)
+    // instead of sleeping, so a slow import cannot outrun the assertions.
+    const scraped = metric!.get();
+    await waitForTagIndexGaugeRead(name);
+    await scraped;
   }
-  await new Promise((r) => setTimeout(r, 50));
 }
 
 describe('tag-index metrics wiring', () => {
@@ -51,11 +57,8 @@ describe('tag-index metrics wiring', () => {
     await scrape();
     expect(findMany).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();
-    // Each gauge did run its read, and asked the build flag.
-    expect(isFlipt.mock.calls).toEqual([
-      ['resource-intent-tag-index-build'],
-      ['resource-intent-tag-index-build'],
-    ]);
+    // Each gauge did run its read, and asked the build flag (once each: the wait starts no read).
+    expect(isFlipt.mock.calls).toEqual([[FLAG], [FLAG]]);
   });
 
   it('with it on, the same wiring reads both (positive control)', async () => {

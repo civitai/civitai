@@ -1,5 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
+import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
@@ -526,7 +527,7 @@ export async function setReportStatus({
     })
     .where('id', '=', id)
     .where('status', '!=', status)
-    .returning(['userId', 'alsoReportedBy'])
+    .returning(['userId', 'alsoReportedBy', 'details'])
     .executeTakeFirst();
 
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
@@ -537,7 +538,12 @@ export async function setReportStatus({
   // double-rewards.
   if (status === ReportStatus.Actioned && updated) {
     const reporterIds = [updated.userId, ...(updated.alsoReportedBy ?? [])];
-    await rewardReportReporters({ reportId: id, reporterIds, ip });
+    await rewardReportReporters({
+      reportId: id,
+      reporterIds,
+      unpaidReporterIds: reportersWithoutReward(updated),
+      ip,
+    });
   }
 
   return { ok: true as const, changed: !!updated };

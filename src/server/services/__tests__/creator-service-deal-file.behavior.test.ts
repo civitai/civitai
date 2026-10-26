@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import '~/__tests__/mocks/logging.mock';
@@ -157,6 +158,7 @@ async function accepted(previewKind = 'Image') {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
+    disclosureVersion: SERVICES_TERMS_VERSION,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -283,6 +285,7 @@ describe('requesting an upload', () => {
           expectedDeliveryDays: 3,
           buyerId: BUYER,
           requestText: 'please',
+          disclosureVersion: SERVICES_TERMS_VERSION,
           buzzType: 'yellow',
           servableLevels: 31,
           consentLevels: 1,
