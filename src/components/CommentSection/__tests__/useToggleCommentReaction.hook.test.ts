@@ -4,15 +4,19 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcUtils from '~/utils/trpc';
 
+type Row = { id: number; reaction: string; user: { id: number; username: string } };
 type Options = {
+  onMutate?: (variables: { id: number; reaction: string }) => Promise<unknown>;
   onSuccess?: (result: string, variables: { id: number }, context: unknown) => void;
-  onSettled?: () => void;
+  onError?: (error: unknown, variables: { id: number }, context: unknown) => void;
+  onSettled?: (data: unknown, error: unknown, variables: { id: number; reaction: string }) => void;
 };
 
 const h = vi.hoisted(() => ({
   options: undefined as Options | undefined,
   mutate: vi.fn(),
-  setData: vi.fn(),
+  // The comment.getReactions cache the hook writes to.
+  cache: [] as Row[],
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -28,7 +32,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           },
         },
       },
-      { useUtils: () => ({ comment: { getReactions: { setData: h.setData } } }) }
+      {
+        useUtils: () => ({
+          comment: {
+            getReactions: {
+              cancel: () => Promise.resolve(),
+              getData: () => h.cache,
+              setData: (_key: unknown, update: Row[] | ((old: Row[]) => Row[])) => {
+                h.cache = typeof update === 'function' ? update(h.cache) : update;
+              },
+            },
+          },
+        }),
+      }
     ),
   };
 });
@@ -51,6 +67,7 @@ function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.cache = [];
 });
 
 describe('useToggleCommentReaction — one toggle in flight at a time', () => {
@@ -64,25 +81,56 @@ describe('useToggleCommentReaction — one toggle in flight at a time', () => {
     expect(h.mutate).toHaveBeenCalledWith({ id: 9, reaction: 'Like' });
   });
 
+  it('a Heart right after a Like is sent too', () => {
+    const hook = mount();
+    act(() => {
+      hook().toggle('Like');
+      hook().toggle('Heart');
+    });
+    expect(h.mutate).toHaveBeenCalledTimes(2);
+    expect(h.mutate).toHaveBeenLastCalledWith({ id: 9, reaction: 'Heart' });
+  });
+
   // Control: the lock must lift, or the case above passes by disabling reactions for good.
   it('a toggle after the first settles is sent', () => {
     const hook = mount();
     act(() => hook().toggle('Like'));
-    act(() => h.options?.onSettled?.());
+    act(() => h.options?.onSettled?.(undefined, null, { id: 9, reaction: 'Like' }));
     act(() => hook().toggle('Like'));
     expect(h.mutate).toHaveBeenCalledTimes(2);
   });
 
-  it('restores the previous reactions when the server ignored the toggle', () => {
+  it('removes its optimistic row when the server ignored the toggle', async () => {
     mount();
-    const previousReactions = [{ id: 1, reaction: 'Heart', user: { id: 2, username: 'x' } }];
-    h.options?.onSuccess?.('ignored', { id: 9 }, { previousReactions });
-    expect(h.setData).toHaveBeenCalledWith({ commentId: 9 }, previousReactions);
+    const context = await h.options?.onMutate?.({ id: 9, reaction: 'Like' });
+    expect(h.cache.map((r) => r.reaction)).toEqual(['Like']);
+    h.options?.onSuccess?.('ignored', { id: 9 }, context);
+    expect(h.cache).toEqual([]);
   });
 
-  it('keeps the optimistic reactions when the toggle was applied', () => {
+  it('puts back a row it removed when the request failed', async () => {
     mount();
-    h.options?.onSuccess?.('created', { id: 9 }, { previousReactions: [] });
-    expect(h.setData).not.toHaveBeenCalled();
+    h.cache = [{ id: 1, reaction: 'Heart', user: { id: 1, username: 'u' } }];
+    const context = await h.options?.onMutate?.({ id: 9, reaction: 'Heart' });
+    expect(h.cache).toEqual([]);
+    h.options?.onError?.(new Error('boom'), { id: 9 }, context);
+    expect(h.cache.map((r) => r.reaction)).toEqual(['Heart']);
+  });
+
+  it('keeps the optimistic reactions when the toggle was applied', async () => {
+    mount();
+    const context = await h.options?.onMutate?.({ id: 9, reaction: 'Like' });
+    h.options?.onSuccess?.('created', { id: 9 }, context);
+    expect(h.cache.map((r) => r.reaction)).toEqual(['Like']);
+  });
+
+  it('a failed Like leaves the Heart sent after it alone', async () => {
+    mount();
+    const like = await h.options?.onMutate?.({ id: 9, reaction: 'Like' });
+    const heart = await h.options?.onMutate?.({ id: 9, reaction: 'Heart' });
+    h.options?.onError?.(new Error('boom'), { id: 9 }, like);
+    expect(h.cache.map((r) => r.reaction)).toEqual(['Heart']);
+    h.options?.onError?.(new Error('boom'), { id: 9 }, heart);
+    expect(h.cache).toEqual([]);
   });
 });

@@ -1131,14 +1131,18 @@ async function reviewEntriesForChallenge(
 
       // Send reaction
       try {
-        await toggleReaction({
+        const reactionResult = await toggleReaction({
           entityType: 'image',
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
           eventPoints: false,
         });
-        log('Reaction sent', entry.imageId);
+        log(
+          reactionResult === 'ignored' ? 'Reaction ignored' : 'Reaction sent',
+          entry.imageId,
+          reactionResult
+        );
       } catch (error) {
         log('Failed to send reaction', entry.imageId, review.reaction);
       }
