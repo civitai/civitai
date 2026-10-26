@@ -114,6 +114,7 @@ function ManageShopPage() {
     <Stack gap="lg" mt="md" pb="xl">
       <ManageHeader
         canAddItems={isOwner}
+        showCosmeticActions={tab === 'cosmetics'}
         targetUserId={manageUserId}
         backHref={`/user/${username}/shop`}
       />
