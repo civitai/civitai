@@ -858,6 +858,22 @@ is the model's own format (`glb`, `fbx`, …) and `variant` the output field it 
 (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
 `QUERY_APP_WORKFLOWS` items.
 
+### Tasks (experimental `kind:'task'`)
+
+`{ kind: 'task', task: 'image.edit@1', input, maxBuzz, pin? }` names a goal instead of a
+step type. The server asks the Task Router which provider should run it within
+`min(maxBuzz, per-call budget)` Buzz, verifies the router's signed ticket (signature,
+audience, expiry, budget, user, one step, callback origin), and runs the ticket's one step on
+the pass-through path above, so every cap, reservation and settle rule is that path's. The
+task id is the idempotency key, so a replayed ticket returns the first workflow. The reply
+is the usual snapshot plus `task: { taskId, resolvedAs, quote }`. Router refusals arrive as
+`errorCode` (`unknown_task`, `over_budget`, …), and a ticket this server refuses as
+`task-ticket-invalid`. There is no estimate yet.
+
+Off unless all three hold: `TASK_ROUTER_URL` (with its party key and callback origin) is
+set, the app is on `TASK_ROUTER_APP_ALLOWLIST`, and the `app-blocks-task-kind` flag is on
+for the viewer. Page tokens only.
+
 ## Publish / review / deploy lifecycle (no trust on push)
 
 The build + deploy of new iframe code is gated entirely on **moderator

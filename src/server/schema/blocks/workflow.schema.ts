@@ -822,6 +822,63 @@ export const blockMultiStepWorkflowBodySchema = z
 
 export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
 
+// ── App Blocks TASK kind (`kind:'task'`, experimental) ────────────────────────
+//
+// A goal (`image.edit@1`) plus a budget. `input` is checked against the goal's schema by the
+// Task Router, not here.
+
+/** `domain.verb@major`, e.g. `image.removeBackground@1`. */
+export const TASK_GOAL_ID_REGEX = /^[a-z][a-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+@[0-9]{1,4}$/;
+const TASK_GOAL_ID_MAX_CHARS = 64;
+const TASK_PIN_ID_MAX_CHARS = 128;
+
+export const blockTaskBodySchema = z
+  .object({
+    kind: z.literal('task'),
+    task: z.string().max(TASK_GOAL_ID_MAX_CHARS).regex(TASK_GOAL_ID_REGEX),
+    input: z.record(z.string(), z.unknown()),
+    maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+    pin: z
+      .union([
+        z.object({ ability: z.string().min(1).max(TASK_PIN_ID_MAX_CHARS) }).strict(),
+        z.object({ provider: z.string().min(1).max(TASK_PIN_ID_MAX_CHARS) }).strict(),
+      ])
+      .optional(),
+  })
+  .strict()
+  .superRefine(
+    refuseInlineMedia(
+      passThroughInputFields,
+      { path: ['input'], message: `task input holds more than ${INLINE_MEDIA_MAX_VISITS} values` },
+      PASS_THROUGH_INPUT_BYTES_MAX
+    )
+  )
+  .refine(
+    (b) => jsonLengthWithin(fieldValues(passThroughInputFields(b)), PASS_THROUGH_INPUT_BYTES_MAX),
+    {
+      path: ['input'],
+      message: `task input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
+    }
+  );
+
+export type BlockTaskBody = z.infer<typeof blockTaskBodySchema>;
+
+/**
+ * The router's own refusals pass through by name; `task-unavailable` is the router being
+ * unreachable or unconfigured, `task-ticket-invalid` a ticket this adapter refused to run.
+ */
+export const TASK_ERROR_CODES = [
+  'unknown_task',
+  'invalid_input',
+  'over_budget',
+  'unsupported_currency',
+  'pin_unavailable',
+  'no_provider',
+  'task-unavailable',
+  'task-ticket-invalid',
+] as const;
+export type TaskErrorCode = (typeof TASK_ERROR_CODES)[number];
+
 // ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
 //
 // Trains a LoRA with the ai-toolkit engine on consumer blobs the page host uploaded
@@ -1010,6 +1067,7 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockStepMemberSchema,
   blockTrainingBodySchema,
   blockMultiStepWorkflowBodySchema,
+  blockTaskBodySchema,
 ]);
 
 export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
@@ -1134,7 +1192,14 @@ export type BlockWorkflowSnapshot = {
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | InlineComfyRefusedCode
+    | TaskErrorCode
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
+  /** `kind:'task'` submits only: which provider the router chose, and its quote. */
+  task?: {
+    taskId: string;
+    resolvedAs: { ability: string; provider: string; via: string };
+    quote: { amount: number; currency: string };
+  };
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
