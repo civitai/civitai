@@ -67,7 +67,8 @@ export const GET: RequestHandler = async ({ params, url, locals, request, fetch 
   }
   if (!upstream.ok && upstream.status !== 416) {
     await upstream.body?.cancel();
-    return empty(502);
+    // A variant the CDN does not have is missing, not an upstream failure; the page treats both alike.
+    return empty(upstream.status === 404 || upstream.status === 410 ? 404 : 502);
   }
 
   const headers = new Headers({ 'cache-control': 'private, no-store' });
