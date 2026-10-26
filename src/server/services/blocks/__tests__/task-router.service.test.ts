@@ -33,17 +33,17 @@ describe('verifyTaskTicket against the router repo vectors', () => {
     });
   }
 
-  it('returns the one step, the router tags and the callbacks of a valid ticket', async () => {
-    const valid = vectorCase('valid');
+  it('returns the steps, with their references, the router tags and the callbacks', async () => {
+    const chain = vectorCase('valid_chain');
     const ticket = await verifyTaskTicket(
-      valid.ticket,
-      verifyOpts({ currentDate: new Date(valid.verifyAt) })
+      chain.ticket,
+      verifyOpts({ currentDate: new Date(chain.verifyAt) })
     );
-    expect(ticket.taskId).toBe('tsk_01JVECTOR00000000000000000');
-    expect(ticket.step.$type).toBe('imageGen');
-    expect(ticket.tags).toEqual(['task:image.edit@1', 'tr:tsk_01JVECTOR00000000000000000']);
+    expect(ticket.taskId).toBe(chain.sub);
+    expect(ticket.steps.map((step) => step.name)).toEqual(['gen', 'cut']);
+    expect(ticket.steps[1].input.image).toEqual({ $ref: 'gen', path: 'output.images[0].url' });
+    expect(ticket.tags).toEqual(['task:chain', `tr:${chain.sub}`]);
     expect(ticket.callbacks).toHaveLength(1);
-    expect(ticket.resolvedAs.ability).toBe('orch.image.edit.nano-banana-2-lite');
   });
 });
 
@@ -56,11 +56,9 @@ describe('verifyTaskTicket on locally signed tickets', () => {
   );
 
   const claims = (over: Record<string, unknown> = {}, workflow: Record<string, unknown> = {}) => ({
-    v: 1,
-    goal: 'image.edit@1',
-    ability: 'orch.image.edit.nano-banana-2-lite',
+    v: 2,
     provider: 'civitai-orchestrator',
-    via: 'rank',
+    steps: [{ name: 's0', goal: 'image.edit@1', ability: 'orch.x', via: 'rank' }],
     budget: vectors.budget,
     quote: { amount: 8, currency: 'buzz' },
     user: vectors.user,
@@ -69,7 +67,7 @@ describe('verifyTaskTicket on locally signed tickets', () => {
       workflow: {
         steps: [{ $type: 'imageGen', input: { prompt: 'p' } }],
         tags: ['task:image.edit@1', 'tr:tsk_local'],
-        metadata: { taskRouter: { v: 1, taskId: 'tsk_local' } },
+        metadata: { taskRouter: { v: 2, taskId: 'tsk_local' } },
         callbacks: [{ url: `${vectors.callbackOrigin}/v1/callbacks/x`, type: ['workflow:*'] }],
         ...workflow,
       },
@@ -103,18 +101,11 @@ describe('verifyTaskTicket on locally signed tickets', () => {
     ],
     ['a quote above the budget', claims({ quote: { amount: 21, currency: 'buzz' } }), /quote/],
     ['another user', claims({ user: 'u_someone_else' }), /user/],
+    ['a version-1 ticket', claims({ v: 1 }), /version/],
     [
-      'two steps',
-      claims(
-        {},
-        {
-          steps: [
-            { $type: 'imageGen', input: {} },
-            { $type: 'imageGen', input: {} },
-          ],
-        }
-      ),
-      /one step/,
+      'nine steps',
+      claims({}, { steps: Array.from({ length: 9 }, () => ({ $type: 'imageGen', input: {} })) }),
+      /1 to 8 steps/,
     ],
     ['a tag outside the router shapes', claims({}, { tags: ['app-block:app_other'] }), /tag/],
     [
@@ -149,8 +140,19 @@ describe('matchTask', () => {
 
   it('sends the party key and returns the match', async () => {
     const fetchImpl = respond(200, {
+      status: 'matched',
       taskId: 'tsk_1',
-      resolvedAs: { ability: 'a', provider: 'p', via: 'rank' },
+      resolvedAs: [
+        {
+          step: 's0',
+          goal: 'image.edit@1',
+          tier: 'standard',
+          ability: 'a',
+          provider: 'p',
+          via: 'sticky',
+          assignment: { event: 'kept' },
+        },
+      ],
       quote: { amount: 8, currency: 'buzz' },
       ticket: 'jws',
     });
@@ -162,13 +164,20 @@ describe('matchTask', () => {
   });
 
   it('passes a router refusal through by its code', async () => {
-    const fetchImpl = respond(404, { error: 'unknown_task', message: 'no such goal' });
+    const fetchImpl = respond(422, { error: 'tier_unavailable', message: 'no best tier' });
     await expect(matchTask(config, request, fetchImpl as unknown as typeof fetch)).resolves.toEqual(
       {
         ok: false,
-        code: 'unknown_task',
-        message: 'no such goal',
+        code: 'tier_unavailable',
+        message: 'no best tier',
       }
+    );
+  });
+
+  it('returns an off-menu reply as not_yet, with its closest items', async () => {
+    const fetchImpl = respond(200, { status: 'not_yet', demandId: 'dem_1', closest: [] });
+    await expect(matchTask(config, request, fetchImpl as unknown as typeof fetch)).resolves.toEqual(
+      { ok: true, notYet: { status: 'not_yet', demandId: 'dem_1', closest: [] } }
     );
   });
 

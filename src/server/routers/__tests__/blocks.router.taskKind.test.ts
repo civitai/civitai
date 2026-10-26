@@ -47,6 +47,7 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksTaskKindEnabled: (...a: unknown[]) => h.taskFlag(...(a as [])),
+  isAppBlocksAuthorFeeEnabled: async () => false,
 }));
 vi.mock('~/server/services/blocks/task-router.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TaskRouterModule>()),
@@ -161,16 +162,21 @@ function claims() {
 }
 
 const vectorTicket = (name: string) => vectors.cases.find((c) => c.name === name)!.ticket;
-function matchReturning(ticket: string) {
+function matchReturning(ticket: string, taskId = TASK_ID, steps = ['s0'], event = 'kept') {
   h.matchTask.mockImplementation(async () => ({
     ok: true,
     match: {
-      taskId: TASK_ID,
-      resolvedAs: {
+      status: 'matched',
+      taskId,
+      resolvedAs: steps.map((step) => ({
+        step,
+        goal: 'image.edit@1',
+        tier: 'standard',
         ability: 'orch.image.edit.nano-banana-2-lite',
         provider: 'civitai-orchestrator',
-        via: 'rank',
-      },
+        via: 'sticky',
+        assignment: { event },
+      })),
       quote: { amount: 8, currency: 'buzz' },
       ticket,
     },
@@ -213,7 +219,7 @@ type Snap = {
   status: string;
   error?: string;
   errorCode?: string;
-  task?: { taskId: string; resolvedAs: { ability: string } };
+  task?: Record<string, unknown>;
 };
 const submit = async (body: Record<string, unknown> = TASK_BODY) =>
   (await caller().submitWorkflow({ blockToken: 't', body: body as never })) as { snapshot: Snap };
@@ -283,10 +289,41 @@ describe("kind:'task' submit", () => {
 
     expect(snapshot.workflowId).toBe(WORKFLOW_ID);
     expect(snapshot.task).toMatchObject({
+      status: 'matched',
       taskId: TASK_ID,
-      resolvedAs: { ability: 'orch.image.edit.nano-banana-2-lite' },
+      resolvedAs: [{ step: 's0', ability: 'orch.image.edit.nano-banana-2-lite' }],
+      moved: false,
     });
     expect(h.reportTaskStarted).toHaveBeenCalledWith(expect.anything(), TASK_ID, WORKFLOW_ID);
+  });
+
+  it('runs a chain ticket as one kind:workflow job, references intact', async () => {
+    const chain = vectors.cases.find((c) => c.name === 'valid_chain')!;
+    matchReturning(chain.ticket, chain.sub, ['gen', 'cut'], 'moved');
+    const { snapshot } = await submit({
+      kind: 'task',
+      steps: [
+        { name: 'gen', task: 'image.generate@1', input: { prompt: 'a red fox sticker' } },
+        {
+          name: 'cut',
+          task: 'image.removeBackground@1',
+          input: { image: { $ref: 'gen', output: 'image' } },
+        },
+      ],
+      maxBuzz: 20,
+    });
+
+    expect(realSubmits()).toHaveLength(1);
+    const sent = realSubmits()[0].body;
+    expect(sent.steps.map((step) => step.$type)).toEqual(['imageGen', 'imageBackgroundRemoval']);
+    expect(sent.steps[1].input).toEqual({ image: { $ref: 'gen', path: 'output.images[0].url' } });
+    expect(sent.tags).toHaveLength(10);
+    expect(sent.tags).toEqual(expect.arrayContaining(['task:chain', `tr:${chain.sub}`]));
+    expect(sent.metadata).toMatchObject({ taskRouter: { taskId: chain.sub } });
+    expect(Object.keys(sent.metadata ?? {})).toHaveLength(2);
+    expect(sent.callbacks).toHaveLength(1);
+    expect(sent.externalId).toContain(chain.sub);
+    expect(snapshot.task).toMatchObject({ status: 'matched', taskId: chain.sub, moved: true });
   });
 
   it('submits a replayed ticket to the orchestrator once', async () => {
@@ -311,11 +348,33 @@ describe("kind:'task' submit", () => {
   it("passes the router's refusal through without spending", async () => {
     h.matchTask.mockImplementation(async () => ({
       ok: false,
-      code: 'unknown_task',
-      message: 'no such goal',
+      code: 'tier_unavailable',
+      message: 'no best tier',
     }));
     const { snapshot } = await submit();
-    expect(snapshot).toMatchObject({ status: 'failed', errorCode: 'unknown_task' });
+    expect(snapshot).toMatchObject({ status: 'failed', errorCode: 'tier_unavailable' });
+    expect(orchestratorCalls()).toHaveLength(0);
+  });
+
+  it('returns an off-menu ask as not_yet, with its demand id, without spending', async () => {
+    h.matchTask.mockImplementation(async () => ({
+      ok: true,
+      notYet: { status: 'not_yet', demandId: 'dem_1', closest: [] },
+    }));
+    const { snapshot } = await submit({
+      kind: 'task',
+      description: 'vectorize this image as an SVG',
+      input: { image: 'https://img.example/a.png', extra: true },
+      maxBuzz: 20,
+    });
+    expect(h.matchTask.mock.calls[0][1]).toMatchObject({
+      description: 'vectorize this image as an SVG',
+      input: { extra: true },
+    });
+    expect(snapshot).toMatchObject({
+      errorCode: 'not_yet',
+      task: { status: 'not_yet', demandId: 'dem_1', closest: [] },
+    });
     expect(orchestratorCalls()).toHaveLength(0);
   });
 
@@ -348,11 +407,9 @@ describe("kind:'task' submit", () => {
       });
       const now = Math.floor(VECTOR_TIME.getTime() / 1000);
       const ticket = await new SignJWT({
-        v: 1,
-        goal: 'image.edit@1',
-        ability: 'orch.x',
+        v: 2,
         provider: 'civitai-orchestrator',
-        via: 'rank',
+        steps: [{ name: 's0', goal: 'image.edit@1', ability: 'orch.x', via: 'rank' }],
         budget: vectors.budget,
         quote: { amount: 8, currency: 'buzz' },
         user: vectors.user,
@@ -375,7 +432,7 @@ describe("kind:'task' submit", () => {
         .setIssuedAt(now)
         .setExpirationTime(now + 120)
         .sign(privateKey);
-      matchReturning(ticket);
+      matchReturning(ticket, 'tsk_local');
     }
 
     it('refuses a platform-internal step type before any orchestrator call', async () => {

@@ -130,8 +130,10 @@ import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
   blockEstimateBatchInputSchema,
+  blockMultiStepWorkflowBodySchema,
   blockPassThroughStepBodySchema,
   blockWorkflowBodySchema,
+  PASS_THROUGH_MAX_BUZZ,
 } from '~/server/schema/blocks/workflow.schema';
 import type { WorkflowTemplate } from '@civitai/orchestration-client';
 import type { VerifiedTaskTicket } from '~/server/services/blocks/task-router.service';
@@ -10589,6 +10591,26 @@ const PASS_THROUGH_RECIPE_LABEL = '__passthrough__';
 /** `WorkflowTemplate.tags`: "At most 10 tags" (orchestration client docs). */
 const ORCHESTRATOR_MAX_WORKFLOW_TAGS = 10;
 
+type RoutedWorkflowFields = Pick<VerifiedTaskTicket, 'tags' | 'metadata' | 'callbacks'>;
+
+/** Throws before anything is spent when the router's tags would pass the orchestrator's cap. */
+function withRoutedTags(tags: string[], routed: RoutedWorkflowFields | undefined): string[] {
+  const merged = [...tags, ...(routed?.tags ?? [])];
+  if (merged.length > ORCHESTRATOR_MAX_WORKFLOW_TAGS) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: `${merged.length} workflow tags exceed the orchestrator's ${ORCHESTRATOR_MAX_WORKFLOW_TAGS}`,
+    });
+  }
+  return merged;
+}
+
+function routedCallbacks(routed: RoutedWorkflowFields | undefined) {
+  if (!routed?.callbacks.length) return {};
+  // The verifier pins each url to the router origin but leaves `type` as free strings.
+  return { callbacks: routed.callbacks as NonNullable<WorkflowTemplate['callbacks']> };
+}
+
 /**
  * THE denylist call for the pass-through arm, shared by the estimate and the
  * submit so a caller can never probe a `$type` it may not run.
@@ -12161,8 +12183,9 @@ async function quotePassThroughBuzz(opts: {
 }
 
 /**
- * TASK SUBMIT (experimental). The ticket's one step runs through
- * `submitPassThroughStepWorkflow`, so every spend, cap and consent rule is that arm's.
+ * TASK SUBMIT (experimental). A one-step ticket runs through `submitPassThroughStepWorkflow`,
+ * a chain through `submitMultiStepWorkflow`, so every spend, cap and consent rule is that
+ * path's.
  */
 async function submitTaskWorkflow(opts: {
   ctx: Context;
@@ -12190,8 +12213,17 @@ async function submitTaskWorkflow(opts: {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'tasks from apps are not enabled' });
   }
 
+  // The ceiling of the path the ticket will run on: one step is pass-through's, a chain is
+  // `kind:'workflow'`'s (per-call budget per step, under the per-call cap).
+  const stepCount = body.steps?.length ?? 1;
+  const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
   const budget = {
-    amount: Math.min(body.maxBuzz, blockPerCallBudget(claims, { pricesAuthorFee: false })),
+    amount: Math.min(
+      body.maxBuzz,
+      stepCount === 1
+        ? Math.min(perCallBudget, PASS_THROUGH_MAX_BUZZ)
+        : multiStepWorkflowCeiling(perCallBudget, stepCount)
+    ),
     currency: 'buzz',
   };
   if (budget.amount < 1) {
@@ -12201,18 +12233,29 @@ async function submitTaskWorkflow(opts: {
   }
   const user = taskRouterUserRef(config.partyKey, userId);
 
+  const { kind: _kind, maxBuzz: _maxBuzz, ...request } = body;
   const matched = await matchTask(config, {
-    task: body.task,
-    input: body.input,
+    ...request,
     budget,
-    ...(body.pin ? { pin: body.pin } : {}),
     requester: { app: claims.appId, user },
   });
   if (!matched.ok) return multiStepRefusal(matched.code, matched.message);
+  if ('notYet' in matched) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'not on the menu yet; recorded as demand',
+        errorCode: 'not_yet',
+        task: { status: 'not_yet', ...matched.notYet },
+      },
+    };
+  }
+  const { match } = matched;
 
   let ticket: VerifiedTaskTicket;
   try {
-    ticket = await verifyTaskTicket(matched.match.ticket, {
+    ticket = await verifyTaskTicket(match.ticket, {
       jwks: taskRouterJwks(config),
       audience: config.partyId,
       budget,
@@ -12227,35 +12270,55 @@ async function submitTaskWorkflow(opts: {
         type: 'error',
         message: e.message,
         appId: claims.appId,
-        taskId: matched.match.taskId,
+        taskId: match.taskId,
       },
       'civitai-prod'
     ).catch(() => undefined);
     return multiStepRefusal('task-ticket-invalid', e.message);
   }
-  if (!BLOCK_IDEMPOTENCY_KEY_REGEX.test(ticket.taskId)) {
-    return multiStepRefusal(
-      'task-ticket-invalid',
-      'ticket task id is not a usable idempotency key'
-    );
-  }
-  const step = blockPassThroughStepBodySchema.safeParse({
-    kind: 'step',
-    $type: ticket.step.$type,
-    input: ticket.step.input,
-    maxBuzz: budget.amount,
-  });
-  if (!step.success) {
-    return multiStepRefusal('task-ticket-invalid', 'ticket step is not a valid pass-through step');
+  if (ticket.taskId !== match.taskId || !BLOCK_IDEMPOTENCY_KEY_REGEX.test(ticket.taskId)) {
+    return multiStepRefusal('task-ticket-invalid', 'ticket task id does not match the match');
   }
 
-  const result = await submitPassThroughStepWorkflow({
-    ctx,
-    claims,
-    body: step.data,
-    idempotencyKey: ticket.taskId,
-    routed: { tags: ticket.tags, metadata: ticket.metadata, callbacks: ticket.callbacks },
-  });
+  const routed = { tags: ticket.tags, metadata: ticket.metadata, callbacks: ticket.callbacks };
+  let result: { snapshot: BlockWorkflowSnapshot };
+  if (ticket.steps.length === 1) {
+    const step = blockPassThroughStepBodySchema.safeParse({
+      kind: 'step',
+      $type: ticket.steps[0].$type,
+      input: ticket.steps[0].input,
+      maxBuzz: budget.amount,
+    });
+    if (!step.success) {
+      return multiStepRefusal(
+        'task-ticket-invalid',
+        'ticket step is not a valid pass-through step'
+      );
+    }
+    result = await submitPassThroughStepWorkflow({
+      ctx,
+      claims,
+      body: step.data,
+      idempotencyKey: ticket.taskId,
+      routed,
+    });
+  } else {
+    const chain = blockMultiStepWorkflowBodySchema.safeParse({
+      kind: 'workflow',
+      steps: ticket.steps,
+    });
+    if (!chain.success) {
+      return multiStepRefusal('task-ticket-invalid', 'ticket steps are not a valid workflow');
+    }
+    result = await submitMultiStepWorkflow({
+      ctx,
+      claims,
+      body: chain.data,
+      idempotencyKey: ticket.taskId,
+      routed,
+    });
+  }
+
   const { workflowId } = result.snapshot;
   if (workflowId && workflowId !== 'failed' && workflowId !== 'whatif') {
     void reportTaskStarted(config, ticket.taskId, workflowId);
@@ -12264,7 +12327,14 @@ async function submitTaskWorkflow(opts: {
     ...result,
     snapshot: {
       ...result.snapshot,
-      task: { taskId: ticket.taskId, resolvedAs: ticket.resolvedAs, quote: ticket.quote },
+      task: {
+        status: 'matched',
+        taskId: ticket.taskId,
+        resolvedAs: match.resolvedAs,
+        moved: match.resolvedAs.some((step) => step.assignment.event === 'moved'),
+        quote: ticket.quote,
+        ...(match.unknownFields ? { unknownFields: match.unknownFields } : {}),
+      },
     },
   };
 }
@@ -12285,7 +12355,7 @@ async function submitPassThroughStepWorkflow(opts: {
   /** OPTIONAL client idempotency key → orchestrator externalId. */
   idempotencyKey?: string;
   /** A Task Router ticket's workflow fields, merged into the submit. */
-  routed?: Pick<VerifiedTaskTicket, 'tags' | 'metadata' | 'callbacks'>;
+  routed?: RoutedWorkflowFields;
 }) {
   const { ctx, claims, body, idempotencyKey, routed } = opts;
 
@@ -12326,13 +12396,7 @@ async function submitPassThroughStepWorkflow(opts: {
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // `$type` never reaches the tag array as text — see `buildPassThroughWorkflowTags`.
-  const tags = [...buildPassThroughWorkflowTags(claims, body.$type), ...(routed?.tags ?? [])];
-  if (tags.length > ORCHESTRATOR_MAX_WORKFLOW_TAGS) {
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: `pass-through step: ${tags.length} workflow tags exceed the orchestrator's ${ORCHESTRATOR_MAX_WORKFLOW_TAGS}`,
-    });
-  }
+  const tags = withRoutedTags(buildPassThroughWorkflowTags(claims, body.$type), routed);
 
   const token = await getOrchestratorToken(userId, ctx);
   const quote = await quotePassThroughBuzz({
@@ -12581,13 +12645,7 @@ async function submitPassThroughStepWorkflow(opts: {
         currencies,
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         externalId: blockExternalId,
-        ...(routed
-          ? {
-              metadata: routed.metadata,
-              // The verifier pins each url to the router origin but leaves `type` as free strings.
-              callbacks: routed.callbacks as NonNullable<WorkflowTemplate['callbacks']>,
-            }
-          : {}),
+        ...(routed ? { metadata: routed.metadata, ...routedCallbacks(routed) } : {}),
       },
     });
     snapshot = snapshotFromWorkflow(submitted);
@@ -12977,8 +13035,10 @@ async function submitMultiStepWorkflow(opts: {
   body: MultiStepWorkflowBody;
   /** OPTIONAL client idempotency key → orchestrator externalId. */
   idempotencyKey?: string;
+  /** A Task Router ticket's workflow fields, merged into the submit. */
+  routed?: RoutedWorkflowFields;
 }) {
-  const { ctx, claims, body, idempotencyKey } = opts;
+  const { ctx, claims, body, idempotencyKey, routed } = opts;
 
   const blockExternalId = idempotencyKey
     ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
@@ -12998,7 +13058,7 @@ async function submitMultiStepWorkflow(opts: {
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
-  const tags = buildMultiStepWorkflowTags(claims, prepared.steps);
+  const tags = withRoutedTags(buildMultiStepWorkflowTags(claims, prepared.steps), routed);
   const workflowGenerationType = resolveBlockGenerationType(body);
 
   const token = await getOrchestratorToken(userId, ctx);
@@ -13240,9 +13300,11 @@ async function submitMultiStepWorkflow(opts: {
         // Which steps this submit named, so a later poll can tell them from a
         // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
         metadata: {
+          ...routed?.metadata,
           [WORKFLOW_METADATA_BLOCK_STEPS_KEY]: buildBlockWorkflowStepsMetadata(prepared.steps),
         },
         externalId: blockExternalId,
+        ...routedCallbacks(routed),
       },
     });
     snapshot = snapshotFromWorkflow(submitted);

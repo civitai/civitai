@@ -860,19 +860,31 @@ is the model's own format (`glb`, `fbx`, …) and `variant` the output field it 
 
 ### Tasks (experimental `kind:'task'`)
 
-`{ kind: 'task', task: 'image.edit@1', input, maxBuzz, pin? }` names a goal instead of a
-step type. The server asks the Task Router which provider should run it within
-`min(maxBuzz, per-call budget)` Buzz, verifies the router's signed ticket (signature,
-audience, expiry, budget, user, one step, callback origin), and runs the ticket's one step on
-the pass-through path above, so every cap, reservation and settle rule is that path's. The
-task id is the idempotency key, so a replayed ticket returns the first workflow. The reply
-is the usual snapshot plus `task: { taskId, resolvedAs, quote }`. Router refusals arrive as
-`errorCode` (`unknown_task`, `over_budget`, …), and a ticket this server refuses as
+A task body names what to do instead of a step type: one goal
+(`{ kind: 'task', task: 'image.edit@1', input, maxBuzz }`), a chain of up to 8
+(`steps: [{ name, task, input }, …]`, where a later input can hold
+`{ $ref: '<earlier step>', output: 'image' }`), or only a `description`. Optional:
+`quality` (`draft | standard | best`), `routing: 'each-request'` to opt out of sticky routing,
+and `pin`. Goals are a menu, not a form: unknown input fields are passed on and listed back in
+`task.unknownFields`.
+
+The server asks the Task Router to match the request within its budget: `maxBuzz`, capped by
+the ceiling of the path the ticket will run on. It then verifies the router's signed ticket
+(signature, audience, expiry, budget, user, 1 to 8 steps, router-shaped tags, callback origin).
+A one-step ticket runs on the pass-through path above. A chain runs on `kind:'workflow'` as
+one job with one charge. Either way, every cap, reservation and settle rule is that path's, and
+the task id is the idempotency key, so a replayed ticket returns the first workflow.
+
+The reply is the usual snapshot plus `task: { status: 'matched', taskId, resolvedAs, moved,
+quote }`. `resolvedAs` has one entry per step, and `moved` is true when sticky routing switched
+provider on this request. An off-menu ask returns `errorCode: 'not_yet'` with
+`task: { status: 'not_yet', demandId, closest }`. Other router refusals arrive as `errorCode`
+(`over_budget`, `tier_unavailable`, and so on), and a ticket this server refuses as
 `task-ticket-invalid`. There is no estimate yet.
 
-Off unless all three hold: `TASK_ROUTER_URL` (with its party key and callback origin) is
-set, the app is on `TASK_ROUTER_APP_ALLOWLIST`, and the `app-blocks-task-kind` flag is on
-for the viewer. Page tokens only.
+Tasks are off unless all three of these hold: `TASK_ROUTER_URL` is set (with its party key and
+callback origin), the app is on `TASK_ROUTER_APP_ALLOWLIST`, and the `app-blocks-task-kind`
+flag is on for the viewer. Page tokens only.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
