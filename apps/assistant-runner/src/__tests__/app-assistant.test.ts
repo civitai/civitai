@@ -14,10 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { toolResultsOf } from '../app-assistant/history';
 import { AppAssistantTools, readPageState } from '../app-assistant/provider';
 import { PAUSED_BY_OTHER_APP, PAUSED_IDLE, SANDBOX_GONE } from '../app-assistant/sandbox';
-import type { OpenTools, ToolContext } from '../interfaces';
+import type { OpenTools, ToolContext } from '../core/interfaces';
 import type { TokenPurpose } from '../minter';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
-import { scriptedModel, toolResults } from '../test-support/scripted-model';
+import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
 // TEST-ONLY stand-ins for minted tokens: never a real credential.

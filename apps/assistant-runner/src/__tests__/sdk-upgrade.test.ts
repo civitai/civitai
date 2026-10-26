@@ -5,7 +5,7 @@ import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppAssistantTools } from '../app-assistant/provider';
-import type { OpenTools, ToolContext } from '../interfaces';
+import type { OpenTools, ToolContext } from '../core/interfaces';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
 
 /**

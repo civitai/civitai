@@ -3,12 +3,12 @@ import { DBOS } from '@dbos-inc/dbos-sdk';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { GrantStore } from '../interfaces';
-import { MemoryConversationStore } from '../memory-store';
-import { Runner, type ReplyOutput } from '../runner';
-import { fakeTools, untilAborted } from '../test-support/fakes';
-import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
-import { scriptedModel, toolResults } from '../test-support/scripted-model';
+import type { GrantStore } from '../core/interfaces';
+import { MemoryConversationStore } from '../core/memory-store';
+import { Runner, type ReplyOutput } from '../core/runner';
+import { fakeTools, untilAborted } from '../core/test-support/fakes';
+import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
+import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 import { GOLDEN } from './golden/reply-dbos-calls';
 
 /**

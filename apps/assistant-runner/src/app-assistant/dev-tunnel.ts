@@ -1,4 +1,4 @@
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 
 /** civitai's endpoints the runner opens, keeps and closes a run's dev tunnel at, relative to `CIVITAI_URL`. */
 export const DEV_TUNNEL_PATH = 'api/internal/app-assistant/dev-tunnel';

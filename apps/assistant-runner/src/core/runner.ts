@@ -48,21 +48,21 @@ import {
   withPatch,
   type EndedReply,
 } from './head';
-import { withRequestGrant } from './grants';
 import type {
   ConversationStore,
   GrantStore,
   Logger,
   ModelProvider,
   OpenTools,
+  RunGrant,
   ToolProvider,
 } from './interfaces';
 import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
 import type { StartRequest } from './protocol';
+import { withRequestGrant } from './request-grant';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
-import type { VerifiedGrant } from './tokens';
 
 export const REPLY_WORKFLOW = 'reply';
 export const STOP_MARKER_WORKFLOW = 'reply-stop-marker';
@@ -79,6 +79,24 @@ const DONE = 'done';
  * history against a different sequence.
  */
 export const WORKFLOW_VERSION = 'reply-1';
+
+/**
+ * What names a runner's runs in DBOS. A run is recovered only by a process with the same application
+ * version, and is found again only under the same workflow names: a deployment that changes either
+ * strands the runs in flight (`sweepStranded` ends them as interrupted).
+ */
+export interface RunnerIdentity {
+  /** DBOS's application name. */
+  appName: string;
+  /** DBOS's application version: bumped when the reply workflow's sequence of DBOS calls changes. */
+  workflowVersion: string;
+}
+
+/** The identity a runner has unless its deployment names another. */
+export const DEFAULT_IDENTITY: RunnerIdentity = {
+  appName: 'assistant-runner',
+  workflowVersion: WORKFLOW_VERSION,
+};
 
 /**
  * How many times DBOS recovers one run after its process died. Each recovery asks the model for the
@@ -124,7 +142,7 @@ export interface ReplyInput {
   model: string;
   settings: RunSettings;
   page?: StartRunRequest['page'];
-  /** civitai's grant says the viewer may start read-only subagents: a flag, not a credential. */
+  /** The run's grant says the viewer may start read-only subagents: a flag, not a credential. */
   subagents?: boolean;
   wallClockMs: number;
   /**
@@ -158,16 +176,18 @@ export interface RunnerDeps {
   store: ConversationStore;
   /** Where each run's grant is kept while it runs: never in DBOS. */
   grants: GrantStore;
-  /** The model calls' ledger (`PgModelCalls`), swept with the runs' retention. */
+  /** A per-run ledger the deployment keeps (civitai's model calls), swept with the runs' retention. */
   modelCalls?: { sweep(olderThanMs: number): Promise<number> };
   log: Logger;
   wallClockMs: number;
   stopGraceMs: number;
   /**
-   * Set when the runner cannot serve a reply as App Assistant's page expects (its tools are not set
-   * up): every start is refused with these words, rather than answered with no tools.
+   * Set when the runner cannot serve a reply as its page expects (civitai: App Assistant's tools are
+   * not set up): every start is refused with these words, rather than answered with no tools.
    */
   startRefusal?: string;
+  /** `DEFAULT_IDENTITY` unless set. */
+  identity?: RunnerIdentity;
 }
 
 export interface LaunchOptions {
@@ -185,6 +205,7 @@ export interface LaunchOptions {
  */
 export class Runner implements RunService {
   readonly #deps: RunnerDeps;
+  readonly #identity: RunnerIdentity;
   #reply: ((input: ReplyInput) => Promise<ReplyOutput>) | undefined;
   #marker: (() => Promise<boolean>) | undefined;
   #pool: pg.Pool | undefined;
@@ -202,6 +223,7 @@ export class Runner implements RunService {
 
   constructor(deps: RunnerDeps) {
     this.#deps = deps;
+    this.#identity = deps.identity ?? DEFAULT_IDENTITY;
   }
 
   /** Registers the workflows. Once per process, before `launch`. */
@@ -215,11 +237,11 @@ export class Runner implements RunService {
 
   async launch(options: LaunchOptions): Promise<void> {
     DBOS.setConfig({
-      name: 'assistant-runner',
+      name: this.#identity.appName,
       systemDatabaseUrl: options.databaseUrl,
       systemDatabaseSchemaName: SYSTEM_SCHEMA,
       executorID: options.executorId,
-      applicationVersion: WORKFLOW_VERSION,
+      applicationVersion: this.#identity.workflowVersion,
       logLevel: options.logLevel ?? 'info',
     });
     await DBOS.launch();
@@ -351,7 +373,9 @@ export class Runner implements RunService {
       executorId: this.#executorId,
     });
     const stranded = runs.filter(
-      (run) => run.applicationVersion !== undefined && run.applicationVersion !== WORKFLOW_VERSION
+      (run) =>
+        run.applicationVersion !== undefined &&
+        run.applicationVersion !== this.#identity.workflowVersion
     );
     for (const run of stranded) {
       await DBOS.cancelWorkflow(run.workflowID);
@@ -375,7 +399,7 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  async start(userId: string, request: StartRequest, grant: VerifiedGrant): Promise<StartOutcome> {
+  async start(userId: string, request: StartRequest, grant: RunGrant): Promise<StartOutcome> {
     // Refused before anything is kept: not `unavailable`, which the page would ask again forever.
     if (this.#deps.startRefusal)
       return { ok: false, error: 'refused', message: this.#deps.startRefusal };
@@ -562,7 +586,7 @@ export class Runner implements RunService {
     userId: string,
     conversationId: string,
     patch: ConversationPatchRequest,
-    grant?: VerifiedGrant
+    grant?: RunGrant
   ): Promise<boolean> {
     const head = await withRequestGrant(
       grant ? { userId, conversationId, token: grant.token } : undefined,

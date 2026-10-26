@@ -13,6 +13,15 @@ key configured the service refuses every run-API request (401); with it but with
 refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
 See [Not built yet](#not-built-yet).
 
+**Layout.** `src/core/` is the generic runner (the DBOS workflows, the run API, the journal, the head
+and progress writes) and reaches the rest only through the seams in `src/core/interfaces.ts`; the
+`core-boundary` test fails on any import from `src/core/` to outside it. Everything civitai's own
+stays outside: viewer tokens and run grants (`tokens.ts`, `grants.ts`, `minter.ts`,
+`credentials.ts`), orchestration (`orchestration*.ts`, `model-calls.ts`, `conversation-store.ts`),
+App Assistant (`app-assistant/`, including the SDK pin), the Restart preview route (`app.ts`) and
+`server.ts`, which wires them together. `reply-dbos-calls.pg.test.ts` pins the DBOS calls a reply
+makes, which `WORKFLOW_VERSION` protects.
+
 ## How it works
 
 - **Protocol.** It implements the run protocol of `@civitai/components-chat@0.25.0`, entry
@@ -29,7 +38,7 @@ See [Not built yet](#not-built-yet).
 
   Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched), always at the root.
 
-  Beyond 0.25.0's types (`src/protocol.ts`, until the runner is bumped to a chat package that types
+  Beyond 0.25.0's types (`src/core/protocol.ts`, until the runner is bumped to a chat package that types
   them): every start's and lookup's answer lists `features: ['edit']`, and a start may carry
   `turn.edit`: the user edited their latest message, so `turn.user` replaces the saved message of
   turn `seq` (the head's latest, or the next when the head ends just before it), the reply that
@@ -238,7 +247,7 @@ See [Not built yet](#not-built-yet).
   under `modelCall` (`reused`, `waiting`, `asked-again` with its `reason`, `cancelled`). The key
   leaves out the system prompt (it names the date). Rows are deleted with the runs' retention.
 - **Runs left on an old version.** DBOS recovers a run only in a process of the same
-  `WORKFLOW_VERSION` (`src/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
+  `WORKFLOW_VERSION` (`src/core/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
   own executor id holds under another version and saves each reply as interrupted, keeping its
   finished steps: the user's slot frees and the page offers Continue, which carries on from those
   steps. A replica touches only its own executor id, so a run another replica still holds is never

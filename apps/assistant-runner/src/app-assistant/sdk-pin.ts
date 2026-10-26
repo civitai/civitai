@@ -8,7 +8,7 @@ import {
 } from '@civitai/app-assistant';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 import { exitCodeOf, manifestOf, outputOf, projectDirOf } from './preview';
 
 /** How long a reply's start waits for the pin check's reads: past it, the reply goes without. */

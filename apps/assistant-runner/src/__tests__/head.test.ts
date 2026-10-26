@@ -11,7 +11,7 @@ import {
   withEnd,
   withPatch,
   withProgress,
-} from '../head';
+} from '../core/head';
 
 const now = new Date('2026-10-20T10:00:00Z');
 const later = new Date('2026-10-20T10:01:00Z');

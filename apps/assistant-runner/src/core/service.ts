@@ -6,8 +6,8 @@ import type {
   StartRunResponse,
 } from '@civitai/components-chat/runner-protocol';
 
+import type { RunGrant } from './interfaces';
 import type { StartRequest } from './protocol';
-import type { VerifiedGrant } from './tokens';
 
 export type StartOutcome =
   | { ok: true; response: StartRunResponse }
@@ -24,7 +24,7 @@ export interface JournalEntry {
  * its idempotency key).
  */
 export interface RunService {
-  start(userId: string, request: StartRequest, grant: VerifiedGrant): Promise<StartOutcome>;
+  start(userId: string, request: StartRequest, grant: RunGrant): Promise<StartOutcome>;
   lookup(userId: string, conversationId: string): Promise<RunSummary | null>;
   /** Whether `runId` is a run this user started. */
   owns(userId: string, runId: string): Promise<boolean>;
@@ -45,7 +45,7 @@ export interface RunService {
     userId: string,
     conversationId: string,
     patch: ConversationPatchRequest,
-    grant?: VerifiedGrant
+    grant?: RunGrant
   ): Promise<boolean>;
   ready(): boolean;
 }

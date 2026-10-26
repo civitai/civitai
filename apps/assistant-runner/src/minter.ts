@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { Logger } from './interfaces';
+import type { Logger } from './core/interfaces';
 
 /**
  * What a minted token is for, as civitai's `AppAssistantTokenPurpose`: `chat` spends Buzz through

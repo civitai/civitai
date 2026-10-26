@@ -1,9 +1,8 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-
 import type pg from 'pg';
 
-import type { EndedReply } from './head';
-import type { GrantStore, Logger, PendingEnd, StoredGrant } from './interfaces';
+import type { EndedReply } from './core/head';
+import type { GrantStore, Logger, PendingEnd, StoredGrant } from './core/interfaces';
+import { requestGrantFor } from './core/request-grant';
 
 /** The runner's own tables, apart from DBOS's `dbos` schema. */
 export const RUNNER_SCHEMA = 'assistant_runner';
@@ -132,30 +131,13 @@ export class RunGrants implements GrantStore {
   }
 }
 
-/**
- * A grant that came with the request being served (a patch), for the conversation store to mint
- * with when no run of that conversation holds one. In memory for that request only.
- */
-const requestGrant = new AsyncLocalStorage<{
-  userId: string;
-  conversationId: string;
-  token: string;
-}>();
-
-export function withRequestGrant<T>(
-  grant: { userId: string; conversationId: string; token: string } | undefined,
-  fn: () => Promise<T>
-): Promise<T> {
-  return grant ? requestGrant.run(grant, fn) : fn();
-}
-
 /** The grant to act with for this user's conversation: the request's own, else a live run's. */
 export async function grantForConversation(
   grants: Pick<RunGrants, 'forConversation'>,
   userId: string,
   conversationId: string
 ): Promise<string | null> {
-  const own = requestGrant.getStore();
-  if (own && own.userId === userId && own.conversationId === conversationId) return own.token;
+  const own = requestGrantFor(userId, conversationId);
+  if (own !== undefined) return own;
   return grants.forConversation(userId, conversationId);
 }
