@@ -41,6 +41,7 @@ import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
@@ -368,9 +369,13 @@ export const createTrainingWorkflow = async ({
   if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+  const modelVersions = await dbWrite.$queryRaw<
+    (TrainingRequest & { modelId: number; modelMeta: ModelMeta | null })[]
+  >`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m.id        "modelId",
+           m.meta      "modelMeta",
            mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
@@ -468,6 +473,11 @@ export const createTrainingWorkflow = async ({
   await assertTrainingTriggerWordAllowed({
     triggerWord,
     log: { userId, source: 'trainer', modelVersionId },
+    model: {
+      id: modelVersion.modelId,
+      versionId: modelVersion.modelVersionId,
+      meta: modelVersion.modelMeta,
+    },
   });
 
   // Don't override the engine field in params - it needs to remain as the literal type

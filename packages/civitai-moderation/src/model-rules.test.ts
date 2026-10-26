@@ -92,6 +92,11 @@ describe('parseModelRulesHoldMeta', () => {
     expect(parseModelRulesHoldMeta(meta)).toEqual(meta);
   });
 
+  it('keeps the source of a hold a training run recorded, and drops one it does not know', () => {
+    expect(parseModelRulesHoldMeta({ source: 'training' })).toMatchObject({ source: 'training' });
+    expect(parseModelRulesHoldMeta({ source: 'elsewhere' })).not.toHaveProperty('source');
+  });
+
   it('keeps the entries that parse and tolerates an empty or missing meta', () => {
     expect(
       parseModelRulesHoldMeta({
