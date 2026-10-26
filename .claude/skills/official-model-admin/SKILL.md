@@ -157,9 +157,32 @@ model.
 
 **The second copy costs no storage, and `attach-import` cannot make it.** `reuseStoredFile` keys on
 `repo` + `revision` + `filename`, so for a path already imported it returns the existing file instead
-of minting another. Create the row directly with `modelFile.create`, passing the **same `url`** (the
-controller derives backend and s3Path from it). Two `ModelFile` rows over one object is supported:
-`deleteModelFileObject` skips the S3 delete while any live row still references that URL.
+of minting another. Use `attach-url` instead (below).
+
+#### Reusing a file another version already stores
+
+`attach-url` gives a version a model file over an object another version's file already stores:
+an official copy of a community model, or a component published a second time. Nothing is re-uploaded.
+
+```bash
+node .claude/skills/official-model-admin/model.mjs attach-url --from-file <id> --from-version <id> --version <id>             # dry run
+node .claude/skills/official-model-admin/model.mjs attach-url --from-file <id> --from-version <id> --version <id> --writable
+```
+
+- It copies the source row's `url`, name, type, size and metadata, and creates the file with
+  `modelFile.create`. Scanning and hashing follow as for any new file.
+- **Both runs download the first 64 KB of the source** through the download route and stop if it
+  fails. The writable run then does the same for the new file and compares the two, ending
+  `VERIFIED`, or `NOT VERIFIED` (exit 1) with the `detach-url` command that removes the new file.
+- Re-running is safe: a version that already has the url gets no second file, only the check.
+- The key must be a moderator's: the API returns file urls only to moderators and the owner.
+- `--url` replaces the url with another url for the **same object key**, e.g. the same key on the
+  other storage backend. A url naming a different key is refused.
+
+Two `ModelFile` rows over one url is supported: `deleteModelFileObject` skips the storage delete while
+any other row still references that url, so the original uploader deleting their file, version or
+model leaves the copy working. That is also why `detach-url` only deletes a file whose url is
+byte-for-byte the source's: a different url string is not protected by that check.
 
 #### Community copies of the same weights: do nothing
 

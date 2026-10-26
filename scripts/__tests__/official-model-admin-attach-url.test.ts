@@ -1,0 +1,158 @@
+import { describe, expect, it, vi } from 'vitest';
+
+const { attachUrl, detachUrl, sameObjectKey } = await import(
+  '../../.claude/skills/official-model-admin/attach-url.mjs'
+);
+
+const SOURCE_URL =
+  'https://civitai-prod-settled.abcd.r2.cloudflarestorage.com/model/1/remacri.safetensors';
+const SOURCE = {
+  id: 11,
+  name: 'remacri.safetensors',
+  url: SOURCE_URL,
+  sizeKB: 64,
+  type: 'Model',
+  metadata: { format: 'SafeTensor' },
+};
+const WEIGHTS = Buffer.alloc(64 * 1024, 7);
+
+type Files = Record<number, { id: number; url?: string; [k: string]: unknown }[]>;
+
+// Downloads answer by (version, file) the way the site's resolve does: a file row with no stored
+// object behind it is a 404, whatever its url says.
+function setup({ files, stored }: { files: Files; stored: Record<string, Buffer> }) {
+  const call = vi.fn(async (procedure: string, input: Record<string, unknown>) => {
+    if (procedure === 'modelFile.getByVersionId') return { files: files[input.id as number] ?? [] };
+    if (procedure === 'modelFile.create') {
+      const created = { id: 99, ...input };
+      (files[input.modelVersionId as number] ??= []).push(created);
+      return created;
+    }
+    if (procedure === 'modelFile.delete') return {};
+    throw new Error(`unexpected ${procedure}`);
+  });
+  const fetchFn = vi.fn(async (url: string) => {
+    const { pathname, searchParams } = new URL(url);
+    const bytes = stored[`${pathname.split('/').pop()}:${searchParams.get('fileId')}`];
+    if (!bytes) return new Response('File not found', { status: 404 });
+    return new Response(bytes, {
+      status: 206,
+      headers: { 'content-range': `bytes 0-${bytes.length - 1}/${bytes.length}` },
+    });
+  });
+  const lines: string[] = [];
+  const deps = {
+    call,
+    fetchFn,
+    apiUrl: 'https://civitai.test',
+    apiKey: 'k',
+    log: (l: string) => lines.push(l),
+  };
+  const created = () => call.mock.calls.filter(([p]) => p === 'modelFile.create');
+  return { call, fetchFn, deps, lines, created };
+}
+
+const opts = { fromFile: 11, fromVersion: 100, version: 200 };
+
+describe('attach-url', () => {
+  it('dry run reads the source and its download, and creates nothing', async () => {
+    const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
+    expect(await attachUrl({ ...opts, writable: false }, t.deps)).toBe(true);
+    expect(t.created()).toHaveLength(0);
+    expect(t.fetchFn).toHaveBeenCalledTimes(1);
+    expect(t.lines.join('\n')).toContain(SOURCE_URL);
+  });
+
+  it('creates a file on the target with the source url and verifies it downloads the same bytes', async () => {
+    const t = setup({
+      files: { 100: [SOURCE] },
+      stored: { '100:11': WEIGHTS, '200:99': WEIGHTS },
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
+    expect(t.created()[0][1]).toEqual({
+      modelVersionId: 200,
+      name: SOURCE.name,
+      url: SOURCE_URL,
+      sizeKB: 64,
+      type: 'Model',
+      metadata: { format: 'SafeTensor' },
+    });
+    expect(t.lines.join('\n')).toContain('VERIFIED');
+  });
+
+  it('fails and prints the undo when the new file does not download', async () => {
+    const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(false);
+    expect(t.lines.join('\n')).toMatch(/NOT VERIFIED[\s\S]*detach-url --file 99 --version 200/);
+  });
+
+  it('fails when the new file downloads different bytes', async () => {
+    const t = setup({
+      files: { 100: [SOURCE] },
+      stored: { '100:11': WEIGHTS, '200:99': Buffer.alloc(64 * 1024, 8) },
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(false);
+  });
+
+  it('refuses a source whose url the API withheld (not a moderator key)', async () => {
+    const { url: _url, ...hidden } = SOURCE;
+    const t = setup({ files: { 100: [hidden] }, stored: { '100:11': WEIGHTS } });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(false);
+    expect(t.created()).toHaveLength(0);
+    expect(t.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('stops before creating when the source itself does not download', async () => {
+    const t = setup({ files: { 100: [SOURCE] }, stored: {} });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(false);
+    expect(t.created()).toHaveLength(0);
+  });
+
+  it('refuses a --url that names a different object', async () => {
+    const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
+    const url =
+      'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/1/other.safetensors';
+    expect(await attachUrl({ ...opts, url, writable: true }, t.deps)).toBe(false);
+    expect(t.created()).toHaveLength(0);
+  });
+
+  it('does not create a second file when the target already has the url', async () => {
+    const t = setup({
+      files: { 100: [SOURCE], 200: [{ id: 55, url: SOURCE_URL }] },
+      stored: { '100:11': WEIGHTS, '200:55': WEIGHTS },
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
+    expect(t.created()).toHaveLength(0);
+  });
+});
+
+describe('sameObjectKey', () => {
+  it('matches the same key in virtual-host and path-style urls, on either store', () => {
+    expect(
+      sameObjectKey(
+        SOURCE_URL,
+        'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/1/remacri.safetensors'
+      )
+    ).toBe(true);
+    expect(sameObjectKey(SOURCE_URL, SOURCE_URL.replace('remacri', 'other'))).toBe(false);
+  });
+});
+
+describe('detach-url', () => {
+  const dOpts = { file: 99, version: 200, fromFile: 11, fromVersion: 100, writable: true };
+
+  it('deletes a file that shares the source url', async () => {
+    const t = setup({ files: { 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL }] }, stored: {} });
+    expect(await detachUrl(dOpts, t.deps)).toBe(true);
+    expect(t.call).toHaveBeenCalledWith('modelFile.delete', { id: 99 });
+  });
+
+  it('refuses a file whose url differs from the source, since its delete could free the object', async () => {
+    const t = setup({
+      files: { 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL.replace('settled', 'other') }] },
+      stored: {},
+    });
+    expect(await detachUrl(dOpts, t.deps)).toBe(false);
+    expect(t.call).not.toHaveBeenCalledWith('modelFile.delete', expect.anything());
+  });
+});
