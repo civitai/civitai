@@ -171,7 +171,7 @@ describe('purgeResizeCache', () => {
 
       await expect(
         purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 70_000 })
-      ).resolves.toBeUndefined();
+      ).resolves.toBe('unconfirmed');
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'image-cacher-invalidate', type: 'warning' })
       );
@@ -193,7 +193,7 @@ describe('purgeResizeCache', () => {
     it('does not wait by default, so the delete flow is not slowed down', async () => {
       mockFetch.mockReturnValueOnce(new Promise(() => undefined));
 
-      await expect(purgeResizeCache({ url: UUID })).resolves.toBeUndefined();
+      await expect(purgeResizeCache({ url: UUID })).resolves.toBe('unconfirmed');
     });
   });
 

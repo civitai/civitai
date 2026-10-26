@@ -2,6 +2,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
+import { IMAGE_CACHER_WAIT_MS } from '~/server/services/image-cacher-retraction';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 type HiddenMetaImage = {
@@ -10,8 +11,6 @@ type HiddenMetaImage = {
   name?: string | null;
   type?: MediaType | null;
 };
-
-const CACHER_WAIT_MS = 70_000;
 
 /**
  * Clear an image's cached copies after its owner hides its metadata, so they re-derive under the
@@ -35,7 +34,7 @@ async function purgeCachedCopies(image: HiddenMetaImage) {
     await purgeResizeCache({
       url: image.url,
       scope: 'hidden-meta-orphans',
-      waitForInvalidationMs: CACHER_WAIT_MS,
+      waitForInvalidationMs: IMAGE_CACHER_WAIT_MS,
     });
     await purgeCache({ urls: getImageEdgePurgeUrls(image) });
   } catch (error) {

@@ -155,7 +155,11 @@ const {
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
       const ids = (values[0] as number[]) ?? [];
-      return MOD_ACTIVITY.filter(
+      const extraActivity = extraQueue.map((q) => ({
+        entityId: q.entityId,
+        lastActedAt: new Date(q.createdAt.getTime() + 1000),
+      }));
+      return [...MOD_ACTIVITY, ...extraActivity].filter(
         (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
       );
     }
@@ -227,15 +231,19 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(async () => []) }));
 // Hand-listed for the same reason: the takedown sync loads the CDN and edge-url clients, which
 // this file's env and logging stubs cannot boot. The job imports only this from it.
-const { mockPersistDeletedTakedowns } = vi.hoisted(() => ({
+const { mockPersistDeletedTakedowns, mockReserve, mockSettle } = vi.hoisted(() => ({
   mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[]) => ({
     sent: 0,
     queued: 0,
     skipped: 0,
   })),
+  mockReserve: vi.fn(async (_rows: { id: number; url?: string | null }[]) => 'reservation'),
+  mockSettle: vi.fn(async (_ids: number[], _reservation: string) => undefined),
 }));
 vi.mock('~/server/services/cdn-access.service', () => ({
   persistDeletedTakedowns: mockPersistDeletedTakedowns,
+  reserveTakedownRetractions: mockReserve,
+  settleTakedownReservations: mockSettle,
 }));
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
@@ -295,6 +303,7 @@ async function runJob() {
     evidenceHeld: number;
     accountHeld: number;
     processed: number;
+    retractionDeferred: number;
     skipped: string;
   }>;
 }
@@ -348,6 +357,9 @@ beforeEach(() => {
   mockDbWrite.$executeRaw.mockClear();
   mockDeleteImages.mockClear();
   mockLogToAxiom.mockClear();
+  mockPersistDeletedTakedowns.mockClear();
+  mockReserve.mockReset().mockResolvedValue('reservation');
+  mockSettle.mockClear();
 });
 
 describe('remove-blocked-images retention clock', () => {
@@ -381,7 +393,8 @@ describe('remove-blocked-images retention clock', () => {
     expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
     // And persists exactly the rows it deleted, after deleting them.
     expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
-      await mockDeleteImages.mock.results.at(-1)?.value
+      await mockDeleteImages.mock.results.at(-1)?.value,
+      { reservation: 'reservation' }
     );
     expect(mockPersistDeletedTakedowns.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
       mockDeleteImages.mock.invocationCallOrder.at(-1) as number
@@ -731,5 +744,150 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(mockDeleteImages.mock.calls[1]?.[0]).toEqual([1]);
     expect(result).toMatchObject({ deletedWithoutRetraction: 0, heldAtDelete: 1 });
+  });
+});
+
+describe('remove-blocked-images retraction load', () => {
+  // 60 more moderator takedowns past retention, so the takedowns span several chunks.
+  const addTakedowns = () => {
+    for (let id = 100; id < 160; id++) {
+      extraImages.push({ id, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({ entityId: id, createdAt: EXPIRED });
+    }
+  };
+  const retractingCalls = () =>
+    mockDeleteImages.mock.calls.filter(
+      (c) => (c[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs === true
+    );
+
+  it('stops starting retracting deletes after a 429 and leaves the rest queued', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id) => ({ id, url: `key-${id}`, retraction: 'busy' as const }))
+    );
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    const started = retractingCalls()[0][0] as number[];
+    expect(started.length).toBeGreaterThan(0);
+    expect(started.length).toBeLessThan(60);
+    const deferred = [...Array(60).keys()]
+      .map((i) => 100 + i)
+      .filter((id) => !started.includes(id));
+    expect(deferred.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ retractionDeferred: deferred.length });
+    for (const id of deferred) expect(queuePruneIds()).not.toContain(id);
+    for (const id of started) expect(queuePruneIds()).toContain(id);
+    // Deferred, not held: they were never handed to the delete.
+    expect(result).toMatchObject({ heldAtDelete: 0 });
+  });
+
+  it('keeps going while the service answers, in chunks', async () => {
+    addTakedowns();
+    const result = await runJob();
+
+    const chunks = retractingCalls().map((c) => c[0] as number[]);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.flat().sort((a, b) => a - b)).toEqual(
+      [1, 7, 8, ...[...Array(60).keys()].map((i) => 100 + i)].sort((a, b) => a - b)
+    );
+    expect(result).toMatchObject({ retractionDeferred: 0 });
+  });
+
+  it('stops starting retracting deletes once its time budget is spent', async () => {
+    addTakedowns();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      mockDeleteImages.mockImplementationOnce(async (ids: number[]) => {
+        vi.setSystemTime(Date.now() + 9 * 60 * 1000);
+        return ids.map((id) => ({ id }));
+      });
+      const result = await runJob();
+
+      expect(retractingCalls()).toHaveLength(1);
+      expect(result.retractionDeferred).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("queues each chunk's retractions before deleting it, so a crash after the delete leaves them", async () => {
+    addTakedowns();
+    mockPersistDeletedTakedowns.mockRejectedValueOnce(new Error('process died'));
+    await expect(runJob()).rejects.toThrow('process died');
+
+    expect(retractingCalls()).toHaveLength(1);
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockReserve).toHaveBeenCalledTimes(1);
+    expect(mockReserve.mock.calls[0][0].map((r) => r.id)).toEqual(chunkIds);
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteImages.mock.invocationCallOrder[0]
+    );
+    // Nothing settled them, so they stay queued for the retry.
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it('settles only the reservations whose retraction landed', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.map((id, i) => ({
+        id,
+        retraction: i === 0 ? ('unconfirmed' as const) : ('confirmed' as const),
+      }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(mockSettle.mock.calls[0]).toEqual([chunkIds.slice(1), 'reservation']);
+  });
+
+  it('releases the reservation of an image the delete kept, so a held image gets no retraction', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 7).map((id) => ({ id, retraction: 'confirmed' as const }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(chunkIds).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toEqual(chunkIds);
+  });
+
+  it('deletes no takedown when their retractions cannot be queued', async () => {
+    addTakedowns();
+    mockReserve.mockRejectedValue(new Error('invalid input value for enum'));
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(0);
+    expect(result).toMatchObject({ retractionDeferred: 63 });
+    for (const id of [1, 7, 8, 100, 159]) expect(queuePruneIds()).not.toContain(id);
+  });
+
+  it('stops starting retracting deletes after a timeout trips the run gate', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[], _u, opts) => {
+      (opts as { retractionGate: { busy: boolean } }).retractionGate.busy = true;
+      return ids.map((id) => ({ id, retraction: 'unconfirmed' as const }));
+    });
+    const result = await runJob();
+
+    expect(retractingCalls()).toHaveLength(1);
+    expect(result.retractionDeferred).toBeGreaterThan(0);
+  });
+
+  it('deletes the takedowns that have waited longest first', async () => {
+    // Queued in the opposite order to the image rows the job reads.
+    for (let i = 0; i < 40; i++) {
+      extraImages.push({ id: 200 + i, userId: PLAIN_USER, blockedFor: 'moderated' });
+      extraQueue.push({
+        entityId: 200 + i,
+        createdAt: new Date(EXPIRED.getTime() - (40 - i) * DAY),
+      });
+    }
+    await runJob();
+
+    const first = retractingCalls()[0][0] as number[];
+    expect([...first].sort((a, b) => a - b)).toEqual([...Array(25).keys()].map((i) => 200 + i));
   });
 });
