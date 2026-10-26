@@ -190,6 +190,11 @@ describe('raise-image-scores raiseValues', () => {
     expect(written()).toEqual([]);
   });
 
+  it('plans an owner already at the sent value as equal, not stale, on a re-run', async () => {
+    const { body } = await call(values([{ ownerId: 3, expected: 10, next: 70 }]));
+    expect(body).toMatchObject({ equal: 1, stale: 0 });
+  });
+
   it('never lowers a score or rewrites an equal one', async () => {
     const { body } = await call(
       values([

@@ -154,7 +154,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       excluded
     ).map((p) => {
       const { expected } = byOwner.get(p.ownerId)!;
-      const stale = p.action !== 'excluded' && p.stored !== expected;
+      // Already at the sent value (a re-run) is `equal`, whatever the driver read.
+      const stale = (p.action === 'raise' || p.action === 'down') && p.stored !== expected;
       return { ...p, expected, action: stale ? ('stale' as const) : p.action };
     });
     const raises = plan.filter((p) => p.action === 'raise');
