@@ -218,6 +218,7 @@
     <RuleMatchDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       {canStrike}
       verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
