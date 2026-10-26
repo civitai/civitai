@@ -37,6 +37,7 @@ vi.mock('../store', () => ({
 }));
 
 const { executeTurn } = await import('../turn.service');
+const { TURN_TOKEN_BUDGET } = await import('../loop');
 
 const ask = (model: string | null, allowance = { spentUsd: 0, capUsd: 1, usedTokens: 0 }) =>
   executeTurn({
@@ -116,5 +117,22 @@ describe('executeTurn', () => {
     expect(complete).toHaveBeenCalledTimes(1);
     // Recorded before the turn ends, so a process that dies here still leaves the spend on the row.
     expect(recordTurnTokens).toHaveBeenCalledWith(9, 4_000, 1_000);
+  });
+
+  it("tells the model this question's budget, as the setting resolves it, and when it is unset", async () => {
+    const system = () =>
+      (complete.mock.lastCall![0] as { messages: { content: string }[] }).messages[0].content;
+    const before = process.env.ASSISTANT_TURN_TOKEN_BUDGET;
+    try {
+      process.env.ASSISTANT_TURN_TOKEN_BUDGET = '40000';
+      await ask(null);
+      expect(system()).toContain('about 40,000 tokens');
+      delete process.env.ASSISTANT_TURN_TOKEN_BUDGET;
+      await ask(null);
+      expect(system()).toContain(`about ${TURN_TOKEN_BUDGET.toLocaleString('en-US')} tokens`);
+    } finally {
+      if (before === undefined) delete process.env.ASSISTANT_TURN_TOKEN_BUDGET;
+      else process.env.ASSISTANT_TURN_TOKEN_BUDGET = before;
+    }
   });
 });

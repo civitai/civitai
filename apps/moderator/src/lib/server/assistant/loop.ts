@@ -189,7 +189,7 @@ export async function runTurn(input: {
       messages.push({ role: 'assistant', content: completion.message.content, tool_calls: calls });
       const results = await Promise.all(calls.map((call) => callTool(call, input, now)));
       for (const r of results) {
-        toolCalls.push(r.log);
+        toolCalls.push({ ...r.log, round: round + 1 });
         for (const s of r.sources) sources.set(s.ref, s);
         messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
       }
