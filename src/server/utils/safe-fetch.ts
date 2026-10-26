@@ -75,8 +75,10 @@ export type SafeFetchOptions = {
    * lowercased, before any `;` params). e.g. `['text/html']` or `['image/']`.
    */
   allowedContentTypes: readonly string[];
-  /** Max redirect hops to follow (each re-validated). Default 2. */
+  /** Max redirect hops to follow (each re-validated). Default 2; 0 refuses any redirect. */
   maxRedirects?: number;
+  /** Deadline for the TLS connection to be established, within `timeoutMs`. */
+  connectTimeoutMs?: number;
 };
 
 export type SafeFetchResult = {
@@ -201,10 +203,21 @@ function requestHop(
         },
       },
       (res) => {
+        clearTimeout(connectTimer);
         resolve({ statusCode: res.statusCode ?? 0, headers: res.headers, stream: res });
       }
     );
-    req.on('error', (err) => reject(err));
+    const connectTimer = opts.connectTimeoutMs
+      ? setTimeout(
+          () => req.destroy(new SafeFetchError('timeout', 'connect timed out')),
+          opts.connectTimeoutMs
+        )
+      : undefined;
+    req.on('socket', (socket) => socket.once('secureConnect', () => clearTimeout(connectTimer)));
+    req.on('error', (err) => {
+      clearTimeout(connectTimer);
+      reject(err);
+    });
     req.end();
   });
 }

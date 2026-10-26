@@ -1,7 +1,16 @@
-import { Card, Divider, Text } from '@mantine/core';
+import { Anchor, Card, Divider, Text } from '@mantine/core';
 import { IconDatabase } from '@tabler/icons-react';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+function ExternalUrl({ url }: { url: string }) {
+  if (!/^https?:\/\//i.test(url)) return <>{url}</>;
+  return (
+    <Anchor href={url} target="_blank" rel="ugc nofollow noopener noreferrer" className="break-all">
+      {url}
+    </Anchor>
+  );
+}
 
 export function ImageExternalMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
@@ -23,7 +32,6 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         </Text>
       </div>
       <div className="flex flex-col">
-        {/* TODO make URLs */}
         {hasSource && (
           <div className="flex justify-between gap-3">
             <Text c="dimmed" className="text-nowrap leading-snug">
@@ -32,10 +40,17 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
             {external.source?.name ? (
               <Text className="leading-snug">
                 {external.source?.name}
-                {external.source?.homepage && ` (${external.source?.homepage})`}
+                {external.source?.homepage && (
+                  <>
+                    {' ('}
+                    <ExternalUrl url={external.source.homepage} />)
+                  </>
+                )}
               </Text>
             ) : (
-              <Text className="leading-snug">{external.source?.homepage}</Text>
+              <Text className="leading-snug">
+                {external.source?.homepage && <ExternalUrl url={external.source.homepage} />}
+              </Text>
             )}
           </div>
         )}
@@ -44,7 +59,9 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
             <Text c="dimmed" className="text-nowrap leading-snug">
               Media URL
             </Text>
-            <Text className="leading-snug">{external.referenceUrl}</Text>
+            <Text className="leading-snug">
+              {external.referenceUrl && <ExternalUrl url={external.referenceUrl} />}
+            </Text>
           </div>
         )}
         {hasCreate && (
@@ -52,7 +69,9 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
             <Text c="dimmed" className="text-nowrap leading-snug">
               Create URL
             </Text>
-            <Text className="leading-snug">{external.createUrl}</Text>
+            <Text className="leading-snug">
+              {external.createUrl && <ExternalUrl url={external.createUrl} />}
+            </Text>
           </div>
         )}
         {hasDetails && (

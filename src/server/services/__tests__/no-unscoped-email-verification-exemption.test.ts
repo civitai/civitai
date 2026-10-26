@@ -104,6 +104,7 @@ const DERIVED_BASES: Record<string, string> = {
   guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorProcedure: 'protectedProcedure',
+  postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
   semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',

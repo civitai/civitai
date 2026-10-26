@@ -2417,6 +2417,30 @@ export interface AppListing {
   feedback?: Feedback[];
 }
 
+export interface AppPostIntent {
+  listingId: string;
+  host: string;
+  pathPrefix: string;
+  enabled: boolean;
+  reviewedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PostIntentManifest {
+  id: number;
+  manifestUrl: string;
+  appId: string;
+  listingId: string;
+  userId: number;
+  manifest: JsonValue;
+  staged: JsonValue;
+  claimExpiresAt: Date;
+  postId: number | null;
+  postedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface AppListingScreenshot {
   id: string;
   appListingId: string;

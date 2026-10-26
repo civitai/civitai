@@ -57,6 +57,8 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // App mode of /intent/post (manifest links from approved apps). Off: every intent is open mode.
+  appPostIntent: { availability: ['mod'], fliptKey: 'app-post-intent' },
   // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
   // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
   // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
