@@ -702,7 +702,9 @@ async function run(
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
-  // Info is signed-in only: its body carries the app-wide usage (documents, bytes).
+  // Info is signed-in only: its body carries the app-wide usage (documents, bytes) — the app's
+  // SHARED documents, which is what `appBytes`/`appDocs` bound; private documents count toward
+  // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
   if (route.op === 'info') requireViewer(access);

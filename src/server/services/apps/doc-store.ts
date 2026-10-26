@@ -57,6 +57,20 @@
 // author changes a shared doc, a private doc is the viewer's, and a counter
 // collection's doc is charged to the viewer whose increment created it.
 //
+// WHICH CEILINGS A DOCUMENT COUNTS TOWARD is decided by the key space it lives in
+// (`scope_uid`), never by the collection's current declaration: a SHARED document
+// (`scope_uid = 0`) counts toward the app's ceiling (`usage_app`) and its author's;
+// a PRIVATE document (`scope_uid` = its viewer) counts toward its viewer's ceiling
+// ONLY. Private writes need no trust gate, so were they charged to the app, a few
+// throwaway accounts could fill an app's whole ceiling and refuse every other user.
+// A private write still takes `usage_app`'s row lock and the next seq (a zero-byte
+// charge), so seq order and the lock order below are unchanged. Because the charge
+// follows the stored key space, a collection whose visibility changes between
+// manifest versions leaves every existing document where it was charged: the old
+// key space is no longer addressed by viewers, its documents stay on the ceilings
+// they were charged to, and the account wipe (which deletes by key space) refunds
+// exactly those ceilings.
+//
 // LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
 // one key being written, (1b) that document's tally and mark rows, (2)
 // `usage_app` for (app, ns), (3) the caller's `usage_user` row. Nothing takes a
@@ -525,9 +539,10 @@ const SQL_SYNC_INDEX = `WITH gone AS (
   ON CONFLICT (app_id, ns, coll, scope_uid, key, name)
   DO UPDATE SET v_text = EXCLUDED.v_text, v_num = EXCLUDED.v_num, v_type = EXCLUDED.v_type`;
 
-// Charge the per-(app, ns) ceiling and take the next seq. Zero rows = over quota.
-// A negative delta always passes, so a delete or a shrink is never refused, even
-// over a ceiling that was lowered.
+// Charge the per-(app, ns) ceiling — shared documents only; a private write passes a
+// zero delta — and take the next seq. Zero rows = over quota. A zero or negative
+// delta always passes, so a private write, a delete or a shrink is never refused by
+// it, even over a ceiling that was lowered.
 // $1 app, $2 ns, $3 Δbytes, $4 Δdocs, $5 byte limit, $6 doc limit
 const SQL_CHARGE_APP = `INSERT INTO appdata.usage_app AS u (app_id, ns, bytes, docs, last_seq)
   SELECT $1, $2, $3::bigint, $4::int, 1
@@ -952,6 +967,18 @@ function decodeCursor(sort: SortSpec, cursor: string): { value: string; key: str
 type UsageDelta = { bytes: number; docs: number };
 type UserCharge = UsageDelta & { uid: number; ceiling: QuotaCeiling };
 
+/** The app-ceiling charge of a write that moves no shared bytes: it still takes the next seq. */
+const NO_APP_CHARGE: UsageDelta = { bytes: 0, docs: 0 };
+
+/**
+ * What a document change costs the APP's ceiling, by the key space it lives in (see WHICH
+ * CEILINGS in the module header): the whole delta for a shared document (`scope_uid = 0`),
+ * nothing for a private one. The single place that decides it.
+ */
+function appDelta(scope: number, delta: UsageDelta): UsageDelta {
+  return scope === 0 ? delta : NO_APP_CHARGE;
+}
+
 export type DocStore = ReturnType<typeof createDocStore>;
 export type DocStoreModeration = ReturnType<typeof createDocStoreModeration>;
 
@@ -1216,7 +1243,7 @@ function buildDocStore(deps: DocStoreDeps) {
           const res = await c.query(SQL_UPDATE_DOC, [...base, json, viewer]);
           const delta = Number(res.rows[0].size_bytes) - Number(existing.size_bytes);
           return finishWrite(c, ctx, coll, scope, key, indexRows, {
-            app: { bytes: delta, docs: 0 },
+            app: appDelta(scope, { bytes: delta, docs: 0 }),
             user: { uid: viewer, bytes: delta, docs: 0, ceiling: ceilingFor(coll) },
           });
         }
@@ -1228,7 +1255,7 @@ function buildDocStore(deps: DocStoreDeps) {
         if (ins.rows.length === 0) continue; // lost the race; re-read
         const size = Number(ins.rows[0].size_bytes);
         return finishWrite(c, ctx, coll, scope, key, indexRows, {
-          app: { bytes: size, docs: 1 },
+          app: appDelta(scope, { bytes: size, docs: 1 }),
           user: { uid: viewer, bytes: size, docs: 1, ceiling: ceilingFor(coll) },
         });
       }
@@ -1363,12 +1390,12 @@ function buildDocStore(deps: DocStoreDeps) {
         await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, coll.name, key]);
       }
       const size = Number(row.size_bytes);
-      const seq = await charge(
-        c,
-        ctx,
-        { bytes: -size, docs: -1 },
-        { uid: viewer, bytes: -size, docs: -1, ceiling: ceilingFor(coll) }
-      );
+      const seq = await charge(c, ctx, appDelta(scope, { bytes: -size, docs: -1 }), {
+        uid: viewer,
+        bytes: -size,
+        docs: -1,
+        ceiling: ceilingFor(coll),
+      });
       await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, coll.name, scope, key, seq]);
       return { deleted: true };
     });
@@ -1748,8 +1775,11 @@ function buildDocStore(deps: DocStoreDeps) {
       };
       /**
        * Delete the locked authored documents exactly as a moderator delete does (tallies, marks,
-       * app and author refunds, tombstones), then refund the app for the private documents. No
-       * user is charged for those: the account's own usage row is deleted below.
+       * app and author refunds, tombstones). The private documents refund nothing: the app's
+       * ceiling never carried them (`appDelta`), and the account's own usage row, which did, is
+       * deleted below. Their zero-byte charge is kept for its lock: it takes `usage_app` (LOCK
+       * ORDER (2)) before the usage-row delete takes (3), as it did when it refunded bytes, so
+       * an in-flight write by this user cannot hold (2) while waiting on a (3) the wipe holds.
        */
       const settle = async (pass: Awaited<ReturnType<typeof wipeDocs>>) => {
         result.sharedDocs += pass.authored.length;
@@ -1759,7 +1789,8 @@ function buildDocStore(deps: DocStoreDeps) {
           await charge(
             c,
             ctx,
-            { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs },
+            // Their key space is `scope_uid = userId` (`SQL_WIPE_PRIVATE_DOCS`).
+            appDelta(userId, { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs }),
             { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
           );
         }
@@ -1797,8 +1828,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * the document store, in every app and namespace they have rows in. Per namespace, in one
    * transaction:
    *   - their own dev namespace (`dev:<uid>`) is deleted outright;
-   *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
-   *     app; their marks — reports included — are deleted and each tally decremented; the shared
+   *   - elsewhere, their private documents are deleted (index rows with them; the app's usage
+   *     never carried them, so it is not refunded); their marks — reports included — are deleted and each tally decremented; the shared
    *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does
    *     (index rows, tallies, every user's marks on them, app and author refunds, tombstones);
    *     counter-created documents charged to them keep their counters but lose the uid; their
