@@ -76,6 +76,8 @@ type Tool<S extends z.ZodType> = {
   /** Any one of these pages opens the data. `null`: every assistant user. */
   requires: string[] | null;
   run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolResult>;
+  timeoutMs?: number;
+  onTimeout?: (args: z.output<S>) => Record<string, unknown>;
 };
 
 const tool = <S extends z.ZodType>(t: Tool<S>) => t;
@@ -121,9 +123,12 @@ const ACCOUNT_FIELDS = [
   'normalizedEmail',
 ] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
 
-/** Addresses per accounts_on_address call. Raising it means raising `groupUniqArray(50)` in
- *  ip-links.service.ts too, or an account's address list is cut short without saying so. */
-const MAX_BATCH_ADDRESSES = 50;
+/** Addresses per accounts_on_address call: the most measured on prod (25 took 13.8 s on 2026-10-26,
+ *  flat from 1 address up), within half of `ACCOUNTS_ON_ADDRESS_TIMEOUT_MS`. Past 50, raise
+ *  `groupUniqArray(50)` in ip-links.service.ts too, or an account's address list is cut short. */
+const MAX_BATCH_ADDRESSES = 25;
+/** Each call scans the reaction and login tables by address: 10-45 s on prod, so the default is short. */
+const ACCOUNTS_ON_ADDRESS_TIMEOUT_MS = 90_000;
 
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
@@ -456,6 +461,11 @@ export const TOOLS = [
       limit: z.number().int().min(1).max(MAX_ACCOUNTS).default(100),
     }),
     requires: [LOOKUP],
+    timeoutMs: ACCOUNTS_ON_ADDRESS_TIMEOUT_MS,
+    onTimeout: ({ address, addresses }) => ({
+      notChecked: [...(addresses ?? []), ...(address ? [address] : [])],
+      note: 'None of these addresses were checked. Say so in your answer, naming them, and offer to retry with fewer at a time.',
+    }),
     run: async ({ address, addresses, days, offset, limit }, ctx) => {
       const asked = [...(addresses ?? []), ...(address ? [address] : [])];
       const refuse = (error: string) => ({

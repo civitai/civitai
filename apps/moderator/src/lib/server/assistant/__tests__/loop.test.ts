@@ -108,6 +108,67 @@ describe('runTurn', () => {
     expect((await run).toolCalls.map((c) => c.round)).toEqual([1, 1, 2]);
   });
 
+  describe('a tool with its own timeout', () => {
+    const slow = (ms: number, timeoutMs?: number): AnyTool => ({
+      name: 'slow',
+      input: z.object({ ids: z.array(z.string()) }),
+      run: (async () => {
+        await new Promise((r) => setTimeout(r, ms));
+        return { data: { ok: true }, rows: 1, truncated: false, sources: [] };
+      }) as never,
+      timeoutMs,
+      onTimeout: (({ ids }: { ids: string[] }) => ({ notChecked: ids })) as never,
+    });
+    const toolResult = async (tool: AnyTool) => {
+      const { run, complete } = turn(
+        [reply(null, [call('slow', { ids: ['a', 'b'] })]), reply('done')],
+        {
+          tools: [tool],
+        }
+      );
+      await run;
+      const messages = (
+        complete.mock.calls[1][0] as { messages: { role: string; content: string }[] }
+      ).messages;
+      return JSON.parse(messages.find((m) => m.role === 'tool')!.content);
+    };
+
+    it('times out at its own limit and tells the model what went unchecked', async () => {
+      expect(await toolResult(slow(200, 20))).toEqual({
+        error: 'The lookup timed out.',
+        notChecked: ['a', 'b'],
+      });
+    });
+
+    it('is not cut off at its limit when it finishes within it', async () => {
+      expect(await toolResult(slow(20, 2_000))).toMatchObject({ data: { ok: true } });
+    });
+
+    it('starts no round its slowest lookup could not finish before the turn deadline', async () => {
+      // 160 s in: 80 s are left, enough for a 45 s lookup but not for a 90 s one.
+      let t = 0;
+      const now = () => t;
+      const ask = async (tool: AnyTool) => {
+        t = 0;
+        const { run, complete } = turn(
+          [reply(null, [call('slow', { ids: ['a'] })]), reply('done')],
+          {
+            tools: [tool],
+            now: () => {
+              const v = now();
+              t = 160_000;
+              return v;
+            },
+          }
+        );
+        await run;
+        return (complete.mock.calls[0][0] as { toolChoice: string }).toolChoice;
+      };
+      expect(await ask(slow(0, 90_000))).toBe('none');
+      expect(await ask(slow(0))).toBe('auto');
+    });
+  });
+
   it('never runs a tool the moderator was not given, whatever the model asks for', async () => {
     const { run } = turn([reply(null, [call('ban_user', { userId: 5 })]), reply('done')]);
     const out = await run;

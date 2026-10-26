@@ -51,6 +51,10 @@ export type AnyTool = {
   name: string;
   input: z.ZodType;
   run: (args: never, ctx: ToolContext) => Promise<ToolResult>;
+  /** Longer than `TOOL_TIMEOUT_MS` for a tool measured to need it. */
+  timeoutMs?: number;
+  /** Added to the timed-out result, so the model can say exactly what went unchecked. */
+  onTimeout?: (args: never) => Record<string, unknown>;
 };
 
 export type TurnOutcome = {
@@ -97,6 +101,8 @@ export async function runTurn(input: {
 }): Promise<TurnOutcome> {
   const now = input.now ?? Date.now;
   const deadline = now() + TURN_DEADLINE_MS;
+  // No round starts that its slowest lookup could not finish before the turn's deadline.
+  const slowestTool = Math.max(TOOL_TIMEOUT_MS, ...input.tools.map((t) => t.timeoutMs ?? 0));
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), TURN_DEADLINE_MS);
 
@@ -144,7 +150,7 @@ export async function runTurn(input: {
 
   try {
     for (let round = 0; round <= MAX_ROUNDS; round++) {
-      const last = stopWith !== null || round === MAX_ROUNDS || now() > deadline - TOOL_TIMEOUT_MS;
+      const last = stopWith !== null || round === MAX_ROUNDS || now() > deadline - slowestTool;
       if (last)
         messages.push({
           role: 'user',
@@ -218,10 +224,10 @@ async function callTool(
   const started = now();
   const name = call.function.name;
   let args: unknown = call.function.arguments;
-  const fail = (error: string) => {
+  const fail = (error: string, detail: Record<string, unknown> = {}) => {
     const log = { name, args, rows: 0, truncated: false, ms: now() - started, error };
     input.emit({ type: 'tool-done', name, rows: 0, error, ms: log.ms });
-    return { id: call.id, content: JSON.stringify({ error }), log, sources: [] };
+    return { id: call.id, content: JSON.stringify({ error, ...detail }), log, sources: [] };
   };
 
   // A model may name a tool it saw earlier or was told about by quoted text; it gets an error.
@@ -246,7 +252,7 @@ async function callTool(
     const result = await Promise.race([
       (tool.run as (a: unknown, c: ToolContext) => Promise<ToolResult>)(parsed.data, input.ctx),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(TIMED_OUT)), TOOL_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error(TIMED_OUT)), tool.timeoutMs ?? TOOL_TIMEOUT_MS);
       }),
     ]);
     const { json, trimmed } = fitJson(
@@ -267,7 +273,9 @@ async function callTool(
     console.error(`[assistant] tool ${name} failed`, e);
     // 🔴 Never the error's own text: a ClickHouse error quotes the whole query, addresses included, and
     // this string reaches the model, the moderator's screen and the audit.
-    return fail(e instanceof Error && e.message === TIMED_OUT ? TIMED_OUT : 'The lookup failed.');
+    if (e instanceof Error && e.message === TIMED_OUT)
+      return fail(TIMED_OUT, tool.onTimeout?.(parsed.data as never) ?? {});
+    return fail('The lookup failed.');
   } finally {
     clearTimeout(timer);
   }

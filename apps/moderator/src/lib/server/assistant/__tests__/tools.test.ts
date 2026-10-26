@@ -240,6 +240,18 @@ describe('accounts_on_address', () => {
     expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
   });
 
+  it('names every address it was given when it times out', () => {
+    const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
+    expect(tool.timeoutMs).toBeGreaterThan(45_000);
+    expect(
+      (tool.onTimeout as (args: unknown) => Record<string, unknown>)(
+        tool.input.parse({ addresses: ['192.0.2.1'], address: '198.51.100.7' })
+      )
+    ).toMatchObject({
+      notChecked: ['192.0.2.1', '198.51.100.7'],
+    });
+  });
+
   it('names back what was not an address, so it is not read as an empty one', async () => {
     getAccountsOnAddresses.mockResolvedValueOnce({ linked: linked as never, invalid: ['nope'] });
     expect(await ask({ addresses: ['192.0.2.1', 'nope'] })).toMatchObject({
@@ -247,9 +259,9 @@ describe('accounts_on_address', () => {
     });
   });
 
-  it('refuses a call with no address, or more than fifty, without reading anything', async () => {
+  it('refuses a call with no address, or more than twenty-five, without reading anything', async () => {
     expect(await ask({})).toMatchObject({ error: expect.any(String) });
-    const many = Array.from({ length: 50 }, (_, i) => `192.0.2.${i + 1}`);
+    const many = Array.from({ length: 25 }, (_, i) => `192.0.2.${i + 1}`);
     expect(await ask({ addresses: many, address: '198.51.100.7' })).toMatchObject({
       error: expect.any(String),
     });
