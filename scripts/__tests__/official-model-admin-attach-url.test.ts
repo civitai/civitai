@@ -40,12 +40,19 @@ function setup({
     if (procedure === 'modelFile.delete') return {};
     throw new Error(`unexpected ${procedure}`);
   });
-  const fetchFn = vi.fn(async (url: string) => {
-    const { pathname, searchParams } = new URL(url);
-    const bytes = stored[`${pathname.split('/').pop()}:${searchParams.get('fileId')}`];
-    const fileId = Number(searchParams.get('fileId'));
-    const lagged = fileId === 99 && lagLeft-- > 0;
-    if (!bytes || lagged) return new Response('File not found', { status: 404 });
+  // The download route redirects to the storage host, which serves the bytes.
+  const fetchFn = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async (url) => {
+    const { host, pathname, searchParams } = new URL(url);
+    if (host === 'civitai.test') {
+      const key = `${pathname.split('/').pop()}:${searchParams.get('fileId')}`;
+      const lagged = key.endsWith(':99') && lagLeft-- > 0;
+      if (!stored[key] || lagged) return new Response('File not found', { status: 404 });
+      return new Response(null, {
+        status: 307,
+        headers: { location: `https://storage.test/${key}` },
+      });
+    }
+    const bytes = stored[pathname.slice(1)];
     return new Response(bytes, {
       status: 206,
       headers: { 'content-range': `bytes 0-${bytes.length - 1}/${bytes.length}` },
@@ -71,7 +78,7 @@ describe('attach-url', () => {
     const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
     expect(await attachUrl({ ...opts, writable: false }, t.deps)).toBe(true);
     expect(t.created()).toHaveLength(0);
-    expect(t.fetchFn).toHaveBeenCalledTimes(1);
+    expect(t.fetchFn).toHaveBeenCalledTimes(2);
     expect(t.lines.join('\n')).toContain(SOURCE_URL);
   });
 
@@ -90,6 +97,19 @@ describe('attach-url', () => {
       metadata: { format: 'SafeTensor' },
     });
     expect(t.lines.join('\n')).toContain('VERIFIED');
+  });
+
+  it('never sends the API key to the storage host it is redirected to', async () => {
+    const t = setup({
+      files: { 100: [SOURCE] },
+      stored: { '100:11': WEIGHTS, '200:99': WEIGHTS },
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
+    const storageCalls = t.fetchFn.mock.calls.filter(([u]) =>
+      u.startsWith('https://storage.test/')
+    );
+    expect(storageCalls).toHaveLength(2);
+    for (const [, init] of storageCalls) expect(init?.headers).not.toHaveProperty('Authorization');
   });
 
   it('verifies a new file that 404s at first while the read replica catches up', async () => {

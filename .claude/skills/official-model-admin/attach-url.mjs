@@ -41,10 +41,17 @@ export function sameObjectKey(a, b) {
 export async function probeDownload({ apiUrl, apiKey, fetchFn, versionId, fileId }) {
   let res;
   try {
+    const range = { Range: `bytes=0-${PROBE_BYTES - 1}` };
     res = await fetchFn(`${apiUrl}/api/download/models/${versionId}?fileId=${fileId}`, {
-      headers: { Authorization: `Bearer ${apiKey}`, Range: `bytes=0-${PROBE_BYTES - 1}` },
-      redirect: 'follow',
+      headers: { Authorization: `Bearer ${apiKey}`, ...range },
+      redirect: 'manual',
     });
+    // Followed by hand so the API key is never sent to the storage host the route redirects to.
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location) {
+      await res.body?.cancel?.();
+      res = await fetchFn(new URL(location, apiUrl).toString(), { headers: range });
+    }
   } catch (err) {
     return { ok: false, status: 0, error: err.message };
   }
