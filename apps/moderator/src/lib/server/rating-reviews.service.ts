@@ -35,6 +35,7 @@ export type RatingReviewEntitySummary = {
   path: string | null;
   nsfwLevel: number;
   override: number | null;
+  /** Set for an Article only; every other type's cover is the first image of its preview set. */
   coverUrl: string | null;
   coverType: MediaType | null;
 };
@@ -95,34 +96,6 @@ async function imagesById(ids: (number | null)[]): Promise<Map<number, RatingRev
   return new Map(found.map((r) => [r.id, r]));
 }
 
-async function postCovers(ids: number[]): Promise<Map<number, RatingReviewImage>> {
-  const found = await postCoverRows(ids, { limit: 1 });
-  return new Map(
-    found.map(({ postId, id, url, type, nsfwLevel }) => [
-      postId,
-      { id, url, type: type as MediaType, nsfwLevel },
-    ])
-  );
-}
-
-async function connectionCovers(
-  entityType: 'Bounty' | 'BountyEntry',
-  ids: number[]
-): Promise<Map<number, RatingReviewImage>> {
-  if (!ids.length) return new Map();
-  const found = await dbRead
-    .selectFrom('ImageConnection as ic')
-    .innerJoin('Image as i', 'i.id', 'ic.imageId')
-    .distinctOn('ic.entityId')
-    .select(['ic.entityId', ...IMAGE_FIELDS])
-    .where('ic.entityType', '=', entityType)
-    .where('ic.entityId', 'in', ids)
-    .orderBy('ic.entityId')
-    .orderBy('i.id')
-    .execute();
-  return new Map(found.map((r) => [r.entityId, r]));
-}
-
 const MODEL_COUNT_CAP = 5000;
 
 type ModelCoverRow = RatingReviewImage & { modelId: number; total: number };
@@ -140,18 +113,6 @@ async function modelCoverRows(ids: number[], limit: number): Promise<ModelCoverR
   return rows;
 }
 
-async function modelCovers(ids: number[]): Promise<Map<number, RatingReviewImage>> {
-  const first = new Map<number, RatingReviewImage>();
-  for (const { modelId, id, url, type, nsfwLevel } of await modelCoverRows(ids, 1))
-    first.set(modelId, { id, url, type, nsfwLevel });
-  return first;
-}
-
-const asCover = (img: RatingReviewImage | undefined) => ({
-  coverUrl: img?.url ?? null,
-  coverType: img?.type ?? null,
-});
-
 async function loadSummaries(
   entityType: RatingReviewEntityType,
   ids: number[]
@@ -163,6 +124,8 @@ async function loadSummaries(
 
   switch (entityType) {
     case 'Article': {
+      // The one cover the preview set cannot give: the legacy `cover` string stands in for a missing
+      // cover image, and a connected image must not replace it.
       const found = await dbRead
         .selectFrom('Article as a')
         .leftJoin('Image as i', 'i.id', 'a.coverId')
@@ -196,11 +159,9 @@ async function loadSummaries(
         .where('id', 'in', ids)
         .where('deletedAt', 'is', null)
         .execute();
-      const covers = await modelCovers(found.map((r) => r.id));
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.id)),
           id: r.id,
           title: r.name,
           nsfwLevel: r.nsfwLevel,
@@ -214,11 +175,9 @@ async function loadSummaries(
         .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await postCovers(found.map((r) => r.id));
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.id)),
           id: r.id,
           title: r.title ?? `Post #${r.id}`,
           nsfwLevel: r.nsfwLevel,
@@ -232,14 +191,9 @@ async function loadSummaries(
         .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await connectionCovers(
-        'Bounty',
-        found.map((r) => r.id)
-      );
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.id)),
           id: r.id,
           title: r.name,
           nsfwLevel: r.nsfwLevel,
@@ -253,14 +207,9 @@ async function loadSummaries(
         .select(['id', 'bountyId', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await connectionCovers(
-        'BountyEntry',
-        found.map((r) => r.id)
-      );
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.id)),
           id: r.id,
           title: `Entry #${r.id}`,
           nsfwLevel: r.nsfwLevel,
@@ -272,14 +221,12 @@ async function loadSummaries(
     case 'Challenge': {
       const found = await dbRead
         .selectFrom('Challenge')
-        .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel', 'coverImageId'])
+        .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await imagesById(found.map((r) => r.coverImageId));
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.coverImageId ?? 0)),
           id: r.id,
           title: r.title,
           nsfwLevel: r.nsfwLevel,
@@ -290,14 +237,12 @@ async function loadSummaries(
     case 'Crucible': {
       const found = await dbRead
         .selectFrom('Crucible')
-        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel', 'imageId', 'heroImageId'])
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await imagesById(found.map((r) => r.imageId ?? r.heroImageId));
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.imageId ?? r.heroImageId ?? 0)),
           id: r.id,
           title: r.name,
           nsfwLevel: r.nsfwLevel,
@@ -308,14 +253,12 @@ async function loadSummaries(
     case 'Collection': {
       const found = await dbRead
         .selectFrom('Collection')
-        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel', 'imageId'])
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
-      const covers = await imagesById(found.map((r) => r.imageId));
       for (const r of found)
         put({
           ...base,
-          ...asCover(covers.get(r.imageId ?? 0)),
           id: r.id,
           title: r.name,
           nsfwLevel: collectionRatingLevel(r.nsfwLevel),
