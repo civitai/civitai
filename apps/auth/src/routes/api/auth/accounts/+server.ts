@@ -1,11 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import {
-  getDeviceId,
-  isLinkedAndFresh,
-  listAccounts,
-  removeAccount,
-} from '$lib/server/auth/device';
+import { isLinkedAndFresh, listAccounts, removeAccount } from '$lib/server/auth/device';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 
 // GET /api/auth/accounts — the browser's linked-account list for the switcher menu. DISPLAY ONLY (no
@@ -15,9 +10,9 @@ import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 // device" returns an empty list (200) rather than a 401 — the switcher just shows nothing. The set is listed
 // only when the caller's principal (the impersonating moderator, else the active account) is linked and fresh
 // on this device, the same membership rule as /api/auth/switch.
-export const GET: RequestHandler = async ({ cookies, locals }) => {
+export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) return json({ accounts: [] });
-  const deviceId = getDeviceId(cookies);
+  const deviceId = locals.deviceId;
   if (!deviceId) return json({ accounts: [] });
   const principal = locals.impersonatedBy ?? locals.user.id;
   if (!(await isLinkedAndFresh(deviceId, principal))) return json({ accounts: [] });
@@ -40,9 +35,12 @@ export const GET: RequestHandler = async ({ cookies, locals }) => {
 
 // DELETE /api/auth/accounts?userId=N — drop one account from THIS browser's device set ("remove from this
 // browser"). Requires an active session; only affects the device cookie's own set. See cutover doc (E).
-export const DELETE: RequestHandler = async ({ url, cookies, locals }) => {
+// POST lists too: it is the form a service caller uses, since the session travels in the body and a GET has none.
+export const POST: RequestHandler = GET;
+
+export const DELETE: RequestHandler = async ({ url, locals }) => {
   if (!locals.user) error(401, 'active session required');
-  const deviceId = getDeviceId(cookies);
+  const deviceId = locals.deviceId;
   const userId = Number(url.searchParams.get('userId'));
   if (!deviceId || !Number.isFinite(userId)) error(400, 'bad request');
   await removeAccount(deviceId, userId);

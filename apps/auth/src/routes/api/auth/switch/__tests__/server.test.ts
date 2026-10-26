@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `readUserId` runs; only the device set and session collaborators are stubbed.
 
 const h = vi.hoisted(() => ({
-  getDeviceId: vi.fn(),
   isLinkedAndFresh: vi.fn(),
   touchAccount: vi.fn(),
   rollDeviceCookie: vi.fn(),
@@ -14,7 +13,6 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/auth/device', () => ({
-  getDeviceId: h.getDeviceId,
   isLinkedAndFresh: h.isLinkedAndFresh,
   touchAccount: h.touchAccount,
   rollDeviceCookie: h.rollDeviceCookie,
@@ -41,7 +39,7 @@ function makeEvent(user: Record<string, unknown> | undefined = { id: ACTIVE }) {
       body: JSON.stringify({ userId: TARGET }),
     }),
     cookies: {},
-    locals: { user },
+    locals: { user, deviceId: DEVICE },
   } as never;
 }
 
@@ -59,7 +57,6 @@ const statusOf = async (event: never) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.getDeviceId.mockReturnValue(DEVICE);
   h.getOrProduceSessionUser.mockResolvedValue({ id: TARGET });
   h.mintUserSession.mockResolvedValue('new-token');
 });
