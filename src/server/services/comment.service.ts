@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
-import { isEqual } from 'lodash-es';
+import { isEqual, omit } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -27,14 +27,18 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
+  countTopLevelCommentsByHiddenViaKysely,
+  countTopLevelCommentsByHiddenViaPrisma,
   countTopLevelCommentsViaKysely,
   countTopLevelCommentsViaPrisma,
   findPinnedCommentsViaPrisma,
   findTopLevelCommentsViaPrisma,
   listPinnedCommentsViaKysely,
   listTopLevelCommentsViaKysely,
+  type CommentCountsByHidden,
   type KyselyCommentListSort,
   type PinnedScope,
+  type TopLevelCommentsBaseFilter,
   type TopLevelCommentsFilter,
 } from '~/server/services/hot-reads-4.reads';
 import { modelMetrics, userMetrics } from '~/server/metrics';
@@ -43,6 +47,7 @@ import type {
   CommentUpsertInput,
   GetAllCommentsSchema,
   GetCommentCountByModelInput,
+  GetCommentCountsByModelInput,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
@@ -229,6 +234,56 @@ export const getVisibleCommentCount = async ({
     count(pinnedFilter, 'pinned'),
   ]);
   return unpinned + pinned;
+};
+
+/**
+ * `getVisibleCommentCount` for the plain view (`visible`) and the hidden view (`hidden`) at once,
+ * for `comment.getVisibleCountsByModel`: each equals the single count with `hidden: false` /
+ * `hidden: true` for the same viewer, from ONE statement where the two calls issued two (two where
+ * they issued four, for a model owner with a blocked-by list). With `includeVisible: false` (the
+ * client already holds every visible comment) only the hidden count runs, and `visible` is `null`.
+ */
+export const getVisibleCommentCounts = async ({
+  input: { modelId, includeVisible },
+  user,
+}: {
+  input: GetCommentCountsByModelInput;
+  user?: SessionUser;
+}): Promise<{ visible: number | null; hidden: number }> => {
+  if (!includeVisible)
+    return {
+      visible: null,
+      hidden: await getVisibleCommentCount({ input: { modelId, hidden: true }, user }),
+    };
+
+  // `kysely-hot-reads-4` on: through Kysely, on the client the same lag decision picks.
+  let count: (
+    filter: TopLevelCommentsBaseFilter,
+    pinned: PinnedScope
+  ) => Promise<CommentCountsByHidden>;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
+    const db = await getKyselyWithoutLag('commentModel', modelId);
+    count = (filter, pinned) => countTopLevelCommentsByHiddenViaKysely(db, filter, pinned);
+  } else {
+    const db = await getDbWithoutLag('commentModel', modelId);
+    count = (filter, pinned) => countTopLevelCommentsByHiddenViaPrisma(db, filter, pinned);
+  }
+  const lists = await getViewerExclusionLists(user);
+  // `hidden` is the only part of the filter the two views differ by, so the filters below are the
+  // single counts' filters without it, and the equal/differing split is the one each single count
+  // makes.
+  const [unpinnedFilter, pinnedFilter] = (
+    await Promise.all([
+      getTopLevelCommentsFilter({ modelId }, user, { ownerSeesBlockers: true }, lists),
+      getTopLevelCommentsFilter({ modelId }, user, { ownerSeesBlockers: false }, lists),
+    ])
+  ).map((filter) => omit(filter, 'hidden'));
+  if (isEqual(unpinnedFilter, pinnedFilter)) return count(unpinnedFilter, 'any');
+  const [unpinned, pinned] = await Promise.all([
+    count(unpinnedFilter, 'unpinned'),
+    count(pinnedFilter, 'pinned'),
+  ]);
+  return { visible: unpinned.visible + pinned.visible, hidden: unpinned.hidden + pinned.hidden };
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({

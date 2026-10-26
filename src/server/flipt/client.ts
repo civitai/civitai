@@ -115,7 +115,8 @@ export enum FLIPT_FEATURE_FLAGS {
   KYSELY_HOT_READS_3 = 'kysely-hot-reads-3',
   // Reads the model page's comment reads (packages/civitai-db-queries/src/hot-reads-4.db.ts) through
   // Kysely-over-pg instead of the Prisma query engine: the visible top-level comment count
-  // (`getVisibleCommentCount`, `comment.getVisibleCountByModel`) and the first page of
+  // (`getVisibleCommentCount`, `comment.getVisibleCountByModel`), both views' counts in one
+  // statement (`getVisibleCommentCounts`, `comment.getVisibleCountsByModel`) and the first page of
   // `comment.getAll` (the unpinned list sorted newest or oldest first, and the pinned block), each
   // list with its author, reactions and model name in one statement where Prisma issues one query
   // per relation. A cursor page or another sort stays on Prisma. DEFAULT-OFF, same semantics as

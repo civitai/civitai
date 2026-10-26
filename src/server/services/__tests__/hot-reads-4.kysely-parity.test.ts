@@ -10,6 +10,8 @@ import { ReviewSort } from '~/server/common/enums';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comment.selector';
 import {
+  countTopLevelCommentsByHiddenViaKysely,
+  countTopLevelCommentsByHiddenViaPrisma,
   countTopLevelCommentsViaKysely,
   countTopLevelCommentsViaPrisma,
   findPinnedCommentsViaPrisma,
@@ -20,6 +22,7 @@ import {
   type CommentListItem,
   type KyselyCommentListPage,
   type PinnedScope,
+  type TopLevelCommentsBaseFilter,
   type TopLevelCommentsFilter,
 } from '~/server/services/hot-reads-4.reads';
 
@@ -374,6 +377,59 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
       ]);
     });
   });
+
+  describe('both views at once (comment.getVisibleCountsByModel)', () => {
+    const scopes: PinnedScope[] = ['any', 'unpinned', 'pinned'];
+    // The filters without `hidden`, de-duplicated: the hidden-view filters collapse onto their
+    // plain-view twins.
+    const bases = [
+      ...new Map(
+        FILTERS.map(([label, { hidden: _hidden, ...base }]) => [
+          JSON.stringify(base),
+          [label, base],
+        ])
+      ).values(),
+    ] as [string, TopLevelCommentsBaseFilter][];
+    const cases = bases.flatMap(([label, base]) =>
+      scopes.map((scope) => [`${label}, ${scope}`, base, scope] as const)
+    );
+
+    it.each(cases)('%s', async (_, base, scope) => {
+      const viaPrisma = await countTopLevelCommentsByHiddenViaPrisma(prisma, base, scope);
+      const viaKysely = await countTopLevelCommentsByHiddenViaKysely(kysely, base, scope);
+      expect(viaKysely).toStrictEqual(viaPrisma);
+      // ...and both equal the two single counts the old client made.
+      expect(viaPrisma).toStrictEqual({
+        visible: await countTopLevelCommentsViaPrisma(prisma, { ...base, hidden: false }, scope),
+        hidden: await countTopLevelCommentsViaPrisma(prisma, { ...base, hidden: true }, scope),
+      });
+    });
+
+    it('control: each filter branch counts the fixture rows expected, in both views', async () => {
+      const { hidden: _hidden, ...base } = viewer;
+      const counts = (over: Partial<TopLevelCommentsBaseFilter>) =>
+        countTopLevelCommentsByHiddenViaKysely(kysely, { ...base, ...over }, 'any');
+      expect(await counts({})).toStrictEqual({ visible: 6, hidden: 2 });
+      expect(await counts({ excludeTosViolations: false })).toStrictEqual({
+        visible: 8,
+        hidden: 3,
+      });
+      expect(await counts({ excludedUserIds: [HIDDEN_USER, BLOCKER] })).toStrictEqual({
+        visible: 3,
+        hidden: 1,
+      });
+      expect(await counts({ userId: AUTHOR, excludedUserIds: [AUTHOR] })).toStrictEqual({
+        visible: 2,
+        hidden: 1,
+      });
+      expect(await counts({ modelId: undefined })).toStrictEqual({ visible: 7, hidden: 2 });
+      expect(await counts({ modelId: MISSING_MODEL })).toStrictEqual({ visible: 0, hidden: 0 });
+      expect(await countTopLevelCommentsByHiddenViaKysely(kysely, base, 'pinned')).toStrictEqual({
+        visible: 2,
+        hidden: 1,
+      });
+    });
+  });
 });
 
 describe('hot reads 4: the Prisma where is the one the service always built', () => {
@@ -501,6 +557,11 @@ describe('hot reads 4: no statement reads a view', () => {
 
   it.each<[string, (db: never) => Promise<unknown>, string[][]]>([
     ['the visible count', (db) => countTopLevelCommentsViaKysely(db, filter, 'any'), [['Comment']]],
+    [
+      'both views at once',
+      (db) => countTopLevelCommentsByHiddenViaKysely(db, filter, 'any'),
+      [['Comment']],
+    ],
     [
       'the unpinned list (one statement)',
       (db) => listTopLevelCommentsViaKysely(db, filter, { limit: 3, sort: ReviewSort.Newest }),

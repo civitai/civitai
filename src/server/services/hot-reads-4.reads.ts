@@ -3,14 +3,16 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   countTopLevelComments,
+  countTopLevelCommentsByHidden,
   listTopLevelComments,
   type PinnedScope,
+  type TopLevelCommentsBaseFilter,
   type TopLevelCommentsFilter,
 } from '@civitai/db-queries/hot-reads-4';
 import { ReviewSort } from '~/server/common/enums';
 import type { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comment.selector';
 
-export type { PinnedScope, TopLevelCommentsFilter };
+export type { PinnedScope, TopLevelCommentsBaseFilter, TopLevelCommentsFilter };
 
 /**
  * The model page's comment reads behind `kysely-hot-reads-4` (comment.service.ts): the visible
@@ -21,7 +23,9 @@ export type { PinnedScope, TopLevelCommentsFilter };
  */
 
 /** The Prisma where for a `TopLevelCommentsFilter`; the Kysely conditions are its twin. */
-export function topLevelCommentsWhere(filter: TopLevelCommentsFilter): Prisma.CommentWhereInput {
+export function topLevelCommentsWhere(
+  filter: TopLevelCommentsBaseFilter & { hidden?: boolean }
+): Prisma.CommentWhereInput {
   const { modelId, userId, excludedUserIds } = filter;
   return {
     modelId,
@@ -59,6 +63,36 @@ export function countTopLevelCommentsViaKysely(
   pinned: PinnedScope
 ) {
   return countTopLevelComments(db, filter, pinned);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Both views' counts at once (`getVisibleCommentCounts`, `comment.getVisibleCountsByModel`):
+// `visible` is the count with `hidden: false`, `hidden` the count with `hidden: true`.
+
+export type CommentCountsByHidden = { visible: number; hidden: number };
+
+/** One `groupBy hidden` over the base filter; a NULL `hidden` group counts in neither view. */
+export async function countTopLevelCommentsByHiddenViaPrisma(
+  db: PrismaClient,
+  filter: TopLevelCommentsBaseFilter,
+  pinned: PinnedScope
+): Promise<CommentCountsByHidden> {
+  const groups = await db.comment.groupBy({
+    by: ['hidden'],
+    where: { ...topLevelCommentsWhere(filter), ...pinnedAtWhere(pinned) },
+    _count: { _all: true },
+  });
+  const countOf = (hidden: boolean) =>
+    groups.find((group) => group.hidden === hidden)?._count._all ?? 0;
+  return { visible: countOf(false), hidden: countOf(true) };
+}
+
+export function countTopLevelCommentsByHiddenViaKysely(
+  db: Kysely<DB>,
+  filter: TopLevelCommentsBaseFilter,
+  pinned: PinnedScope
+): Promise<CommentCountsByHidden> {
+  return countTopLevelCommentsByHidden(db, filter, pinned);
 }
 
 // ---------------------------------------------------------------------------------------------

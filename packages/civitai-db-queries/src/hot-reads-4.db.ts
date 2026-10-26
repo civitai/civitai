@@ -10,6 +10,8 @@ import { jsonArrayFrom } from './infra/helpers';
 // compares the two against a real database.
 //
 //   - `countTopLevelComments`: the visible top-level comment count.
+//   - `countTopLevelCommentsByHidden`: the plain and the hidden view's counts in one statement
+//     (`comment.getVisibleCountsByModel`).
 //   - `listTopLevelComments`: a page of top-level comments (unpinned, newest or oldest first) or the
 //     pinned block (`pinnedAt desc`), each with its author, its reactions and the model name, as ONE
 //     statement where Prisma issues one query per relation.
@@ -46,12 +48,15 @@ export type TopLevelCommentsFilter = {
   hidden: boolean;
 };
 
+/** A filter with no `hidden` condition, for the statement that counts both views at once. */
+export type TopLevelCommentsBaseFilter = Omit<TopLevelCommentsFilter, 'hidden'>;
+
 /** `unpinned`: `pinnedAt IS NULL`; `pinned`: `IS NOT NULL`; `any`: both. */
 export type PinnedScope = 'unpinned' | 'pinned' | 'any';
 
 function topLevelCommentConditions(
   eb: ExpressionBuilder<DB, 'Comment'>,
-  filter: TopLevelCommentsFilter,
+  filter: TopLevelCommentsBaseFilter & { hidden?: boolean },
   pinned: PinnedScope
 ): Expression<SqlBool> {
   const conditions: Expression<SqlBool>[] = [];
@@ -61,7 +66,7 @@ function topLevelCommentConditions(
     conditions.push(eb('Comment.userId', 'not in', filter.excludedUserIds));
   conditions.push(eb('Comment.parentId', 'is', null));
   if (filter.excludeTosViolations) conditions.push(eb('Comment.tosViolation', '=', false));
-  conditions.push(eb('Comment.hidden', '=', filter.hidden));
+  if (filter.hidden !== undefined) conditions.push(eb('Comment.hidden', '=', filter.hidden));
   if (pinned === 'unpinned') conditions.push(eb('Comment.pinnedAt', 'is', null));
   if (pinned === 'pinned') conditions.push(eb('Comment.pinnedAt', 'is not', null));
   return eb.and(conditions);
@@ -79,6 +84,26 @@ export async function countTopLevelComments(
     .where((eb) => topLevelCommentConditions(eb, filter, pinned))
     .executeTakeFirstOrThrow();
   return row.count;
+}
+
+/**
+ * Both views' counts in ONE statement: `visible` is `countTopLevelComments` with `hidden: false`,
+ * `hidden` with `hidden: true`. The base filter carries no `hidden` condition, and each count is a
+ * `FILTER` on the value, so a NULL `hidden` lands in neither, as in each single count.
+ */
+export async function countTopLevelCommentsByHidden(
+  db: Kysely<DB>,
+  filter: TopLevelCommentsBaseFilter,
+  pinned: PinnedScope
+) {
+  return db
+    .selectFrom('Comment')
+    .select([
+      sql<number>`(count(*) filter (where "Comment"."hidden" = false))::int`.as('visible'),
+      sql<number>`(count(*) filter (where "Comment"."hidden" = true))::int`.as('hidden'),
+    ])
+    .where((eb) => topLevelCommentConditions(eb, filter, pinned))
+    .executeTakeFirstOrThrow();
 }
 
 export type TopLevelCommentsPage =
