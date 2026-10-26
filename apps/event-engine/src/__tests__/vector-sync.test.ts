@@ -1618,7 +1618,7 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   };
 
   // An outage (or an expired queue) used to mark every image failed and let the caller move on.
-  test.each(['failed', 'expired'])(
+  test.each(['failed', 'expired', 'canceled'])(
     'a %s workflow with no step succeeded is re-submitted, not dropped',
     async (status) => {
       let posts = 0;
@@ -1630,6 +1630,24 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
       expect(result.vectors.size).toBe(2);
     }
   );
+
+  test('an expired workflow keeps the steps that finished and re-submits only the rest', async () => {
+    const submitted: string[][] = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const ids = stepIds(init);
+      submitted.push(ids);
+      if (submitted.length > 1) return ok(init, 50);
+      const body = JSON.parse(workflowBody(ids, 'r1', ids.slice(1)));
+      return new Response(JSON.stringify({ ...body, status: 'expired' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(3));
+    expect(submitted).toEqual([
+      ['1', '2', '3'],
+      ['2', '3'],
+    ]);
+    expect([...result.vectors.keys()].sort()).toEqual([1, 2, 3]);
+    expect(result.failed).toEqual([]);
+  });
 
   test('a workflow that keeps failing ends as counted failures, without an error that would stall the caller', async () => {
     let posts = 0;

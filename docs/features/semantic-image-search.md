@@ -97,9 +97,10 @@ locally until the orchestration client ships it.
   precision, or without a model revision or profile) fails only its image, counted as
   `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four
   times, to isolate the bad input. A workflow that ends expired or canceled, or failed with no
-  step succeeding across several images, is an outage rather than bad inputs: it is re-submitted
-  with backoff up to `VECTOR_EMBED_MAX_RETRIES`, and only then are its images counted as failed
-  (logged at error level) for the reconciler to retry.
+  step succeeding across several images, is an outage rather than bad inputs: the vectors that did
+  finish are kept, and the unfinished inputs are re-submitted with backoff up to
+  `VECTOR_EMBED_MAX_RETRIES`. Only then are they counted as failed (logged at error level) for the
+  reconciler to retry.
 - When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
   workflows not yet submitted are skipped. The vectors already returned are stored before the
   error is raised, so a retry pays only for what is missing.

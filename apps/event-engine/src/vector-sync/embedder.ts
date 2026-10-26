@@ -378,7 +378,12 @@ export class Embedder {
     return call.result;
   }
 
-  private async embedSplitting(batch: EmbedInput[], call: EmbedCall, depth: number): Promise<void> {
+  private async embedSplitting(
+    batch: EmbedInput[],
+    call: EmbedCall,
+    depth: number,
+    outageRetries = 0
+  ): Promise<void> {
     let workflow: Workflow;
     try {
       workflow = await this.runWithRetry(batch);
@@ -427,7 +432,17 @@ export class Embedder {
       };
       accepted.push([Number(input.id), output.embedding, stamp, kind]);
     }
-    if (failed.length && looksLikeOutage(workflow, batch.length)) {
+    // Retried here, not by the caller, so a batch that keeps failing ends as counted failures
+    // (reconcile retries them) rather than a flush that never moves on. Only the unfinished
+    // inputs go again; the steps that succeeded are kept below.
+    const outage = failed.length > 0 && looksLikeOutage(workflow, batch.length);
+    const retryOutage = outage && outageRetries < this.opts.maxRetries;
+    if (retryOutage) {
+      logger.warn(
+        { workflow: workflow.id, status: workflow.status, ids: failed, attempt: outageRetries },
+        'vector-sync: workflow ended without its inputs being at fault; re-submitting'
+      );
+    } else if (outage) {
       logger.error(
         { workflow: workflow.id, status: workflow.status, ids: failed },
         'vector-sync: workflow kept failing after retries; inputs failed'
@@ -449,10 +464,17 @@ export class Embedder {
       call.stamps.set(kind, stamp);
       this.stampSeen = true;
     }
-    if (!accepted.length) return;
-    this.onProgress?.();
-    call.result.stamp ??= accepted[0][2];
-    for (const [id, vector] of accepted) call.result.vectors.set(id, vector);
+    if (accepted.length) {
+      this.onProgress?.();
+      call.result.stamp ??= accepted[0][2];
+      for (const [id, vector] of accepted) call.result.vectors.set(id, vector);
+    }
+    if (retryOutage) {
+      await this.sleep(Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2));
+      const unfinished = new Set(failed);
+      const again = batch.filter((input) => unfinished.has(input.id));
+      await this.embedSplitting(again, call, depth, outageRetries + 1);
+    }
   }
 
   private async runWithRetry(batch: EmbedInput[]): Promise<Workflow> {
@@ -463,13 +485,7 @@ export class Embedder {
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
-        const workflow = await this.run(batch);
-        // Retried here, not by the caller, so a batch that keeps failing ends as counted failures
-        // (reconcile retries them) rather than a flush that never moves on.
-        if (looksLikeOutage(workflow, batch.length) && errors < this.opts.maxRetries) {
-          throw new RetryableError(`workflow ${workflow.id} ${workflow.status}`);
-        }
-        return workflow;
+        return await this.run(batch);
       } catch (err) {
         // Giving up on a workflow that may still be running: the caller's retry (a backfill page,
         // the next consumer flush) re-sends it within seconds, so wait for it to finish first.
