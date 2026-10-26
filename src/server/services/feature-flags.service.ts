@@ -173,6 +173,12 @@ const featureFlags = createFeatureFlags({
   // per key either way; ON drops the whole-result cache's up-to-10s lag on a Flipt change. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down, so OFF is the default.
   trpcFlagGuardPerRequest: { availability: [], fliptKey: 'trpc-flag-guard-per-request' },
+  // Generator status poll. ON: the fallback poll (`usePollWorkflows`) skips a workflow that a
+  // signal already refreshed within the last poll interval, so a workflow whose signals arrive is
+  // read on signal only. A workflow with no recent signal is polled exactly as before. OFF: every
+  // pollable workflow is read on every tick, as before. `[]` = DARK and fails CLOSED when the key
+  // is absent or Flipt is down.
+  statusUpdateOnSignal: { availability: [], fliptKey: 'status-update-on-signal' },
   // SSR-CPU kill switch for the model page's above-the-fold UI (title row, version buttons, the
   // version-details grid, action row and Details rows, trigger words, AIR, hash): the same
   // `@civitai/components` markup as `shellDesignSystemMarkup`, in place of per-instance Mantine

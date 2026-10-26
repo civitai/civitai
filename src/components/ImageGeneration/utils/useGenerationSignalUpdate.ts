@@ -4,6 +4,7 @@ import produce from 'immer';
 import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { extractTrpcErrorCode } from '~/components/AppBlocks/blockImageScanLogic';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
@@ -44,8 +45,47 @@ export function applyPreparationEvent(
 }
 
 export const usePollableWorkflowIdsStore = create<{ ids: string[] }>(() => ({ ids: [] }));
+
+/** How often the fallback poll reads every pollable workflow. */
+export const STATUS_POLL_INTERVAL_MS = 60_000;
+
+/**
+ * When a signal last refreshed each workflow (`statusUpdateOnSignal` only). Written only from a
+ * read that returned the workflow, so a failed refetch never suppresses the poll.
+ */
+const signalRefreshedAt = new Map<string, number>();
+
+export function recordSignalRefresh(workflowIds: string[], at: number) {
+  for (const id of workflowIds) signalRefreshedAt.set(id, at);
+}
+
+/** Test helper: forget every recorded signal refresh. */
+export function __resetSignalRefreshes() {
+  signalRefreshedAt.clear();
+}
+
+/**
+ * The ids one poll tick should read. Without `skipSignaled` that is every id, as before. With it, an
+ * id a signal refreshed less than one interval ago is skipped: the signal path already read it. A
+ * workflow whose signals stop is then read on a later tick, so it is at most just under two
+ * intervals stale instead of one.
+ */
+export function selectIdsToPoll(workflowIds: string[], skipSignaled: boolean, now: number) {
+  if (!skipSignaled) return workflowIds;
+  const pollable = new Set(workflowIds);
+  // Ids that left the pollable set are never asked about again.
+  for (const id of signalRefreshedAt.keys()) if (!pollable.has(id)) signalRefreshedAt.delete(id);
+  return workflowIds.filter((id) => {
+    const at = signalRefreshedAt.get(id);
+    return at === undefined || now - at >= STATUS_POLL_INTERVAL_MS;
+  });
+}
+
 export function useTextToImageSignalUpdate() {
-  usePollWorkflows();
+  const { statusUpdateOnSignal } = useFeatureFlags();
+  const skipSignaledRef = useRef(!!statusUpdateOnSignal);
+  skipSignaledRef.current = !!statusUpdateOnSignal;
+  usePollWorkflows(skipSignaledRef);
 
   return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
     if (data.$type !== 'step') return;
@@ -65,7 +105,7 @@ export function useTextToImageSignalUpdate() {
       signalStepEventsDictionary[data.workflowId] = { ...data };
     }
     debouncer(() =>
-      updateSignaledWorkflows().catch((error) =>
+      updateSignaledWorkflows(skipSignaledRef.current).catch((error) =>
         console.error('[generation] signaled workflow update failed', error)
       )
     );
@@ -146,8 +186,9 @@ export function resolvePollOutcomes(
   return { updates, drop };
 }
 
-export async function updateWorkflowsStatus(workflowIds: string[]) {
-  if (!workflowIds.length) return;
+/** Reads each workflow and writes it to the cache. Resolves to the ids whose read returned one. */
+export async function updateWorkflowsStatus(workflowIds: string[]): Promise<string[]> {
+  if (!workflowIds.length) return [];
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
 
   // allSettled, never all: one rejected id used to throw past the prune and the cache write
@@ -155,19 +196,24 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
   // froze the slot counter for every other job until the page was reloaded.
   const outcomes = await Promise.allSettled(workflowIds.map(fetchSignaledWorkflow));
   const { updates, drop } = resolvePollOutcomes(workflowIds, outcomes);
+  const read = workflowIds.filter((_, index) => {
+    const outcome = outcomes[index];
+    return outcome.status === 'fulfilled' && !!outcome.value;
+  });
 
   if (drop.size)
     usePollableWorkflowIdsStore.setState(({ ids }) => ({
       ids: ids.filter((id) => !drop.has(id)),
     }));
 
-  if (!updates.length) return;
+  if (!updates.length) return read;
 
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteTextToImageRequests) => {
       if (old) applyStatusUpdates(old, updates);
     })
   );
+  return read;
 }
 
 /** Writes refetched workflows onto the cached pages in place — `data` is an immer draft. */
@@ -205,17 +251,23 @@ export function applyStatusUpdates(
   }
 }
 
-async function updateSignaledWorkflows() {
+async function updateSignaledWorkflows(recordRefresh: boolean) {
   const signalData = { ...signalStepEventsDictionary };
   signalStepEventsDictionary = {};
 
   const workflowIds = Object.keys(signalData);
   if (!workflowIds.length) return;
 
-  await updateWorkflowsStatus(workflowIds);
+  const read = await updateWorkflowsStatus(workflowIds);
+  if (recordRefresh) recordSignalRefresh(read, Date.now());
 }
 
-function usePollWorkflows() {
+/** One fallback poll tick: reads the pollable workflows `selectIdsToPoll` keeps. */
+export function pollWorkflowsStatus(workflowIds: string[], skipSignaled: boolean, now: number) {
+  return updateWorkflowsStatus(selectIdsToPoll(workflowIds, skipSignaled, now));
+}
+
+function usePollWorkflows(skipSignaledRef: { current: boolean }) {
   const hasIds = usePollableWorkflowIdsStore(({ ids }) => ids.length > 0);
 
   const intervalRef = useRef<number | null>(null);
@@ -236,10 +288,10 @@ function usePollWorkflows() {
         const ids = usePollableWorkflowIdsStore.getState().ids;
         // Nothing awaits this timer, so an escaping rejection is an unhandled one with no stack
         // worth reading. Report it instead; the next tick retries.
-        updateWorkflowsStatus(ids).catch((error) =>
+        pollWorkflowsStatus(ids, skipSignaledRef.current, Date.now()).catch((error) =>
           console.error('[generation] workflow status poll failed', error)
         );
-      }, 60000);
+      }, STATUS_POLL_INTERVAL_MS);
     }
 
     return handleClearInterval;
