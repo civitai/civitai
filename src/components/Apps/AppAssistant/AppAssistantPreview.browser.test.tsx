@@ -141,6 +141,51 @@ describe('AppAssistantPreview — a preview the server runner started', () => {
 });
 
 /**
+ * The preview's `app.storage` lives only in that tab (the SDK's local-preview store), so
+ * whatever the app saves there is gone on any reload. The pane says so beside its caption,
+ * and only while a preview is shown. The whole sentence is pinned on purpose: a reword
+ * should fail here and be reviewed.
+ */
+describe('AppAssistantPreview — the note that preview data resets on reload', () => {
+  const NOTE = 'Data saved in the preview resets when it reloads.';
+
+  test('shows the note beside the caption while a preview is shown', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    await expect.element(page.getByText(NOTE, { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('New previews can take a minute to appear.', { exact: true }))
+      .toBeInTheDocument();
+  });
+
+  test('shows no note when there is no preview', async () => {
+    await renderWithProviders(<AppAssistantPreview canPreview session={null} />);
+    // Positive control: the empty state rendered, so an absent note is not an unrendered pane.
+    await expect
+      .element(page.getByText('Your app appears here once it runs.', { exact: false }))
+      .toBeInTheDocument();
+    expect(page.getByText(NOTE).query()).toBeNull();
+    expect(m.fetchFrame).not.toHaveBeenCalled();
+  });
+
+  test('shows no note when no preview is live on the server runner', async () => {
+    const restart = { onRestart: () => undefined, pending: false, error: null };
+    await renderWithProviders(<AppAssistantPreview canPreview session={null} restart={restart} />);
+    await expect.element(page.getByTestId('preview-restart')).toBeInTheDocument();
+    expect(page.getByText(NOTE).query()).toBeNull();
+  });
+
+  test('shows no note when live preview is not enabled for the account', async () => {
+    await renderWithProviders(<AppAssistantPreview canPreview={false} session={SESSION} />);
+    await expect
+      .element(page.getByText('Live preview isn’t enabled for your account yet.', { exact: false }))
+      .toBeInTheDocument();
+    expect(page.getByText(NOTE).query()).toBeNull();
+  });
+});
+
+/**
  * 🔴 REGRESSION (live reload). Vite reloads the app INSIDE the frame on an edit. The
  * page host reports that (`onGuestReloaded`, dev-tunnel only — see PageBlockHost) and
  * the preview answers with the manual Reload's own path: fetch a fresh entry URL, whose

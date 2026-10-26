@@ -85,7 +85,7 @@ export function StorylineStageOverlay({
               What happens next
             </Button>
           )}
-          {caption && <StorylineCaptionNote key={imageId} caption={caption} />}
+          {caption && <StorylineCaptionNote key={imageId} caption={caption} hideable />}
         </div>
       )}
       {storyline.endOpen && (

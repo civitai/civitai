@@ -101,28 +101,94 @@ name: Lint
 # it renders RED, on the commit that caused it, within minutes instead of
 # whenever the next PR happens to inherit it.
 
+# ── DOCS-ONLY CHANGES SKIP THIS WORKFLOW, EXCEPT DOCS A TEST READS ──────────
+#
+# `paths` rather than `paths-ignore` because only `paths` documents the
+# re-include rule: patterns are evaluated in order, so a positive pattern after
+# a negative one includes that path again. A change touching ANY file outside
+# the excluded trees still runs everything.
+#
+# Kept (re-included) because a unit test reads it, so editing it alone can turn
+# the suite red: docs/dev/convention-guards.md (no-lint-rules-script-drift
+# checks its "Convention guards run as tests" section against package.json).
+# Found by grepping every test file for paths under docs/ that it opens; that
+# was the only one. Markdown OUTSIDE these trees is deliberately not excluded:
+# tests read CLAUDE.md files, .claude/rules/*.md, app READMEs and the ToS
+# markdown under src/. If you add a test that reads a file under docs/ or
+# claudedocs/, add that path below the negations.
+#
+# Known gap: source-nul-bytes scans every .md in the repo, so a docs-only change
+# that adds a NUL byte is no longer caught by CI. Accepted for the runner time.
+#
+# Nothing breaks when this skips: `main` and `release` have no
+# required_status_checks, so no PR waits on a check that never starts. If one
+# of these jobs ever becomes a required check, a docs-only PR would hang on it
+# and this filter must go (or the check must be made path-aware).
 on:
   pull_request:
     branches: [main, release]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!claudedocs/**'
+      - 'docs/dev/convention-guards.md'
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!claudedocs/**'
+      - 'docs/dev/convention-guards.md'
+  # `only` runs one job (or one unit shard) instead of the whole fan-out, for
+  # dispatches that care about a single suite. Every job's `if` reads it; on
+  # pull_request and push `inputs.only` is empty and everything runs as before.
+  # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   workflow_dispatch:
+    inputs:
+      only:
+        description: >-
+          Run only this job. all = every job (default). typecheck, unit (all 4
+          shards), unit-1 .. unit-4 (one shard), packages, apps, apps-typecheck,
+          geometry, component.
+        type: choice
+        default: all
+        options:
+          - all
+          - typecheck
+          - unit
+          - unit-1
+          - unit-2
+          - unit-3
+          - unit-4
+          - packages
+          - apps
+          - apps-typecheck
+          - geometry
+          - component
 
 permissions:
   contents: read
 
-# On a PR this is unchanged: `github.ref` is `refs/pull/N/merge`, so a new push
-# to the branch cancels the in-flight run.
+# One group per ref, for pull requests AND pushes. On a PR `github.ref` is
+# `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
+# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
+# cancels the run for the older one that is still going.
 #
-# On a push to `main` it MUST NOT be `github.ref` — that is the same string for
-# every commit on the branch, so a busy `main` would cancel its own runs and the
-# only commit with a verdict would be whichever one happened to be last. Worse,
-# the losers would render as `cancelled`, a status this repo already has an open
-# complaint about being indistinguishable from a real failure. Grouping by
-# `github.sha` gives each commit its own group, so nothing cancels anything and
-# every commit on `main` gets its own answer.
+# That last part is a deliberate trade, not an oversight. Until 2026-10 a push
+# grouped by `github.sha`, so every commit on `main` kept its own full run (10+
+# jobs) alive. On a busy day that queued dozens of `main` runs behind the PR
+# runs on a plan with a fixed concurrent-job limit. The newest commit's run
+# checks a tree that contains every older commit, so `main` still gets a
+# verdict; what is given up is a per-commit verdict for intermediate commits,
+# which show as `cancelled`. To pin a break to one of them, push a branch at
+# that commit and dispatch this workflow on it (`only` narrows it to one suite).
+#
+# A workflow_dispatch run groups by ref AND by the `only` input, so a new
+# dispatch of the same suite on the same branch cancels the stale one, while
+# dispatches of DIFFERENT suites on one branch still run side by side. The
+# `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
 concurrency:
-  group: lint-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -305,10 +371,14 @@ jobs:
     # Safe: neither `main` nor `release` has any required_status_checks (verified
     # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
     # merge gate keys on the old name.
+    #
+    # The trailing `only` clause is the workflow_dispatch selector (see `on:`);
+    # it is true on every other event, so the three disjuncts above are unchanged.
     if: >-
-      github.event_name == 'push'
+      (github.event_name == 'push'
       || github.event.pull_request.head.repo.full_name != github.repository
-      || github.event.pull_request.base.ref != 'main'
+      || github.event.pull_request.base.ref != 'main')
+      && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck')
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
     # Leaving it in would have kept the fork case broken AND masked the HTTPS
@@ -405,6 +475,10 @@ jobs:
     # If the suite proves too noisy there, the fix is to de-flake the tests or to
     # narrow what runs on push — NOT to hide the result behind continue-on-error.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
+    # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
+    # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
+    # which is why the shard pick lives in the matrix expression instead.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-') }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -454,10 +528,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
-    # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
-    timeout-minutes: 15
+        # [1, 2, 3, 4] unless a dispatch named one shard (`only: unit-<n>`). The
+        # `--shard=<n>/4` denominator below stays 4 either way, so a single
+        # shard runs exactly the files it would in a full run.
+        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4]') }}
+    # Per-shard, not the whole suite. The ~3.4m estimate above is from the
+    # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
+    # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
+    # 20m leaves headroom over that. It is NOT 30/4: the fixed overhead does not
+    # shard.
+    timeout-minutes: 20
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
     # itself without its URL, so a shard that does not hold it pays only the container start.
@@ -483,6 +563,12 @@ jobs:
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # The same throwaway server for the kysely-hot-reads-2 Prisma-vs-Kysely parity suite, which
+      # drops and recreates its own `hot_reads_2_parity` schema there. That suite fails in CI if this
+      # is missing rather than skipping itself.
+      KYSELY_HOT_READS_2_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-3 suite (its own `hot_reads_3_parity` schema).
+      KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -616,6 +702,7 @@ jobs:
   packages:
     name: Package unit tests
     runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -737,6 +824,7 @@ jobs:
     # branch-protection API), so no merge gate keys on either string.
     name: App unit tests
     runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps' }}
     # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
     # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
     # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
@@ -804,6 +892,7 @@ jobs:
   apps-typecheck:
     name: App typecheck
     runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps-typecheck' }}
     # No app under `apps/` was typechecked by anything before this. The root
     # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
     # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
@@ -845,6 +934,7 @@ jobs:
   geometry:
     name: Geometry tests
     runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     # The browser-mode `geometry` project — real Chromium, the real app cascade,
     # an explicit phone viewport. See `test/geometry-setup.tsx` for what it loads
     # and why it is a separate project from `component`.
@@ -1028,6 +1118,7 @@ jobs:
   component:
     name: Component tests
     runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
     # The browser-mode `component` project (`*.browser.test.tsx`), on the same
     # Chromium setup as `geometry` above. See that job for why Playwright is
     # installed from the workspace pin rather than a version written here.

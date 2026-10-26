@@ -106,6 +106,7 @@ import {
 } from '~/server/jobs/build-resource-intent-cooc';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-training-datasets';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -167,6 +168,7 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
   storageUsageMediaJob,
   sendNotificationsJob,

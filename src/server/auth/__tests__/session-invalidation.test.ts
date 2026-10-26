@@ -41,8 +41,19 @@ const {
   mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
 }));
 
+// Refresh writes through the conditional variant. It is routed to the same mock, minus its keepValue argument,
+// so these boundary tests read one call shape; what keepValue does is covered in
+// session-invalidation.token-state.test.ts.
 vi.mock('~/server/redis/atomic', () => ({
   hSetMultiWithTTL: mockHSetMultiWithTTL,
+  hSetMultiWithTTLUnlessValue: (
+    client: unknown,
+    key: string,
+    fields: Record<string, string>,
+    ttlMs: number,
+    _keepValue: string,
+    onChunk?: unknown
+  ) => mockHSetMultiWithTTL(client, key, fields, ttlMs, onChunk),
 }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({
@@ -59,6 +70,7 @@ vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: {
     hScanNoValues: mockHScanNoValues,
+    hDel: vi.fn().mockResolvedValue(0),
     set: vi.fn().mockResolvedValue('OK'),
   },
   withSysReadDeadline: mockWithSysReadDeadline,

@@ -46,7 +46,12 @@ import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useChatLayout } from '~/components/Chat/useChatTheme';
 import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
-import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
+import {
+  getLinkHref,
+  linkifyOptions,
+  loadMotion,
+  showsChatModeratorMark,
+} from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -470,7 +475,7 @@ export function ExistingChat() {
                       linkToProfile
                       badge={
                         <Group gap={6} ml={4} align="center">
-                          {cm.user.isModerator ? (
+                          {showsChatModeratorMark(cm.user) ? (
                             <Image
                               src="/images/civ-c.png"
                               title="Moderator"
@@ -900,6 +905,7 @@ function ChatInputBox({
           thisChat.messages = [
             {
               content: data.content,
+              userId: data.userId,
               contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },

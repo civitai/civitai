@@ -2,6 +2,7 @@
   import '../global.css';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { page, navigating } from '$app/state';
+  import { toLinkBase } from '$lib/civitai-link';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -45,8 +46,28 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
-  import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
+  import {
+    isNavLinkActive,
+    isPathActive,
+    navBadge,
+    navCount,
+    navHref,
+    navPartial,
+    navWorstRank,
+  } from '$lib/nav-links';
+  import {
+    sidebarCounts,
+    sidebarLastActioned,
+    refreshSidebarCounts,
+  } from '$lib/sidebar-counts.svelte';
+  import {
+    LAST_ACTIONED_WINDOW_DAYS,
+    URGENT_SEVERITY_RANK,
+    lastActionedBadge,
+    severityClassForRank,
+  } from '$lib/queue-thresholds';
+  import ShortAge from '$lib/components/ShortAge.svelte';
+  import { minuteClock } from '$lib/minute-clock.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
 
@@ -78,17 +99,53 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
+  // A count the server could not read is marked, not left out: "423+" rather than a smaller total.
+  const badgeFor = (item: NavLink, cnt: number | null) =>
+    navBadge(
+      cnt,
+      navPartial(item, (key) => counts.unavailable.includes(key))
+    );
+  const PARTIAL_TITLE = 'Some counts are unavailable';
 
-  // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
+  const lastActioned = sidebarLastActioned();
+  const clock = minuteClock();
+  const now = $derived(clock.now);
+  // Nothing until the lookup lands: a missing timestamp reads as "no action in a week", and painting
+  // that before the answer arrives would flash every waiting queue red.
+  const actionedFor = (link: NavLink, count: number | null) =>
+    link.countKey && lastActioned.value
+      ? lastActionedBadge(link.countKey, lastActioned.value[link.countKey]?.at, count, now)
+      : null;
+
+  // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
+  // still says when something inside it is behind.
+  const severityFor = (link: NavLink) => severityClassForRank(navWorstRank(link, countFor));
+  const overThreshold = (link: NavLink) =>
+    (navWorstRank(link, countFor) ?? Infinity) <= URGENT_SEVERITY_RANK;
+
+  // Collapsed unless you're working inside the section or something in it is over threshold; an
+  // explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
   const holdsCurrentPage = (item: NavLink) =>
     !!item.children?.some(
       (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
     );
-  const isOpen = (item: NavLink) => openGroups[item.label] ?? holdsCurrentPage(item);
+  const isOpen = (item: NavLink) =>
+    openGroups[item.label] ?? (holdsCurrentPage(item) || overThreshold(item));
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
+
+  // Stored absolute URLs (an appeal's link, pasted text) still name `.com`; every builder here already
+  // uses the link base. Rewritten on hover or focus, so the status bar, copy-link and middle-click agree.
+  const retarget = (event: Event) => {
+    const a = (event.target as Element | null)?.closest?.('a[href]');
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const next = toLinkBase(a.href, data.civitaiUrl);
+    if (next !== a.href) a.href = next;
+  };
 </script>
+
+<svelte:document onpointerover={retarget} onfocusin={retarget} />
 
 <SidebarProvider>
   {#if navigating.to}
@@ -127,7 +184,7 @@
             {#each data.nav as item (item.path ?? item.label)}
                 {@const Icon = iconFor(item)}
                 {#if item.children}
-                  {@const rollup = rollupFor(item)}
+                  {@const rollup = badgeFor(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
                     onOpenChange={(o) => (openGroups[item.label] = o)}
@@ -140,9 +197,12 @@
                             <span>{item.label}</span>
                             {#if rollup !== null}
                               <span
-                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                  item
+                                ) ?? 'text-sidebar-foreground/70'}"
+                                title={rollup.partial ? PARTIAL_TITLE : undefined}
                               >
-                                {rollup}
+                                {rollup.text}
                               </span>
                             {/if}
                             <IconChevronRight
@@ -163,7 +223,9 @@
                              top-level ones; only the left indent and rule stay as the hierarchy cue. -->
                         <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = navCount(childLink, countFor)}
+                            {@const count = navCount(childLink, countFor)}
+                            {@const cnt = badgeFor(childLink, count)}
+                            {@const actioned = actionedFor(childLink, count)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -179,11 +241,28 @@
                                     {...props}
                                   >
                                     <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>
+                                    <!-- Beside the label, not the count: the counts stay one right-aligned column. -->
+                                    {#if actioned}
+                                      {@const badgeClass = `shrink-0 rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
+                                      {#if actioned.at}
+                                        <ShortAge
+                                          at={actioned.at}
+                                          {now}
+                                          title={actioned.title}
+                                          class={badgeClass}
+                                        />
+                                      {:else}
+                                        <span class={badgeClass} title={actioned.title}>
+                                          &gt;{LAST_ACTIONED_WINDOW_DAYS}d
+                                        </span>
+                                      {/if}
+                                    {/if}
                                     {#if cnt !== null}
                                       <span
                                         class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
+                                        title={cnt.partial ? PARTIAL_TITLE : undefined}
                                       >
-                                        {cnt}
+                                        {cnt.text}
                                       </span>
                                     {/if}
                                   </a>
@@ -196,7 +275,7 @@
                     </SidebarMenuItem>
                   </Collapsible>
                 {:else}
-                  {@const cnt = navCount(item, countFor)}
+                  {@const cnt = badgeFor(item, navCount(item, countFor))}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
@@ -207,9 +286,12 @@
                           <span>{item.label}</span>
                           {#if cnt !== null}
                             <span
-                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                item
+                              ) ?? 'text-sidebar-foreground/70'}"
+                              title={cnt.partial ? PARTIAL_TITLE : undefined}
                             >
-                              {cnt}
+                              {cnt.text}
                             </span>
                           {/if}
                         </a>

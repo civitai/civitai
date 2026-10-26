@@ -11,6 +11,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.url().optional(),
@@ -101,6 +103,8 @@ export const clientSchema = z.object({
 export const clientEnv = {
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: process.env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED,
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: process.env.NEXT_PUBLIC_LOCAL_ADS_ENABLED,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,

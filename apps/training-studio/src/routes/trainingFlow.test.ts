@@ -12,6 +12,7 @@ import {
   paramDeviations,
   promptHasTrigger,
   runExtraCapabilities,
+  sampleImagesProblem,
   seedPrompts,
   startLabelPass,
   withTrigger,
@@ -19,7 +20,10 @@ import {
   CUSTOM_VERSION_KEY,
   type Img,
   type Run,
+  type SamplePrompt,
 } from './trainingFlow';
+
+const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
 
 const run = (cardType: string, versionKey?: string): Run => {
   const card = cardByType(cardType);
@@ -178,7 +182,7 @@ describe('buildTrainingRuns extra fields', () => {
       'ohwx',
       'test',
       [{ run: r, params: { ...defaultRunParams(r), ...overrides } }],
-      ['ohwx, a photo'],
+      rows(['ohwx, a photo']),
       ['blue'],
       labelMode
     )[0]!;
@@ -242,7 +246,7 @@ describe('sample prompts', () => {
       'ohwx',
       'test',
       [{ run: r, params: defaultRunParams(r) }],
-      prompts,
+      rows(prompts),
       ['blue'],
       'tag'
     )[0]!.prompts;
@@ -318,5 +322,62 @@ describe('retired cards', () => {
 
   it('still resolves a past Hunyuan run to its card', () => {
     expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
+  });
+});
+
+describe('sample input images', () => {
+  const img = (name: string) => ({ url: `https://orch.example/blobs/${name}`, name });
+  const prompts = (...entries: [string, string?][]): SamplePrompt[] =>
+    entries.map(([text, image], id) => ({ id, text, ...(image ? { image: img(image) } : {}) }));
+
+  const submit = (cardTypes: string[], sample: SamplePrompt[]) => {
+    const runs = cardTypes.map((t) => run(t));
+    return buildTrainingRuns(
+      { media: 'image', loraType: 'concept', runs },
+      [image(1, [], 'ohwx, a photo')],
+      'ohwx',
+      'test',
+      runs.map((r) => ({ run: r, params: defaultRunParams(r) })),
+      sample,
+      ['blue'],
+      'caption'
+    );
+  };
+
+  it('pairs each submitted prompt with its own image, skipping blank rows', () => {
+    const [out] = submit(
+      ['flux2klein'],
+      prompts(['ohwx, make it night', 'a.png'], ['  '], ['ohwx, add snow', 'b.png'])
+    );
+    expect(out!.prompts).toEqual(['ohwx, make it night', 'ohwx, add snow']);
+    expect(out!.sourceImages).toEqual([img('a.png').url, img('b.png').url]);
+  });
+
+  it('keeps a sweep run whose model takes no images text-only', () => {
+    const [klein, sdxl] = submit(['flux2klein', 'sdxl'], prompts(['ohwx, make it night', 'a.png']));
+    expect(klein!.sourceImages).toEqual([img('a.png').url]);
+    expect(sdxl!.sourceImages).toBeUndefined();
+    expect(sdxl!.prompts).toEqual(['ohwx, make it night']);
+  });
+
+  it('sends no images when no row has one', () => {
+    expect(submit(['flux2klein'], prompts(['ohwx, a photo']))[0]!.sourceImages).toBeUndefined();
+  });
+
+  it('refuses a half-imaged list rather than submitting it text-only', () => {
+    const half = prompts(['ohwx, make it night', 'a.png'], ['ohwx, add snow']);
+    expect(sampleImagesProblem(half)).toMatch(/every sample prompt/);
+    expect(() => submit(['flux2klein'], half)).toThrow(/every sample prompt/);
+  });
+
+  it('flags an image on a row with no prompt, which would be dropped with the row', () => {
+    expect(sampleImagesProblem(prompts(['ohwx, make it night', 'a.png'], ['', 'b.png']))).toMatch(
+      /needs a prompt/
+    );
+  });
+
+  it('has nothing to flag when every prompt or none has an image', () => {
+    expect(sampleImagesProblem(prompts(['a', 'a.png'], ['b', 'b.png'], ['']))).toBeNull();
+    expect(sampleImagesProblem(prompts(['a'], ['b']))).toBeNull();
   });
 });

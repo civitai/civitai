@@ -13,7 +13,7 @@
     selectionParam,
     counts,
   }: {
-    tabs: { value: string; label: string }[];
+    tabs: { value: string; label: string; /** Shown on hover. */ hint?: string }[];
     current: string;
     /** The URL param holding the tab. */
     param: string;
@@ -33,35 +33,36 @@
     });
 </script>
 
-<nav class="flex items-end gap-1 border-b border-dark-4 pt-3.5 pr-6" aria-label={label}>
+<!-- Top of the list column, as `TriageTabs` compact: equal segments, the count under the label. -->
+<nav
+  class="grid auto-cols-fr grid-flow-col gap-0.5 rounded-md border border-dark-4 bg-dark-8 p-0.5"
+  aria-label={label}
+>
   {#each tabs as tab (tab.value)}
     {@const active = tab.value === current}
     {@const count = counts?.[tab.value]}
     <a
       href={hrefFor(tab.value)}
+      title={tab.hint}
       data-sveltekit-noscroll
       data-sveltekit-keepfocus
       aria-current={active ? 'page' : undefined}
       class={cn(
-        '-mb-px flex border-b-2 px-3 pt-1.5 pb-2.5',
-        active
-          ? 'border-blue-500 font-semibold text-white'
-          : 'border-transparent font-medium text-dark-0 hover:text-white'
+        'flex min-w-0 flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight',
+        active ? 'bg-dark-5 font-semibold text-white' : 'font-medium text-dark-0 hover:text-white'
       )}
     >
-      <span class="flex items-center gap-2 text-sm">
-        {tab.label}
-        {#if count !== undefined}
-          <span
-            class={cn(
-              'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
-              active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
-            )}
-          >
-            {num(count)}
-          </span>
-        {/if}
-      </span>
+      <span class="whitespace-nowrap">{tab.label}</span>
+      {#if count !== undefined}
+        <span
+          class={cn(
+            'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
+            active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
+          )}
+        >
+          {num(count)}
+        </span>
+      {/if}
     </a>
   {/each}
 </nav>

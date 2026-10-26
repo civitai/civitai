@@ -1,7 +1,9 @@
 import { env } from '~/env/server';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   CURSOR_UNPARSED,
   DEEP_OFFSET,
@@ -19,6 +21,18 @@ const requestCounter = registerCounterWithLabels({
   help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
   labelNames: ['outcome', 'reason', 'route'] as const,
 });
+
+const meiliOffCounter = registerCounterWithLabels({
+  name: 'feed_primary_meili_off_total',
+  help: 'Image-feed requests the feed service did not serve, answered without Meilisearch',
+  labelNames: ['answer', 'reason', 'route'] as const,
+});
+/** `answer`: empty (an empty page), unavailable (a retryable 503) or refused (a 400). */
+export const countMeiliOff = (
+  answer: 'empty' | 'unavailable' | 'refused',
+  reason: string,
+  route: FeedPrimaryRoute
+) => meiliOffCounter.inc({ answer, reason: reasonLabel(reason), route });
 
 /** Which caller asked: the site's image feed or the public REST images endpoint. */
 export type FeedPrimaryRoute = 'website' | 'rest';
@@ -208,6 +222,12 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
   const mapping = mapSearchInputToFeedQuery(input, 'primary', deps.route);
+  // An inclusion list of only impossible ids (prod sends `tags: [0]`) matches nothing on the
+  // search index either.
+  if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) {
+    count('served');
+    return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
+  }
   if (!mapping.ok) {
     const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
@@ -266,6 +286,21 @@ export async function serveFromFeed<T extends { id: number }>(
 
 export function feedPrimaryAvailable() {
   return !!env.FEED_SERVICE_URL;
+}
+
+/**
+ * FEED_SERVICE_MEILI_OFF for this viewer: the image feed never reads Meilisearch. Only with a feed
+ * service configured, since without one there is nothing else to answer from.
+ */
+export async function isMeiliOff(input: { currentUserId?: number; isModerator?: boolean }) {
+  if (!feedPrimaryAvailable()) return false;
+  return withSpan('image:flipt:meiliOff', () =>
+    getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_SERVICE_MEILI_OFF,
+      input.currentUserId?.toString() || 'anonymous',
+      feedFliptContext(input)
+    )
+  );
 }
 
 export function fetchFeedPrimary(query: string, timeoutMs: number) {

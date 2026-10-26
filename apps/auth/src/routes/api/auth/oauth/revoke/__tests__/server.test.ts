@@ -173,6 +173,27 @@ beforeEach(() => {
       userId: 7,
       clientId: null,
     },
+    {
+      id: 7,
+      key: generateSecretHash('conf_user_refresh'),
+      type: 'Refresh',
+      userId: TOKEN_OWNER,
+      clientId: CONFIDENTIAL_CLIENT,
+    },
+    {
+      id: 8,
+      key: generateSecretHash('conf_user_access'),
+      type: 'Access',
+      userId: TOKEN_OWNER,
+      clientId: CONFIDENTIAL_CLIENT,
+    },
+    {
+      id: 9,
+      key: generateSecretHash('owner_other_access'),
+      type: 'Access',
+      userId: CONFIDENTIAL_OWNER,
+      clientId: OTHER_PUBLIC_CLIENT,
+    },
   ];
 });
 
@@ -295,6 +316,68 @@ describe('revoke — the confidential-client gate is unchanged', () => {
 
     expect(res.status).toBe(200);
     expect(stored('conf_access')).toBe(false);
+  });
+
+  it.each([
+    ['revokes', CONFIDENTIAL_SECRET, false],
+    ['refuses a wrong secret and keeps', 'wrong-secret', true],
+  ])('%s the token for HTTP Basic client credentials', async (_, secret, kept) => {
+    const basic = Buffer.from(`${CONFIDENTIAL_CLIENT}:${secret}`).toString('base64');
+    const res = await POST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/revoke', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          authorization: `Basic ${basic}`,
+        },
+        body: new URLSearchParams({ token: 'conf_access' }).toString(),
+      }),
+      locals: {},
+    } as never);
+
+    expect(res.status).toBe(200);
+    expect(stored('conf_access')).toBe(kept);
+  });
+});
+
+describe('revoke — a confidential client revokes the tokens issued to it', () => {
+  const asClient = (token: string, extra: Record<string, string> = {}) =>
+    post({ token, client_id: CONFIDENTIAL_CLIENT, client_secret: CONFIDENTIAL_SECRET, ...extra });
+
+  it("revokes a user's access token issued to that client", async () => {
+    const res = await asClient('conf_user_access');
+
+    expect(res.status).toBe(200);
+    expect(stored('conf_user_access')).toBe(false);
+    expect(h.auditEvents).toEqual([
+      { type: 'token.revoked', userId: TOKEN_OWNER, clientId: CONFIDENTIAL_CLIENT, ip: h.clientIp },
+    ]);
+  });
+
+  it("revokes a user's refresh token and cascades that user's access tokens for the client", async () => {
+    const res = await asClient('conf_user_refresh', { token_type_hint: 'refresh_token' });
+
+    expect(res.status).toBe(200);
+    expect(stored('conf_user_refresh')).toBe(false);
+    expect(stored('conf_user_access')).toBe(false);
+    expect(stored('conf_access')).toBe(true);
+    expect(stored('link_access')).toBe(true);
+  });
+
+  it("leaves the client owner's token issued to a different client alone", async () => {
+    const res = await asClient('owner_other_access');
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+    expect(stored('owner_other_access')).toBe(true);
+    expect(h.auditEvents).toEqual([]);
+  });
+
+  it("leaves another user's token issued to a different client alone", async () => {
+    const res = await asClient('link_access');
+
+    expect(res.status).toBe(200);
+    expect(stored('link_access')).toBe(true);
   });
 });
 

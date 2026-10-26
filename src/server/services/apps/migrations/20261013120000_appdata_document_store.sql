@@ -210,8 +210,10 @@ CREATE TABLE IF NOT EXISTS appdata.doc_tomb (
 );
 CREATE INDEX IF NOT EXISTS doc_tomb_deleted_idx ON appdata.doc_tomb (deleted_at);
 
--- Per-(app, namespace) usage. The row is also the lock that orders `seq`: it is
--- updated, and so row-locked until commit, by every document write.
+-- Per-(app, namespace) usage of SHARED documents (`scope_uid = 0`) only — the app
+-- ceiling. A private document is charged to its viewer's `usage_user` row alone.
+-- The row is also the lock that orders `seq`: it is updated (a private write with a
+-- zero-byte charge), and so row-locked until commit, by every document write.
 CREATE TABLE IF NOT EXISTS appdata.usage_app (
   app_id   text COLLATE "C" NOT NULL,
   ns       text COLLATE "C" NOT NULL,
@@ -222,8 +224,8 @@ CREATE TABLE IF NOT EXISTS appdata.usage_app (
   CONSTRAINT usage_app_pkey PRIMARY KEY (app_id, ns)
 );
 
--- Per-(app, namespace, user) usage: a private doc is charged to its viewer, a
--- user-authored shared doc to its author.
+-- Per-(app, namespace, user) usage: a private doc is charged to its viewer (and
+-- to nothing else), a user-authored shared doc to its author (and to `usage_app`).
 CREATE TABLE IF NOT EXISTS appdata.usage_user (
   app_id  text COLLATE "C" NOT NULL,
   ns      text COLLATE "C" NOT NULL,

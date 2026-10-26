@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureFliptInitialized, getFliptClientSync } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  getFliptClientSync,
+  getFliptLocalOverride,
+} from '~/server/flipt/client';
 import { isFinalsMalwareScanOn } from '~/server/services/creator-service-deal-file-scan';
 
 vi.mock('~/server/flipt/client', () => ({
   ensureFliptInitialized: vi.fn(),
   getFliptClientSync: vi.fn(),
+  getFliptLocalOverride: vi.fn(),
 }));
 
 const evaluateBoolean = vi.fn();
@@ -16,6 +21,7 @@ describe('isFinalsMalwareScanOn', () => {
       .mockReset()
       .mockReturnValue({ evaluateBoolean } as never);
     evaluateBoolean.mockReset();
+    vi.mocked(getFliptLocalOverride).mockReset().mockReturnValue(undefined);
   });
 
   it('follows the finals malware scan flag', async () => {
@@ -32,6 +38,18 @@ describe('isFinalsMalwareScanOn', () => {
     evaluateBoolean.mockImplementation(() => {
       throw new Error('flag not found');
     });
+    expect(await isFinalsMalwareScanOn()).toBe(false);
+  });
+
+  it('follows a local override over Flipt, either way', async () => {
+    evaluateBoolean.mockImplementation(() => {
+      throw new Error('flag not found');
+    });
+    vi.mocked(getFliptLocalOverride).mockReturnValue('on');
+    expect(await isFinalsMalwareScanOn()).toBe(true);
+    expect(getFliptLocalOverride).toHaveBeenLastCalledWith('creator-services-finals-malware-scan');
+    evaluateBoolean.mockReturnValue({ enabled: true });
+    vi.mocked(getFliptLocalOverride).mockReturnValue('off');
     expect(await isFinalsMalwareScanOn()).toBe(false);
   });
 

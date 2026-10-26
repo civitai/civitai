@@ -1,5 +1,5 @@
 /**
- * `page_render_total` counts HTML documents. Each case replays the hook sequence Next 16.3.1
+ * `page_render_total` counts HTML documents. Each case replays the hook sequence Next 16.4.3
  * runs for that response, as recorded from a built Next app with logging `_app` and `_document`
  * hooks (normal render: app, document; gSSP notFound: app, app as `/404`, document as `/404`;
  * gSSP throw: app, app as `/_error`, document as `/_error`; gSSP redirect, `_app` redirect and
@@ -166,7 +166,7 @@ describe('the recorded hook sequences', () => {
     expect(
       version,
       'Next changed: re-record the _app/_document hook order for normal, notFound, throw, redirect and data responses, then update this file'
-    ).toBe('16.3.1');
+    ).toBe('16.4.3');
   });
 });
 

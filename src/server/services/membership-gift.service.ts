@@ -571,15 +571,36 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
     return { armed: false as const, reason: 'slot-occupied' };
   }
 
-  const holderTier = (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
-  const billedMonthly = isBilledMonthly(subscription);
+  // Our row can still name the plan before a change (webhook order is not guaranteed); the live
+  // subscription is the plan this month will be billed on.
+  const livePrice = stripeSub.items.data[0]?.price;
+  const liveProduct =
+    livePrice &&
+    (await dbWrite.product.findUnique({
+      where: { id: livePrice.product as string },
+      select: { metadata: true },
+    }));
+  if (!livePrice || !liveProduct) {
+    await log({
+      type: 'warning',
+      stage: 'arm',
+      giftId: gift.id,
+      userId,
+      message: `subscription ${stripeSub.id} bills a product we have no row for; not arming`,
+    });
+    return { armed: false as const, reason: 'unknown-product' };
+  }
+  const holderTier = (liveProduct.metadata as SubscriptionProductMetadata).tier ?? 'free';
+  const billedMonthly = isBilledMonthly({
+    price: { interval: livePrice.recurring?.interval ?? null },
+  });
   let months = 1;
   if (!billedMonthly) {
     const { pricesByCurrency } = await getTierMonthlyPrice(gift.tier);
     const monthlyValue = pricesByCurrency[stripeSub.currency];
     if (monthlyValue)
       months = monthsCoveredByRenewal({
-        renewalAmount: stripeSub.items.data[0]?.price.unit_amount ?? 0,
+        renewalAmount: livePrice.unit_amount ?? 0,
         monthlyValue,
         monthsRemaining: gift.monthsRemaining,
       });
@@ -1150,7 +1171,10 @@ export type GiftRevocationEffect =
   | { kind: 'unaccepted-offer-withdrawn'; monthsRemaining: number }
   | { kind: 'nothing-live' };
 
-/** Whether Stripe could charge this subscription: the same test keepGiftMembership applies. */
+/**
+ * Whether Stripe could charge this subscription by any means, bank debit included: a revocation
+ * that leaves the holder billable needs a person. Not keepGiftMembership's card-only test.
+ */
 async function canBill(stripe: Stripe, sub: Stripe.Subscription) {
   const customer = sub.customer as Stripe.Customer;
   if (
@@ -1498,11 +1522,22 @@ export async function refundUnfulfilledMembershipGift({
   return { outcome: 'refunded', ...plan, refundId: refund.id };
 }
 
+type Payer = string | Stripe.PaymentMethod | Stripe.CustomerSource | null | undefined;
+
+/** An unexpanded id is unknown, so it does not count as a card. */
+function isCard(payer: Payer) {
+  if (!payer || typeof payer === 'string') return false;
+  if (payer.object === 'payment_method') return payer.type === 'card';
+  if (payer.object === 'source') return payer.type === 'card';
+  return payer.object === 'card';
+}
+
 /**
  * "Keep my membership": clears a scheduled cancellation (gift subs use cancel_at,
  * regular cancels use cancel_at_period_end) so billing resumes after the free months.
- * Requires a usable payment method — without one, returns a billing-portal URL so the
- * user can add a card, then retry.
+ * Renewals bill a card only. When what Stripe would bill is not a card, a saved card is set as
+ * the subscription default, which outranks the customer's own default; with no saved card it
+ * returns a card-only Checkout to add one, then the member retries.
  */
 export async function keepGiftMembership({ userId }: { userId: number }) {
   const stripe = await getServerStripe();
@@ -1517,7 +1552,13 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   }
 
   const stripeSub = await stripe.subscriptions.retrieve(subscription.id, {
-    expand: ['customer'],
+    expand: [
+      'customer',
+      'customer.invoice_settings.default_payment_method',
+      'customer.default_source',
+      'default_payment_method',
+      'default_source',
+    ],
   });
   if (TERMINAL_STATUSES.includes(stripeSub.status)) {
     throw throwNotFoundError('No active membership found');
@@ -1527,24 +1568,40 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   }
 
   const customer = stripeSub.customer as Stripe.Customer;
-  // default_source is a legacy Source/Card — Stripe bills it as the customer
-  // default but rejects it as a subscription default_payment_method, so it only
-  // counts as "has a way to pay", never gets set on the sub.
+  // The order Stripe picks what to bill in.
+  const payer =
+    stripeSub.default_payment_method ??
+    stripeSub.default_source ??
+    customer.invoice_settings?.default_payment_method ??
+    customer.default_source;
   let subscriptionPaymentMethod: string | null = null;
-  let hasBillingMethod =
-    !!customer.invoice_settings?.default_payment_method || !!customer.default_source;
-  if (!hasBillingMethod) {
-    const methods = await stripe.paymentMethods.list({ customer: customer.id, type: 'card' });
-    subscriptionPaymentMethod = methods.data[0]?.id ?? null;
-    hasBillingMethod = !!subscriptionPaymentMethod;
+  if (!isCard(payer)) {
+    const customerDefault = customer.invoice_settings?.default_payment_method;
+    if (isCard(customerDefault)) {
+      subscriptionPaymentMethod = (customerDefault as Stripe.PaymentMethod).id;
+    } else {
+      const cards = await stripe.paymentMethods.list({
+        customer: customer.id,
+        type: 'card',
+        limit: 10,
+      });
+      // A card is good through its expiry month; exp_month is 1-based, so this is the 1st after it.
+      const unexpired = cards.data.find(
+        ({ card }) => !!card && dayjs().isBefore(new Date(card.exp_year, card.exp_month, 1))
+      );
+      subscriptionPaymentMethod = unexpired?.id ?? null;
+    }
   }
-  if (!hasBillingMethod) {
-    const portal = await stripe.billingPortal.sessions.create({
+  if (!isCard(payer) && !subscriptionPaymentMethod) {
+    const setup = await stripe.checkout.sessions.create({
       customer: customer.id,
-      return_url: `${baseUrl}/user/membership?flow=keep-membership`,
-      flow_data: { type: 'payment_method_update' },
+      mode: 'setup',
+      payment_method_types: ['card'],
+      success_url: `${baseUrl}/user/membership?flow=keep-membership`,
+      cancel_url: `${baseUrl}/user/membership`,
     });
-    return { kept: false as const, portalUrl: portal.url };
+    // Named portalUrl for the existing client; it is a Checkout URL now.
+    return { kept: false as const, portalUrl: setup.url };
   }
 
   await stripe.subscriptions.update(stripeSub.id, {

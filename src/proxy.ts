@@ -1,8 +1,27 @@
 // proxy.ts (Next 16 renamed the `middleware` file convention to `proxy`)
 import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import { isGlobalFliptFlagOn } from '~/server/flipt/global-sync';
 import { runMiddlewares } from '~/server/middleware';
+import { recordTrpcProxySkipped } from '~/server/prom/trpc-proxy-skip.metrics';
+import {
+  TRPC_PATH_PREFIX,
+  TRPC_SKIP_PROXY_MIDDLEWARE_FLAG,
+} from '~/server/middleware/api-request-policy';
 
 export async function proxy(request: NextRequest) {
+  // The tRPC route applies everything the middlewares do on /api/trpc (region block, default
+  // response headers, verified-crawler header) itself — see `applyApiRequestPolicy`. With the
+  // flag ON, the proxy hands tRPC straight through; OFF (the default), both apply it, which is
+  // idempotent. Once ON has proven out, `/api/trpc/:path*` can leave the matcher below, which is
+  // what stops Next invoking the proxy for tRPC at all.
+  if (
+    request.nextUrl.pathname.startsWith(TRPC_PATH_PREFIX) &&
+    isGlobalFliptFlagOn(TRPC_SKIP_PROXY_MIDDLEWARE_FLAG)
+  ) {
+    recordTrpcProxySkipped();
+    return NextResponse.next();
+  }
   return runMiddlewares(request);
 }
 

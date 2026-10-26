@@ -159,7 +159,8 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
 describe('new-app-listing-comment — SQL: who it notifies, and who it must not', () => {
   it('notifies the listing OWNER, off the app_listings join', () => {
     const s = normalizeSql(sql());
-    expect(s).toContain('JOIN "app_listings" al ON al."serial_id" = t."appListingId"');
+    expect(s).toContain('JOIN "app_listings" al ON al."serial_id" = c."entityId"');
+    expect(s).toContain(`c."entityType" = 'appListing'`);
     expect(s).toContain(`CASE WHEN al.kind = 'onsite'`);
   });
 
@@ -201,30 +202,12 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
     expect(normalizeSql(sql())).toContain(`${APP_LISTING_OWNER_SQL} > 0`);
   });
 
-  it('keeps the top-level predicate, which is REDUNDANT defence-in-depth rather than the guard', () => {
-    // 🔴 CLAIM CORRECTED. This test used to say that dropping the `IS NOT NULL` "would match reply
-    // threads too, and every reply would notify the owner a second time". That is FALSE, and
-    // asserting it made the test name overclaim what the predicate does.
-    //
-    // What actually excludes replies is the INNER `JOIN "app_listings" al ON al."serial_id" =
-    // t."appListingId"` — NULL never equals anything, so a reply thread is dropped by the join
-    // whether or not this predicate exists. Deleting it yields BYTE-IDENTICAL rows.
-    //
-    // So the deletion mutant SURVIVES as UNREACHABLE, not as unasserted — no input can make it
-    // change the answer, and the two diagnoses have opposite remedies (an unasserted mutant wants
-    // an assertion; an unreachable one wants none, because any test for it is vacuous by
-    // construction). This assertion therefore pins the predicate's PRESENCE as intent that must
-    // survive a refactor making the join LEFT or reordering it — not its behaviour.
-    //
-    // Provenance: the byte-identical result was measured by the #4184 audit against a real
-    // Postgres 16 fixture built from the repo's DDL. Recorded rather than re-derived.
-    expect(normalizeSql(sql())).toContain(
-      'JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL'
-    );
-    // The clause that does the real work, pinned beside it so the pair cannot drift apart.
-    expect(normalizeSql(sql())).toContain(
-      'JOIN "app_listings" al ON al."serial_id" = t."appListingId"'
-    );
+  it('keeps the top-level predicate: it is the only thing stopping a reply notifying the owner', () => {
+    // Every reply carries the listing's id on its own row, so without `parentId IS NULL` each
+    // reply would notify the owner a second time.
+    const s = normalizeSql(sql());
+    expect(s).toContain('c."parentId" IS NULL');
+    expect(s).toContain('JOIN "app_listings" al ON al."serial_id" = c."entityId"');
   });
 
   it('emits the detail keys prepareMessage reads', () => {
@@ -252,22 +235,23 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       SELECT DISTINCT
       CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END "ownerId",
       JSONB_BUILD_OBJECT(
-      'version', 2,
+      'version', 3,
       'commentId', c.id,
       'appListingSlug', al.slug,
       'listingName', al.name,
       'username', u.username
       ) "details"
-      FROM "CommentV2" c
+      FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
-      JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL
-      JOIN "app_listings" al ON al."serial_id" = t."appListingId"
+      JOIN "app_listings" al ON al."serial_id" = c."entityId"
       LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
       LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
-      WHERE CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
+      WHERE c."entityType" = 'appListing'
+      AND c."parentId" IS NULL
+      AND c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
       AND al."status" = 'approved'
       AND al."revision_of_id" IS NULL
-      AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND c."createdAt" > '2026-08-19'
       AND c."createdAt" > NOW() - INTERVAL '7 days'
       AND c."userId" != CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
@@ -276,24 +260,20 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       WHERE (blk."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk.type = 'Block')
       )
-      AND NOT EXISTS (
-      WITH RECURSIVE muteable_threads AS (
-      SELECT t.id "id", 0 "depth"
-      UNION ALL
-      SELECT pc."threadId", mt."depth" + 1
-      FROM muteable_threads mt
-      JOIN "Thread" th ON th.id = mt."id"
-      JOIN "CommentV2" pc ON pc.id = th."commentId"
-      WHERE mt."depth" < 100
-      )
-      SELECT 1
-      FROM muteable_threads mt
-      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
-      WHERE tm."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
-      )
+      AND (NOT EXISTS (
+      SELECT 1 FROM "CommentTopicMute" ctm
+      WHERE ctm."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
+      AND ctm."entityType" = c."entityType" AND ctm."entityId" = c."entityId"
+      ) AND NOT EXISTS (
+      SELECT 1 FROM "CommentMute" cm
+      JOIN "CommentV3" anc ON anc.id = cm."commentId"
+      WHERE cm."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
+      AND anc.id <> c.id
+      AND (anc.path @> c.path OR anc.id = c."replyToId")
+      ))
       )
       SELECT
-      concat('new-comment-app-listing:owner:v2:', details->>'commentId') "key",
+      concat('new-comment-app-listing:owner:v3:', details->>'commentId') "key",
       concat('comment:v2:', details->>'commentId') "dedupeKey",
       "ownerId"    "userId",
       'new-app-listing-comment' "type",
@@ -356,53 +336,11 @@ describe('new-app-listing-comment — dedupe: no double-notify with the #4160 ty
     expect(normalizeSql(sql())).toContain(`concat('comment:v2:', details->>'commentId')`);
   });
 
-  it('the key it emits for a V2 comment is IDENTICAL to the one new-mention emits', () => {
-    // 🔴 A RELATIONSHIP, not two independently-spelled literals. Asserting each side's string
-    // separately lets both drift together and still pass; this fails the moment they diverge,
-    // which is the only thing that actually causes the double-notify.
-    //
-    // new-mention emits `commentDedupeKeyByVersion` (a CASE that yields 'comment:v2:' when
-    // details.version is set); this processor emits `commentDedupeKey('v2')`. Different SQL
-    // TEXT, and they must produce the same VALUE for a V2 row — so the comparison is made on
-    // the evaluated key, not on the expression.
-    const evaluate = (expr: string, version: unknown) => {
-      // Mirrors the two SQL forms for a row with details->>'version' = version.
-      if (expr.includes('case when')) {
-        return `comment:${version != null ? 'v2' : 'v1'}:${COMMENT_ID}`;
-      }
-      const m = expr.match(/concat\('comment:(v[12]):'/);
-      return `comment:${m![1]}:${COMMENT_ID}`;
-    };
-
-    const ownerMatch = normalizeSql(sql()).match(/concat\('comment:v2:'[^)]*\)/);
-    const mentionSql = normalizeSql(
-      mentionDefs['new-mention'].prepareQuery!({ lastSent: LAST_SENT })
-    );
-    const mentionMatch = mentionSql.match(/concat\('comment:',\s*case when[\s\S]*?end\b[^)]*\)/);
-
-    // Assert the extraction SUCCEEDED before using it. Without this a mutant that renames the key
-    // kills this test with `Cannot read properties of null` — a TypeError from the harness, not
-    // this test's own assertion, which is exactly the "died for the wrong reason" failure mode.
-    expect(ownerMatch, 'new-app-listing-comment emits no comment:v2: dedupe key').not.toBeNull();
-    expect(mentionMatch, 'new-mention emits no versioned dedupe key').not.toBeNull();
-
-    const ownerKeyExpr = ownerMatch![0];
-    const mentionKeyExpr = mentionMatch![0];
-
-    // Positive control: the helper CAN return different values, so an equality that holds here
-    // is a fact about the two expressions rather than about a stub that always agrees.
-    expect(evaluate(mentionKeyExpr, undefined)).not.toBe(evaluate(mentionKeyExpr, 2));
-
-    expect(evaluate(ownerKeyExpr, 2)).toBe(evaluate(mentionKeyExpr, 2));
-    expect(evaluate(ownerKeyExpr, 2)).toBe(`comment:v2:${COMMENT_ID}`);
-  });
-
-  it('emits details.version = 2, without which the shared key would resolve to the v1 namespace', () => {
-    // The mention side's key is a CASE on `details->>'version'`. If this processor omitted
-    // `'version', 2` its own key would still be `comment:v2:` (it is hardcoded), but any future
-    // consumer reading version — including `commentDedupeKeyIfAddressable` — would misclassify
-    // the row. Cheap to assert, invisible when wrong.
-    expect(normalizeSql(sql())).toContain(`'version', 2`);
+  it('emits details.version, without which the detail fetch reads its id as a v1 id', () => {
+    // The detail fetcher looks a versionless row up by `legacyV1Id`. Its own key is still
+    // `comment:v2:` (hardcoded, shared with the reply and mention types), so a missing version
+    // would not break dedupe; it would attach a different comment's body, or none.
+    expect(normalizeSql(sql())).toContain(`'version', 3`);
   });
 
   it('runs in the EntityOwner batch, BEHIND mention, direct-response and thread-response', () => {
@@ -530,8 +468,10 @@ describe('INVARIANT GUARD: the reply/mention behaviour #4160 shipped is unchange
       mentionDefs['new-mention'],
     ]) {
       const s = normalizeSql(def.prepareQuery!({ lastSent: LAST_SENT }));
-      expect(s).toContain('LEFT JOIN "app_listings" al ON al."serial_id"');
-      expect(s).not.toMatch(/AND\s+(root|t)\."appListingId"\s+IS NULL/);
+      expect(s).toContain(
+        `LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"`
+      );
+      expect(s).not.toMatch(/"appListingId"\s+IS NULL/);
     }
   });
 

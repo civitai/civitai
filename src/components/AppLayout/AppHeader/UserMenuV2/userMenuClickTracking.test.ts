@@ -175,6 +175,18 @@ describe('UserMenu_Click', () => {
     ]);
   });
 
+  it('records a phone Create row under the create group', async () => {
+    await mount(
+      createElement(MobileItem, {
+        item: { id: 'create-generate', label: 'Generate', icon: IconBox, href: '/generate' },
+      })
+    );
+    await click(row('Generate'));
+    expect(details()).toEqual([
+      { item: 'create-generate', group: 'create', pinned: false, surface: 'mobile' },
+    ]);
+  });
+
   it('does not record the mobile pin toggle', async () => {
     const onToggle = vi.fn();
     await mount(createElement(MobileItem, { item: inventory, onToggle }));

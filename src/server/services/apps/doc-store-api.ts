@@ -222,6 +222,8 @@ export type StorageErrorBody = {
  */
 const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
   storage_disabled: 'document storage is unavailable',
+  // The store's connection-fault message names the driver error (`doc-store.ts`).
+  service_unavailable: 'storage is temporarily unavailable',
 };
 
 function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
@@ -667,7 +669,8 @@ async function moderate(
  * charges a raw error from its INSERT/UPDATE, because a value can make those fail. Here a raw
  * error is refunded, which is sound only because the store validates a document fully before
  * any SQL runs and `translatePgError` (`doc-store.ts`) maps the one value-reachable database
- * error (the stored-size CHECK) to `too_large`. A new constraint a value can violate must be
+ * error (the stored-size CHECK) to `too_large`, and connection faults to `service_unavailable`
+ * (refunded above). A new constraint a value can violate must be
  * mapped there too, or every such failure becomes a free retry of the moderation scan.
  */
 function isOurFault(err: unknown): boolean {
@@ -675,6 +678,8 @@ function isOurFault(err: unknown): boolean {
   if (err.code === 'rate_limited') return err.details?.reason === 'contention';
   return (
     err.code === 'storage_disabled' ||
+    // The store's database could not be reached (`translatePgError`), or a gate's read failed.
+    err.code === 'service_unavailable' ||
     err.code === 'moderation_unavailable' ||
     err.code === 'consent_unavailable'
   );
@@ -724,7 +729,9 @@ async function run(
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
-  // Info is signed-in only: its body carries the app-wide usage (documents, bytes).
+  // Info is signed-in only: its body carries the app-wide usage (documents, bytes) — the app's
+  // SHARED documents, which is what `appBytes`/`appDocs` bound; private documents count toward
+  // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
   if (route.op === 'info') requireViewer(access);

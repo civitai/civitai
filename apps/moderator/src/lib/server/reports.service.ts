@@ -1,11 +1,12 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
-import { URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
+import { reportersWithoutReward } from '@civitai/shared/report-reward';
+import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
-import { SYSTEM_USER_ID } from './users.service';
+import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
@@ -404,23 +405,116 @@ export async function getReportHistory(
 export async function getReportCounts(): Promise<Record<string, number>> {
   const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
   const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
-  // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
-  // per-branch joins back to Report seq-scanned it once per entity type.
+  // Rides Report_open_reason_id_idx.
   const open = sql`select "id" from "Report" where "status" in (${statuses}) and "reason" in (${reasons})`;
-  const branches = REPORT_ENTITIES.map(
-    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, count(*)::int as count
-      from ${sql.table(reportTable)} er
-      join open_reports o on o."id" = er."reportId"`
-  );
-  const { rows } = await sql<{
-    type: string;
-    count: number;
-  }>`with open_reports as materialized (${open})
-    ${sql.join(branches, sql` union all `)}`.execute(dbRead);
+  const rows = await perReportType(open, sql<number>`count(*)::int`);
+  return Object.fromEntries(rows.map(([key, count]) => [key, Number(count)]));
+}
 
-  return Object.fromEntries(
-    rows.map((row) => [reportCountKey(row.type as ReportEntity), Number(row.count)])
+/** A moderator's review outcome: upheld or dismissed. Moving a report to Processing is not a review. */
+const REVIEWED_REPORT_STATUSES = [ReportStatus.Actioned, ReportStatus.Unactioned];
+
+export type LastActioned = { at: string; by: string | null };
+
+/**
+ * When a moderator last reviewed a report of each type, and who, keyed like `getReportCounts`. Types
+ * with nothing inside the window are absent. The system user is excluded, as in `getReportHistory`:
+ * its expiry run is nobody working the queue. A writer that sets `status` without stamping
+ * `statusSetAt`/`statusSetBy` is invisible here, so every report status write must stamp both.
+ */
+export async function getReportLastActioned(): Promise<Record<string, LastActioned>> {
+  // Both predicates are literals to match `Report_human_statusSetAt_idx`, which hardcodes the system
+  // user's id; a bound parameter leaves the planner unable to prove the partial index applies. `<>`
+  // rather than getReportHistory's `is distinct from` for the same reason, so a null setter is dropped.
+  const recent = sql`select "id", "statusSetAt", "statusSetBy" from "Report"
+    where "statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+      and "statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+      and "status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})`;
+  // Epoch milliseconds rather than the timestamp: inside JSON the column loses the driver's UTC
+  // parsing, and a zone-less string parses as the reader's local time.
+  const rows = await perReportType(
+    recent,
+    sql<{ at: number | null; by: number | null }>`json_build_object(
+      'at', (extract(epoch from max(r."statusSetAt")) * 1000)::bigint,
+      'by', (array_agg(r."statusSetBy" order by r."statusSetAt" desc))[1])`
   );
+  const users = await usersByIds(rows.flatMap(([, v]) => (v.by ? [v.by] : [])));
+  return Object.fromEntries(
+    rows.flatMap(([key, v]) =>
+      v.at
+        ? [
+            [
+              key,
+              {
+                at: new Date(Number(v.at)).toISOString(),
+                by: (v.by && users.get(v.by)?.username) || null,
+              },
+            ],
+          ]
+        : []
+    )
+  );
+}
+
+export type QueueWorker = { by: string | null; at: string; count: number };
+
+/**
+ * Each moderator who reviewed a report of this type inside the window, most recent first: when they
+ * last did and how many they reviewed. Reads the same rows as `getReportLastActioned`, so its first
+ * entry is that queue's last-actioned badge. A report counts for whoever set its status last.
+ */
+export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWorker[]> {
+  const { reportTable } = reportEntity(type);
+  const { rows } = await sql<{ by: number; at: Date; count: number }>`
+    select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
+    from "Report" r
+    join ${sql.table(reportTable)} er on er."reportId" = r."id"
+    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+      and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+      and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
+    group by r."statusSetBy"
+    order by "at" desc`.execute(dbRead);
+  const users = await usersByIds(rows.map((r) => r.by));
+  return rows.map((r) => ({
+    by: users.get(r.by)?.username ?? null,
+    at: new Date(r.at).toISOString(),
+    count: r.count,
+  }));
+}
+
+/** When the oldest new report of each type was filed, keyed like `getReportCounts`, as ISO strings. */
+export async function getReportOldestOpen(): Promise<Record<string, string>> {
+  const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
+  const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
+  // The same set `getReportCounts` counts, so the age describes the reports behind the badge.
+  const open = sql`select "id", "createdAt" from "Report"
+    where "status" in (${statuses}) and "reason" in (${reasons})`;
+  const rows = await perReportType(
+    open,
+    sql<number | null>`(extract(epoch from min(r."createdAt")) * 1000)::bigint`
+  );
+  return Object.fromEntries(
+    rows.flatMap(([key, ms]) => (ms ? [[key, new Date(Number(ms)).toISOString()]] : []))
+  );
+}
+
+/**
+ * `value`, an aggregate over `r`, for each report type's share of `reports` — keyed by
+ * `reportCountKey`. `reports` is read once into a materialized CTE that every report table joins:
+ * per-branch joins back to Report seq-scanned it once per entity type.
+ */
+async function perReportType<V>(
+  reports: RawBuilder<unknown>,
+  value: RawBuilder<V>
+): Promise<[string, V][]> {
+  const branches = REPORT_ENTITIES.map(
+    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, ${value} as value
+      from ${sql.table(reportTable)} er
+      join matched r on r."id" = er."reportId"`
+  );
+  const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
+    ${sql.join(branches, sql` union all `)}`.execute(dbRead);
+  return rows.map((row) => [reportCountKey(row.type as ReportEntity), row.value]);
 }
 
 export async function setReportStatus({
@@ -459,7 +553,7 @@ export async function setReportStatus({
     })
     .where('id', '=', id)
     .where('status', '!=', status)
-    .returning(['userId', 'alsoReportedBy'])
+    .returning(['userId', 'alsoReportedBy', 'details'])
     .executeTakeFirst();
 
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
@@ -470,7 +564,12 @@ export async function setReportStatus({
   // double-rewards.
   if (status === ReportStatus.Actioned && updated) {
     const reporterIds = [updated.userId, ...(updated.alsoReportedBy ?? [])];
-    await rewardReportReporters({ reportId: id, reporterIds, ip });
+    await rewardReportReporters({
+      reportId: id,
+      reporterIds,
+      unpaidReporterIds: reportersWithoutReward(updated),
+      ip,
+    });
   }
 
   return { ok: true as const, changed: !!updated };

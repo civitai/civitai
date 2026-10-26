@@ -135,12 +135,16 @@ export const TEST_BLOCK_TOKEN_PUBLIC_PEM = TEST_BLOCK_TOKEN_PUBLIC_PEM_;
 setEnvDefaults({
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
+  // A deployed origin: an unset one counts as local and silences the tracker, GA and ads.
+  NEXT_PUBLIC_CIVITAI_LINK: 'https://civitai.com',
 });
 
 // The @civitai/redis package validates its own env from `process.env` directly (its own schema),
 // NOT `~/env/server`, so the mock below doesn't reach it. Set the two required vars (the rest have
 // defaults) so loadRedisEnv() succeeds when a test imports the redis shim/package — the `redis`
 // driver itself is still mocked per-test, so no real connection is opened.
+// ~/env/client reads process.env directly; see the NEXT_PUBLIC_CIVITAI_LINK default above.
+process.env.NEXT_PUBLIC_CIVITAI_LINK ??= 'https://civitai.com';
 process.env.REDIS_URL ??= 'redis://localhost:6379';
 process.env.REDIS_SYS_URL ??= 'redis://localhost:6379';
 
@@ -158,6 +162,17 @@ process.env.DATABASE_URL ??= 'postgres://user:pass@localhost:5432/db';
 process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
 process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
 process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
+
+// The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
+// removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
+// suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
+// clear this.
+process.env.FLIPT_LOCAL_OVERRIDES = [
+  process.env.FLIPT_LOCAL_OVERRIDES,
+  'app-blocks-legacy-stores-removed=off',
+]
+  .filter(Boolean)
+  .join(',');
 
 // One `env` object for the worker, reads layered defaults-then-per-file-overrides. A test
 // declares what it needs with `setEnv({ … })` instead of replacing the whole module — which

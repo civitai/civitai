@@ -61,6 +61,7 @@ import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.
 import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import {
+  listingIdsInChipRow,
   postAppChipQuery,
   postAppMarkerQuery,
   projectPostAppChip,
@@ -241,7 +242,9 @@ describe('the app read is an allowlist', () => {
     // 🔴 The structural half of criterion 6. A behavioural test over the
     // projector cannot see a widened SELECT — the extra column simply arrives
     // and is dropped — so the select tree is pinned here, level by level.
-    expect(Object.keys(q.select).sort()).toEqual(['appBlocks', 'name']);
+    expect(Object.keys(q.select).sort()).toEqual(['appBlocks', 'connectListings', 'name']);
+    expect(q.select.connectListings.where).toEqual({ kind: 'offsite' });
+    expect(q.select.connectListings.select).toEqual(q.select.appBlocks.select.appListing.select);
     expect(Object.keys(q.select.appBlocks.select).sort()).toEqual(
       ['appListing', 'currentVersionDeployedAt', 'status'].sort()
     );
@@ -563,5 +566,47 @@ describe('projectPostAppChip emits exactly the chip', () => {
     // matches no OauthClient, so `findUnique` returns null by design.
     expect(project(null)).toBeNull();
     expect(project(undefined)).toBeNull();
+  });
+});
+
+describe('an offsite Connect listing with no block', () => {
+  const offsiteRow = (over: Partial<Listing> = {}) => ({
+    name: 'Game Frame',
+    appBlocks: [],
+    connectListings: [
+      listing({ slug: 'civitai-games', name: 'Civitai Games', kind: 'offsite', ...over }),
+    ],
+  });
+
+  it('links the store listing when it is approved', () => {
+    expect(project(offsiteRow())).toEqual({
+      slug: 'civitai-games',
+      name: 'Civitai Games',
+      iconUrl: listingIconUrl({ url: ICON_UUID }),
+    });
+  });
+
+  it('names it unlinked while the listing itself is not approved', () => {
+    expect(project(offsiteRow({ status: 'pending' }))).toEqual({
+      slug: null,
+      name: 'Civitai Games',
+      iconUrl: null,
+    });
+  });
+
+  it('stays silent for a mature listing on a non-red host', () => {
+    expect(project(offsiteRow({ contentRating: 'x' }), SFW_HOST)).toBeNull();
+  });
+
+  it('ignores a connect listing that is not offsite', () => {
+    expect(project(offsiteRow({ kind: 'onsite' }))?.name).toBe('Game Frame');
+  });
+
+  it('feeds the listing id to the visibility-level read', () => {
+    const r = {
+      appBlocks: [],
+      connectListings: [{ ...listing({ kind: 'offsite' }), id: 'apl_g' }],
+    };
+    expect(listingIdsInChipRow(r)).toEqual(['apl_g']);
   });
 });

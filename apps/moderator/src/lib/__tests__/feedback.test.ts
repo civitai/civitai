@@ -123,6 +123,7 @@ describe('feedbackAreaOptions', () => {
       'apps-marketplace',
       'apps-platform',
       'bitdex-image-feed',
+      'semantic-image-search',
       'site-bug-report',
     ]);
   });

@@ -424,6 +424,104 @@ describe('awardBountyEntry', () => {
     });
   });
 
+  // Bankable netting reads who funded an award from the award row, which outlives the bounty.
+  it('names the supporters who funded the award, and what each put in, on the award', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [100],
+          supporterChargedAt: [0],
+        },
+      }),
+    ]);
+  });
+
+  it('names every supporter of a bounty several users funded, each with what they put in', async () => {
+    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix === 'bounty-4-5-1' ? 100 : 50 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 150,
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 6],
+          supporterAmounts: [100, 50],
+          supporterChargedAt: [0, 0],
+        },
+      }),
+    ]);
+  });
+
+  // Each award row is one colour, and only some colours are bankable: a supporter is named on a
+  // row for what they put in that colour, never for their whole contribution.
+  it('names on each colour of the award only what each supporter paid in that colour', async () => {
+    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+    benefactors[0].buzzTransactionId = ['bounty-4-5-1', 'legacy-tx'];
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+      prefix === 'bounty-4-5-1'
+        ? [{ accountType: 'green', amount: 60 }]
+        : [{ accountType: 'yellow', amount: 50 }]
+    );
+    await awardBountyEntry({ id: 10, userId: 5 });
+    const [[transactions]] = buzz.createBuzzTransactionMany.mock.calls as [
+      [{ toAccountType: string; amount: number; details: unknown }[]]
+    ];
+    expect(
+      Object.fromEntries(transactions.map((t) => [t.toAccountType, [t.amount, t.details]]))
+    ).toEqual({
+      green: [
+        60,
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [60],
+          supporterChargedAt: [0],
+        },
+      ],
+      yellow: [
+        90,
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 6],
+          supporterAmounts: [40, 50],
+          supporterChargedAt: [0, 0],
+        },
+      ],
+    });
+  });
+
+  // Bankable netting counts only what was charged from its cutover: the cutover balance already
+  // reflects a charge made before it.
+  it('names when each supporter was charged, one entry per charge', async () => {
+    benefactors[0].buzzTransactionId = ['bounty-4-5-1792454400000', 'bounty-4-5-1793836800000'];
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix.endsWith('1792454400000') ? 30 : 70 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 100,
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 5],
+          supporterAmounts: [30, 70],
+          supporterChargedAt: [1792454400, 1793836800],
+        },
+      }),
+    ]);
+  });
+
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();

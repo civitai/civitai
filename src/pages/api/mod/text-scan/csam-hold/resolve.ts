@@ -23,7 +23,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
     'A removal decision is refused with BAD_REQUEST for a type with no removal path; the hold stays pending.',
     'The decision and its label-store record are one transaction. If a removal, strike or ban fails the hold stays pending and the call can be repeated.',
     `\`holds\` decides up to ${CSAM_HOLD_BATCH_MAX} holds (\`remove\` or \`dismiss\` only) in one call that counts as one rate-limit hit. Each is decided on its own against its \`textHash\`; a stale or refused hold is reported in \`results\` and does not stop the rest.`,
-    'Refuses with CONFLICT when the hold is missing, not a csam hold, no longer Pending, or its text changed since `textHash` was read (when given) (a rescan of edited content updates the pending hold in place).',
+    'Refuses with CONFLICT when the hold is missing, not a csam hold, no longer Pending, or its text changed since `textHash` was read (a rescan of edited content updates the pending hold in place).',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
   input: resolveCsamHoldInput,
@@ -77,8 +77,11 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
         message: `This decision needs the "${actionGrant}" moderator permission.`,
       });
 
-    if (input.holdId === undefined)
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Give `holdId` or `holds`.' });
+    if (input.holdId === undefined || input.textHash === undefined)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Give `holdId` and `textHash`, or `holds`.',
+      });
 
     // Audit surface only (it feeds the reward pipeline's idempotency key, never an access check).
     const ip = resolveClientIpOrNull(ctx.req) ?? undefined;

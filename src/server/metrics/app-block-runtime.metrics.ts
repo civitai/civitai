@@ -741,7 +741,8 @@ type Bundle = {
 //          real it shows up as mass piling immediately above 0.4 — and a generic
 //          0.25→0.5→1 ladder would hide it completely.
 //   10   — BLOCK_READY_TIMEOUT_MS: the ceiling on ONE attempt's wait for
-//          BLOCK_READY once init has started.
+//          BLOCK_READY once init has started — on every surface except the
+//          author's dev tunnel, which waits DEV_TUNNEL_READY_TIMEOUT_MS (30s).
 //   15   — TOKEN_WAIT_TIMEOUT_MS: the ceiling on ONE attempt's wait for a token.
 //
 // 🔴 A `launch_total` ABOVE 15s IS REACHABLE AND LEGITIMATE — do not read the
@@ -757,7 +758,8 @@ type Bundle = {
 // auto-retry-recovered launch lands in `+Inf` with no resolution between "16s"
 // and "57s", so the histogram can say THAT a launch was slow-recovered but not
 // how slow. Deliberate: extra edges up there would cost series on every app for
-// a population that is rare by construction (it takes two failed attempts), and
+// a population that is rare by construction (it takes two failed attempts — or,
+// on the dev tunnel only, one slow attempt against its 30s window), and
 // `_sum`/`_count` still give a usable mean for it. Revisit only if that bucket
 // turns out to carry real volume.
 const APP_BLOCK_LAUNCH_BUCKETS = [0.1, 0.25, 0.4, 0.6, 0.8, 1.2, 1.8, 2.5, 4, 6, 8, 10, 15];

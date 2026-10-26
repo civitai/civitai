@@ -22,6 +22,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticPurchaseMeta,
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemMeta,
   CosmeticShopSectionMeta,
   GetAllCosmeticShopSections,
@@ -69,7 +70,8 @@ import {
 } from '~/server/services/creator-shop-labels.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
-import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
+import { appendItemHistory, shopItemDisplayMeta } from '~/server/services/creator-shop.data';
+import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -272,6 +274,7 @@ export const upsertCosmeticShopItem = async ({
   id,
   archived,
   videoUrl,
+  meta: formMeta,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number; isModerator?: boolean }) => {
   // Read on the writer: this row gates a write (the pack refusal and the
@@ -284,7 +287,6 @@ export const upsertCosmeticShopItem = async ({
           id: true,
           cosmeticId: true,
           addedById: true,
-          meta: true,
           _count: {
             select: {
               purchases: true,
@@ -344,21 +346,55 @@ export const upsertCosmeticShopItem = async ({
     // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
     // clears it — neither should be overwritten with the empty string expansion returns.
     ...(cosmeticShopItem.description != null && { description: expansion.html }),
-    // The editor seeds its form from a read, and reads now serve the row count in
-    // `meta.purchases`, so saving any unrelated field would write that derived
-    // value into the stored counter. Keep whatever is stored: only a purchase
-    // moves it. (Create has no stored value and sets its own `meta` below.)
-    ...(id &&
-      cosmeticShopItem.meta != null && {
-        meta: {
-          ...cosmeticShopItem.meta,
-          purchases: (existingItem?.meta as CosmeticShopItemMeta | null)?.purchases ?? 0,
-        },
-      }),
     availableQuantity,
     availableTo,
     availableFrom,
     archivedAt: archived ? new Date() : null,
+  };
+
+  // From the locked row, not the form: the form loaded `meta` earlier and edits only its payees, so
+  // its copy would erase a verdict, creator edit or refund entry committed since, and overwrite the
+  // stored `purchases` counter with the count reads serve. Changes go in the history like any edit,
+  // so a creator listing edited here moves the version a pending verdict is pinned to.
+  const editedMeta = async (tx: Prisma.TransactionClient, itemId: number) => {
+    const current = await lockShopItem(tx, itemId);
+    const meta: CosmeticShopItemMeta = {
+      ...((current.meta ?? {}) as CosmeticShopItemMeta),
+      ...(formMeta?.paidToUserIds !== undefined ? { paidToUserIds: formMeta.paidToUserIds } : {}),
+    };
+    const changes: CosmeticShopItemHistoryChange[] = [];
+    const recordChange = (
+      field: string,
+      from: string | number | null | undefined,
+      to: string | number | null | undefined
+    ) => {
+      if ((from ?? null) !== (to ?? null)) changes.push({ field, from, to });
+    };
+    recordChange('name', current.title, data.title);
+    if (data.description !== undefined)
+      recordChange('description', current.description, data.description);
+    recordChange('price', current.unitAmount, data.unitAmount);
+    if (availableQuantity !== undefined)
+      recordChange('quantity', current.availableQuantity, availableQuantity);
+    if (formMeta?.paidToUserIds !== undefined) {
+      const payees = (ids?: number[]) => (ids?.length ? ids.join(', ') : null);
+      recordChange(
+        'paidToUserIds',
+        payees((current.meta as CosmeticShopItemMeta | null)?.paidToUserIds),
+        payees(formMeta.paidToUserIds)
+      );
+    }
+    return (
+      changes.length
+        ? appendItemHistory(meta, {
+            at: new Date().toISOString(),
+            userId,
+            kind: 'edited',
+            status: current.status,
+            changes,
+          })
+        : meta
+    ) as Prisma.InputJsonValue;
   };
 
   const item = await dbWrite.$transaction(
@@ -366,7 +402,7 @@ export const upsertCosmeticShopItem = async ({
       const saved = id
         ? await tx.cosmeticShopItem.update({
             where: { id },
-            data,
+            data: { ...data, meta: await editedMeta(tx, id) },
             select: cosmeticShopItemSelect,
           })
         : await tx.cosmeticShopItem.create({
@@ -374,7 +410,7 @@ export const upsertCosmeticShopItem = async ({
               ...data,
               addedById: userId,
               meta: {
-                ...(cosmeticShopItem.meta ?? {}),
+                ...(formMeta ?? {}),
                 purchases: 0,
               },
             },

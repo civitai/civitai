@@ -46,7 +46,9 @@ import type { HeldSummary } from './removal-hold';
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
-export type ActionResult = { ok: true; warning?: string } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true; warning?: string }
+  | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
@@ -99,6 +101,9 @@ export type JsonResult =
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
       reason?: string;
+      /** A rate-limit refusal's `Retry-After`: the request was refused before the endpoint acted, so
+       *  it is safe to send again once this has passed. */
+      retryAfterSeconds?: number;
     };
 
 /** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
@@ -186,6 +191,8 @@ async function postJson(opts: {
       // limit has left. Reducing that to a status code is what makes a moderator retry the same
       // forbidden action, or re-login against a 403 that re-logging in cannot fix.
       const reason = await readError(res);
+      const retryAfter = res.status === 429 ? Number(res.headers.get('retry-after')) : NaN;
+      const retryAfterSeconds = retryAfter > 0 ? retryAfter : undefined;
       // Recovered = the body parsed as the envelope this app reads. It is NOT proof the app wrote it.
       if (reason)
         return {
@@ -193,8 +200,14 @@ async function postJson(opts: {
           error: `${opts.label}: ${reason}`,
           status: res.status,
           reason,
+          retryAfterSeconds,
         };
-      return { ok: false, error: `${opts.label} returned ${res.status}.`, status: res.status };
+      return {
+        ok: false,
+        error: `${opts.label} returned ${res.status}.`,
+        status: res.status,
+        retryAfterSeconds,
+      };
     }
     return {
       ok: true,
@@ -241,6 +254,9 @@ export type ModEndpoint =
   | 'model/set-poi'
   | 'model/take-down'
   | 'model/unpublish'
+  | 'poi-flag/confirm'
+  | 'poi-flag/dismiss'
+  | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
@@ -250,6 +266,7 @@ export type ModEndpoint =
   | 'strike/void'
   | 'text-scan'
   | 'text-scan/csam-hold/resolve'
+  | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'

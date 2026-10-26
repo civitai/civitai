@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useComputedColorScheme } from '@mantine/core';
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import { PageBlockHost, type PageBlockHostProps } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -10,6 +10,8 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 
 export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host' | 'dnsPending'> & {
   iframeSrc: string;
+  /** The page host's terminal fallback, as `PageBlockHostProps.onFallbackChange` reports it. */
+  onFallbackChange?: PageBlockHostProps['onFallbackChange'];
   fit: 'viewport' | 'fill';
   /** Shown instead of the app when its dev token cannot be minted. */
   tokenErrorFallback: ReactNode;
@@ -23,6 +25,7 @@ export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host' 
 
 /** The caller's own app, running from its dev tunnel inside the real page host. */
 export function DevTunnelBlockHost({
+  onFallbackChange,
   appBlockId,
   blockId,
   appId,
@@ -126,6 +129,7 @@ export function DevTunnelBlockHost({
       blockInstanceId={blockInstanceId}
       appName={appName}
       iframeSrc={iframeSrc}
+      onFallbackChange={onFallbackChange}
       bootSkeleton={bootSkeleton}
       // 🔴 The author dev tunnel. `resolveDevPageBlockForAuthor` applies NO
       // status filter, so this mounts ARBITRARY UNPUBLISHED code that no

@@ -4,10 +4,26 @@ import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
+import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
 import { unhandledErrorsTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+// Session-acting routes, each with the callers it accepts. SvelteKit's form-origin check is off app-wide (see
+// svelte.config.js), so these carry their own. Consent approval is body-dependent and checked in its route.
+const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
+  '/api/auth/oauth/device-approve': isHubPageRequest,
+  '/api/auth/oauth/device-deny': isHubPageRequest,
+  '/login/oauth/device': isHubPageRequest,
+  '/login/oauth/authorize': isHubPageRequest,
+  '/api/auth/switch': isTrustedSessionCaller,
+  '/api/auth/impersonate': isTrustedSessionCaller,
+  '/api/auth/impersonate/exit': isTrustedSessionCaller,
+  '/api/auth/accounts': isTrustedSessionCaller,
+  // The main app's logout revokes the hub session server-to-server with no Origin.
+  '/logout': isTrustedSessionCaller,
+};
 
 // One body for every rejection, so the response says nothing about which admin routes exist.
 const forbidden = () => new Response('Forbidden', { status: 403 });
@@ -33,6 +49,14 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (corsOrigin && event.request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: preflightHeaders(corsOrigin) });
   }
+
+  const originCheck = event.route?.id ? ORIGIN_CHECKS[event.route.id] : undefined;
+  if (
+    originCheck &&
+    MUTATING_METHODS.has(event.request.method) &&
+    !originCheck(event.request, event.url)
+  )
+    return forbidden();
 
   // Populate locals.user from the session cookie. The cookie is THIN (identity only), so resolve the rich user
   // by userId from the shared cache (produce on miss) rather than trusting an embedded user. The verifier handles

@@ -1,6 +1,7 @@
 import {
   REMOTE_PREVIEW,
   TURN_LIMIT_REFUSAL,
+  isKeepLimitResult,
   assistantRules,
   assistantSubagentRules,
   assistantSubagentInstructions,
@@ -74,6 +75,13 @@ async function open(overrides: Partial<ToolContext> = {}) {
   opened.push(tools);
   return { tools, reported, ended, stop };
 }
+
+/** The runner's own reads as a reply opens (the SDK pin check): the assistant made none of them. */
+const RUNNER_READS = ['my-app/package.json', 'my-app/node_modules/@civitai/sdk/package.json'];
+/** Every `read_file` call but the runner's own SDK pin reads. */
+const assistantReads = () =>
+  fake.calls.filter((c) => c.tool === 'read_file' && !RUNNER_READS.includes(String(c.args.path)))
+    .length;
 
 const opensApps = () =>
   fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
@@ -346,7 +354,7 @@ describe('App Assistant’s gate on the runner', () => {
     // The 150th was still the gate's ordinary refusal, not the end.
     expect(reported[149]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
-    expect(fake.callsTo('read_file')).toBe(0);
+    expect(assistantReads()).toBe(0);
   });
 
   it('keeps a subagent read-only: it cannot write or run commands', async () => {
@@ -367,7 +375,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(fake.callsTo('write_file')).toBe(0);
     expect(fake.callsTo('run_command')).toBe(0);
     // Control: the read it was allowed did run.
-    expect(fake.callsTo('read_file')).toBe(1);
+    expect(assistantReads()).toBe(1);
   });
 
   it('leaves a subagent’s calls out of the parent’s 150', async () => {
@@ -386,7 +394,7 @@ describe('App Assistant’s gate on the runner', () => {
     })) as { status: string };
     expect(dispatched.status).toBe('done');
     // All five ran though the parent's count stood at 149: a subagent has its own budget.
-    expect(fake.callsTo('read_file')).toBe(5);
+    expect(assistantReads()).toBe(5);
     expect(reported.filter((r) => r.subagent !== undefined)).toHaveLength(5);
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toMatchObject({
@@ -581,6 +589,35 @@ describe('what the page is told of a call', () => {
       output: expect.stringMatching(/^exit_code: 0/),
     });
     expect((reported[1].output as string).length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('the kept-apps limit, as the page is told of it', () => {
+  it('a create_app refused at the cap reaches the page as the limit, in this reply and the next call', async () => {
+    fake.add('my-app');
+    fake.add('second-app', 'suspended');
+    fake.add('third-app', 'suspended');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    const before = opensApps().length;
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(2);
+    expect(creates.map(isKeepLimitResult)).toEqual([true, true]);
+    // The cap was asked once; the second call was refused by the gate.
+    expect(opensApps().length - before).toBe(1);
+  });
+
+  it('NEGATIVE CONTROL: under the cap, create_app is not reported as the limit', async () => {
+    fake.add('my-app');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open();
+    await call(tools.tools, 'create_app', { name: 'Fourth app' });
+    const creates = reported.filter((r) => r.name === 'create_app');
+    expect(creates).toHaveLength(1);
+    expect(creates[0].isError).toBe(false);
+    expect(isKeepLimitResult(creates[0])).toBe(false);
   });
 });
 

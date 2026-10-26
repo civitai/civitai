@@ -2,9 +2,11 @@ import {
   addOwnerChapterSchema,
   createStorylineSchema,
   getStorylinesInfiniteSchema,
+  insertStorylineChapterSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
   linkStorylineChapterSchema,
+  moveStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
   setStorylineImageCaptionSchema,
@@ -25,6 +27,7 @@ import {
   addOwnerChapter,
   addStorylineCollaborator,
   createStoryline,
+  deleteStoryline,
   getStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
@@ -38,9 +41,11 @@ import {
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
+  insertStorylineChapter,
   joinStorylineEarlyAccess,
   linkStorylineChapter,
   moderateStorylineTitle,
+  moveStorylineChapter,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
   removePendingChapter,
@@ -225,6 +230,10 @@ export const storylineRouter = router({
       updateStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
+  delete: storylineWriteProcedure
+    .input(storylineIdSchema)
+    .mutation(({ input, ctx }) => deleteStoryline({ id: input.id, userId: ctx.user.id })),
+
   setImageCaption: storylineWriteProcedure
     .input(setStorylineImageCaptionSchema)
     .mutation(({ input, ctx }) =>
@@ -243,6 +252,18 @@ export const storylineRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+
+  insertChapter: storylineWriteProcedure
+    .input(insertStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      insertStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  moveChapter: storylineWriteProcedure
+    .input(moveStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      moveStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   linkChapter: storylineWriteProcedure
     .input(linkStorylineChapterSchema)

@@ -33,6 +33,7 @@ import {
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
@@ -140,6 +141,14 @@ import {
   WILDCARD_MAX_CONCURRENT,
   type WildcardPackErrorCode,
 } from './wildcardPackParse';
+import {
+  classifyResourceFileError,
+  resolveGetResourceFileRequest,
+  RESOURCE_FILE_DEADLINE_MS,
+  RESOURCE_FILE_MAX_CONCURRENT,
+  type ResourceFileErrorCode,
+  withDeadline,
+} from './resourceFileParse';
 import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
@@ -287,6 +296,10 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
  * windows instead of from a hard-coded literal in a comment. Importing them from
  * this file would drag the whole component graph into the `unit` project.
+ *
+ * `BLOCK_READY_TIMEOUT_MS` is the window for every surface EXCEPT the dev tunnel,
+ * which waits `DEV_TUNNEL_READY_TIMEOUT_MS` — the host reads the window for its
+ * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
@@ -372,7 +385,7 @@ type NavigateMessage = { path?: unknown; scope?: unknown; target?: unknown } | u
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
-// 🔴 The ONE reviewMode NACK that must NOT use REVIEW_NACK_MESSAGE.
+// 🔴 reviewMode NACKs whose reply carries a closed error set must NOT use REVIEW_NACK_MESSAGE.
 // WILDCARD_PACK_RESULT's `error` is a DISCRIMINATED ENUM, not free text: the
 // block-side `isValidWildcardPackResult` rejects any value outside
 // not-found | forbidden | too-large | parse-failed | busy, and a rejected reply
@@ -386,6 +399,8 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
 // `BlockWildcardPackErrorCode` (aliased in wildcardPackParse.ts), so tsc rejects
 // any future edit that swaps in a non-member string.
 const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
+// Same reasoning for RESOURCE_FILE_RESULT, whose `error` is also a closed set.
+const RESOURCE_FILE_REVIEW_NACK_CODE: ResourceFileErrorCode = 'forbidden';
 
 /**
  * The floor a `fit="fill"` host will not shrink below, in px.
@@ -624,6 +639,13 @@ export interface PageBlockHostProps {
   appName: string;
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
+  /**
+   * Told the terminal fallback's reason whenever it changes: a reason once the host gives up on the
+   * app (it never became ready in time, its token failed, it reported a fatal error), `null` while it
+   * loads or runs (so also after a Retry that recovered). App Assistant's preview offers its Restart
+   * preview on a reason. Report only: it changes nothing the host does.
+   */
+  onFallbackChange?: (reason: ReturnType<typeof pageFallbackReason>) => void;
   /**
    * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
    * paints its own boot state (THEMED only if the app is also enabled for the
@@ -874,6 +896,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  onFallbackChange,
   bootSkeleton,
   surface,
   sandbox,
@@ -1216,6 +1239,9 @@ export function PageBlockHost({
   // `canRemint` is whether a token re-mint is even wired: without it an auth
   // terminal can never be recovered, so we must not burn an attempt on it.
   const canRemint = onRetryToken != null;
+  // The surface's BLOCK_READY wait (window, timeout retry, timeout copy). The ONE
+  // surface check for it lives in `readyWaitPolicyFor`; only the dev tunnel differs.
+  const readyWait = readyWaitPolicyFor(surface);
   const autoRetry = useMemo(
     () =>
       decideAutoRetry({
@@ -1223,8 +1249,15 @@ export function PageBlockHost({
         attempts: autoRetryBudget.attempts,
         reminted: autoRetryBudget.reminted,
         canRemint,
+        autoRetryOnTimeout: readyWait.autoRetryOnTimeout,
       }),
-    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+    [
+      status,
+      autoRetryBudget.attempts,
+      autoRetryBudget.reminted,
+      canRemint,
+      readyWait.autoRetryOnTimeout,
+    ]
   );
   /** True once the host has stopped auto-recovering: this terminal state is final. */
   const autoRetrySettled = autoRetry.kind === 'none';
@@ -1488,7 +1521,10 @@ export function PageBlockHost({
     if (controllerRef.current) return;
     const controller = new IframeInitController({
       sendInit: sendInitOnce,
-      readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+      // 10 s everywhere except the dev tunnel (30 s) — see `readyWaitPolicyFor`.
+      // The controller keeps re-posting BLOCK_INIT to the SAME frame for the
+      // whole window; nothing reloads the frame until it elapses.
+      readyTimeoutMs: readyWait.readyTimeoutMs,
       onReadyTimeout: () => {
         setStatus((current) => (current === 'loading' ? 'timeout' : current));
       },
@@ -1499,7 +1535,7 @@ export function PageBlockHost({
       controller.dispose();
       controllerRef.current = null;
     };
-  }, [token, status, sendInitOnce]);
+  }, [token, status, sendInitOnce, readyWait.readyTimeoutMs]);
 
   // #3/#6: the mint errored (no token will arrive). Surface an `error` state
   // immediately rather than waiting out the no_token timeout — a hard mint
@@ -2328,6 +2364,8 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // GET_RESOURCE_FILE: session-authed and a mutation, for the same reasons.
+  const resolveResourceFileMutation = trpc.generation.resolveResourceFile.useMutation();
   // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
   // (protectedProcedure), like resolveWildcardPack above and for the same reason:
   // these are the SAME procedures the site's own follow button calls, so the
@@ -2349,6 +2387,7 @@ export function PageBlockHost({
   // synchronously in the message handler (JS is single-threaded, so the
   // check→increment before the first await is atomic per message).
   const wildcardInFlightRef = useRef<number>(0);
+  const resourceFileInFlightRef = useRef<number>(0);
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -4652,6 +4691,50 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
+  // ── GET_RESOURCE_FILE → RESOURCE_FILE_RESULT (civitai-app-starters#664) ──────
+  //
+  // The GET_WILDCARD_PACK pattern for workflow files: resolve as the viewer,
+  // fetch and parse in this tab, post back only the parsed graphs and meta. The
+  // signed URL never reaches the iframe. Refused in review preview: an untrusted
+  // pending app would run this on the reviewing moderator's session.
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_RESOURCE_FILE', async (raw) => {
+      const req = resolveGetResourceFileRequest(raw);
+      if (!req) return;
+      const { requestId, modelVersionId, fileId } = req;
+      if (reviewMode) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: RESOURCE_FILE_REVIEW_NACK_CODE });
+        return;
+      }
+      if (resourceFileInFlightRef.current >= RESOURCE_FILE_MAX_CONCURRENT) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: 'busy' });
+        return;
+      }
+      resourceFileInFlightRef.current += 1;
+      try {
+        const file = await withDeadline(async (signal) => {
+          const resolved = await resolveResourceFileMutation.mutateAsync(
+            fileId === undefined ? { modelVersionId } : { modelVersionId, fileId }
+          );
+          const { fetchAndParseResourceFile } = await import('./resourceFileHost');
+          const { entries, truncated } = await fetchAndParseResourceFile({
+            signedUrl: resolved.signedUrl,
+            sizeBytes: resolved.sizeBytes,
+            fileName: resolved.meta.fileName,
+            signal,
+          });
+          return { meta: resolved.meta, entries, truncated };
+        }, RESOURCE_FILE_DEADLINE_MS);
+        send('RESOURCE_FILE_RESULT', { requestId, file });
+      } catch (err) {
+        send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
+      } finally {
+        resourceFileInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, resolveResourceFileMutation, reviewMode]);
+
   // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
   //
   // A block asks the host to follow / unfollow a collection for the viewer. The
@@ -5380,6 +5463,11 @@ export function PageBlockHost({
   // frame instead of a blank viewport. See pageBlockHostLogic.pageFallbackReason
   // for the status→reason mapping + the anti-spoof rationale.
   const fallbackReason = pageFallbackReason(status);
+  const onFallbackChangeRef = useRef(onFallbackChange);
+  onFallbackChangeRef.current = onFallbackChange;
+  useEffect(() => {
+    onFallbackChangeRef.current?.(fallbackReason);
+  }, [fallbackReason]);
 
   // #4 Retry: re-attempt the load from a terminal fallback. The full re-arm in
   // one place so there's no stuck state and no timer leak across retries:
@@ -6084,6 +6172,7 @@ export function PageBlockHost({
               // Automatic recovery has settled (exhausted, or never applicable):
               // the button is now the only path forward, so make it unmissable.
               prominentRetry={autoRetrySettled}
+              timeoutCopy={readyWait.timeoutCopy}
             />
           </Box>
         ) : null}
