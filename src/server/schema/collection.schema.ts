@@ -109,6 +109,9 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // The "Save to collection" picker sets this to drop archived collections; management
+    // surfaces leave it off so the owner can still see and unarchive them.
+    excludeArchived: z.boolean(),
     // Attaches `pendingReviewCount` per collection, for the sidebar badges. Opt-in because the
     // picker in AddToCollectionModal calls this too and draws no badge — and because a caller that
     // renders inside the sidebar must pass the SAME value as the sidebar or the two split into
@@ -240,6 +243,12 @@ export const upsertCollectionInput = z
     tags: z.array(tagSchema).nullish(),
   })
   .merge(collectionItemSchema);
+
+export type SetCollectionArchivedInput = z.infer<typeof setCollectionArchivedInput>;
+export const setCollectionArchivedInput = z.object({
+  id: z.number(),
+  archived: z.boolean(),
+});
 
 export type UpdateCollectionCoverImageInput = z.infer<typeof updateCollectionCoverImageInput>;
 export const updateCollectionCoverImageInput = z.object({

@@ -13,6 +13,7 @@ import {
   joinCollectionAsManagerHandler,
   removeCollectionItemHandler,
   saveItemHandler,
+  setCollectionArchivedHandler,
   setCollectionItemNsfwLevelHandler,
   setItemScoreHandler,
   unfollowHandler,
@@ -35,6 +36,7 @@ import {
   getUserCollectionItemsByItemSchema,
   removeCollectionItemInput,
   saveCollectionItemInputSchema,
+  setCollectionArchivedInput,
   setCollectionItemNsfwLevelInput,
   setItemScoreInput,
   updateCollectionCoverImageInput,
@@ -178,6 +180,12 @@ export const collectionRouter = router({
     .use(isFlagProtected('collections'))
     .use(isOwnerOrModerator)
     .mutation(deleteUserCollectionHandler),
+  setArchived: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(setCollectionArchivedInput)
+    .use(isFlagProtected('collections'))
+    .use(isOwnerOrModerator)
+    .mutation(setCollectionArchivedHandler),
   bulkSaveItems: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(bulkSaveCollectionItemsInput)
