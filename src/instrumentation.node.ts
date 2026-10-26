@@ -275,7 +275,12 @@ if (!OTEL_ENABLED) {
     // static graph, and a failure here must never affect boot — withSpan simply keeps opening
     // spans as before. See ~/server/utils/otel-withspan-gate.
     void import('~/server/utils/otel-withspan-gate')
-      .then((m) => m.registerWithSpanSkipUnsampledGate())
+      .then((m) => {
+        m.registerWithSpanSkipUnsampledGate();
+        console.log(
+          '[instrumentation.node] withSpan skip-unsampled gate armed (flag-controlled: otel-withspan-skip-unsampled)'
+        );
+      })
       .catch((err) => {
         console.error('[instrumentation.node] withSpan gate registration failed (fail-open):', err);
       });

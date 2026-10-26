@@ -178,8 +178,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // keeps today's behaviour. Global boolean, evaluated with no entity or context, and read at most
   // once per refresh interval per process. See `src/server/utils/otel-withspan-gate.ts`.
   //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, which bypasses the eval cache on every refresh.
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
+  // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt

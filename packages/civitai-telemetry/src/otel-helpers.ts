@@ -42,7 +42,9 @@ export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined):
  * Deliberately NOT skipped:
  *   - no active span: the child would be a new ROOT, ratio-sampled, so some of those spans
  *     are exported today;
- *   - a REMOTE parent: the sampler re-applies the ratio to remote parents;
+ *   - a REMOTE parent: conservative. Today an unsampled remote parent's children are AlwaysOff
+ *     too (only `remoteParentSampled` is configured), but excluding remote parents means a
+ *     future `remoteParentNotSampled` change cannot make this drop exportable spans;
  *   - a parent with the sampled flag set but not recording (e.g. one that has already ENDED,
  *     as in work that outlives its request): its children ARE recorded today.
  */

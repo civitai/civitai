@@ -183,7 +183,8 @@ describe('withSpan with the gate on still opens a span when the child could be r
       'a sampled, non-recording parent',
       () => trace.wrapSpanContext(parentContext({ traceFlags: TraceFlags.SAMPLED })),
     ],
-    // The app's sampler re-applies the ratio to remote parents.
+    // Conservative: an unsampled remote parent's children are AlwaysOff today, but remote parents
+    // are excluded so a future `remoteParentNotSampled` sampler change cannot drop exportable spans.
     ['an unsampled REMOTE parent', () => trace.wrapSpanContext(parentContext({ isRemote: true }))],
     // A recording parent, whatever its flags say.
     [
