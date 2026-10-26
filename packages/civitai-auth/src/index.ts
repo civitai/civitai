@@ -47,6 +47,8 @@ export {
   type InvalidateInfo,
 } from './session-registry';
 export { SESSION_REGISTRY_KEYS } from './session-registry-keys';
+export { familyId, familyClaims, SESSION_LINEAGE_MAX_AGE_MS } from './family';
+export type { FamilyClaims } from './family';
 export {
   cookiePrefix,
   isSecureCookie,

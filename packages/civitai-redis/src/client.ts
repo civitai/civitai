@@ -2607,6 +2607,10 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
+    // Hash `familyId → 'invalid'`: every token of a sign-in lineage ends together.
+    FAMILY_STATE: 'session:family-state',
+    // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
+    USER_CUT: 'session:user-cut',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once

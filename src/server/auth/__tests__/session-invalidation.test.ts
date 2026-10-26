@@ -123,8 +123,8 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
     const [, key, fieldsObj, ttlMs] = mockHSetMultiWithTTL.mock.calls[0];
     expect(key).toBe(REDIS_SYS_KEYS.SESSION.TOKEN_STATE);
     expect(fieldsObj).toEqual({ 'token-a': 'refresh', 'token-b': 'refresh' });
-    // 30 days in ms
-    expect(ttlMs).toBe(60 * 60 * 24 * 30 * 1000);
+    // 91 days in ms: markers outlast the 90-day session limit
+    expect(ttlMs).toBe(60 * 60 * 24 * 91 * 1000);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
