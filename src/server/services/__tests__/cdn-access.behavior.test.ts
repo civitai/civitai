@@ -1191,8 +1191,15 @@ describe('image server busy (429)', () => {
 
     expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 0, throttled: 1 });
     expect(calls).toHaveLength(1);
+    // Backed off, but a 429 is load shedding: it spends none of the row's attempts.
     expect(await retryRows()).toEqual([
-      expect.objectContaining({ data: expect.objectContaining({ attempts: 1 }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          attempts: 0,
+          backoffs: 1,
+          nextAttemptAt: expect.any(String),
+        }),
+      }),
     ]);
 
     await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
@@ -1350,6 +1357,108 @@ describe('image server busy (429)', () => {
     expect(calls.map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(2)}&retractPublicBlobs=true&persist=true`,
     ]);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  // A row already queued for the image is the sync's deny persist (with its edge purge) here.
+  const queuedDenyPersist = async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+  };
+
+  it('a reservation over a due retry holds it until settled, then hands back what it owed', async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    await queuedDenyPersist();
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+
+    const [reserved] = await retryRows();
+    expect(reserved.data).toMatchObject({ reservation, retract: true, purgeEdge: true });
+    expect(new Date(String(reserved.data.nextAttemptAt)).getTime()).toBeGreaterThan(Date.now());
+    // Not sent while the delete's own retraction may be in flight.
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 0 });
+
+    await settleTakedownReservations([1], reservation!);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: false, purgeEdge: true } },
+    ]);
+    const before = calls.length;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(calls.slice(before).map(kind)).toEqual(['deny']);
+    expect(purged).toHaveLength(1);
+  });
+
+  it("a reservation over a dead run's reservation takes it over, and settling removes it", async () => {
+    const { reserveTakedownRetractions, settleTakedownReservations } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const second = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    expect((await retryRows())[0].data).toMatchObject({ reservation: second });
+    expect((await retryRows())[0].data.reservedOver).toBeUndefined();
+
+    await settleTakedownReservations([1], second!);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('a deny persist failing on a reserved row keeps its retraction and its lease', async () => {
+    const { reserveTakedownRetractions, queueTakedownPersistRetry } = await import(
+      '~/server/services/cdn-access.service'
+    );
+    const reservation = await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+    const lease = (await retryRows())[0].data.nextAttemptAt;
+    await queueTakedownPersistRetry({ imageId: 1, url: u(1), retract: false, purgeEdge: true });
+
+    expect((await retryRows())[0].data).toMatchObject({
+      retract: true,
+      purgeEdge: true,
+      reservation,
+      nextAttemptAt: lease,
+    });
+  });
+
+  it('a new reservation revives a retry that had run out of attempts, and says so once', async () => {
+    const { reserveTakedownRetractions } = await import('~/server/services/cdn-access.service');
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (1, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({
+                        url: u(1),
+                        retract: true,
+                        purgeEdge: false,
+                        attempts: 24,
+                        gaveUpAt: '2026-10-01T00:00:00Z',
+                      })}::jsonb)`;
+    await reserveTakedownRetractions([{ id: 1, url: u(1) }]);
+
+    const [row] = await retryRows();
+    expect(row.data.gaveUpAt).toBeUndefined();
+    expect(row.data.attempts).toBeUndefined();
+    expect(logsOf('info', 'takedown-persist-retry-revived')).toEqual([
+      expect.objectContaining({ imageIds: [1] }),
+    ]);
+  });
+
+  it('never resends a retraction for an image that is still there (a hold kept it)', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(await stateOf(u(1))).toBe('Retracted');
+    // A retraction retry left for the image, as by a reservation the delete never settled.
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (1, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: u(1), retract: true, purgeEdge: false })}::jsonb)`;
+    const before = calls.length;
+
+    await retryTakedownPersists();
+    const sent = calls.slice(before);
+    expect(sent).toHaveLength(1);
+    expect(kind(sent[0])).toBe('deny');
     expect(await retryRows()).toEqual([]);
   });
 

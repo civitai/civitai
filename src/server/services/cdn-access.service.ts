@@ -608,13 +608,18 @@ export type TakedownPersistRetry = {
 type PersistOptions = Omit<TakedownPersistRetry, 'url'>;
 /** The retry row as stored. Absent fields read as a fresh row: no attempts yet, due now. */
 type PersistRetryRow = TakedownPersistRetry & {
+  /** Failures counted against `PERSIST_RETRY_MAX_ATTEMPTS`. */
   attempts?: number;
+  /** Every backoff, counted or not; it picks the next wait. */
+  backoffs?: number;
   /** ISO time before which the retry leaves the row alone. */
   nextAttemptAt?: string;
   /** Set when the attempts ran out: the row stays, unselected, for a human to look at. */
   gaveUpAt?: string;
   /** Written by `reserveTakedownRetractions`; cleared when its delete settles. */
   reservation?: string;
+  /** What a row reserved over owed before (its own `retract` and schedule), handed back on settle. */
+  reservedOver?: { retract?: boolean; nextAttemptAt?: string };
 };
 type UrlImage = { id: number | null; name: string | null; type: MediaType | null };
 
@@ -679,23 +684,65 @@ export async function sendTakedownPersistOrRetry(
   }
 }
 
+/** Logs once that a new failure or reservation brought back a row the retry had given up on. */
+async function logRevivedRetries(imageIds: number[]) {
+  if (!imageIds.length) return;
+  const revived = await dbWrite.$queryRaw<{ entityId: number }[]>`
+    SELECT "entityId" FROM "JobQueue"
+    WHERE type::text = ${JobQueueType.ImageCdnPersistRetry}
+      AND "entityId" = ANY(${imageIds}::int[])
+      AND data->>'gaveUpAt' IS NOT NULL
+  `.catch(() => []);
+  if (revived.length)
+    await logToAxiom({
+      type: 'info',
+      name: 'takedown-persist-retry-revived',
+      message: 'a new takedown event restarted retries that had run out of attempts',
+      imageIds: revived.map((r) => r.entityId),
+    }).catch(() => undefined);
+}
+
 /**
- * 🔴 Must tolerate the enum label not existing yet: it is added only after the deploy. Until then
- * the insert fails and is logged.
+ * Queues the retry. A row already queued for the image is merged into, not replaced: it keeps a
+ * retraction or an edge purge it already owed (`retract`/`purgeEdge` are OR-ed), and a new event
+ * restarts its attempts (clearing `gaveUpAt`) and makes it due now. One exception: a row another
+ * delete has reserved keeps its reservation and lease, so it is not sent while that delete's own
+ * retraction may still be in flight. `settles` names the reservation this failure belongs to, which
+ * is released instead.
+ *
+ * 🔴 Must tolerate the enum label not existing: on a database without it the insert fails and is
+ * logged.
  */
 export async function queueTakedownPersistRetry({
   imageId,
+  settles,
   ...data
-}: TakedownPersistRetry & { imageId: number | undefined }) {
+}: TakedownPersistRetry & { imageId: number | undefined; settles?: string }) {
   try {
     if (imageId === undefined) throw new Error('no image id for this url');
+    await logRevivedRetries([imageId]);
     await dbWrite.$executeRaw`
       INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
       VALUES (${imageId}, ${EntityType.Image}::"EntityType",
               ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", ${JSON.stringify(data)}::jsonb)
-      -- A later failure for the same image replaces the earlier row; its url is the same, and
-      -- either attempt's options are enough to finish the takedown.
-      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data = EXCLUDED.data
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
+        (COALESCE("JobQueue".data, '{}'::jsonb)
+          - 'attempts' - 'backoffs' - 'gaveUpAt' - 'nextAttemptAt' - 'reservation' - 'reservedOver')
+        || EXCLUDED.data
+        || jsonb_build_object(
+          'retract', COALESCE(("JobQueue".data->>'retract')::boolean, false)
+            OR COALESCE((EXCLUDED.data->>'retract')::boolean, false),
+          'purgeEdge', COALESCE(("JobQueue".data->>'purgeEdge')::boolean, false)
+            OR COALESCE((EXCLUDED.data->>'purgeEdge')::boolean, false))
+        || CASE
+          WHEN "JobQueue".data->>'reservation' IS NOT NULL
+            AND "JobQueue".data->>'reservation' IS DISTINCT FROM ${settles ?? null}::text
+          THEN jsonb_strip_nulls(jsonb_build_object(
+            'reservation', "JobQueue".data->'reservation',
+            'nextAttemptAt', "JobQueue".data->'nextAttemptAt',
+            'reservedOver', "JobQueue".data->'reservedOver'))
+          ELSE '{}'::jsonb
+        END
     `;
   } catch (error) {
     await logToAxiom({
@@ -739,28 +786,58 @@ export async function reserveTakedownRetractions(
     id,
     data: { url, retract: true, purgeEdge: false, nextAttemptAt, reservation },
   }));
+  await logRevivedRetries(served.map((r) => r.id));
+  // A row already queued for the image takes this reservation's token and lease, so the per-minute
+  // retry cannot send it while this delete's retraction is in flight, and settling finds it. What it
+  // owed before is kept in `reservedOver` (its own `retract` and schedule) for settling to hand back;
+  // a leftover reservation from a run that died owed nothing else, so it gets none. A new
+  // reservation is a new event: attempts restart and a given-up row is revived.
   await dbWrite.$executeRaw`
     INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
     SELECT (e->>'id')::int, ${EntityType.Image}::"EntityType",
            ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", e->'data'
     FROM jsonb_array_elements(${JSON.stringify(entries)}::jsonb) AS e
-    -- A retry already queued for the image keeps its schedule and options and gains the
-    -- retraction, but no reservation: settling this delete must not remove what it still owes.
-    ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-      SET data = "JobQueue".data || '{"retract": true}'::jsonb
+    ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
+      (COALESCE("JobQueue".data, '{}'::jsonb) - 'attempts' - 'backoffs' - 'gaveUpAt')
+      || jsonb_build_object(
+        'url', EXCLUDED.data->'url',
+        'retract', true,
+        'nextAttemptAt', EXCLUDED.data->'nextAttemptAt',
+        'reservation', EXCLUDED.data->'reservation')
+      || jsonb_strip_nulls(jsonb_build_object('reservedOver',
+        CASE
+          WHEN "JobQueue".data->>'reservation' IS NOT NULL THEN "JobQueue".data->'reservedOver'
+          ELSE jsonb_strip_nulls(jsonb_build_object(
+            'retract', COALESCE(("JobQueue".data->>'retract')::boolean, false),
+            'nextAttemptAt', "JobQueue".data->'nextAttemptAt'))
+        END))
   `;
   return reservation;
 }
 
-/** Drops the reservations of these images that still carry `reservation`, once their delete settled. */
+/**
+ * Releases the reservations of these images that still carry `reservation`, once their delete
+ * settled: retracted, nothing to retract, or the delete kept the image. A reservation of its own is
+ * removed; one made over an existing retry gives that row back its own `retract` and schedule.
+ */
 export async function settleTakedownReservations(imageIds: number[], reservation: string) {
   if (!imageIds.length) return;
+  const mine = Prisma.sql`
+    type::text = ${JobQueueType.ImageCdnPersistRetry}
+    AND "entityType" = ${EntityType.Image}::"EntityType"
+    AND "entityId" = ANY(${imageIds}::int[])
+    AND data->>'reservation' = ${reservation}
+  `;
   await dbWrite.$executeRaw`
-    DELETE FROM "JobQueue"
-    WHERE type::text = ${JobQueueType.ImageCdnPersistRetry}
-      AND "entityType" = ${EntityType.Image}::"EntityType"
-      AND "entityId" = ANY(${imageIds}::int[])
-      AND data->>'reservation' = ${reservation}
+    DELETE FROM "JobQueue" WHERE ${mine} AND data->'reservedOver' IS NULL
+  `;
+  await dbWrite.$executeRaw`
+    UPDATE "JobQueue" SET data =
+      (data - 'reservation' - 'reservedOver' - 'nextAttemptAt' - 'retract')
+      || jsonb_build_object(
+        'retract', COALESCE((data->'reservedOver'->>'retract')::boolean, false))
+      || jsonb_strip_nulls(jsonb_build_object('nextAttemptAt', data->'reservedOver'->'nextAttemptAt'))
+    WHERE ${mine} AND data->'reservedOver' IS NOT NULL
   `;
 }
 
@@ -779,11 +856,11 @@ type RetryTotals = {
  * run separately, so retractions the image server is holding back never take a deny's place.
  *
  * Each due row gets one attempt per run. Sent or no longer a takedown (a url lifted since: persisting
- * it would deny a restored image): the row is removed. Held back unsent (the run's gate, no slot in
- * time, or another run took the url): the row is left as it is. Any other failure, a 429 and a
- * timeout included: the attempt is counted and the row waits out a backoff (1, 5, 15, 60 minutes,
- * then hourly). After `PERSIST_RETRY_MAX_ATTEMPTS` the row is marked given up, logged as an error and
- * kept for a human.
+ * it would deny a restored image): the row is removed. Held back unsent by the run's gate or a full
+ * limiter: the row is left as it is. Anything else waits out a backoff (1, 5, 15, 60 minutes, then
+ * hourly); a timeout, a connection failure or an error status also spends one of
+ * `PERSIST_RETRY_MAX_ATTEMPTS` attempts, a 429 or a lost url claim does not. Out of attempts, the row
+ * is marked given up, logged as an error and kept for a human.
  */
 export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}) {
   const totals: RetryTotals = {
@@ -835,19 +912,21 @@ async function retryTakedownPersist(
     let outcome: 'sent' | 'skipped';
     try {
       const result = await withUrlClaim(url, async (claim) => {
-        // A row from the takedown sync needs the url still retracted (or deleted by a moderator):
-        // an image restored and then deleted by its owner is not a takedown. Only a row from the
-        // hard delete of a takedown may rely on the url having no image row left.
-        const [still] = await dbWrite.$queryRaw<{ takenDown: boolean }[]>`
-          SELECT EXISTS (
-              SELECT 1 FROM "ImageCdnAccess" WHERE url = ${url} AND state = 'Retracted'
-            )
-            OR EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" WHERE url = ${url})
-            OR (${data.retract === true} AND NOT EXISTS (SELECT 1 FROM "Image" WHERE url = ${url}))
-            AS "takenDown"
+        // A deny persist needs the url still retracted (or deleted by a moderator): an image
+        // restored and then deleted by its owner is not a takedown.
+        const [facts] = await dbWrite.$queryRaw<{ denyStands: boolean; gone: boolean }[]>`
+          SELECT
+            EXISTS (SELECT 1 FROM "ImageCdnAccess" WHERE url = ${url} AND state = 'Retracted')
+              OR EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" WHERE url = ${url})
+              AS "denyStands",
+            NOT EXISTS (SELECT 1 FROM "Image" WHERE url = ${url}) AS "gone"
         `;
-        if (!still?.takenDown) return 'skipped' as const;
-        await sendTakedownPersist(url, data, (await imagesOnUrl(url)).images, {
+        // 🔴 A retraction is resent only for a url no image row uses any more: the hard delete it
+        // belongs to went through, and that delete refuses a held image. An image the delete kept is
+        // still there, so it never gets one here, whatever the row says; at most its deny persists.
+        const retract = data.retract === true && !!facts?.gone;
+        if (!retract && !facts?.denyStands) return 'skipped' as const;
+        await sendTakedownPersist(url, { ...data, retract }, (await imagesOnUrl(url)).images, {
           gate,
           beforeSend: claim.renew,
         });
@@ -859,21 +938,31 @@ async function retryTakedownPersist(
       }
       outcome = result.value;
     } catch (error) {
-      if (error instanceof RetractionHeldBackError) {
+      // Held back unsent by this run's own gate or a full limiter: nothing happened, so nothing
+      // changes. A lost claim means another run has the url now, so it backs off instead.
+      if (error instanceof RetractionHeldBackError && !(error instanceof ClaimLostError)) {
         totals.throttled++;
         return;
       }
       if (error instanceof RetractionNotDoneError) totals.throttled++;
-      const attempts = (data.attempts ?? 0) + 1;
+      // Only a failure says something about the row: a timeout, a connection failure, an error
+      // status. A 429 is load shedding and a lost claim is another run's turn; both back off without
+      // spending an attempt, so a long busy spell cannot use the cap up.
+      const counts = !(error instanceof ImageServerBusyError) && !(error instanceof ClaimLostError);
+      const attempts = (data.attempts ?? 0) + (counts ? 1 : 0);
+      const backoffs = (data.backoffs ?? 0) + 1;
       const gaveUp = attempts >= PERSIST_RETRY_MAX_ATTEMPTS;
       const next: PersistRetryRow = {
         ...data,
         attempts,
+        backoffs,
         ...(gaveUp
           ? { gaveUpAt: new Date().toISOString() }
-          : { nextAttemptAt: persistRetryDue(attempts, Date.now()) }),
+          : { nextAttemptAt: persistRetryDue(backoffs, Date.now()) }),
       };
+      // A reservation still here outlived its delete's run; this retry owns the row now.
       delete next.reservation;
+      delete next.reservedOver;
       if (gaveUp) totals.gaveUp++;
       else if (!(error instanceof RetractionNotDoneError)) totals.failed++;
       await logToAxiom({
@@ -909,7 +998,14 @@ const DELETE_PERSIST_CONCURRENCY = 10;
  */
 export async function persistDeletedTakedowns(
   rows: { id: number; url: string; retraction?: ImageCacherOutcome }[],
-  { budgetMs = DELETE_PERSIST_BUDGET_MS } = {}
+  {
+    budgetMs = DELETE_PERSIST_BUDGET_MS,
+    reservation,
+  }: {
+    budgetMs?: number;
+    /** The reservation these deletes made: a failure here releases it into a due retry. */
+    reservation?: string;
+  } = {}
 ) {
   const deadline = Date.now() + budgetMs;
   const totals = { sent: 0, queued: 0, skipped: 0, notAttempted: 0, retractionPending: 0 };
@@ -950,7 +1046,13 @@ export async function persistDeletedTakedowns(
         }).catch(() => undefined);
       }
       totals.queued++;
-      await queueTakedownPersistRetry({ imageId: id, url, retract: true, purgeEdge: false });
+      await queueTakedownPersistRetry({
+        imageId: id,
+        url,
+        retract: true,
+        purgeEdge: false,
+        settles: reservation,
+      });
     }),
     DELETE_PERSIST_CONCURRENCY
   );

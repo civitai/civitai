@@ -1092,6 +1092,9 @@ type DeletedImageRow = {
   retraction?: ImageCacherOutcome;
 };
 
+/** Bounds a retracting delete's object delete, so a stuck one cannot hold its chunk open. */
+export const RETRACTING_STORAGE_DELETE_TIMEOUT_MS = 30_000;
+
 async function deleteFromStorage(
   rows: Omit<DeletedImageRow, 'retraction'>[],
   {
@@ -1118,6 +1121,8 @@ async function deleteFromStorage(
           url: row.url,
           retractPublicBlobs,
           retractionGate,
+          // A failed object delete is queued for its own retry, and the purge still runs.
+          abortSignal: AbortSignal.timeout(RETRACTING_STORAGE_DELETE_TIMEOUT_MS),
         });
         return { ...row, retraction: purge };
       })

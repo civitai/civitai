@@ -393,7 +393,8 @@ describe('remove-blocked-images retention clock', () => {
     expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
     // And persists exactly the rows it deleted, after deleting them.
     expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
-      await mockDeleteImages.mock.results.at(-1)?.value
+      await mockDeleteImages.mock.results.at(-1)?.value,
+      { reservation: 'reservation' }
     );
     expect(mockPersistDeletedTakedowns.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
       mockDeleteImages.mock.invocationCallOrder.at(-1) as number
@@ -838,6 +839,19 @@ describe('remove-blocked-images retraction load', () => {
 
     const chunkIds = retractingCalls()[0][0] as number[];
     expect(mockSettle.mock.calls[0]).toEqual([chunkIds.slice(1), 'reservation']);
+  });
+
+  it('releases the reservation of an image the delete kept, so a held image gets no retraction', async () => {
+    addTakedowns();
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 7).map((id) => ({ id, retraction: 'confirmed' as const }))
+    );
+    await runJob();
+
+    const chunkIds = retractingCalls()[0][0] as number[];
+    expect(chunkIds).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toContain(7);
+    expect(mockSettle.mock.calls[0][0]).toEqual(chunkIds);
   });
 
   it('deletes no takedown when their retractions cannot be queued', async () => {

@@ -72,11 +72,13 @@ const INGEST_SUBMIT_CONCURRENCY = 20;
 
 // remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
 // 30-minute lock: a second run taking the lock would double the retractions in flight. A chunk is
-// five rounds of `MAX_IN_FLIGHT_RETRACTIONS` retractions, each a slot wait of up to
-// `RETRACTION_SLOT_WAIT_MS` (60s) plus a request of up to `IMAGE_CACHER_WAIT_MS` (70s): ~11 min.
-// So the takedown phase ends within this budget (5 min) + one chunk (~11 min) + the persist budget
-// (1 min) = ~17 min, which leaves ~13 min of the lock for the reads before it and the
-// non-retracting deletes after it.
+// five rounds of `MAX_IN_FLIGHT_RETRACTIONS` rows, each a storage delete of up to
+// `RETRACTING_STORAGE_DELETE_TIMEOUT_MS` (30s), a slot wait of up to `RETRACTION_SLOT_WAIT_MS` (60s)
+// and a request of up to `IMAGE_CACHER_WAIT_MS` (70s): ~13.5 min. So the takedown phase ends within
+// this budget (5 min) + one chunk (~13.5 min) + the persist budget (1 min) = ~19.5 min, leaving
+// ~10.5 min of the lock for the reads before it and the non-retracting deletes after it.
+// Not bounded here: the chunk's DB DELETE and its cache and search-index updates, which run on the
+// database's and those clients' own timeouts.
 const TAKEDOWN_RETRACTION_BUDGET_MS = 5 * 60 * 1000;
 const TAKEDOWN_CHUNK_ROUNDS = 5;
 
@@ -974,16 +976,21 @@ export const removeBlockedImages = createJob(
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
       // and the retention window outlasts anything cached before the deny, so no CDN purge here.
       // A retraction that did not land replaces its reservation with a retry that is due now.
-      await cdnAccess.persistDeletedTakedowns(rows);
-      // Settled: retracted, or nothing to retract (another row still uses the url). A row the delete
-      // kept keeps its reservation, which the retry drops once it finds the image still there.
-      if (reservation)
-        await cdnAccess.settleTakedownReservations(
+      await cdnAccess.persistDeletedTakedowns(rows, { reservation: reservation ?? undefined });
+      // Settled: retracted, nothing to retract (another row still uses the url), or not deleted at
+      // all (a hold kept it, and a held image must get no retraction). Only a deleted row whose
+      // retraction did not land keeps a retry, and the persist above already released it to be due.
+      if (reservation) {
+        const pending = new Set(
           rows
-            .filter((x) => x.retraction !== 'busy' && x.retraction !== 'unconfirmed')
-            .map((x) => x.id),
+            .filter((x) => x.retraction === 'busy' || x.retraction === 'unconfirmed')
+            .map((x) => x.id)
+        );
+        await cdnAccess.settleTakedownReservations(
+          ids.filter((id) => !pending.has(id)),
           reservation
         );
+      }
       // A 429 or a timeout means the image server is at its limit or slow: more now only add load.
       if (retractionGate.busy || rows.some((x) => x.retraction === 'busy'))
         retractionStoppedBy = 'busy';
