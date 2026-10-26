@@ -372,7 +372,7 @@ function terminatingLink({
       // `trpcUnifiedBatchWindow`: both browser clients send through ONE batch link, so the React
       // client's queries and the vanilla client's (the hand-rolled batchers) released by the same
       // window share a request. Off: each client keeps its own batch link, as before.
-      condition: () => false && typeof window !== 'undefined' && getTrpcUnifiedBatchWindowEnabled(), // MUTANT
+      condition: () => typeof window !== 'undefined' && getTrpcUnifiedBatchWindowEnabled(),
       true: sharedBrowserBatchLink,
       false: batchStreamLink({ url, headers }),
     }),

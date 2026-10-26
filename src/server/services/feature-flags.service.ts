@@ -90,7 +90,7 @@ const featureFlags = createFeatureFlags({
   // timers, so queries started a few ms apart leave as one request. Only where batching applies
   // (`trpcBatching` on, signed in). OFF: unchanged. `[]` = DARK and fails CLOSED when the key is
   // absent or Flipt is down.
-  trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-windows' /* MUTANT */ },
+  trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
