@@ -967,6 +967,11 @@ export async function waitForApplyJob(
  * Failed and the live Deployment is left untouched. The build chain
  * surfaces this back to civitai-web via the standard apply Job watch.
  *
+ * Between the smoke test and the apply it runs an OPTIONAL platform publish
+ * step, `/templates/publish.sh`, when the mounted templates ConfigMap ships
+ * one. The script owns its failure policy (non-zero blocks the apply). The
+ * review sandbox script never runs it: a pending build is never published.
+ *
  * Exported for the orchestration tests so the smoke shape stays
  * locked-in.
  */
@@ -1062,6 +1067,15 @@ if printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | 
 fi
 
 echo "smoke test: PASSED — healthz 200, / 200 text/html, no port-leak redirect"
+
+# ---- Optional platform publish step -----------------------------------------
+# The platform may ship a publish script in the mounted templates ConfigMap.
+# When present it runs here: after the smoke test passed and before the live
+# apply. It decides itself whether a failure must block the apply (non-zero)
+# or only warn (zero). Absent => no-op, so this is safe to deploy first.
+if [ -f /templates/publish.sh ]; then
+  bash /templates/publish.sh
+fi
 
 # ---- Apply the per-app manifest into the live namespace --------------------
 kubectl apply -f /tmp/rendered.yaml
