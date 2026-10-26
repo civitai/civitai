@@ -241,105 +241,66 @@ export async function getBountyEntries(
 }
 
 export type UserComment = {
+  /** The old `Comment` id, which the bulk actions and the model page's dialog still address. */
   id: number;
   createdAt: Date;
   content: string;
-  nsfw: boolean | null;
   tosViolation: boolean | null;
   modelId: number | null;
 };
 
+/** Rows with an old `Comment` id. Tombstones keep their `userId`, so are excluded. */
 export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
-    .selectFrom('Comment')
-    .select(['id', 'createdAt', 'content', 'nsfw', 'tosViolation', 'modelId'])
+    .selectFrom('CommentV3')
+    .select([
+      sql<number>`"legacyV1Id"`.as('id'),
+      'createdAt',
+      'content',
+      'tosViolation',
+      'entityId as modelId',
+    ])
     .where('userId', '=', userId)
+    .where('legacyV1Id', 'is not', null)
+    .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
 }
 
-// Retool's segmentedControl1 split comments into "Model Comments" (`Comment`) and "Other Comments"
-// (`CommentV2` — image, article, bounty and post threads). Only the first was ported; this is the
-// other half, and it is the larger table on most accounts.
+// Retool's "Other Comments": every comment not on the model page.
 export type UserCommentV2 = {
   id: number;
   createdAt: Date;
   content: string;
   tosViolation: boolean | null;
-  threadId: number;
-  /** What the comment is ON — resolved through the thread, and through its root thread for replies. */
+  /** What the comment is ON. A reply carries its entity on its own row. */
   entityType: string | null;
   entityId: number | null;
 };
 
-// `Thread` carries one nullable FK per commentable type, so resolving what a comment is attached to is
-// a coalesce across all of them — no builder equivalent. A reply's own thread points at the parent
-// comment, so the ROOT thread is what identifies the image or model it ultimately hangs off; Retool's
-// CommentsWithLinks coalesced root first for exactly that reason.
-//
-// (Its name promises a link filter that its SQL does not contain — the filtering was done in the
-// browser. What the query is actually for is this resolution, so that is what is ported.)
-export const THREAD_TARGETS = [
-  'imageId',
-  'modelId',
-  'postId',
-  'articleId',
-  'bountyId',
-  'bountyEntryId',
-  'reviewId',
-  'questionId',
-  'answerId',
-] as const;
-
-export const threadEntityId = sql<number | null>`coalesce(${sql.join(
-  THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
-  sql`, `
-)})`;
-
-export const threadEntityType = sql<string | null>`case ${sql.join(
-  THREAD_TARGETS.map(
-    (c) =>
-      sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
-        c.replace(/Id$/, '')
-      )}`
-  ),
-  sql` `
-)} end`;
-
-/** What each `CommentV2` hangs off, through its thread and, for a reply, the root thread. A comment whose thread points at nothing has no entry. */
-export async function commentV2ThreadParents(
+/** What each comment hangs off, by id. A comment with no row has no entry. */
+export async function commentParents(
   commentIds: number[]
 ): Promise<Map<number, { type: string; id: number }>> {
   if (!commentIds.length) return new Map();
-  const { rows } = await sql<{ id: number; type: string | null; targetId: number | null }>`
-    select c.id, ${threadEntityType} as type, ${threadEntityId} as "targetId"
-    from "CommentV2" c
-    left join "Thread" t on t.id = c."threadId"
-    left join "Thread" root on root.id = t."rootThreadId"
-    where c.id in (${sql.join(commentIds)})`.execute(dbRead);
-  return new Map(
-    rows.flatMap((r) => (r.type && r.targetId ? [[r.id, { type: r.type, id: r.targetId }]] : []))
-  );
+  const rows = await dbRead
+    .selectFrom('CommentV3')
+    .select(['id', 'entityType', 'entityId'])
+    .where('id', 'in', commentIds)
+    .execute();
+  return new Map(rows.map((r) => [r.id, { type: r.entityType, id: r.entityId }]));
 }
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
-    .selectFrom('CommentV2 as c')
-    .leftJoin('Thread as t', 't.id', 'c.threadId')
-    .leftJoin('Thread as root', 'root.id', 't.rootThreadId')
-    .select([
-      'c.id',
-      'c.createdAt',
-      'c.content',
-      'c.tosViolation',
-      'c.threadId',
-      threadEntityId.as('entityId'),
-      threadEntityType.as('entityType'),
-    ])
-    .where('c.userId', '=', userId)
-    .orderBy('c.createdAt', 'desc')
+    .selectFrom('CommentV3')
+    .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
+    .where('userId', '=', userId)
+    .where('legacyV1Id', 'is', null)
+    .where('deletedAt', 'is', null)
+    .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
