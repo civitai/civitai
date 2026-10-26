@@ -125,6 +125,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_VERSION_IMAGES_SKIP_TAGS = 'model-version-images-skip-tags',
+  // ON skips `getModelHandler`'s read of the owner's posts on the versions (`modelVersions[].posts`)
+  // when the viewer is neither the owner nor a moderator, returning `posts: []` on every version —
+  // what an owner with no posts gets. Every client reader of that field is owner- or
+  // moderator-only (the publish/republish buttons, the version list's problem icons and menu, the
+  // model wizard). Owners and moderators are unchanged. Boolean, evaluated with no entityId, and
+  // only for a viewer who is neither.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
