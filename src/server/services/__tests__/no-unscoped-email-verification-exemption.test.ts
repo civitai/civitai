@@ -108,6 +108,7 @@ const DERIVED_BASES: Record<string, string> = {
   semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
+  sharedStorageProcedure: 'publicProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
   storylineWriteProcedure: 'guardedProcedure',
