@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
     data: { canAppeal: boolean } | undefined;
     isError: boolean;
   },
+  asked: [] as unknown[],
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -23,7 +24,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy({
-      'image.getAppealState': { useQuery: () => state.appealState },
+      'image.getAppealState': {
+        useQuery: (input: unknown) => {
+          state.asked.push(input);
+          return state.appealState;
+        },
+      },
       'report.getLatestAppeal': { useQuery: () => ({ data: null, isLoading: false }) },
     }),
   };
@@ -45,7 +51,7 @@ function render() {
         React.createElement(
           'div',
           { 'data-notice': '' },
-          React.createElement(OwnerBlockedImageNotice, { imageId: 1 })
+          React.createElement(OwnerBlockedImageNotice, { imageId: 4321 })
         )
       )
     );
@@ -68,6 +74,13 @@ afterEach(() => {
 });
 
 describe('OwnerBlockedImageNotice', () => {
+  it('asks about the image it is shown for', () => {
+    state.appealState = { data: undefined, isError: false };
+    state.asked = [];
+    render();
+    expect(state.asked).toEqual([{ id: 4321 }]);
+  });
+
   it('shows the blocked banner and the appeal link when the appeal would be accepted', () => {
     state.appealState = { data: { canAppeal: true }, isError: false };
     const text = render();

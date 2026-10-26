@@ -108,6 +108,11 @@ describe('image.getAppealState', () => {
     });
   });
 
+  it('fails rather than answering when the check throws', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
+    await expect(callerFor({ id: OWNER }).getAppealState({ id: 1 })).rejects.toThrow();
+  });
+
   it('is refused when signed out', async () => {
     await expect(callerFor(undefined).getAppealState({ id: 1 })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
