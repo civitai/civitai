@@ -144,28 +144,53 @@ describe('runTurn', () => {
       expect(await toolResult(slow(20, 2_000))).toMatchObject({ data: { ok: true } });
     });
 
-    it('starts no round its slowest lookup could not finish before the turn deadline', async () => {
-      // 160 s in: 80 s are left, enough for a 45 s lookup but not for a 90 s one.
-      let t = 0;
-      const now = () => t;
-      const ask = async (tool: AnyTool) => {
-        t = 0;
-        const { run, complete } = turn(
-          [reply(null, [call('slow', { ids: ['a'] })]), reply('done')],
-          {
-            tools: [tool],
-            now: () => {
-              const v = now();
-              t = 160_000;
-              return v;
-            },
-          }
-        );
-        await run;
-        return (complete.mock.calls[0][0] as { toolChoice: string }).toolChoice;
-      };
-      expect(await ask(slow(0, 90_000))).toBe('none');
-      expect(await ask(slow(0))).toBe('auto');
+    it('gives a measured-slow tool its full limit, not the 45 s default', async () => {
+      vi.useFakeTimers();
+      try {
+        const result = toolResult(slow(60_000, 90_000));
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(await result).toMatchObject({ data: { ok: true } });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps the generic error even if the detail names one, and survives a detail that throws', async () => {
+      const own = (onTimeout: unknown): AnyTool => ({
+        ...slow(200, 20),
+        onTimeout: onTimeout as never,
+      });
+      expect(await toolResult(own(() => ({ error: 'SELECT * FROM secrets', x: 1 })))).toEqual({
+        error: 'The lookup timed out.',
+        x: 1,
+      });
+      expect(
+        await toolResult(
+          own(() => {
+            throw new Error('SELECT * FROM secrets');
+          })
+        )
+      ).toEqual({ error: 'The lookup timed out.' });
+    });
+
+    it('still answers when the turn deadline passes during a lookup', async () => {
+      vi.useFakeTimers();
+      try {
+        // Like fetch: a call made with an already-aborted signal fails at once.
+        const script = [
+          reply(null, [call('slow', { ids: ['a'] })]),
+          reply('found a; b not checked'),
+        ];
+        const complete = vi.fn(async (req: { signal?: AbortSignal }) => {
+          if (req.signal?.aborted) throw new Error('aborted');
+          return script.shift()!;
+        });
+        const { run } = turn([], { tools: [slow(250_000, 300_000)], complete: complete as never });
+        await vi.advanceTimersByTimeAsync(251_000);
+        expect(await run).toMatchObject({ status: 'done', answer: 'found a; b not checked' });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

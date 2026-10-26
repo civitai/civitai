@@ -249,6 +249,7 @@ describe('accounts_on_address', () => {
       )
     ).toMatchObject({
       notChecked: ['192.0.2.1', '198.51.100.7'],
+      note: expect.stringContaining('were checked'),
     });
   });
 

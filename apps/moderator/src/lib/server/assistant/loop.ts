@@ -14,6 +14,8 @@ export const MAX_ROUNDS = 10;
  *  allowance is the dollar cap. */
 export const DAILY_TOKEN_CAP = 10_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
+/** The forced final answer's own window when the turn deadline passed during the last lookups. */
+export const FINAL_ANSWER_GRACE_MS = 30_000;
 /** A whole turn; past this the in-flight model call is aborted. */
 export const TURN_DEADLINE_MS = 4 * 60_000;
 /**
@@ -101,8 +103,6 @@ export async function runTurn(input: {
 }): Promise<TurnOutcome> {
   const now = input.now ?? Date.now;
   const deadline = now() + TURN_DEADLINE_MS;
-  // No round starts that its slowest lookup could not finish before the turn's deadline.
-  const slowestTool = Math.max(TOOL_TIMEOUT_MS, ...input.tools.map((t) => t.timeoutMs ?? 0));
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), TURN_DEADLINE_MS);
 
@@ -150,7 +150,7 @@ export async function runTurn(input: {
 
   try {
     for (let round = 0; round <= MAX_ROUNDS; round++) {
-      const last = stopWith !== null || round === MAX_ROUNDS || now() > deadline - slowestTool;
+      const last = stopWith !== null || round === MAX_ROUNDS || now() > deadline - TOOL_TIMEOUT_MS;
       if (last)
         messages.push({
           role: 'user',
@@ -165,7 +165,10 @@ export async function runTurn(input: {
         messages,
         tools: input.specs,
         toolChoice: last ? 'none' : 'auto',
-        signal: abort.signal,
+        // A lookup can outlast the deadline. The answer that reports what it did and did not check
+        // still gets its own short window, or the turn ends with nothing for the moderator to read.
+        signal:
+          last && abort.signal.aborted ? AbortSignal.timeout(FINAL_ANSWER_GRACE_MS) : abort.signal,
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
@@ -227,7 +230,7 @@ async function callTool(
   const fail = (error: string, detail: Record<string, unknown> = {}) => {
     const log = { name, args, rows: 0, truncated: false, ms: now() - started, error };
     input.emit({ type: 'tool-done', name, rows: 0, error, ms: log.ms });
-    return { id: call.id, content: JSON.stringify({ error, ...detail }), log, sources: [] };
+    return { id: call.id, content: JSON.stringify({ ...detail, error }), log, sources: [] };
   };
 
   // A model may name a tool it saw earlier or was told about by quoted text; it gets an error.
@@ -273,8 +276,15 @@ async function callTool(
     console.error(`[assistant] tool ${name} failed`, e);
     // 🔴 Never the error's own text: a ClickHouse error quotes the whole query, addresses included, and
     // this string reaches the model, the moderator's screen and the audit.
-    if (e instanceof Error && e.message === TIMED_OUT)
-      return fail(TIMED_OUT, tool.onTimeout?.(parsed.data as never) ?? {});
+    if (e instanceof Error && e.message === TIMED_OUT) {
+      let detail: Record<string, unknown> = {};
+      try {
+        detail = tool.onTimeout?.(parsed.data as never) ?? {};
+      } catch (inner) {
+        console.error(`[assistant] tool ${name} onTimeout failed`, inner);
+      }
+      return fail(TIMED_OUT, detail);
+    }
     return fail('The lookup failed.');
   } finally {
     clearTimeout(timer);

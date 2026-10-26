@@ -464,7 +464,7 @@ export const TOOLS = [
     timeoutMs: ACCOUNTS_ON_ADDRESS_TIMEOUT_MS,
     onTimeout: ({ address, addresses }) => ({
       notChecked: [...(addresses ?? []), ...(address ? [address] : [])],
-      note: 'None of these addresses were checked. Say so in your answer, naming them, and offer to retry with fewer at a time.',
+      note: 'None of these addresses were checked: the lookup ran out of time. Say so in your answer, naming them, and offer to try again later.',
     }),
     run: async ({ address, addresses, days, offset, limit }, ctx) => {
       const asked = [...(addresses ?? []), ...(address ? [address] : [])];

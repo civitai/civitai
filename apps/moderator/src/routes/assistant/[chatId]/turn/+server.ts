@@ -7,6 +7,8 @@ import { denied } from '$lib/permissions';
 import { findModel } from '$lib/assistant/models';
 import type { TurnEvent } from '$lib/assistant/types';
 
+const KEEPALIVE_MS = 20_000;
+
 const bodySchema = z.object({
   prompt: z.string().trim().min(1).max(4000),
   playbook: z
@@ -50,16 +52,21 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 
   const encoder = new TextEncoder();
   let open = true;
+  let keepalive: ReturnType<typeof setInterval> | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const emit = (event: TurnEvent) => {
+      const send = (text: string) => {
         if (!open) return;
         try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          controller.enqueue(encoder.encode(text));
         } catch {
           open = false;
         }
       };
+      const emit = (event: TurnEvent) => send(`${JSON.stringify(event)}\n`);
+      // A lookup can run silent for over a minute; a blank line (which the client skips) keeps a
+      // proxy's idle timeout from cutting the stream while the turn is still working.
+      keepalive = setInterval(() => send('\n'), KEEPALIVE_MS);
       executeTurn({
         chatId,
         moderator: { id: locals.user.id, username: locals.user.username ?? null },
@@ -78,11 +85,13 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
           emit({ type: 'error', error: busy ? BUSY : 'The turn failed.' });
         })
         .finally(() => {
+          clearInterval(keepalive);
           if (open) controller.close();
           open = false;
         });
     },
     cancel() {
+      clearInterval(keepalive);
       open = false;
     },
   });
