@@ -5,7 +5,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * A muted or banned account cannot write to a storyline: start one, edit it, add or insert a
+ * A muted or banned account cannot write to a storyline: start, edit or delete one, add or insert a
  * chapter, pick the canon branch, join two branches, add or remove a collaborator, or caption a
  * chapter image.
  *
@@ -19,6 +19,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const writers = vi.hoisted(() => ({
   createStoryline: vi.fn(async () => ({ id: 1 })),
   updateStoryline: vi.fn(async () => ({ id: 1 })),
+  deleteStoryline: vi.fn(async () => ({ id: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
   insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   moveStorylineChapter: vi.fn(async () => ({ chapterIds: [1] })),
@@ -51,6 +52,7 @@ const WRITE_CALLS = [
     input: { postId: 11, title: 'A story', maxNsfwLevel: 1 },
   },
   { name: 'update', writer: writers.updateStoryline, input: { id: 10, title: 'Renamed' } },
+  { name: 'delete', writer: writers.deleteStoryline, input: { id: 10 } },
   {
     name: 'addChapter',
     writer: writers.addOwnerChapter,

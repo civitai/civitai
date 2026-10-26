@@ -27,6 +27,7 @@ import {
   addOwnerChapter,
   addStorylineCollaborator,
   createStoryline,
+  deleteStoryline,
   getStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
@@ -228,6 +229,10 @@ export const storylineRouter = router({
     .mutation(({ input, ctx }) =>
       updateStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+
+  delete: storylineWriteProcedure
+    .input(storylineIdSchema)
+    .mutation(({ input, ctx }) => deleteStoryline({ id: input.id, userId: ctx.user.id })),
 
   setImageCaption: storylineWriteProcedure
     .input(setStorylineImageCaptionSchema)
