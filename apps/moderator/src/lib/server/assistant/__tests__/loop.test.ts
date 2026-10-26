@@ -99,6 +99,15 @@ describe('runTurn', () => {
     });
   });
 
+  it('logs which model round asked for each lookup', async () => {
+    const { run } = turn([
+      reply(null, [call('lookup', { userId: 5 }, 'a'), call('lookup', { userId: 6 }, 'b')]),
+      reply(null, [call('lookup', { userId: 7 }, 'c')]),
+      reply('done'),
+    ]);
+    expect((await run).toolCalls.map((c) => c.round)).toEqual([1, 1, 2]);
+  });
+
   it('never runs a tool the moderator was not given, whatever the model asks for', async () => {
     const { run } = turn([reply(null, [call('ban_user', { userId: 5 })]), reply('done')]);
     const out = await run;
