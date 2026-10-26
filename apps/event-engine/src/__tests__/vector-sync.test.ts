@@ -920,6 +920,25 @@ describe('embedding gate', () => {
       })
     );
 
+  // parseInt('eight') is NaN, and `attempt >= NaN` is never true: the retries never ended.
+  test('a malformed number in the vector-sync env is refused at startup, not run on a default', async () => {
+    const start = (env: Record<string, string>) =>
+      withEnv(env, async () => (await import('@/vector-sync/embedder')).Embedder.fromConfig('low'));
+    await expect(start({ VECTOR_EMBED_MAX_RETRIES: 'eight' })).rejects.toThrow(
+      /VECTOR_EMBED_MAX_RETRIES="eight"/
+    );
+    await expect(start({ VECTOR_EMBED_BATCH_SIZE: '500' })).rejects.toThrow(
+      /VECTOR_EMBED_BATCH_SIZE/
+    );
+    // Number('0x3') is 3; the refusal must come from the parse, not a later range check.
+    await expect(start({ VECTOR_EMBED_MAX_RETRIES: '0x3' })).rejects.toThrow(
+      /VECTOR_EMBED_MAX_RETRIES="0x3"/
+    );
+    // Past 2^31 ms the flush interval would fire every millisecond.
+    await expect(start({ VECTOR_SYNC_DEBOUNCE_MS: '9999999999' })).rejects.toThrow(/DEBOUNCE_MS/);
+    await expect(start({ VECTOR_EMBED_MAX_RETRIES: '3' })).resolves.toBeDefined();
+  });
+
   test("embedding needs its switch, this process's Image flag, and a connector that streams Image", async () => {
     expect(await reason({})).toBeNull();
     expect(await reason({ VECTOR_SYNC_EMBED_ENABLED: undefined })).toMatch(/EMBED/);
@@ -1567,10 +1586,19 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts[1] - posts[0]).toBeLessThan(120_000);
   });
 
+  // Shaped as Node 22's fetch throws them: TypeError('fetch failed') with the socket error as cause.
+  const fetchFailed = (code: string) =>
+    Promise.reject(
+      new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) })
+    );
+
   // Ephemeral workflows ignore externalId, so a submit that may have been accepted is only sent
   // again once its steps should be done and cached. Re-sending at once doubles the GPU work.
   test.each([
     ['a network error', () => Promise.reject(new TypeError('socket hang up'))],
+    ['a reset after connecting', () => fetchFailed('ECONNRESET')],
+    ['an unreachable host on a reused socket', () => fetchFailed('EHOSTUNREACH')],
+    ['a TLS error mid-request', () => fetchFailed('ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC')],
     ['a 502', async () => new Response('bad gateway', { status: 502 })],
   ])('an ambiguous submit (%s) is not re-sent before the resubmit delay', async (_, fail) => {
     const posts: number[] = [];
@@ -1590,6 +1618,31 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts[1] - posts[0]).toBeGreaterThanOrEqual(120_000);
     expect(bodies[1]).not.toHaveProperty('externalId');
   });
+
+  // Nothing reached the orchestrator, so nothing can be running: waiting 120 s per retry through
+  // an outage would only stall the batch.
+  test.each([
+    'ECONNREFUSED',
+    'ENOTFOUND',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+  ])(
+    'a submit that never left (%s) is retried with normal backoff, not the resubmit delay',
+    async (code) => {
+      const posts: number[] = [];
+      let now = () => 0;
+      const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+        posts.push(now());
+        if (posts.length === 1) return fetchFailed(code);
+        return ok(init, 50);
+      }) as unknown as typeof fetch;
+      const run = clocked(fetchImpl);
+      now = run.now;
+      const result = await run.e.embed(inputs(1));
+      expect(result.vectors.size).toBe(1);
+      expect(posts[1] - posts[0]).toBeLessThan(120_000);
+    }
+  );
 
   test('a 2xx submit whose body is cut off is re-sent only after the resubmit delay', async () => {
     const posts: number[] = [];
@@ -1642,6 +1695,9 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     let now = () => 0;
     const fetchImpl = (async () => {
       times.push(now());
+      // Without the hold this spins on microtasks and no test timeout can fire; ~12 are expected.
+      if (times.length > 100)
+        return new Response('runaway: Retry-After not waited', { status: 418 });
       return new Response('', { status: 429, headers: { 'Retry-After': '600' } });
     }) as unknown as typeof fetch;
     const run = clocked(fetchImpl);
@@ -1701,6 +1757,10 @@ describe('ratelimit module', () => {
     expect(parsed.size).toBe(3);
   });
 
+  test('an empty or non-decimal param is dropped, not read as 0 (r=0 would mean no quota left)', () => {
+    expect(parseRateLimitHeader('p;r=;q=0x10;t=1e3;w=   ').get('p')).toEqual({});
+  });
+
   test('Retry-After as seconds or an HTTP-date', () => {
     const now = Date.parse('2026-10-24T02:00:00Z');
     expect(parseRetryAfter('1', now)).toBe(1000);
@@ -1709,6 +1769,13 @@ describe('ratelimit module', () => {
     expect(parseRetryAfter('Sat, 24 Oct 2026 01:00:00 GMT', now)).toBe(0);
     expect(parseRetryAfter('soon', now)).toBeUndefined();
     expect(parseRetryAfter(null, now)).toBeUndefined();
+  });
+
+  // Past 2^31 ms setTimeout fires at once, so an unbounded hold became a 1 ms spin.
+  test('Retry-After is capped at an hour', () => {
+    expect(parseRetryAfter('86400', 0)).toBe(3_600_000);
+    expect(parseRetryAfter('9'.repeat(400), 0)).toBe(3_600_000);
+    expect(parseRetryAfter('Sat, 24 Oct 2099 02:00:00 GMT', 0)).toBe(3_600_000);
   });
 
   test('may I send N now / when to retry', () => {

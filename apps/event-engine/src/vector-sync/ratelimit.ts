@@ -30,8 +30,9 @@ export function parseRateLimitHeader(
       const eq = param.indexOf('=');
       if (eq < 0) continue;
       const key = param.slice(0, eq).trim();
-      const value = Number(param.slice(eq + 1).trim());
-      if (key && Number.isFinite(value)) values[key] = value;
+      const raw = param.slice(eq + 1).trim();
+      // Structured-field integers and decimals only: Number('') is 0, and would read as r=0.
+      if (key && /^-?\d+(\.\d+)?$/.test(raw)) values[key] = Number(raw);
     }
     out.set(name, values);
   }
@@ -54,13 +55,20 @@ function splitList(header: string): string[] {
   return items.map((i) => i.trim()).filter(Boolean);
 }
 
-/** Retry-After as milliseconds from `now`: delta-seconds or an HTTP-date. Undefined if absent or unparseable. */
-export function parseRetryAfter(value: string | null | undefined, now: number): number | undefined {
+/**
+ * Retry-After as milliseconds from `now`: delta-seconds or an HTTP-date, at most `maxMs` (past
+ * 2^31 ms setTimeout fires at once). Undefined if absent or unparseable.
+ */
+export function parseRetryAfter(
+  value: string | null | undefined,
+  now: number,
+  maxMs = 60 * 60_000
+): number | undefined {
   if (value == null || value.trim() === '') return undefined;
   const v = value.trim();
-  if (/^\d+(\.\d+)?$/.test(v)) return Number(v) * 1000;
+  if (/^\d+(\.\d+)?$/.test(v)) return Math.min(maxMs, Number(v) * 1000);
   const at = Date.parse(v);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+  return Number.isNaN(at) ? undefined : Math.min(maxMs, Math.max(0, at - now));
 }
 
 export type Observation = {

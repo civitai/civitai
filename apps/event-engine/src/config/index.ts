@@ -2,10 +2,21 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-/** An unset, malformed or out-of-range value is the fallback; 0 is kept. */
-function nonNegativeInt(value: string | undefined, fallback: number, max: number) {
-  const n = value?.trim() ? Number(value) : fallback;
-  return Number.isInteger(n) && n >= 0 && n <= max ? n : fallback;
+const invalidVectorEnv: string[] = [];
+
+/** An unset or blank value is the fallback; a malformed or out-of-range one is refused by assertVectorSyncConfig. */
+function vectorInt(name: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER) {
+  const raw = process.env[name];
+  if (!raw?.trim()) return fallback;
+  const n = /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  if (n >= min && n <= max) return n;
+  invalidVectorEnv.push(`${name}=${JSON.stringify(raw)} (an integer from ${min} to ${max})`);
+  return fallback;
+}
+
+/** Vector-sync processes call this at startup: a typo'd number must not run on a silent default. */
+export function assertVectorSyncConfig() {
+  if (invalidVectorEnv.length) throw new Error(`invalid ${invalidVectorEnv.join(', ')}`);
 }
 
 export const config = {
@@ -136,13 +147,13 @@ export const config = {
   // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
-    pgPoolMax: Math.max(1, parseInt(process.env.VECTOR_PG_POOL_MAX ?? '4', 10)),
+    pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
     // embedBlockedReason in vector-sync/sync.ts.
     embedEnabled: process.env.VECTOR_SYNC_EMBED_ENABLED === 'true',
     // Events for one image arriving within this window collapse into one re-read.
-    debounceMs: parseInt(process.env.VECTOR_SYNC_DEBOUNCE_MS ?? '5000', 10),
+    debounceMs: vectorInt('VECTOR_SYNC_DEBOUNCE_MS', 5000, 0, 600_000),
     qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
     qdrantApiKey: process.env.QDRANT_API_KEY || undefined,
     // Writes go to the collection, reads to the alias, so a model migration can fill a new
@@ -155,12 +166,12 @@ export const config = {
     embedToken: process.env.VECTOR_EMBED_TOKEN ?? '',
     // Orchestrator jobs in flight per process: one per step, i.e. per image. An upper bound: the
     // orchestrator's per-account quota (its RateLimit headers) usually lowers it.
-    embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '500', 10) || 500),
-    embedMaxRetries: parseInt(process.env.VECTOR_EMBED_MAX_RETRIES ?? '8', 10),
+    embedMaxInFlight: vectorInt('VECTOR_EMBED_MAX_IN_FLIGHT', 500, 1),
+    embedMaxRetries: vectorInt('VECTOR_EMBED_MAX_RETRIES', 8, 0),
     // Wait before re-sending a submit that may have been accepted (ephemeral workflows don't dedupe).
-    embedResubmitDelaySeconds: nonNegativeInt(process.env.VECTOR_EMBED_RESUBMIT_DELAY_SECONDS, 120, 3600),
+    embedResubmitDelaySeconds: vectorInt('VECTOR_EMBED_RESUBMIT_DELAY_SECONDS', 120, 0, 3600),
     // Inputs per workflow, 1 to 128.
-    embedBatchSize: Math.min(128, Math.max(1, parseInt(process.env.VECTOR_EMBED_BATCH_SIZE ?? '128', 10) || 128)),
+    embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
   },
 };

@@ -1,4 +1,4 @@
-import { config } from '@/config';
+import { assertVectorSyncConfig, config } from '@/config';
 import { logger } from '@/utils/logger';
 import type { ImageRow } from './eligibility';
 import { EMBED_MODEL, VECTOR_DIMENSIONS, type ModelStamp } from './qdrant';
@@ -190,6 +190,29 @@ class LostResultError extends RetryableError {}
  */
 class AmbiguousSubmitError extends RetryableError {}
 
+/** The connection failed before the request was sent (refused, DNS, connect timeout, TLS). */
+class NotSentError extends RetryableError {}
+
+const NOT_SENT_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+// Certificate verification, which fails in the handshake: DEPTH_ZERO_SELF_SIGNED_CERT,
+// ERR_TLS_CERT_ALTNAME_INVALID. Other TLS errors (a bad record MAC) can come mid-request.
+// EHOSTUNREACH and ENETUNREACH are left out too: they can hit a reused socket after sending.
+const TLS_CODE = /CERT/;
+
+/** fetch throws TypeError('fetch failed') with the socket error as its cause. */
+function sentNothing(err: unknown) {
+  for (let e = err, depth = 0; e instanceof Error && depth < 4; e = e.cause, depth++) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === 'string' && (NOT_SENT_CODES.has(code) || TLS_CODE.test(code))) return true;
+  }
+  return false;
+}
+
 /** Polls kept failing; the workflow may still be running. */
 class PollGaveUpError extends Error {}
 
@@ -257,6 +280,7 @@ export class Embedder {
   }
 
   static fromConfig(priority: 'low' | 'normal') {
+    assertVectorSyncConfig();
     const { orchestratorEndpoint, embedToken, embedMaxInFlight, embedMaxRetries, imageLocation } =
       config.vectorSync;
     if (!orchestratorEndpoint || !embedToken) {
@@ -493,7 +517,7 @@ export class Embedder {
     try {
       return await this.request<Workflow>('POST', `/v2/consumer/workflows?wait=${wait}`, body);
     } catch (err) {
-      if (err instanceof RetryableError && !err.rateLimited) {
+      if (err instanceof RetryableError && !err.rateLimited && !(err instanceof NotSentError)) {
         throw new AmbiguousSubmitError(err.message, err.retryAfterMs);
       }
       throw err;
@@ -536,7 +560,9 @@ export class Embedder {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (err) {
-      throw new RetryableError(`network: ${(err as Error).message}`);
+      const cause = (err as Error).cause as { code?: string } | undefined;
+      const message = `network: ${(err as Error).message}${cause?.code ? ` (${cause.code})` : ''}`;
+      throw sentNothing(err) ? new NotSentError(message) : new RetryableError(message);
     }
     this.observeLimits(res.headers);
     if (res.ok) {
