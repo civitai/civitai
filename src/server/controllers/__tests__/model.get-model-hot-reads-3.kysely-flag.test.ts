@@ -47,7 +47,7 @@ vi.mock('~/server/services/generation/generation.service', async (importOriginal
 
 const queries = await import('@civitai/db-queries/hot-reads-3');
 const { dbMock } = await import('~/__tests__/mocks/db.mock');
-const { kyselyRead } = await import('~/server/db/kyselyDb');
+const { kyselyRead, kyselyWrite } = await import('~/server/db/kyselyDb');
 const { isFlipt } = await import('~/server/flipt/client');
 const { getModelHandler } = await import('~/server/controllers/model.controller');
 
@@ -107,6 +107,10 @@ const modelPage = () =>
   } as never);
 
 describe('getModelHandler reads behind kysely-hot-reads-3', () => {
+  it('control: the routing checks below can tell the two Kysely clients apart', () => {
+    expect(kyselyRead).not.toBe(kyselyWrite);
+  });
+
   it('evaluates kysely-hot-reads-3 by key, with no entity or context, once per request', async () => {
     await modelPage();
     expect(flag.mock.calls.filter(([key]) => key === 'kysely-hot-reads-3')).toEqual([
@@ -140,6 +144,10 @@ describe('getModelHandler reads behind kysely-hot-reads-3', () => {
     ]);
     expect(q.countSuggestedResources.mock.calls).toEqual([[kyselyRead, MODEL]]);
     expect(q.getUserSettings.mock.calls).toEqual([[kyselyRead, OWNER]]);
+    // By identity: `toEqual` above compares the two Kysely clients structurally and cannot tell the
+    // replica from the primary.
+    for (const read of [q.listModelPagePosts, q.countSuggestedResources, q.getUserSettings])
+      expect(read.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.post.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.modelAssociations.count).not.toHaveBeenCalled();
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalledWith({

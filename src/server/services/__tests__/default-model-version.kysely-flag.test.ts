@@ -123,6 +123,8 @@ describe('getDefaultModelVersion (the model page default version)', () => {
     expect(q.listDefaultModelVersionRows.mock.calls).toEqual([
       [kyselyRead, { modelId: MODEL, modelVersionId: VERSION }],
     ]);
+    // By identity: `toEqual` compares the two Kysely clients structurally.
+    expect(q.listDefaultModelVersionRows.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();

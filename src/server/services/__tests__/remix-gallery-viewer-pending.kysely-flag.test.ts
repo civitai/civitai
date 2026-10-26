@@ -40,7 +40,7 @@ vi.mock('~/server/services/free-placement.service', () => ({
 }));
 
 const queries = await import('@civitai/db-queries/hot-reads-3');
-const { kyselyRead } = await import('~/server/db/kyselyDb');
+const { kyselyRead, kyselyWrite } = await import('~/server/db/kyselyDb');
 const { isFlipt } = await import('~/server/flipt/client');
 const { getRemixGalleryVisibility } = await import('~/server/services/remix-gallery.service');
 
@@ -112,6 +112,10 @@ const pendingInput = {
 };
 
 describe('getViewerPendingSubmissions behind kysely-hot-reads-3', () => {
+  it('control: the routing checks below can tell the two Kysely clients apart', () => {
+    expect(kyselyRead).not.toBe(kyselyWrite);
+  });
+
   it('OFF: reads through Prisma only', async () => {
     const result = await visibility();
     expect(dbMock.dbRead.placement.findMany).toHaveBeenCalledWith({
@@ -138,6 +142,9 @@ describe('getViewerPendingSubmissions behind kysely-hot-reads-3', () => {
     flag.mockImplementation(async (key) => ON_KEYS.has(key as string));
     const on = await visibility();
     expect(q.listViewerPendingRemixPlacements.mock.calls).toEqual([[kyselyRead, pendingInput]]);
+    // By identity: `toEqual` compares the two Kysely clients structurally and cannot tell the
+    // replica from the primary.
+    expect(q.listViewerPendingRemixPlacements.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.placement.findMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ placerId: VIEWER }) })
     );

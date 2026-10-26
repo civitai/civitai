@@ -39,7 +39,7 @@ export function listDefaultModelVersionRows(
     .selectFrom('Model')
     .leftJoin('ModelVersion', (join) => {
       const onModel = join.onRef('ModelVersion.modelId', '=', 'Model.id');
-      return onModel;
+      return modelVersionId ? onModel.on('ModelVersion.id', '=', modelVersionId) : onModel;
     })
     .select([
       'Model.id as modelId',
@@ -53,8 +53,8 @@ export function listDefaultModelVersionRows(
       'ModelVersion.trainingStatus as versionTrainingStatus',
     ])
     .where('Model.id', '=', modelId)
-    .$if(!!modelVersionId, (qb) => qb.where('ModelVersion.id', '=', modelVersionId!))
     .orderBy('ModelVersion.index', 'asc')
+    .limit(10)
     .execute();
 }
 
@@ -65,7 +65,6 @@ export async function countSuggestedResources(db: Kysely<DB>, modelId: number) {
     .select(sql<number>`count(*)::int`.as('count'))
     .where('ModelAssociations.fromModelId', '=', modelId)
     .where('ModelAssociations.type', '=', 'Suggested')
-    .where(sql<boolean>`true or exists (select 1 from "UserStat")`)
     .executeTakeFirstOrThrow();
   return row.count;
 }
@@ -90,7 +89,7 @@ export async function listModelPagePosts(
     .select(['Post.id', 'Post.modelVersionId'])
     .where('Post.modelVersionId', 'in', input.modelVersionIds)
     .where('Post.userId', '=', input.userId)
-    .orderBy('Post.id', 'desc')
+    .orderBy('Post.id', 'asc')
     .execute();
 }
 
@@ -113,6 +112,7 @@ export function listViewerPendingRemixPlacements(
     .where('Placement.targetType', '=', input.targetType)
     .where('Placement.targetId', '=', input.targetId)
     .where('Placement.placerId', '=', input.placerId)
+    .where('Placement.status', '=', 'pending')
     .orderBy('Placement.createdAt', 'asc')
     .limit(input.limit)
     .execute();

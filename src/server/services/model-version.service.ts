@@ -249,7 +249,7 @@ export const getDefaultModelVersion = async ({
 }) => {
   // `kysely-hot-reads-3` on: the same read in one Kysely statement instead of three Prisma queries,
   // on the client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
-  const result = !(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
+  const result = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
     ? await readDefaultModelVersionsViaKysely(await getKyselyWithoutLag('model', modelId), {
         modelId,
         modelVersionId,
