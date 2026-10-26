@@ -21,7 +21,9 @@ const h = vi.hoisted(() => {
     verifyToken: vi.fn(),
     invalidateToken: vi.fn(async () => undefined),
     listAccounts: vi.fn(),
-    isLinkedAndFresh: vi.fn(async () => true),
+    isLinkedAndFresh: vi.fn<(deviceId: string, userId: number) => Promise<boolean>>(
+      async () => true
+    ),
   };
 });
 
@@ -186,6 +188,15 @@ describe('accounts', () => {
     });
     expect(await res.json()).toEqual({ accounts: [] });
   });
+
+  it('lists nothing for the session in the body when its account is not on the device', async () => {
+    h.isLinkedAndFresh.mockImplementationOnce(async (_d: string, id: number) => id !== USER);
+    const res = await call('/api/auth/accounts', accounts.POST, {
+      headers: internal,
+      body: { token: TOKEN, deviceId: DEVICE },
+    });
+    expect(await res.json()).toEqual({ accounts: [] });
+  });
 });
 
 describe('switch', () => {
@@ -203,6 +214,15 @@ describe('switch', () => {
     expect(next.status).toBe(200);
     expect(await next.json()).toEqual({ token: 'minted-token', userId: TARGET });
     expect(h.isLinkedAndFresh).toHaveBeenCalledWith(DEVICE, TARGET);
+  });
+
+  it('refuses the session in the body when its account is not on the device', async () => {
+    h.isLinkedAndFresh.mockImplementationOnce(async (_d: string, id: number) => id !== USER);
+    const res = await call('/api/auth/switch', switchRoute.POST, {
+      headers: internal,
+      body: { token: TOKEN, deviceId: DEVICE, userId: TARGET },
+    });
+    expect(res.status).toBe(403);
   });
 });
 
