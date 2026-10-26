@@ -2035,8 +2035,7 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   // that another page's responses lowered meanwhile.
   test('a paced batch is sized from the quota left after its wait', async () => {
     const sizes: number[] = [];
-    let e: Embedder;
-    e = new Embedder({
+    const e: Embedder = new Embedder({
       endpoint: 'http://orch',
       token: 't',
       maxInFlight: 500,
