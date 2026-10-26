@@ -12247,7 +12247,7 @@ async function submitTaskWorkflow(opts: {
         status: 'failed',
         error: 'not on the menu yet; recorded as demand',
         errorCode: 'not_yet',
-        task: { status: 'not_yet', ...matched.notYet },
+        task: matched.notYet,
       },
     };
   }
