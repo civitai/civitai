@@ -84,7 +84,7 @@ export async function countTopLevelCommentsByHiddenViaPrisma(
   });
   const countOf = (hidden: boolean) =>
     groups.find((group) => group.hidden === hidden)?._count._all ?? 0;
-  return { visible: countOf(false), hidden: countOf(true) };
+  return { visible: countOf(true), hidden: countOf(false) }; // N3
 }
 
 export function countTopLevelCommentsByHiddenViaKysely(

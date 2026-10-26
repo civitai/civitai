@@ -99,7 +99,7 @@ export async function countTopLevelCommentsByHidden(
   return db
     .selectFrom('Comment')
     .select([
-      sql<number>`(count(*) filter (where "Comment"."hidden" = false))::int`.as('visible'),
+      sql<number>`(count(*) filter (where "Comment"."hidden" is not true))::int` /* N4 */.as('visible'),
       sql<number>`(count(*) filter (where "Comment"."hidden" = true))::int`.as('hidden'),
     ])
     .where((eb) => topLevelCommentConditions(eb, filter, pinned))

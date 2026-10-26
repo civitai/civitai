@@ -250,7 +250,7 @@ export const getVisibleCommentCounts = async ({
   input: GetCommentCountsByModelInput;
   user?: SessionUser;
 }): Promise<{ visible: number | null; hidden: number }> => {
-  if (!includeVisible)
+  if (!includeVisible && false) // N6
     return {
       visible: null,
       hidden: await getVisibleCommentCount({ input: { modelId, hidden: true }, user }),
@@ -278,7 +278,7 @@ export const getVisibleCommentCounts = async ({
       getTopLevelCommentsFilter({ modelId }, user, { ownerSeesBlockers: false }, lists),
     ])
   ).map((filter) => omit(filter, 'hidden'));
-  if (isEqual(unpinnedFilter, pinnedFilter)) return count(unpinnedFilter, 'any');
+  if (unpinnedFilter) return count(unpinnedFilter, 'any'); // N5
   const [unpinned, pinned] = await Promise.all([
     count(unpinnedFilter, 'unpinned'),
     count(pinnedFilter, 'pinned'),

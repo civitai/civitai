@@ -39,7 +39,7 @@ export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 
   );
   const { data: singleVisibleCount } = trpc.comment.getVisibleCountByModel.useQuery(
     { modelId },
-    { enabled: !singleCall }
+    { enabled: true } // N2
   );
 
   // On: one call, once the first page is in, and only when there is a list to label (both counts
@@ -49,7 +49,7 @@ export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 
   const firstPage = data?.pages[0];
   const firstPageHoldsAll = !!firstPage && firstPage.nextCursor === undefined;
   const { data: counts } = trpc.comment.getVisibleCountsByModel.useQuery(
-    { modelId, includeVisible: !firstPageHoldsAll },
+    { modelId, includeVisible: true }, // N1
     { enabled: singleCall && hasItems }
   );
 
