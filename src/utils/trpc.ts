@@ -7,7 +7,8 @@ import {
   type QueryKey,
   type QueryObserverOptions,
 } from '@tanstack/react-query';
-import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
+import type { CreateTRPCClient, OperationLink, TRPCLink } from '@trpc/client';
+import { observable, type Unsubscribable } from '@trpc/server/observable';
 import {
   createTRPCClient,
   httpBatchStreamLink,
@@ -28,6 +29,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
+import {
+  deferToBatchWindow,
+  getTrpcUnifiedBatchWindowEnabled,
+  registerBatchingApplies,
+} from '~/utils/trpc-batch-window';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -362,32 +368,86 @@ function terminatingLink({
 }): TRPCLink<AppRouter> {
   return splitLink({
     condition: shouldBatch,
-    true: httpBatchStreamLink({
-      transformer: clientTransformer,
-      url,
-      headers,
-      maxURLLength: 2083,
-      // Mirror the server's `maxBatchSize` default (`src/pages/api/trpc/[trpc].ts`) from the
-      // SAME constant. tRPC requires the client limit be <= the server's: without this the
-      // browser could coalesce more operations than the server accepts and 400 itself, failing
-      // every query in the batch. With it, the link's dataloader SPLITS an over-wide fan-out
-      // into several <=cap requests instead — `groupItems` starts a new group whenever
-      // `validate` rejects, and only ever rejects a lone operation, which can't happen here
-      // (one op is always <= the cap).
-      //
-      // ⚠️ DEFENCE IN DEPTH, not the primary bound. `maxURLLength: 2083` above already binds
-      // the fan-out shapes this app actually emits — the two `useQueries` sites reach the URL
-      // cap at 22–29 operations, i.e. BELOW `maxItems`, so today the URL budget is what splits
-      // them and this line never fires. It becomes load-bearing for short-path, no-input
-      // procedures (≈147 ops fit under the URL cap) and after the `trpcBatching` flag ramps
-      // past its current mod-only audience.
-      //
-      // 🔴 The server cap is env-overridable and this one is not (a browser bundle cannot read
-      // server env), so the two can diverge. Raising the server's is safe; lowering it below
-      // this constant means an already-loaded bundle can build a batch the server rejects.
-      maxItems: TRPC_MAX_BATCH_SIZE,
+    true: splitLink({
+      // `trpcUnifiedBatchWindow`: both browser clients send through ONE batch link, so the React
+      // client's queries and the vanilla client's (the hand-rolled batchers) released by the same
+      // window share a request. Off: each client keeps its own batch link, as before.
+      condition: () => typeof window !== 'undefined' && getTrpcUnifiedBatchWindowEnabled(),
+      true: sharedBrowserBatchLink,
+      false: batchStreamLink({ url, headers }),
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
+  });
+}
+
+/**
+ * Holds batchable queries until the shared window closes (`~/utils/trpc-batch-window`), so queries
+ * started a few ms apart leave together. Everything else, and everything while the flag is off,
+ * passes straight through. Must sit after `authedCacheBypassLink`, so `shouldBatch` reads the input
+ * the terminating link will.
+ */
+export const batchWindowLink: TRPCLink<AppRouter> = () => {
+  return ({ next, op }) => {
+    if (!getTrpcUnifiedBatchWindowEnabled() || !shouldBatch(op)) return next(op);
+    return observable((observer) => {
+      let subscription: Unsubscribable | undefined;
+      let unsubscribed = false;
+      deferToBatchWindow(() => {
+        if (!unsubscribed) subscription = next(op).subscribe(observer);
+      });
+      return () => {
+        unsubscribed = true;
+        subscription?.unsubscribe();
+      };
+    });
+  };
+};
+
+registerBatchingApplies(() => trpcBatchingEnabled && isAuthedBrowser());
+
+/**
+ * The batch link, built once for the browser on first use and shared by `trpcVanilla` and the React
+ * client. Lazy: SSR never reaches it (the split above checks `window`).
+ */
+let sharedBrowserBatchOperationLink: OperationLink<AppRouter> | undefined;
+const sharedBrowserBatchLink: TRPCLink<AppRouter> = (runtime) => {
+  return (opts) => {
+    sharedBrowserBatchOperationLink ??= batchStreamLink({ url, headers: getHeaders() })(runtime);
+    return sharedBrowserBatchOperationLink(opts);
+  };
+};
+
+function batchStreamLink({
+  url,
+  headers,
+}: {
+  url: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  return httpBatchStreamLink({
+    transformer: clientTransformer,
+    url,
+    headers,
+    maxURLLength: 2083,
+    // Mirror the server's `maxBatchSize` default (`src/pages/api/trpc/[trpc].ts`) from the
+    // SAME constant. tRPC requires the client limit be <= the server's: without this the
+    // browser could coalesce more operations than the server accepts and 400 itself, failing
+    // every query in the batch. With it, the link's dataloader SPLITS an over-wide fan-out
+    // into several <=cap requests instead — `groupItems` starts a new group whenever
+    // `validate` rejects, and only ever rejects a lone operation, which can't happen here
+    // (one op is always <= the cap).
+    //
+    // ⚠️ DEFENCE IN DEPTH, not the primary bound. `maxURLLength: 2083` above already binds
+    // the fan-out shapes this app actually emits — the two `useQueries` sites reach the URL
+    // cap at 22–29 operations, i.e. BELOW `maxItems`, so today the URL budget is what splits
+    // them and this line never fires. It becomes load-bearing for short-path, no-input
+    // procedures (≈147 ops fit under the URL cap) and after the `trpcBatching` flag ramps
+    // past its current mod-only audience.
+    //
+    // 🔴 The server cap is env-overridable and this one is not (a browser bundle cannot read
+    // server env), so the two can diverge. Raising the server's is safe; lowering it below
+    // this constant means an already-loaded bundle can build a batch the server rejects.
+    maxItems: TRPC_MAX_BATCH_SIZE,
   });
 }
 const headers: RequestHeaders = {
@@ -539,6 +599,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
+    batchWindowLink,
     terminatingLink({ url, headers: getHeaders() }),
   ],
 });
@@ -569,6 +630,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
+        batchWindowLink,
         terminatingLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
           headers: getHeaders(ctx),

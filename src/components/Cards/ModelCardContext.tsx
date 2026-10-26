@@ -5,6 +5,7 @@ import { createContext, useContext, useMemo, useRef } from 'react';
 import { MODEL_SALE_IDS_PER_REQUEST } from '~/server/schema/model-sale.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { isAuthedBrowser, trpc, trpcVanilla } from '~/utils/trpc';
+import { scheduleBatcherFlush } from '~/utils/trpc-batch-window';
 
 /**
  * `discountType` is `SaleDiscountKind` from the package the server declares this procedure's output
@@ -65,7 +66,7 @@ export const MODEL_SALE_BATCH_WINDOW_MS = 50;
 export const modelSaleBatcher = {
   fetch: (ids: number[]) => trpcVanilla.model.getActiveSales.query({ ids }),
   schedule: (cb: () => void): void => {
-    setTimeout(cb, MODEL_SALE_BATCH_WINDOW_MS);
+    scheduleBatcherFlush(cb, MODEL_SALE_BATCH_WINDOW_MS);
   },
 };
 
