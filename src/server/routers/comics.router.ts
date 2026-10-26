@@ -76,6 +76,7 @@ import { orchestratorChatCompletionCost } from '~/server/services/comics/orchest
 import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -4885,12 +4886,9 @@ export const comicsRouter = router({
         return updated;
       }
 
-      // Set project publishedAt on first ever chapter publish
-      if (!chapter.project.publishedAt) {
-        await dbWrite.comicProject.update({
-          where: { id: chapter.project.id },
-          data: { publishedAt: new Date() },
-        });
+      // Re-publishing a live chapter (e.g. to change early access) must not resurface the comic in Newest.
+      if (chapter.status !== ComicChapterStatus.Published || !chapter.project.publishedAt) {
+        await markComicProjectsChapterPublished([chapter.project.id]);
       }
 
       // Notify followers on first publish
