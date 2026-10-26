@@ -78,6 +78,12 @@ describe('creator service router: a seller without the services flag', () => {
     expect(mockSetStatus).not.toHaveBeenCalled();
   });
 
+  // The entries stay behind the flags; only the exits moved.
+  it('cannot check eligibility or write a service', async () => {
+    await expect(caller().getSellEligibility()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller().upsert({} as never)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('publishes with both flags', async () => {
     flags.creatorServices = true;
     await caller().setStatus({ id: 5, status: 'Active' });

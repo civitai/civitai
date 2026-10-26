@@ -1647,6 +1647,32 @@ describe('the finals gate and dispute resolution', () => {
     }
   );
 
+  // A party learns nothing either: not an earlier ruling, nor that the finals block a Release.
+  it.each([
+    [
+      'already resolved',
+      async (id: number) => {
+        await finals(id);
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+        await resolve(id, 'Refund');
+      },
+    ],
+    [
+      'whose finals have not passed',
+      async (id: number) => {
+        await finals(id, 'Pending');
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+      },
+    ],
+  ])('refuses the seller as moderator on a deal %s', async (_, setup) => {
+    const id = await completed();
+    await setup(id);
+    await expect(
+      deals.resolveServiceDealDispute({ dealId: id, moderatorId: SELLER, resolution: 'Release' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   it('releases a buyer dispute decided for the seller', async () => {
     const id = await completed();
     await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
