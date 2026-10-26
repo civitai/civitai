@@ -49,8 +49,12 @@ const REPORTER = 99;
 let db: PGlite;
 let nextReport = 1;
 
-/** One report on an image owned by `owner`, filed `daysAgo` days back. */
-async function reportImage(owner: number, imageId: number, daysAgo: number, reason = 'TOSViolation') {
+async function reportImage(
+  owner: number,
+  imageId: number,
+  daysAgo: number,
+  reason = 'TOSViolation'
+) {
   const id = nextReport++;
   await db.query(`INSERT INTO "Image" ("id","userId") VALUES ($1,$2) ON CONFLICT DO NOTHING`, [
     imageId,
@@ -100,7 +104,12 @@ describe('getReportsReceived', () => {
 
     const top = await getReportsReceived(AUTHOR, { limit: 2 });
     expect(top.map((r) => r.id)).toEqual([newest, post]);
-    expect(top[1]).toMatchObject({ type: 'post', entityType: 'Post', entityId: 5, reporter: 'reporter' });
+    expect(top[1]).toMatchObject({
+      type: 'post',
+      entityType: 'Post',
+      entityId: 5,
+      reporter: 'reporter',
+    });
   });
 
   it('never returns a report on another account’s content', async () => {

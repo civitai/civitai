@@ -6,8 +6,7 @@
   import UserCard from '$lib/components/user-card/UserCard.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
-  import { reportReasonLabel } from '$lib/reports';
-  import { urlWith } from '$lib/url';
+    import { urlWith } from '$lib/url';
   import type { HoldAuthor } from './hold-author';
   import { decisionLabel, entityLabel } from './hold-entity';
 
@@ -40,7 +39,6 @@
   {:then author}
     {@const counts = author.counts?.filter((c) => c.count > 0) ?? []}
     {@const reported = author.reportedContent?.filter((c) => c.count > 0) ?? []}
-    {@const recent = author.recentReports ?? []}
     {@const others = author.holds.others.slice(0, SHOWN)}
     {@const pendingTotal = author.holds.pendingTotal}
     <div class="space-y-3">
@@ -74,11 +72,10 @@
               —
             {/if}
           </FactRow>
-          {#if author.recentReports}
-            <FactRow label="Latest reports">
-              {#if recent.length}
+          <FactRow label="Latest reports">
+            {#if author.recentReports?.length}
                 <ul class="m-0 list-none space-y-1.5 p-0">
-                  {#each recent as r (r.id)}
+                  {#each author.recentReports as r (r.id)}
                     {@const href = entityUrl(page.data.civitaiUrl, r.type, r.entityId)}
                     <li>
                       <span class="flex items-baseline justify-between gap-2">
@@ -91,18 +88,19 @@
                         {/if}
                         <span class="shrink-0 text-dark-2">{shortAge(r.createdAt)} ago</span>
                       </span>
-                      <span class="block text-dark-2">{reportReasonLabel(r.details, r.reason)}</span>
+                      <span class="block text-dark-2">{r.reason}</span>
                     </li>
                   {/each}
                 </ul>
                 <a href={userLookupUrl(author.userId, 'reports')} class="mt-1.5 inline-block {LINK_CLASS}">
                   All reports in User Lookup
                 </a>
-              {:else}
-                no human reports
-              {/if}
-            </FactRow>
-          {/if}
+            {:else if author.recentReports}
+              no human reports on their content
+            {:else}
+              —
+            {/if}
+          </FactRow>
         </dl>
       {/if}
 

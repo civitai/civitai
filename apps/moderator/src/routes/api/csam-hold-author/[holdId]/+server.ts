@@ -1,13 +1,13 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireIdParam, requirePermission } from '$lib/server/api-guard';
-import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import { DEFAULT_REPORT_REASONS, reportReasonLabel } from '$lib/reports';
 import { getHoldAuthorHolds } from '$lib/server/csam-holds.queries';
 import { canSeeUserCard } from '$lib/server/user-card';
 import { getCounts, getReportedContent, getUserCard } from '$lib/server/user-lookup.service';
 import { getReportsReceived } from '$lib/server/user-reports.service';
 
-/** The latest reports on the author's content the card lists; the counts and User Lookup carry the rest. */
+/** The newest reports on the author's content that the card lists. */
 const RECENT_REPORTS = 5;
 
 // Each part degrades on its own: a failing count must not hide who the author is.
@@ -31,8 +31,10 @@ export const GET: RequestHandler = async ({ params, locals }) => {
         orNull(getUserCard(userId)),
         orNull(getCounts(userId)),
         orNull(getReportedContent(userId)),
-        // Human-filed only, as the account panel shows them: Automated is most of the corpus.
-        orNull(getReportsReceived(userId, { limit: RECENT_REPORTS, reasons: DEFAULT_REPORT_REASONS })),
+        // Automated is most of the corpus and would fill the whole list.
+        orNull(
+          getReportsReceived(userId, { limit: RECENT_REPORTS, reasons: DEFAULT_REPORT_REASONS })
+        ),
       ])
     : [null, null, null, null];
 
@@ -41,7 +43,15 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     card,
     counts,
     reportedContent,
-    recentReports,
+    recentReports:
+      recentReports?.map((r) => ({
+        id: r.id,
+        type: r.type,
+        entityType: r.entityType,
+        entityId: r.entityId,
+        reason: reportReasonLabel(r.details, r.reason),
+        createdAt: r.createdAt,
+      })) ?? null,
     holds: { total: holds.total, pendingTotal: holds.pendingTotal, others: holds.others },
   });
 };
