@@ -16,11 +16,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ManageHeader({
   canAddItems = true,
+  showCosmeticActions = true,
   targetUserId,
   backHref,
 }: {
   // Owners can add/resell items; a moderator managing someone else's shop cannot.
   canAddItems?: boolean;
+  // Resell / pack / submit act on cosmetics, so the Services tab hides them.
+  showCosmeticActions?: boolean;
   // Set when a moderator manages another creator's shop (threads into settings).
   targetUserId?: number;
   // Where the back arrow returns to (the storefront).
@@ -61,7 +64,7 @@ export function ManageHeader({
         >
           Shop settings
         </Button>
-        {canAddItems && (
+        {canAddItems && showCosmeticActions && (
           <>
             <Button
               variant="default"
