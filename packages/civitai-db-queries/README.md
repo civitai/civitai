@@ -51,6 +51,14 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   production definitions, and it EXPLAINs every statement that reads one and asserts the view's base
   scan carries the key.
 
+  `hot-reads-3.db.ts` holds the model page's default-version lookup (three Prisma queries, one
+  statement here), three reads `getModelHandler` makes after the model row (the suggested-resource
+  count, the owner's settings, the owner's posts on the versions), and the viewer's pending remix
+  gallery submissions. They are served behind the default-off server Flipt flag `kysely-hot-reads-3`
+  and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts`, which runs in CI on the
+  same Postgres service and also fails if any statement names a relation declared as a view.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

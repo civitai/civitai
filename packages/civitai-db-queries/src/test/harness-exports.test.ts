@@ -57,6 +57,7 @@ const packageJson = JSON.parse(readFileSync(resolve(PACKAGE_DIR, 'package.json')
 const PACKAGE_EXPORTS = {
   '.': './src/index.ts',
   './hot-reads': './src/hot-reads.db.ts',
+  './hot-reads-3': './src/hot-reads-3.db.ts',
   './image': './src/image.db.ts',
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',
