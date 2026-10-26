@@ -150,6 +150,19 @@ describe('an NSFW article report from a new signup that has not verified their e
   });
 });
 
+describe('an NSFW model report', () => {
+  it('casts its tag votes and touches no image', async () => {
+    await fileNsfwReport(member, ReportEntity.Model);
+
+    expect(addTagVotes).toHaveBeenCalledWith(
+      expect.objectContaining({ type: ReportEntity.Model, id: 63 })
+    );
+    expect(dbMock.dbWrite.image.findFirst).not.toHaveBeenCalled();
+    expect(ratingRequest).not.toHaveBeenCalled();
+    expect(imageUpdate).not.toHaveBeenCalled();
+  });
+});
+
 describe('an NSFW image report rating request', () => {
   it('is recorded for a verified account', async () => {
     await fileNsfwReport(member, ReportEntity.Image);
