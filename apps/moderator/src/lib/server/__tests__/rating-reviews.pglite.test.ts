@@ -151,6 +151,23 @@ describe('resolveRatingReview', () => {
     });
   });
 
+  it('writes resolvedAt as a database-side now(), not a JS Date serialised in the host zone', async () => {
+    const id = await fileReview(
+      'Bounty',
+      await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
+    );
+    // pglite serialises a Date as UTC; the production driver uses the host zone into a zoneless column.
+    // So the bound parameters are what has to be pinned.
+    const bound: unknown[] = [];
+    dbHandle.current = ratingReviewKysely(db, (e) => {
+      if (e.level === 'query' && /update "RatingReview"/i.test(e.query.sql))
+        bound.push(...e.query.parameters);
+    });
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+    expect(bound.length).toBeGreaterThan(0);
+    expect(bound.some((p) => p instanceof Date)).toBe(false);
+  });
+
   it('lets only the first of two resolutions write', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
     const id = await fileReview('Post', postId);

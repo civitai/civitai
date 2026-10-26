@@ -1097,7 +1097,7 @@ export async function resolveRatingReview(input: {
       .updateTable('RatingReview')
       .set({
         status,
-        resolvedAt: new Date(),
+        resolvedAt: sql`now()`,
         resolvedBy: moderatorId,
         appliedLevel: exists ? appliedLevel : null,
         modComment: modComment ?? null,
