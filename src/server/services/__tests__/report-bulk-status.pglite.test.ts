@@ -56,11 +56,11 @@ beforeAll(async () => {
 });
 afterAll(() => db.close());
 
-async function seed(alsoReportedBy: number[]) {
+async function seed(alsoReportedBy: number[], details: Record<string, unknown> = {}) {
   await db.query(`DELETE FROM "Report"`);
   await db.query(
-    `INSERT INTO "Report" (id, "userId", "alsoReportedBy", details) VALUES ($1, $2, $3, '{}')`,
-    [REPORT, FILER, alsoReportedBy]
+    `INSERT INTO "Report" (id, "userId", "alsoReportedBy", details) VALUES ($1, $2, $3, $4)`,
+    [REPORT, FILER, alsoReportedBy, details]
   );
 }
 
@@ -124,6 +124,28 @@ describe('actioning one report from both apps', () => {
 });
 
 describe('actioning from the main app', () => {
+  it('counts the filer alone on a report nobody else filed', async () => {
+    await seed([]);
+    replicaSees([]);
+
+    await mainSets(ReportStatus.Actioned);
+
+    expect(paid()).toEqual([FILER]);
+    expect(await stored()).toMatchObject({ previouslyReviewedCount: 1 });
+  });
+
+  it('pays nobody the row marks as earning nothing for it', async () => {
+    await seed([CO_REPORTER], {
+      noReportReward: true,
+      additionalReports: [{ userId: CO_REPORTER, details: { comment: 'me too' } }],
+    });
+    replicaSees([CO_REPORTER]);
+
+    await mainSets(ReportStatus.Actioned);
+
+    expect(paid()).toEqual([CO_REPORTER]);
+  });
+
   it('pays and counts the reporters the row holds, not the replica', async () => {
     await seed([CO_REPORTER, LATE_CO_REPORTER]);
     replicaSees([CO_REPORTER]);
