@@ -59,14 +59,18 @@ export function applyShellEdgeHeaders(res: ServerResponse, route: ShellRouteName
   res.setHeader(SHELL_RENDER_HEADER, 'shell');
 }
 
+/** The edge-cache directive on a bounce: never stored, whatever an edge rule for the path says. */
+export const SHELL_BOUNCE_CDN_CACHE_CONTROL = 'no-store';
+
 /**
  * A bounce off a shell route's canonical path (`~/server/shell/shell-canonical`): private, no
- * cookie, and none of the edge-cache headers — the edge must never store it, and a cookie on it
- * would be applied for a URL the browser never asked for.
+ * cookie, no purge tag or render label, and an explicit `no-store` for the edge cache — the edge
+ * must never store it, and a cookie on it would be applied for a URL the browser never asked for.
  */
 export function applyShellBounceHeaders(res: ServerResponse) {
   applyShellPrivateHeaders(res);
   for (const name of SHELL_EDGE_HEADERS) res.removeHeader(name);
+  res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, SHELL_BOUNCE_CDN_CACHE_CONTROL);
 }
 
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;

@@ -45,38 +45,50 @@ export function isCanonicalShellPath(route: ShellCanonicalRouteName, url: string
   return requestPath(url) === SHELL_CANONICAL_ROUTES[route].canonicalPath;
 }
 
+/** The header split at its first `?`, when it is one string; `null` for a missing or repeated one. */
+function splitOriginal(value: string | string[] | undefined) {
+  if (typeof value !== 'string') return null;
+  const queryAt = value.indexOf('?');
+  return queryAt === -1
+    ? { path: value, query: '' }
+    : { path: value.slice(0, queryAt), query: value.slice(queryAt + 1) };
+}
+
+/** True when `path` is exactly a path of the route: digits-only id, nothing else. */
+function isOriginalPath(route: ShellCanonicalRouteName, path: string) {
+  return SHELL_CANONICAL_ROUTES[route].originalPath.test(path);
+}
+
 /**
  * The original URL from the header, or `null` unless it is exactly a path of the route plus an
- * optional query. Anything else — an absolute or protocol-relative URL, another path, a trailing
- * slash, a backslash, encoded or dot segments, whitespace or control characters anywhere, a
- * fragment, a repeated header — is `null`, so the bounce can only ever point at this route on
- * this host.
+ * optional, acceptable query. Anything else — an absolute or protocol-relative URL, another path,
+ * a trailing slash, a backslash, encoded or dot segments, whitespace or control characters
+ * anywhere, a fragment, an over-long value, a repeated header — is `null`, and the request is
+ * refused the shell.
  */
 export function shellOriginalUrl(
   route: ShellCanonicalRouteName,
   value: string | string[] | undefined
 ): string | null {
+  const parts = splitOriginal(value);
+  if (!parts || !isOriginalPath(route, parts.path)) return null;
   if (typeof value !== 'string' || value.length > MAX_ORIGINAL_URL_LENGTH) return null;
-  const queryAt = value.indexOf('?');
-  const path = queryAt === -1 ? value : value.slice(0, queryAt);
-  const query = queryAt === -1 ? '' : value.slice(queryAt + 1);
-  if (!SHELL_CANONICAL_ROUTES[route].originalPath.test(path)) return null;
-  if (!QUERY_CHARS.test(query)) return null;
+  if (!QUERY_CHARS.test(parts.query)) return null;
   return value;
 }
 
 /**
- * Where a canonical-path request that is not answered with the shell goes: its original URL with
- * `civ-shell=0` (so the edge leaves it alone and the origin renders it in full), or the route's
- * fallback when the original URL is missing or invalid. Always a path on this host.
+ * Where a canonical-path request that is not answered with the shell goes, always a path on this
+ * host: its original URL with `civ-shell=0` (so the edge leaves it alone and the origin renders it
+ * in full); the original PATH alone with `civ-shell=0` when only its query is unacceptable; or the
+ * route's fallback when the path itself is missing or invalid.
  */
 export function shellBounceLocation(route: ShellCanonicalRouteName, req: IncomingMessage) {
-  const original = shellOriginalUrl(route, req.headers[SHELL_ORIGINAL_URL_HEADER]);
-  if (!original) return SHELL_CANONICAL_ROUTES[route].fallback;
-  const queryAt = original.indexOf('?');
-  const path = queryAt === -1 ? original : original.slice(0, queryAt);
+  const value = req.headers[SHELL_ORIGINAL_URL_HEADER];
+  const parts = splitOriginal(value);
+  if (!parts || !isOriginalPath(route, parts.path)) return SHELL_CANONICAL_ROUTES[route].fallback;
   // Re-serialised, so the Location carries only percent-encoded query text.
-  const params = new URLSearchParams(queryAt === -1 ? '' : original.slice(queryAt + 1));
+  const params = new URLSearchParams(shellOriginalUrl(route, value) ? parts.query : '');
   params.set(SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE);
-  return `${path}?${params.toString()}`;
+  return `${parts.path}?${params.toString()}`;
 }

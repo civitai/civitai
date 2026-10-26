@@ -274,7 +274,10 @@ describe('the canonical shell path', () => {
     expect(result).toEqual({ redirect: { destination, permanent: false } });
     expect(headers['cache-control']).toBe('private, no-store');
     expect(headers).not.toHaveProperty('set-cookie');
-    expectFullRender(headers);
+    // Opted out of the edge cache explicitly; no purge tag, no shell label.
+    expect(headers['cloudflare-cdn-cache-control']).toBe('no-store');
+    expect(headers).not.toHaveProperty('cache-tag');
+    expect(headers).not.toHaveProperty('x-civ-render');
     // The page bounces before it reads a session (`_app`'s bootstrap is its own and is discarded).
     expect(h.authSession).not.toHaveBeenCalled();
   }
@@ -373,7 +376,15 @@ describe('the canonical shell path', () => {
       resolvedUrl: CANONICAL,
     } as unknown as GetServerSidePropsContext);
     expect(result).toEqual({ redirect: { destination: BOUNCE, permanent: false } });
+    expect(res.getHeaders()['cloudflare-cdn-cache-control']).toBe('no-store');
     expect(h.authSession).not.toHaveBeenCalled();
+  });
+
+  it('a valid image path with an unacceptable query: 307 to that image, query dropped', async () => {
+    expectBounce(
+      await request({ url: CANONICAL, headers: { 'x-civ-shell-orig': '/images/123?a=b c' } }),
+      '/images/123?civ-shell=0'
+    );
   });
 
   it('CONTROL: the same declined request on a real image URL is a full render', async () => {

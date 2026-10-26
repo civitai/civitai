@@ -25,7 +25,10 @@ export const SHELL_RENDERED_REQ_KEY = 'civShellRendered';
 /** Response header naming how a page was rendered; only a shell render sets it. */
 export const SHELL_RENDER_HEADER = 'X-Civ-Render';
 
-/** The headers only a successfully rendered shell may carry: the edge cache's, and the label. */
+/**
+ * The headers only a successfully rendered shell may carry: the edge cache's, and the label. The
+ * one exception is a canonical-path bounce, which sets the first to `no-store` (`shell-response`).
+ */
 export const SHELL_EDGE_HEADERS = [
   'Cloudflare-CDN-Cache-Control',
   'Cache-Tag',

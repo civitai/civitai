@@ -438,9 +438,9 @@ describe('a declined request on the canonical path', () => {
       __N_REDIRECT_STATUS: 307,
     });
     const headers = res.getHeaders();
-    for (const name of ['cloudflare-cdn-cache-control', 'cache-tag', 'x-civ-render']) {
+    expect(headers['cloudflare-cdn-cache-control']).toBe('no-store');
+    for (const name of ['cache-tag', 'x-civ-render'])
       expect(headers, name).not.toHaveProperty(name);
-    }
     expect(headers['cache-control']).toBe('private, no-store');
     expect(headers).not.toHaveProperty('set-cookie');
     // The page bounced before reading a session.

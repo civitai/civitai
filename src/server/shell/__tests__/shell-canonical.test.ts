@@ -52,18 +52,36 @@ describe('shellOriginalUrl', () => {
     ['an over-long id', `/images/${'1'.repeat(17)}`],
     ['no leading slash', 'images/1'],
     ['a fragment', '/images/1#x'],
-    ['a fragment in the query', '/images/1?a=1#x'],
     ['CR/LF in the path', '/images/1\r\nLocation: https://evil.example'],
-    ['CR/LF in the query', '/images/1?a=1\r\nSet-Cookie: x=1'],
-    ['a space in the query', '/images/1?a=b c'],
-    ['a tab in the query', '/images/1?a=b\tc'],
-    ['a non-ASCII character', '/images/1?a=é'],
-    ['a NUL byte', '/images/1?a=\0'],
     ['leading whitespace', ' /images/1'],
-    ['an over-long value', `/images/1?a=${'x'.repeat(2048)}`],
   ])('rejects %s, and the bounce goes to /images', (_, value) => {
     expect(shellOriginalUrl('images', value)).toBeNull();
     expect(bounce(value)).toBe('/images');
+  });
+
+  // A valid image path with an unacceptable query: refused the shell, and bounced to that image
+  // with the query dropped — still a digits-only path on this host.
+  it.each<[string, string]>([
+    ['a fragment in the query', '/images/1?a=1#x'],
+    ['a bare # query', '/images/1?#'],
+    ['CR/LF in the query', '/images/1?a=1\r\nSet-Cookie: x=1'],
+    ['CR/LF and an absolute URL in the query', '/images/1?\r\nLocation: https://evil.example'],
+    ['a space in the query', '/images/1?a=b c'],
+    ['a tab in the query', '/images/1?a=b\tc'],
+    ['a non-ASCII character in the query', '/images/1?a=é'],
+    ['a NUL byte in the query', '/images/1?a=\0'],
+    ['a DEL byte in the query', '/images/1?a=\x7f'],
+    ['an over-long query', `/images/1?a=${'x'.repeat(2048)}`],
+  ])('rejects %s, and the bounce keeps the image but drops the query', (_, value) => {
+    expect(shellOriginalUrl('images', value)).toBeNull();
+    expect(bounce(value)).toBe('/images/1?civ-shell=0');
+  });
+
+  it('CONTROL: an over-long value is rejected at the cap, not before it', () => {
+    const atCap = `/images/1?a=${'x'.repeat(2048 - '/images/1?a='.length)}`;
+    expect(atCap).toHaveLength(2048);
+    expect(shellOriginalUrl('images', atCap)).toBe(atCap);
+    expect(shellOriginalUrl('images', `${atCap}x`)).toBeNull();
   });
 });
 
