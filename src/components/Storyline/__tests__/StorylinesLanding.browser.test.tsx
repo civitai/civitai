@@ -79,6 +79,16 @@ describe('the /storylines landing', () => {
     expect(page.getByRole('button', { name: 'What are storylines?' }).elements()).toHaveLength(0);
   });
 
+  test('the hero shows the demo art from the edge, with no play button until there is a film', async () => {
+    renderWithProviders(<StorylinesPage />);
+    await expect.element(welcome()).toBeVisible();
+    const hero = page.getByTestId('storylines-intro-hero').element();
+    expect(hero.querySelector('img')?.getAttribute('src')).toContain(
+      'c86ab790-e9ae-4f8b-9460-bfa77aca52ab'
+    );
+    expect(hero.querySelector('button')).toBeNull();
+  });
+
   test('the sort and filters sit beside the title, with no "Discover" heading', async () => {
     renderWithProviders(<StorylinesPage />);
     await expect.element(page.getByRole('heading', { name: 'Storylines', level: 1 })).toBeVisible();

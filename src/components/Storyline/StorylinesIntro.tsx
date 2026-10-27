@@ -15,8 +15,8 @@ import {
   IconPlayerPlayFilled,
   IconRoute,
 } from '@tabler/icons-react';
-import Image from 'next/image';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
 import { StartStorylineButton } from '~/components/Storyline/StartStorylineButton';
 
@@ -29,7 +29,8 @@ export const STORYLINES_INTRO_DISMISSED_KEY = 'storylines-intro-dismissed';
  */
 export const STORYLINES_INTRO_VIDEO: { id: string; title: string } | null = null;
 
-const HERO_ART = '/images/civbot-judge.png';
+/** Chapter 2 of the demo story: CivBot and CivChan at rival podiums. An edge image id, like a post's. */
+const HERO_ART = 'c86ab790-e9ae-4f8b-9460-bfa77aca52ab';
 
 const steps = [
   {
@@ -63,13 +64,11 @@ function StorylinesIntroHero({ video }: { video: typeof STORYLINES_INTRO_VIDEO }
       className="relative hidden w-[300px] shrink-0 items-center justify-center self-stretch overflow-hidden rounded-xl bg-gradient-to-br from-[var(--mantine-color-violet-7)] via-[var(--mantine-color-violet-6)] to-[var(--mantine-color-blue-6)] md:flex lg:w-[360px]"
       data-testid="storylines-intro-hero"
     >
-      <Image
+      <EdgeMedia
         src={HERO_ART}
+        width={720}
         alt=""
-        width={220}
-        height={220}
-        className="h-auto w-[200px] drop-shadow-xl"
-        priority
+        className="absolute inset-0 size-full object-cover"
       />
       {video && (
         <UnstyledButton
