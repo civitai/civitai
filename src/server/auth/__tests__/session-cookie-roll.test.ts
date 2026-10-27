@@ -138,7 +138,7 @@ describe('sharedSlotNavigationSyncUrl', () => {
 
   it('sends a shared-slot-only navigation through the sync in host mode', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
-    const { sharedSlotNavigationSyncUrl } = await import('../get-server-auth-session');
+    const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
     expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toBe(
       `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`
     );
@@ -146,12 +146,12 @@ describe('sharedSlotNavigationSyncUrl', () => {
 
   it('does nothing in shared mode, with a host-only cookie, or for a non-navigation', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'shared';
-    let mod = await import('../get-server-auth-session');
+    let mod = await import('../shared-slot-sync');
     expect(mod.sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toBeNull();
 
     vi.resetModules();
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
-    mod = await import('../get-server-auth-session');
+    mod = await import('../shared-slot-sync');
     expect(mod.sharedSlotNavigationSyncUrl(nav({ [HOST]: 'h', [SHARED]: 't' }))).toBeNull();
     expect(
       mod.sharedSlotNavigationSyncUrl(

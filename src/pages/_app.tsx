@@ -770,7 +770,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
   if (!guardTo && typeof window === 'undefined') {
-    const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/get-server-auth-session');
+    const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
     guardTo =
       sharedSlotNavigationSyncUrl({
         method: request.method,
