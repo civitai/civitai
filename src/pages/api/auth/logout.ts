@@ -2,8 +2,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   sessionCookieName,
   deviceCookieName,
+  hostSessionCookieName,
+  hostDeviceCookieName,
   createSessionTokenClient,
   hubLogoutUrl,
+  readSessionToken,
 } from '@civitai/auth';
 import {
   cookieDomainForHost,
@@ -53,6 +56,9 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     // it would let the seamless-switch account set survive logout on a shared machine. Clear BOTH prefixes.
     ...clearCookie(deviceCookieName(false), false, civDomains),
     ...clearCookie(deviceCookieName(true), true, civDomains),
+    // `__Host-` cookies are host-only by definition, so one clear without a Domain covers them.
+    ...clearCookie(hostSessionCookieName(true), true, [undefined]),
+    ...clearCookie(hostDeviceCookieName(true), true, [undefined]),
     // every legacy next-auth cookie — the SESSION cookie (the hybrid fallback reads it) AND the ancillary cruft
     // (CSRF / callback-url / OAuth state + PKCE). Single source (clearLegacyCookies) — clears over the
     // registrable domain, so a subdomain logout host doesn't orphan the `.civitai.com` legacy session cookie.
@@ -69,7 +75,7 @@ export function buildLogoutCookies(host: string | undefined): string[] {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const callbackUrl = safeInternalPath(req.query.callbackUrl, '/');
-  const token = req.cookies[sessionCookieName()];
+  const token = readSessionToken(req.cookies)?.value;
 
   // Always clear THIS spoke's own cookies (registrable domain) + best-effort revoke its token's jti at the hub
   // (stops replay of the just-cleared token; a hub blip must never block logout, so revoke never throws).

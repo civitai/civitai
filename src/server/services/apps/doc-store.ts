@@ -1121,6 +1121,28 @@ function buildDocStore(deps: DocStoreDeps) {
     );
   }
 
+  /**
+   * Whether this store can serve calls: it has a connection and its role passed the
+   * least-privilege check — the SAME two refusals every call makes (`runTx`), so this cannot
+   * disagree with them. Reads the role at most until it is settled (one round trip on a cold
+   * store, none after). Throws when the role cannot be read (the connection failed); the caller
+   * decides what an unconfirmed store reads as. Backs `civitai_app_block_doc_store_enabled`.
+   */
+  async function isUsable(): Promise<boolean> {
+    if (!deps.db) return false;
+    if (privileges === undefined) {
+      const client = await deps.db.connect();
+      try {
+        await assertLeastPrivilege(client);
+      } catch (err) {
+        if (!(err instanceof DocStoreError && err.code === 'storage_disabled')) throw err;
+      } finally {
+        client.release();
+      }
+    }
+    return privileges === 'safe';
+  }
+
   async function runTx<T>(begin: string, fn: (c: DocStoreClient) => Promise<T>): Promise<T> {
     if (!deps.db) {
       throw new DocStoreError('storage_disabled', 'document storage is not configured');
@@ -1880,6 +1902,7 @@ function buildDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
+    isUsable,
   };
   /**
    * Shared documents of `appId` under `key` in any of `collections`, production namespace only,

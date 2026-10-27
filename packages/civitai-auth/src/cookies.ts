@@ -4,6 +4,7 @@ import {
   LEGACY_SESSION_COOKIE_BASE,
   SECURE_COOKIE_PREFIX,
   SESSION_COOKIE_BASE,
+  type SessionCookieMode,
 } from './constants';
 
 // Single source of truth for the auth cookie names — the hub sets them, the main app sets them, and every
@@ -64,7 +65,96 @@ export function readCookie(header: string, name: string): string | undefined {
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+    if (part.slice(0, idx).trim() !== name) continue;
+    const raw = part.slice(idx + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      // A malformed %-escape must not throw out of a caller such as logout; hand back the raw value.
+      return raw;
+    }
   }
   return undefined;
 }
+
+// ── Host-only session cookie ──────────────────────────────────────────────────────────────────────────────
+// Each app moves from the shared slot (`__Secure-civ-token`, Domain=<registrable>) to a host-only slot
+// (`__Host-civ-token`) when its AUTH_SESSION_COOKIE_MODE flips to `host`. Until every app has moved, readers accept
+// both slots, so the order the apps flip in never signs anyone out. Dev (http) has no prefix, so both slots
+// share the bare name there.
+
+/** This app's cookie mode. Anything but `host` is `shared` (the default), so an unset or mistyped value is inert. */
+export const sessionCookieMode = (): SessionCookieMode =>
+  process.env.AUTH_SESSION_COOKIE_MODE === 'host' ? 'host' : 'shared';
+
+/** Whether the shared slot is still read. AUTH_LEGACY_READ defaults to true; only an explicit false turns it off. */
+export const legacyCookieReadEnabled = (): boolean =>
+  !/^(false|0|off|no)$/i.test((process.env.AUTH_LEGACY_READ ?? '').trim());
+
+export const hostSessionCookieName = (secure: boolean = isSecureCookie()): string =>
+  `${secure ? HOST_COOKIE_PREFIX : ''}${SESSION_COOKIE_BASE}`;
+
+export const hostDeviceCookieName = (secure: boolean = isSecureCookie()): string =>
+  `${secure ? HOST_COOKIE_PREFIX : ''}${DEVICE_COOKIE_BASE}`;
+
+export type CookieSlot = SessionCookieMode;
+
+/** A cookie value plus the name and slot it was read from, so a writer can put it back where it came from. */
+export interface CookieRead {
+  value: string;
+  name: string;
+  slot: CookieSlot;
+}
+
+export interface CookieReadOptions {
+  mode?: SessionCookieMode;
+  secure?: boolean;
+  legacyRead?: boolean;
+}
+
+type CookieJar = Partial<Record<string, string | undefined>> | undefined | null;
+
+export const sessionCookieNameForSlot = (slot: CookieSlot, secure: boolean = isSecureCookie()) =>
+  slot === 'host' ? hostSessionCookieName(secure) : sessionCookieName(secure);
+
+export const deviceCookieNameForSlot = (slot: CookieSlot, secure: boolean = isSecureCookie()) =>
+  slot === 'host' ? hostDeviceCookieName(secure) : deviceCookieName(secure);
+
+// Presence-based: the mode's own slot wins whenever it is present, valid or not; the other slot is read only
+// when the mode's slot is absent. Validity is never consulted, so a stale cookie in one slot can't make the
+// reader pick a different identity from the other.
+function readSlot(
+  cookies: CookieJar,
+  nameFor: (slot: CookieSlot, secure: boolean) => string,
+  opts: CookieReadOptions
+): CookieRead | null {
+  const mode = opts.mode ?? sessionCookieMode();
+  const secure = opts.secure ?? isSecureCookie();
+  const legacyRead = opts.legacyRead ?? legacyCookieReadEnabled();
+  const order: CookieSlot[] = mode === 'host' ? ['host', 'shared'] : ['shared', 'host'];
+  for (const slot of order) {
+    if (slot === 'shared' && !legacyRead) continue;
+    const name = nameFor(slot, secure);
+    const value = cookies?.[name];
+    if (value) return { value, name, slot };
+  }
+  return null;
+}
+
+/** The session token this request carries, and where it was read from. */
+export const readSessionToken = (cookies: CookieJar, opts: CookieReadOptions = {}) =>
+  readSlot(cookies, sessionCookieNameForSlot, opts);
+
+/** The device id this request carries, and where it was read from. */
+export const readDeviceId = (cookies: CookieJar, opts: CookieReadOptions = {}) =>
+  readSlot(cookies, deviceCookieNameForSlot, opts);
+
+/**
+ * Where a refreshed token is written: under the name it was read from. A token read from the host-only slot is
+ * rolled there in either mode. A token read from the shared slot is rolled there in shared mode (as today), and
+ * in host mode is served as-is, never copied into the host-only slot; the next navigation re-syncs it.
+ */
+export const rollSlot = (
+  read: Pick<CookieRead, 'slot'>,
+  mode: SessionCookieMode = sessionCookieMode()
+): CookieSlot | null => (read.slot === 'host' ? 'host' : mode === 'shared' ? 'shared' : null);

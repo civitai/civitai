@@ -16,6 +16,12 @@ export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
 export const HOST_COOKIE_PREFIX = '__Host-';
 
+// Which slot this app writes its session and device cookies to, read per app from AUTH_SESSION_COOKIE_MODE
+// (`sessionCookieMode()`). `shared` is today's `__Secure-` cookie on the registrable domain; `host` is a
+// `__Host-` cookie that stays on the host that set it. Readers accept both slots during the move (cookies.ts).
+export const SESSION_COOKIE_MODES = ['shared', 'host'] as const;
+export type SessionCookieMode = (typeof SESSION_COOKIE_MODES)[number];
+
 // Cross-domain account sync query param — the single marker the hub re-attaches after login and the
 // destination's useDomainSync reads to kick off the auth-code flow (/api/auth/authorize).
 export const SYNC_PARAM = 'sync-account';

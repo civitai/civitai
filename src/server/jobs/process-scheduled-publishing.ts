@@ -17,6 +17,7 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
@@ -151,14 +152,10 @@ export const processScheduledPublishing = createJob(
           AND "publishedAt" <= ${now}
       `;
 
-      // Update project publishedAt for first-time publishing projects
       const projectIds = [...new Set(scheduledComicChapters.map((ch) => ch.projectId))];
-      for (const projectId of projectIds) {
-        await dbWrite.comicProject.updateMany({
-          where: { id: projectId, publishedAt: null },
-          data: { publishedAt: now },
-        });
+      await markComicProjectsChapterPublished(projectIds, now);
 
+      for (const projectId of projectIds) {
         // Update NSFW levels — chapter recompute must complete before project
         // recompute or the project reads stale chapter levels.
         await updateComicNsfwLevels([projectId]).catch((e) =>

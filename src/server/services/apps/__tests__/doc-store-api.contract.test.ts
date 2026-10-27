@@ -1489,7 +1489,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       context_binding: 403,
     };
     for (const [kind, status] of Object.entries(STATUS_SENT) as [BlockScopeRefusalKind, number][]) {
-      const body = storageRefusalBody({ kind, status, error: `e-${kind}` });
+      const body = storageRefusalBody({ kind, status, error: `e-${kind}` }, {
+        method: 'GET',
+        query: {},
+      } as unknown as NextApiRequest);
       expect(STORAGE_ERROR_STATUS[body.code], kind).toBe(status);
       expect(body.message, kind).toBe(`e-${kind}`);
       expect(body.error, kind).toBe(`e-${kind}`);
