@@ -11,6 +11,8 @@ it.
   shows in the user's chat list, follows normal chat retention, and the user can clear their own view.
 - **Reply-only.** Users can answer a thread a moderator started, but cannot start one with the account.
   A banned user cannot post in chat at all and uses the appeal flow instead.
+- **A user who leaves the thread** cannot be messaged as Civitai Moderation again; the send is refused.
+  Nothing rejoins them.
 - **A tray notification** points at the thread with every message (`/?chat=<id>` opens it), because
   chat alone does not reach someone whose chat is muted or switched off.
 - **Claims.** Sending claims the thread for 30 minutes and renews the claim. While another moderator

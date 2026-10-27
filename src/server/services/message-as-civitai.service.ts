@@ -23,6 +23,7 @@ const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
 const PENDING_TTL_SECONDS = 5 * 60;
 const SEND_LOCK_SECONDS = 30;
 const PENDING = 'pending';
+// Redis runs a script atomically, so nothing can take the lock between the GET and the DEL.
 const RELEASE_IF_OWNER = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0`;
 
 function requireModerationAccountId(): number {
