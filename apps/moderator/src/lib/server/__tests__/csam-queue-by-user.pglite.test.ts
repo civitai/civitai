@@ -166,7 +166,8 @@ describe('what a sent CSAM report takes out of the pending count', () => {
         (26, 204, 'csam', '2026-01-01', NULL),
         (27, 205, 'csam', '2026-01-01', NULL),
         (28, 206, 'csam', '2026-04-01', '2026-04-01'),
-        (29, 207, 'csam', '2026-04-01', NULL);
+        (29, 207, 'csam', '2026-04-01', NULL),
+        (30, 201, 'minor', '2026-01-01', NULL);
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
         (201, '2026-03-01', '[]'), (202, '2026-03-01', '[]'), (203, '2026-03-01', '[]'),
         (204, NULL, '[{"id": 26}]'), (206, '2026-03-01', '[{"id": 28}]'),
@@ -216,6 +217,11 @@ describe('what a sent CSAM report takes out of the pending count', () => {
     const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
     expect(pending).toBe(10);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
+  });
+
+  it('leaves the other queues’ badges alone', async () => {
+    // 104's image, and 201's, whose report covers its CSAM-queue images.
+    expect(Number((await getImageReviewCounts()).minor)).toBe(2);
   });
 });
 
