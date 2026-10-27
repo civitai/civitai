@@ -5,6 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import WalkPager from './WalkPager.svelte';
+  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, num } from '$lib/format';
   import { denied } from '$lib/permissions';
   import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
@@ -71,15 +72,11 @@
 
   const page = $derived(
     browser && shown && canView
-      ? fetch(
+      ? fetchJson<GeneratedWorkflowPage>(
           `/api/user-workflows/${userId}?take=20&source=${source}${
             cursors[index] ? `&cursor=${encodeURIComponent(cursors[index])}` : ''
           }`
-        ).then(async (r): Promise<GeneratedWorkflowPage> => {
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? String(r.status));
-          return body;
-        })
+        )
       : null
   );
 

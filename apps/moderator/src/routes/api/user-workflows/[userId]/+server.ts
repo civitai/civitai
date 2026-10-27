@@ -2,7 +2,11 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { RESTRICTION_PAGES } from '$lib/restriction-types';
 import { requireIdParam, requirePermission } from '$lib/server/api-guard';
-import { getUserGeneratedWorkflows, isWorkflowSource } from '$lib/server/user-workflows.service';
+import {
+  ORCHESTRATOR_TIMEOUT_MS,
+  getUserGeneratedWorkflows,
+  isWorkflowSource,
+} from '$lib/server/user-workflows.service';
 
 // The pages that mount the panel. This read is wider than any page's own content — an account's full
 // off-site generation history, prompts and signed media included, for work never published to the site
@@ -32,9 +36,17 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
       })
     );
   } catch (e) {
-    // The panel reads `body.error` — an uncaught throw here returns an HTML error page, and the
-    // fetch's `r.json()` fails on it before any message reaches the moderator.
     console.error('[user-workflows] query failed', e);
-    return json({ error: 'Could not reach the orchestrator.' }, { status: 502 });
+    const timedOut = e instanceof Error && e.name === 'TimeoutError';
+    // Never 502 or 504: Cloudflare replaces an origin 502/504 with its own HTML page, so the panel
+    // would get `<!DOCTYPE` instead of this message.
+    return json(
+      {
+        error: timedOut
+          ? `The orchestrator did not answer within ${ORCHESTRATOR_TIMEOUT_MS / 1000} seconds.`
+          : 'Could not reach the orchestrator.',
+      },
+      { status: 503 }
+    );
   }
 };

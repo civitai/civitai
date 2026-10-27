@@ -166,6 +166,8 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
   };
 }
 
+export const ORCHESTRATOR_TIMEOUT_MS = 30_000;
+
 export async function getUserGeneratedWorkflows(
   userId: number,
   options: { take?: number; cursor?: string | null; source?: WorkflowSource } = {}
@@ -185,7 +187,7 @@ export async function getUserGeneratedWorkflows(
 
   const res = await fetch(`${base}/v1/manager/workflows?${query}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`The orchestrator refused the query (${res.status}).`);
 
