@@ -24,7 +24,33 @@ export { createImpersonationClient } from './impersonation-client'; // moderator
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
-export type { SpokeGuard, SpokeGuardConfig, SpokeGuardResult } from './spoke-guard';
+export type {
+  SpokeGuard,
+  SpokeGuardCheckOptions,
+  SpokeGuardConfig,
+  SpokeGuardResult,
+} from './spoke-guard';
+export {
+  spokeAuthorize,
+  spokeCallback,
+  spokeAuthorizeUrl,
+  spokeReauthResponse,
+  spokeSessionCookies,
+  isNavigationRequest,
+  withSetCookies,
+  signInProblemHtml,
+  POST_LOGIN_MARKER,
+  LOGIN_RETRY_COOKIE,
+  postLoginMarkerCookie,
+  clearPostLoginMarker,
+  loginRetryCookie,
+  clearLoginRetryCookie,
+  otherSlotExpiries,
+  SESSION_REAUTH_HEADER,
+} from './spoke-signin'; // a first-party app's own sign-in routes
+export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
+export { createRevocationCheck } from './revocation-check';
+export type { RevocationCheckConfig } from './revocation-check';
 export {
   buildAuthorizeRedirect,
   completeFirstPartyCallback,
@@ -66,6 +92,7 @@ export {
   readSessionToken,
   readDeviceId,
   rollSlot,
+  parseCookieHeader,
   type CookieSlot,
   type CookieRead,
   type CookieReadOptions,

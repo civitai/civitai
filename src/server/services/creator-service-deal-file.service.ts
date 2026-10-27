@@ -2,6 +2,11 @@ import { Prisma } from '@prisma/client';
 import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import type {
+  ServiceDealAccessKind,
+  ServiceDealAccessRole,
+  Tracker,
+} from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -583,7 +588,20 @@ export async function listServiceDealFiles({
   });
 }
 
-export type ServiceDealFileDownload = { bucket: string; key: string; fileName: string };
+type ServiceDealFileAccess = {
+  dealId: number;
+  fileId: number;
+  userId: number;
+  role: ServiceDealAccessRole;
+  kind: ServiceDealAccessKind;
+};
+
+export type ServiceDealFileDownload = {
+  bucket: string;
+  key: string;
+  fileName: string;
+  access: ServiceDealFileAccess;
+};
 
 /**
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
@@ -599,14 +617,19 @@ export async function resolveServiceDealFileDownload({
   userId,
   isModerator,
   delivered = false,
+  moderatorFetch = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
+  /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
+   *  it never counts as the buyer's download. */
+  moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
     {
+      dealId: number;
       s3Key: string;
       deliveryKey: string | null;
       fileName: string;
@@ -622,7 +645,7 @@ export async function resolveServiceDealFileDownload({
       completedAt: Date | null;
     }[]
   >`
-    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
+    SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
       f."malwareScanStatus", f."status",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
@@ -648,17 +671,55 @@ export async function resolveServiceDealFileDownload({
     // An archive is only ever handed out in the form the server built.
     else if (fileExtension(row.fileName) === 'zip') return null;
   }
-  return { bucket: await getBucket(), key, fileName: row.fileName };
+  const role: ServiceDealAccessRole =
+    row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
+  return {
+    bucket: await getBucket(),
+    key,
+    fileName: row.fileName,
+    access: {
+      dealId: row.dealId,
+      fileId,
+      userId,
+      role,
+      kind: moderatorFetch ? 'ModeratorFetch' : 'Download',
+    },
+  };
 }
 
-export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
+/** Not awaited, so recording never slows or fails a download; it still awaits delivery so a lost
+ *  row is logged. */
+export async function getServiceDealFileDownloadUrl(
+  target: ServiceDealFileDownload,
+  tracker: Pick<Tracker, 'serviceDealFileAccess'>
+) {
   const { url } = await getGetUrlByKey(target.key, {
     bucket: target.bucket,
     fileName: target.fileName,
     expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   });
+  try {
+    tracker
+      .serviceDealFileAccess(target.access, { awaitDelivery: true })
+      .then((sent) => {
+        // False is a tracker that is switched off: nothing was written.
+        if (!sent) logAccessFailure(target.access)(new Error('Tracker not configured'));
+      })
+      .catch(logAccessFailure(target.access));
+  } catch (error) {
+    logAccessFailure(target.access)(error);
+  }
   return url;
 }
+
+const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
+  logToAxiom({
+    name: 'creator-service-file-access',
+    type: 'error',
+    message: 'Could not record a deal file access',
+    ...access,
+    error: error instanceof Error ? error.message : String(error),
+  }).catch(() => null);
 
 // ---------------------------------------------------------------------------------------------
 // Preview pipeline (the job)

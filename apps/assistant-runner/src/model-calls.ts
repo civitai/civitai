@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type pg from 'pg';
 
 import { RUNNER_SCHEMA } from './grants';
-import type { Logger, ModelCallLedger, ModelCallScope } from './interfaces';
+import type { Logger } from './core/interfaces';
 import type { TokenSource } from './minter';
 import {
   FINAL_STATUSES,
@@ -11,6 +11,27 @@ import {
   type OrchestrationClient,
   type WorkflowState,
 } from './orchestration';
+
+/** The model requests one stored orchestration workflow may answer. */
+export interface ModelCallScope {
+  runId: string;
+  userId: string;
+  conversationId: string;
+  seq: number;
+  /** Also a workflow an earlier run of the same turn sent (`ModelContext.carriesOn`). */
+  carriesOn?: boolean;
+}
+
+/**
+ * Which orchestration workflow each model request was sent as, kept the moment orchestration names
+ * it (before its answer is read), so a request asked again after a crash finds it. Keyed by run and
+ * by a hash of what the request asks (`callKey`). Holds ids only: never a token.
+ */
+export interface ModelCallLedger {
+  /** The workflow the latest request with this key in `scope` was sent as, else `null`. */
+  find(scope: ModelCallScope, key: string): Promise<string | null>;
+  save(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
+}
 
 /**
  * The response header orchestration names a chat completion's workflow in, set once the workflow is

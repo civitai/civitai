@@ -1,5 +1,10 @@
-import type { Authenticator, ConversationStore, ModelProvider, ToolProvider } from './interfaces';
-import type { TokenVerifier } from './tokens';
+import type {
+  Authenticator,
+  ConversationStore,
+  GrantVerifier,
+  ModelProvider,
+  ToolProvider,
+} from './interfaces';
 
 /** Refuses every request. The default, so a runner with no authenticator configured serves nobody. */
 export const refuseAll: Authenticator = {
@@ -11,7 +16,7 @@ export const refuseAll: Authenticator = {
 };
 
 /** Accepts no run grant. The default, so a runner with no key configured starts nothing. */
-export const refuseGrants: Pick<TokenVerifier, 'grant'> = {
+export const refuseGrants: GrantVerifier = {
   grant: async () => null,
 };
 

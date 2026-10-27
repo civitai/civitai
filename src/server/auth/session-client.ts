@@ -81,7 +81,8 @@ export async function maybeRollHubCookie(
   deviceCookie: string | undefined,
   res: CookieWritable,
   host?: string,
-  slot?: CookieSlot
+  slot?: CookieSlot,
+  requestCookies?: Partial<Record<string, string | undefined>>
 ): Promise<void> {
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
@@ -94,7 +95,7 @@ export async function maybeRollHubCookie(
     )?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
-    setSessionCookie(res, fresh, { deviceCookie, host, slot });
+    setSessionCookie(res, fresh, { deviceCookie, host, slot, requestCookies });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
   }
@@ -139,7 +140,8 @@ export async function maybeUpgradeLegacySession(
   legacyToken: string | undefined,
   deviceCookie: string | undefined,
   res: CookieWritable,
-  host?: string
+  host?: string,
+  requestCookies?: Partial<Record<string, string | undefined>>
 ): Promise<void> {
   if (!HUB_ORIGIN || !legacyToken || typeof res.setHeader !== 'function') return;
   if (!(await claimLegacyUpgrade(legacyToken))) {
@@ -166,7 +168,7 @@ export async function maybeUpgradeLegacySession(
     ).catch(() => undefined);
     // Set the civ-token + the device cookie (the hub's reused-or-minted device id) in lockstep — this also
     // clears the legacy SESSION cookie.
-    setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId });
+    setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId, requestCookies });
     // … then de-crud every legacy next-auth cookie on the same response — the SESSION cookie (so the hybrid
     // fallback can't re-resolve the stale legacy identity) AND the ancillary cruft (CSRF / callback-url /
     // state / PKCE). setSessionCookie no longer clears the session cookie itself.

@@ -32,7 +32,7 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import {
   StorylineStageOverlay,
   StorylineToolbarChip,
@@ -69,11 +69,13 @@ import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToMode
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImagePublishedWithApp } from '~/components/Image/DetailV2/ImagePublishedWithApp';
 import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
@@ -186,32 +188,18 @@ export function ImageDetail2() {
     storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
   );
 
-  // Deferred to the carousel settling rather than run per slide change: the URL
-  // replace pushes a global store update that re-renders every useBrowserRouter
-  // consumer, which is too much to do inside an animating frame.
-  const lastSettledIdRef = useRef(images[index]?.id);
+  const settle = useCarouselUrlSync({
+    images,
+    index,
+    navigate,
+    carouselNavigate: carouselNavigation.navigate,
+  });
   const handleSettle = (settledIndex: number) => {
-    const settled = images[settledIndex];
-    // a drag that springs back settles on the slide it started from
-    if (!settled || lastSettledIdRef.current === settled.id) return;
-    lastSettledIdRef.current = settled.id;
-    navigate(settled.id);
+    if (!settle(settledIndex)) return;
     // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
     // dead-end (and loop back) at the edge of the loaded page
     if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
   };
-
-  // The drawer and the fork point move the detail to another image from outside the carousel.
-  // An index that only caught up with the carousel's own settle is skipped, or a quick second
-  // swipe would be dragged back.
-  const carouselNavigate = carouselNavigation.navigate;
-  useEffect(() => {
-    const target = images[index];
-    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
-    lastSettledIdRef.current = target.id;
-    carouselNavigate(index);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
-  }, [index, storyline.active]);
 
   const image = images[carouselNavigation.index];
 
@@ -565,6 +553,10 @@ export function ImageDetail2() {
                       className="rounded-xl"
                       tipsEnabled={!image.poi}
                     />
+                    {/* Beside, not inside, the creator card: the card's subText sits
+                        inside the profile link on the cosmetic-shop card, and an
+                        anchor cannot nest in an anchor. */}
+                    <ImagePublishedWithApp imageId={image.id} />
                     {image.postId && (
                       <EntityCollaboratorList
                         entityId={image.postId}

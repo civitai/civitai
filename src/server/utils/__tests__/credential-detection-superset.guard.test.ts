@@ -90,6 +90,10 @@ const NON_CREDENTIAL_QUERY: Record<string, string> = {};
 const NON_CREDENTIAL_COOKIES: Record<string, string> = {
   readDeviceId:
     'a device identifier (either slot) used for rolling/upgrade bookkeeping; authenticates nobody on its own',
+  maybeRollHubCookie:
+    'a presence check deciding whether the cookie write expires the other slot; the token it rolls is passed in separately, so it authenticates nobody',
+  maybeUpgradeLegacySession:
+    'a presence check deciding whether the cookie write expires the other slot; the token it upgrades is passed in separately, so it authenticates nobody',
 };
 
 const UNRESOLVABLE = '<unresolvable>';

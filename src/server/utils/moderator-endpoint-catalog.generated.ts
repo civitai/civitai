@@ -26,6 +26,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/creator-services/deal-file-url'),
   '/api/mod/creator-services/deal-files': () =>
     import('~/pages/api/mod/creator-services/deal-files'),
+  '/api/mod/creator-services/dispute-evidence': () =>
+    import('~/pages/api/mod/creator-services/dispute-evidence'),
+  '/api/mod/creator-services/dispute-review': () =>
+    import('~/pages/api/mod/creator-services/dispute-review'),
   '/api/mod/creator-services/disputes': () => import('~/pages/api/mod/creator-services/disputes'),
   '/api/mod/creator-services/resolve-dispute': () =>
     import('~/pages/api/mod/creator-services/resolve-dispute'),

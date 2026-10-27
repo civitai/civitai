@@ -6769,6 +6769,24 @@ export interface ServiceDeal {
   events?: ServiceDealEvent[];
   files?: ServiceDealFile[];
   transactions?: ServiceDealTransaction[];
+  disputeReviews?: ServiceDisputeReview[];
+}
+
+export interface ServiceDisputeReview {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  evidence: JsonValue;
+  agentVersion: string;
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
+  createdAt: Date;
 }
 
 export interface ServiceDealEvent {

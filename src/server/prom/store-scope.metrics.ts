@@ -172,7 +172,12 @@ export type StoreScopeEntrypoint =
   // side, which is precisely the "scope lost in transit" signature the two
   // counters exist to distinguish. Slice by this label before reading either as
   // a statement about the store.
-  | 'post-detail';
+  | 'post-detail'
+  // The same "Published with <app>" chip on the IMAGE detail page
+  // (`image.getPublishedWithApp`). A separate label from `post-detail` for the same
+  // reason that one is separate from `trpc-detail`: two non-store surfaces folded
+  // into one label could not show a scope lost on only one of them.
+  | 'image-detail';
 
 /**
  * Record the scope an entry point actually branched on.

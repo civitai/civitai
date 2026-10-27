@@ -5265,6 +5265,30 @@ export type ServiceDealTransaction = {
   lastError: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type ServiceDisputeReview = {
+  id: Generated<number>;
+  dealId: number;
+  /**
+   * Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
+   */
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  /**
+   * The evidence bundle the review read, as submitted.
+   */
+  evidence: unknown;
+  agentVersion: string;
+  /**
+   * Allowed values: DISPUTE_REVIEW_MODES in the same file.
+   */
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ServiceOffering = {
   id: Generated<number>;
   sellerId: number;
@@ -6544,6 +6568,7 @@ export type DB = {
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
+  ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;
   ServiceOfferingReport: ServiceOfferingReport;
   Session: Session;

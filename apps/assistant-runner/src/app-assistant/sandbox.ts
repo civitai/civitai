@@ -18,7 +18,7 @@ import {
 import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { ToolSet } from 'ai';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 
 /** How long the sandbox has to start running once it was asked to (the page holds a message as long). */
 export const WAKE_TIMEOUT_MS = 3 * 60_000;

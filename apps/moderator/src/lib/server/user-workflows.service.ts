@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { logToAxiom } from './axiom';
 
 /**
  * One account's generation history, read straight from the orchestrator.
@@ -166,6 +167,11 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
   };
 }
 
+// Cloudflare cuts a request at 100 s, so this cannot go much higher. One heavy account measured 63-70 s
+// for this call (2026-10-27); the slow-call log below shows whether others are close.
+export const ORCHESTRATOR_TIMEOUT_MS = 90_000;
+const SLOW_CALL_MS = 30_000;
+
 export async function getUserGeneratedWorkflows(
   userId: number,
   options: { take?: number; cursor?: string | null; source?: WorkflowSource } = {}
@@ -183,13 +189,33 @@ export async function getUserGeneratedWorkflows(
   });
   if (options.cursor) query.set('Cursor', options.cursor);
 
-  const res = await fetch(`${base}/v1/manager/workflows?${query}`, {
-    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`The orchestrator refused the query (${res.status}).`);
-
-  const body = (await res.json()) as { items?: unknown; next?: unknown };
+  const started = Date.now();
+  let outcome = 'error';
+  let body: { items?: unknown; next?: unknown };
+  try {
+    const res = await fetch(`${base}/v1/manager/workflows?${query}`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`The orchestrator refused the query (${res.status}).`);
+    body = (await res.json()) as typeof body;
+    outcome = 'ok';
+  } catch (e) {
+    if (e instanceof Error && e.name === 'TimeoutError') outcome = 'timeout';
+    throw e;
+  } finally {
+    const ms = Date.now() - started;
+    if (ms > SLOW_CALL_MS) {
+      void logToAxiom({
+        name: 'user-workflows-slow',
+        type: 'info',
+        userId,
+        source: options.source ?? 'onsite',
+        ms,
+        outcome,
+      }).catch(() => null);
+    }
+  }
   const items = Array.isArray(body.items) ? body.items : [];
   return {
     items: items.map(readWorkflow).filter((w): w is GeneratedWorkflow => w !== null),

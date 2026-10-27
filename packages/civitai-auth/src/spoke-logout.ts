@@ -1,5 +1,10 @@
 import { DEVICE_COOKIE_BASE, HOST_COOKIE_PREFIX, SESSION_COOKIE_BASE } from './constants';
-import { allCookieNames, readCookie, sessionCookieName } from './cookies';
+import {
+  allCookieNames,
+  parseCookieHeader,
+  sessionCookieNameForSlot,
+  type CookieSlot,
+} from './cookies';
 import { hubBaseUrl } from './hub';
 import { hubLogoutUrl } from './providers';
 import { createSessionTokenClient, type SessionTokenClient } from './session-token-client';
@@ -13,7 +18,7 @@ export interface SpokeLogoutOptions {
 }
 
 // Same 2-label registrable domain the hub and the main app scope the shared cookie to.
-function registrableDomain(hostname: string): string | undefined {
+export function registrableDomain(hostname: string): string | undefined {
   const h = hostname.toLowerCase();
   if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
   const parts = h.split('.');
@@ -48,8 +53,16 @@ export async function spokeLogout(
   const returnUrl = opts.returnUrl ?? url.origin;
   const hub = opts.hubBase === undefined ? hubBaseUrl() : opts.hubBase;
 
-  const token = readCookie(request.headers.get('cookie') ?? '', sessionCookieName());
-  if (token) await (opts.sessionTokenClient ?? createSessionTokenClient()).revoke(token);
+  // Both slots, whatever this app's mode: logout expires both cookies, so a token left unrevoked would stay live.
+  const cookies = parseCookieHeader(request.headers.get('cookie') ?? '');
+  const slots: CookieSlot[] = ['shared', 'host'];
+  const tokens = new Set(
+    slots.map((slot) => cookies[sessionCookieNameForSlot(slot)]).filter((t): t is string => !!t)
+  );
+  if (tokens.size) {
+    const client = opts.sessionTokenClient ?? createSessionTokenClient();
+    for (const token of tokens) await client.revoke(token);
+  }
 
   const headers = new Headers({
     location: hub ? hubLogoutUrl(hub, returnUrl) : returnUrl,

@@ -28,6 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   setSessionCookie(res, result.token, {
     deviceCookie: readDeviceId(req.cookies)?.value,
     host: req.headers.host,
+    requestCookies: req.cookies,
   });
   return res.status(200).json({ ok: true, userId });
 }

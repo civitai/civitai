@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 
 import { jwtVerify, type JWTPayload } from 'jose';
 
-import type { Authenticator } from './interfaces';
+import type { Authenticator, RunGrant } from './core/interfaces';
 
 /**
  * The two credentials civitai signs for the runner (`src/server/services/app-assistant/
@@ -26,13 +26,11 @@ export const VIEWER_AUDIENCE = 'assistant-runner:viewer';
 export const VIEWER_TYP = 'assistant-viewer+jwt';
 export const GRANT_AUDIENCE = 'assistant-runner:run-grant';
 export const GRANT_TYP = 'assistant-run-grant+jwt';
-/** The request header a start (and a patch) carries its run grant in. */
-export const GRANT_HEADER = 'x-run-grant';
 /** How far apart civitai's clock and the runner's may be. */
 export const CLOCK_SKEW_SECONDS = 30;
 
 /** A run grant that verified: who it acts for, in which conversation, for which start, until when. */
-export interface VerifiedGrant {
+export interface VerifiedGrant extends RunGrant {
   /** The grant itself, as civitai signed it: what the runner trades for tokens. */
   token: string;
   userId: string;
@@ -123,11 +121,4 @@ export function viewerAuthenticator(verifier: TokenVerifier): Authenticator {
       return userId ? { ok: true, userId } : { ok: false, status: 401, message: 'Sign in again.' };
     },
   };
-}
-
-/** The run grant a request carries, if any (the first, when a client sent it twice). */
-export function grantHeader(headers: IncomingHttpHeaders): string | undefined {
-  const value = headers[GRANT_HEADER];
-  const grant = Array.isArray(value) ? value[0] : value;
-  return grant ? grant.trim() : undefined;
 }

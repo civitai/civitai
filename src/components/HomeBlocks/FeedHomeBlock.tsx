@@ -18,6 +18,8 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { HostCrucibleTile } from '~/components/HomeBlocks/HostCrucibleTile';
+import { layoutCrucibleRow, useGridSlots } from '~/components/HomeBlocks/useGridSlots';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -148,7 +150,7 @@ const FeedHomeBlockContent = ({
     isLoading || !feedItems ? (
       <FeedSkeleton rows={rows} />
     ) : feedItems.entity === 'crucibles' ? (
-      <CrucibleFeedGrid items={feedItems.items} rows={rows} />
+      <CrucibleFeedGrid items={feedItems.items} rows={rows} eventTag={metadata.feed?.eventTag} />
     ) : feedItems.entity === 'images' ? (
       <ImageFeedGrid
         items={feedItems.items}
@@ -289,24 +291,38 @@ function ModelFeedGrid({
 function CrucibleFeedGrid({
   items,
   rows,
+  eventTag,
 }: Omit<
   GridProps<Extract<FeedBlockItems, { entity: 'crucibles' }>['items']>,
   'maxPerUser' | 'order'
->) {
-  const { loadingPreferences, items: visible } = useApplyHiddenPreferences({
+> & { eventTag?: string }) {
+  const currentUser = useCurrentUser();
+  const { loadingPreferences, items: hiddenFiltered } = useApplyHiddenPreferences({
     type: 'crucibles',
     data: items,
   });
+  const { gridRef, slots } = useGridSlots(rows, !!eventTag, loadingPreferences);
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
+  const { cards: visible, showTile } = layoutCrucibleRow(hiddenFiltered, eventTag, slots);
+
   return (
-    <div className={classes.grid} style={{ '--count': visible.length } as React.CSSProperties}>
+    <div
+      ref={gridRef}
+      className={classes.grid}
+      style={{ '--count': visible.length + (showTile ? 1 : 0) } as React.CSSProperties}
+    >
       {visible.map((item) => (
         <div key={item.id} className="p-2">
           <CrucibleCard data={item} />
         </div>
       ))}
+      {showTile && eventTag && (
+        <div className="p-2">
+          <HostCrucibleTile eventTag={eventTag} signedIn={!!currentUser} />
+        </div>
+      )}
     </div>
   );
 }

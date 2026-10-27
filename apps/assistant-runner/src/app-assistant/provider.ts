@@ -28,7 +28,7 @@ import {
 import type { ChatToolResult, RunPageState } from '@civitai/components-chat/runner-protocol';
 import type { ToolSet } from 'ai';
 
-import type { Logger, OpenTools, ToolContext, ToolProvider } from '../interfaces';
+import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';

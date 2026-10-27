@@ -16,28 +16,33 @@ import { buildApp } from '../app';
 import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
 import { RunGrants } from '../grants';
-import type { ModelProvider, ToolContext } from '../interfaces';
+import type { ModelProvider, ToolContext } from '../core/interfaces';
 import { TokenMinter } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
-import { startTurn, withProgress } from '../head';
-import { MemoryConversationStore } from '../memory-store';
+import { startTurn, withProgress } from '../core/head';
+import { MemoryConversationStore } from '../core/memory-store';
 import {
   REPLIES_QUEUE,
   REPLY_WORKFLOW,
   Runner,
   WORKFLOW_VERSION,
   type RunnerDeps,
-} from '../runner';
+} from '../core/runner';
 import { createTokenVerifier } from '../tokens';
 import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
-import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
+import { bearerAuthenticator, fakeTools, untilAborted } from '../core/test-support/fakes';
 import { signGrant, testKeys } from '../test-support/keys';
 import { MemoryModelCalls } from '../test-support/memory-model-calls';
-import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
-import { scriptedModel, toolResults } from '../test-support/scripted-model';
-import { readEvents, type ReadEntry } from '../test-support/sse';
+import {
+  freshDatabase,
+  rowsContaining,
+  tableCount,
+  TEST_DATABASE_URL,
+} from '../core/test-support/pg';
+import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
+import { readEvents, type ReadEntry } from '../core/test-support/sse';
 
 // Runs against a real Postgres (CI's `App unit tests` job provides one). Without
 // ASSISTANT_RUNNER_TEST_DATABASE_URL the whole file skips.

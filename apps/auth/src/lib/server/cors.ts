@@ -2,8 +2,8 @@ import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 
 // SAME-SITE spoke origins allowed to call the hub's /api/auth/* endpoints DIRECTLY from the browser with
-// credentials — so a `*.civitai.com` app (e.g. moderator.civitai.com) can use @civitai/auth's
-// createAuthBrowserClient instead of building its own same-origin proxies. These are different origins from the
+// credentials, e.g. moderator.civitai.com, instead of through its own same-origin server proxies (what every
+// in-repo app does today; the package no longer ships a browser client). These are different origins from the
 // hub (CORS applies) but the SAME site, so their cookies ride along and the hub's Set-Cookie is accepted.
 //
 // DISTINCT from the `TrustedSpokeDomain` table, the CROSS-site first-party login registry for `.red` (the

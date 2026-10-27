@@ -7,9 +7,10 @@
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
-  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { DisputeResolution } from '$lib/server/creator-services-disputes.service';
+  import { buyerFinalDownloads } from './downloads';
   import { disputeOrigin, viewerParty } from './origin';
   import type { DisputeCardRow, ResolveOutcome } from './+page.server';
 
@@ -38,6 +39,22 @@
   const releaseBlocked = $derived(!row.finalsClear || !!outcome?.releaseRefused);
   // The main app refuses a party too; hiding the buttons only saves the round trip.
   const party = $derived(viewerParty(row, viewerId));
+  const buyerDownloads = $derived(
+    row.files ? buyerFinalDownloads(row.files, row, row.accessRecordedSince) : null
+  );
+  const firstTaken = $derived.by(() => {
+    if (buyerDownloads?.state !== 'yes') return null;
+    const when =
+      buyerDownloads.beforeDispute === null
+        ? ''
+        : buyerDownloads.beforeDispute
+          ? ', before the dispute'
+          : ', after the dispute opened';
+    const since = buyerDownloads.partial
+      ? ` · recorded only since ${dateTime(row.accessRecordedSince)}`
+      : '';
+    return `first ${dateTime(buyerDownloads.firstAt)}${when}${since}`;
+  });
 
   const choose = (value: DisputeResolution) => () => {
     chosen = value;
@@ -93,6 +110,26 @@
     </p>
   {/if}
 
+  {#if buyerDownloads}
+    <p class="mt-2 text-sm text-dark-0">
+      Buyer downloaded the final:
+      {#if buyerDownloads.state === 'yes'}
+        yes, {dateTime(buyerDownloads.lastAt)}, {plural(buyerDownloads.count, 'time')}
+        <span class="text-xs text-dark-2">· {firstTaken}</span>
+      {:else if buyerDownloads.state === 'never'}
+        No download recorded
+      {:else if buyerDownloads.reason === 'before-recording'}
+        <span class="text-dark-2">unknown (the deal completed before downloads were recorded)</span>
+      {:else}
+        <span class="text-dark-2">unknown (the download log could not be read)</span>
+      {/if}
+    </p>
+    <p class="mt-1 text-xs text-dark-2">
+      A download before the dispute counts toward releasing to the seller, unless the files are missing
+      or broken.
+    </p>
+  {/if}
+
   <details class="mt-2">
     <summary class="cursor-pointer text-xs text-dark-2">
       Event log ({row.events.length})
@@ -143,6 +180,27 @@
       </ul>
     {/if}
   </details>
+
+  {#if row.latestReview}
+    {@const review = row.latestReview}
+    <div class="mt-3 rounded-md bg-dark-7 p-2 text-sm">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="font-medium text-white">Agent review</span>
+        <Badge variant="outline">{review.class}</Badge>
+        <span class="text-dark-0">
+          {review.proposal ? `Proposes ${review.proposal.toLowerCase()}` : 'Escalated to a human'}
+        </span>
+        {#if review.confidence !== null}
+          <span class="text-xs text-dark-2">{Math.round(review.confidence * 100)}% confident</span>
+        {/if}
+        {#if review.mode === 'shadow'}<Badge variant="secondary">shadow</Badge>{/if}
+      </div>
+      <p class="mt-1 whitespace-pre-wrap text-dark-0">{review.rationale}</p>
+      <p class="mt-1 text-xs text-dark-2">
+        {review.agentVersion} · {dateTime(review.createdAt)}
+      </p>
+    </div>
+  {/if}
 
   {#if outcome?.error}
     <ErrorAlert class="mt-3" message={outcome.error} />

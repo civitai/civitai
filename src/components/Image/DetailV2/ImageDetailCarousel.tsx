@@ -81,7 +81,7 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
-const SETTLE_FALLBACK_MS = 800;
+export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
   images,
@@ -148,11 +148,15 @@ export function ImageDetailCarousel({
   };
 
   useEffect(() => {
-    if (!embla || embla.selectedScrollSnap() === index) return;
+    if (!embla) return;
     syncingRef.current = true;
-    embla.scrollTo(index);
+    // A slide added in the same commit as the index that names it is not embla's yet, and its
+    // own reinit would announce the old slide and write it back through `navigate`.
+    if (index >= embla.slideNodes().length && index < images.length)
+      embla.reInit({ startIndex: index });
+    else if (embla.selectedScrollSnap() !== index) embla.scrollTo(index);
     syncingRef.current = false;
-  }, [embla, index]);
+  }, [embla, index, images.length]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
