@@ -310,14 +310,15 @@ export async function getCsamQueueByUser({
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
+  const covered = coveredBySentCsamReport('Image');
   const rows = await dbRead
     .selectFrom('Image')
     .select('needsReview')
     // The CSAM queue counts only what is still pending, as its by-user page does.
     .select(
-      sql<number>`count(*) filter (where "needsReview" <> ${FLAG_KEPT_THROUGH_BLOCK} or not ${coveredBySentCsamReport(
-        'Image'
-      )})`.as('count')
+      sql<number>`count(*) filter (where "needsReview" <> ${FLAG_KEPT_THROUGH_BLOCK} or not ${covered})`.as(
+        'count'
+      )
     )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
