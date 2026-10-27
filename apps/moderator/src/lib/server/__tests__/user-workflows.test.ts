@@ -174,17 +174,39 @@ describe('getUserGeneratedWorkflows', () => {
         { id: 'b', tags: ['civitai-comfy-nodes'] },
         { id: 'c', tags: [] },
         { id: 'd' },
-        { id: 'e', tags: ['training'] },
+        { id: 'e', tags: ['civitai', 'training', 'modelVersion:1'] },
+        { id: 'f', tags: ['gen', 'civitai-comfy-nodes'] },
       ],
       next: null,
     });
     const page = await getUserGeneratedWorkflows(42);
-    expect(page.items.map((w) => [w.id, w.origin])).toEqual([
-      ['a', 'onsite'],
-      ['b', 'comfy'],
-      ['c', 'untagged'],
-      ['d', 'untagged'],
-      ['e', 'other'],
+    expect(page.items.map((w) => [w.id, w.origin, w.sourceTag])).toEqual([
+      ['a', 'onsite', null],
+      ['b', 'comfy', null],
+      ['c', 'untagged', null],
+      ['d', 'untagged', null],
+      // A non-generation row names what it was rather than a bare "other source".
+      ['e', 'other', 'training'],
+      ['f', 'onsite', null],
+    ]);
+  });
+
+  it('says params are missing only for a generation that recorded none of them', async () => {
+    respond({
+      items: [
+        { id: 'blank', tags: [] },
+        { id: 'upscale', tags: ['gen'], metadata: { params: { workflow: 'img-upscale' } } },
+        { id: 'comfy', tags: ['civitai-comfy-nodes'] },
+        { id: 'enhance', tags: ['prompt-enhancement'] },
+      ],
+      next: null,
+    });
+    const page = await getUserGeneratedWorkflows(42);
+    expect(page.items.map((w) => [w.id, w.paramsMissing])).toEqual([
+      ['blank', true],
+      ['upscale', false],
+      ['comfy', false],
+      ['enhance', false],
     ]);
   });
 

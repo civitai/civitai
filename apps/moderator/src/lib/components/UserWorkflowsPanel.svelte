@@ -23,7 +23,7 @@
   // A fact about the row's tags, not a guess at how it was submitted.
   const ORIGIN_LABEL: Record<WorkflowOrigin, string> = {
     onsite: 'site generator',
-    comfy: 'Comfy Cloud',
+    comfy: 'Comfy Cloud (sends no prompt)',
     untagged: 'no source tag',
     other: 'other source',
   };
@@ -161,7 +161,9 @@
                 <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
                   <span>{dateTime(workflow.createdAt)}</span>
                   {#if source === 'all'}
-                    <Badge variant="outline">{ORIGIN_LABEL[workflow.origin]}</Badge>
+                    <Badge variant="outline"
+                      >{workflow.sourceTag ?? ORIGIN_LABEL[workflow.origin]}</Badge
+                    >
                   {/if}
                   {#if workflow.workflow}
                     <Badge variant="secondary">{workflow.workflow}</Badge>
@@ -179,7 +181,7 @@
 
                 {#if workflow.prompt}
                   <p class="mt-1 wrap-break-word text-sm text-dark-0">{workflow.prompt}</p>
-                {:else if workflow.origin !== 'comfy'}
+                {:else if workflow.paramsMissing}
                   <p class="mt-1 text-xs text-dark-2">No generation params recorded.</p>
                 {/if}
                 {#if workflow.negativePrompt}

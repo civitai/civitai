@@ -45,6 +45,13 @@ export function workflowOrigin(tags: string[]): WorkflowOrigin {
   return tags.length === 0 ? 'untagged' : 'other';
 }
 
+// Tags every submitter adds; they name nothing about what the workflow was.
+const GENERIC_TAGS = new Set(['civitai']);
+
+/** For an `other` row, the tag that says what it was (`training`, `prompt-enhancement`, …). */
+export const otherSourceTag = (tags: string[]): string | null =>
+  tags.find((t) => !GENERIC_TAGS.has(t) && !t.includes(':')) ?? null;
+
 export type GeneratedMedia = {
   id: string;
   url: string;
@@ -64,6 +71,11 @@ export type GeneratedWorkflow = {
   workflow: string | null;
   ecosystem: string | null;
   origin: WorkflowOrigin;
+  /** Set for `other` rows only. */
+  sourceTag: string | null;
+  /** A generation that recorded none of prompt, form or model family. Not said of Comfy Cloud, which
+   *  never sends them, nor of `other` workflows, whose params live elsewhere. */
+  paramsMissing: boolean;
   media: GeneratedMedia[];
   /** Outputs the orchestrator will not serve — expired, or withheld. Counted so an empty grid is not
    *  read as "they generated nothing". */
@@ -159,6 +171,10 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
   // Comfy Cloud sends `metadata: {}`, so every field read from it is null for those rows — the prompt
   // exists only inside the raw node graph at `steps[].input.workflow`. The media carries them instead.
   const params = w.metadata?.params ?? {};
+  const tags = Array.isArray(w.tags)
+    ? w.tags.filter((t): t is string => typeof t === 'string')
+    : [];
+  const origin = workflowOrigin(tags);
   const steps = Array.isArray(w.steps) ? w.steps : [];
   const media: GeneratedMedia[] = [];
   let unavailable = 0;
@@ -176,9 +192,13 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
     negativePrompt: str(params.negativePrompt),
     workflow: str(params.workflow),
     ecosystem: str(params.ecosystem),
-    origin: workflowOrigin(
-      Array.isArray(w.tags) ? w.tags.filter((t): t is string => typeof t === 'string') : []
-    ),
+    origin,
+    sourceTag: origin === 'other' ? otherSourceTag(tags) : null,
+    paramsMissing:
+      (origin === 'onsite' || origin === 'untagged') &&
+      !params.prompt &&
+      !params.workflow &&
+      !params.ecosystem,
     media,
     unavailable,
   };
