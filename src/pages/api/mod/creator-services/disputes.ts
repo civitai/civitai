@@ -16,5 +16,5 @@ export default defineModeratorEndpoint('creatorServices.disputes', {
     cursor: z.string().max(64).optional().describe('`nextCursor` from the previous page.'),
     limit: z.coerce.number().int().min(1).max(50).default(20),
   }),
-  handler: (input) => listDisputedServiceDeals(input),
+  handler: (input, { actor }) => listDisputedServiceDeals({ ...input, viewerId: actor.id }),
 });

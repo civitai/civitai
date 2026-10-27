@@ -112,7 +112,6 @@ export async function getLatestServiceDisputeReviews(dealIds: number[]) {
     ORDER BY r."dealId", r."createdAt" DESC, r."id" DESC`;
 }
 
-/** The access summary fails open to null: ClickHouse may be unreachable. */
 export async function getServiceDisputeEvidence({
   dealId,
   viewerId,

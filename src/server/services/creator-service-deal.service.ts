@@ -1153,9 +1153,11 @@ function parseDisputeCursor(cursor: string | undefined) {
 export async function listDisputedServiceDeals({
   cursor,
   limit = 20,
+  viewerId,
 }: {
   cursor?: string;
   limit?: number;
+  viewerId: number;
 }) {
   const after = parseDisputeCursor(cursor);
   const page_ = after
@@ -1211,7 +1213,11 @@ export async function listDisputedServiceDeals({
       events: events
         .filter((event) => event.dealId === row.id)
         .map(({ dealId: _, ...event }) => event),
-      latestReview: reviews.find((review) => review.dealId === row.id) ?? null,
+      // A party is refused the review everywhere else; the queue must not hand it over either.
+      latestReview:
+        viewerId === row.buyerId || viewerId === row.sellerId
+          ? null
+          : reviews.find((review) => review.dealId === row.id) ?? null,
     })),
     nextCursor: rows.length > limit ? page[page.length - 1].cursor : undefined,
   };

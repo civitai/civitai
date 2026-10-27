@@ -1899,19 +1899,28 @@ describe('the finals gate and dispute resolution', () => {
       `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '1 hour' WHERE id = ANY($1)`,
       [[ids[0], ids[1]]]
     );
-    const first = await deals.listDisputedServiceDeals({ limit: 2 });
+    const first = await deals.listDisputedServiceDeals({ limit: 2, viewerId: STRANGER });
     expect(first.items.map((item) => item.id)).toEqual([ids[2], ids[0]]);
-    const second = await deals.listDisputedServiceDeals({ limit: 2, cursor: first.nextCursor });
+    const second = await deals.listDisputedServiceDeals({
+      limit: 2,
+      cursor: first.nextCursor,
+      viewerId: STRANGER,
+    });
     expect(second.items.map((item) => item.id)).toEqual([ids[1]]);
     expect(second.nextCursor).toBeUndefined();
-    await expect(deals.listDisputedServiceDeals({ cursor: 'nope' })).rejects.toThrow(/cursor/);
+    await expect(
+      deals.listDisputedServiceDeals({ cursor: 'nope', viewerId: STRANGER })
+    ).rejects.toThrow(/cursor/);
   });
 
   it('lists the queue with what a decision needs', async () => {
     const held = await delivered();
     await finals(held, 'Failed');
     await escrow.holdServiceDealForReview(held, escrow.FINAL_SCAN_FAILED);
-    const { items, nextCursor } = await deals.listDisputedServiceDeals({ limit: 20 });
+    const { items, nextCursor } = await deals.listDisputedServiceDeals({
+      limit: 20,
+      viewerId: STRANGER,
+    });
     expect(nextCursor).toBeUndefined();
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
@@ -2162,7 +2171,7 @@ describe('reasons and reason codes', () => {
       userId: BUYER,
       reasonCode: 'not_as_previewed',
     });
-    const { items } = await deals.listDisputedServiceDeals({});
+    const { items } = await deals.listDisputedServiceDeals({ viewerId: STRANGER });
     expect(items[0].events.at(-1)).toMatchObject({
       type: 'Disputed',
       comment: null,
@@ -2810,8 +2819,9 @@ describe('dispute reviews', () => {
        WHERE "dealId" = $1 ORDER BY id`,
       [dealId]
     );
-  const latestOnQueue = async (id: number) =>
-    (await deals.listDisputedServiceDeals({})).items.find((item) => item.id === id)?.latestReview;
+  const latestOnQueue = async (id: number, viewerId = STRANGER) =>
+    (await deals.listDisputedServiceDeals({ viewerId })).items.find((item) => item.id === id)
+      ?.latestReview;
   const resolve = (id: number, resolution: 'Refund' | 'Release') =>
     deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution });
 
@@ -2845,6 +2855,16 @@ describe('dispute reviews', () => {
       rationale: 'why',
     });
     expect(await latestOnQueue(unreviewed)).toBeNull();
+  });
+
+  it.each([
+    ['buyer', BUYER],
+    ['seller', SELLER],
+  ])('keeps the review off the queue for a moderator who is the %s', async (_, party) => {
+    const id = await disputed();
+    await review(id, 'Refund');
+    expect(await latestOnQueue(id, party)).toBeNull();
+    expect(await latestOnQueue(id)).toMatchObject({ proposal: 'Refund' });
   });
 
   it.each([
