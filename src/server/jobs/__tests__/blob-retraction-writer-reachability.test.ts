@@ -269,6 +269,23 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
+
+  // remove-blocked-images: its two queue reads. The batch's held-id exclusion arrives as a nested
+  // `Prisma.sql` fragment, so its ids are read from that fragment's own values.
+  if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"')) {
+    const flat = values.flatMap((v) =>
+      v && typeof v === 'object' && 'values' in v ? (v as { values: unknown[] }).values : [v]
+    );
+    const ids = (flat.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('"entityId" = ANY(')) {
+      const cutoff = flat.find((v) => v instanceof Date) as Date;
+      return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
+    }
+    return store.queue
+      .filter((q) => !ids.includes(q.entityId))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
   // The hold marker's view exists, as on prod, and holds nobody.
   if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
   if (sql.includes('FROM "EvidenceHeldUser"')) return [];
@@ -435,11 +452,6 @@ beforeEach(async () => {
   dbMock.dbWrite.image.updateMany.mockImplementation(applyUpdate as never);
   dbMock.dbWrite.image.update.mockImplementation((async (args: any) =>
     applyUpdate({ where: args.where, data: args.data })) as never);
-
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(async ({ where }: any) => {
-    const excluded = where?.entityId?.notIn ?? [];
-    return store.queue.filter((q) => !excluded.includes(q.entityId));
-  });
 
   // The shared db mock only defaults the READ verbs; `toggleBan` fires several fire-and-forget
   // writes whose result it immediately `.catch()`es, and an undefined return throws before the

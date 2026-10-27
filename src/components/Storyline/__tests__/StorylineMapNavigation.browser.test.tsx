@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import Router from 'next/router';
@@ -63,7 +64,10 @@ const childrenByChapterId = (ids: number[]) =>
 const aheadOf: Record<number, Chapter[]> = { 35: [b6] };
 const imageOf = (postId: number) => ({ id: postId / 10, postId, index: 0 });
 
-const mocks = vi.hoisted(() => ({ unwalkedPostIds: new Set<number>() }));
+const mocks = vi.hoisted(() => ({ unwalkedPostIds: new Set<number>(), warm: false }));
+// Prod's queries never go stale and outlive the detail, so a second entry reads them from cache.
+const cache = () =>
+  mocks.warm ? { staleTime: Infinity, gcTime: Infinity } : ({} as Record<string, never>);
 
 const later = <T,>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 80));
 
@@ -76,6 +80,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     useQuery({
       queryKey: ['path', chapterId],
       enabled: !!chapterId,
+      ...cache(),
       placeholderData: keepPreviousData,
       queryFn: () =>
         later({
@@ -90,6 +95,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     const query = useQuery({
       queryKey: ['images', postIds, [...mocks.unwalkedPostIds]],
       enabled: postIds.length > 0,
+      ...cache(),
       placeholderData: keepPreviousData,
       queryFn: () => later(postIds.filter((id) => !mocks.unwalkedPostIds.has(id)).map(imageOf)),
     });
@@ -395,5 +401,86 @@ describe('a branch chapter whose first image is not in the walk', () => {
       expect(Router.push).toHaveBeenCalledWith('/images/460?storylineChapter=46')
     );
     expect(Router.push).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The slide embla has in view, not the index the detail holds. */
+function slideInView() {
+  const viewport = document.querySelector('.touch-pan-y');
+  const slides = [...(viewport?.firstElementChild?.children ?? [])];
+  const mid = viewport ? viewport.getBoundingClientRect().left + viewport.clientWidth / 2 : 0;
+  return slides.findIndex((slide) => {
+    const rect = slide.getBoundingClientRect();
+    return rect.left <= mid && mid < rect.right;
+  });
+}
+
+/**
+ * Tester retry, storyline 1 on prod: B5 -> map -> B6 worked on the first entry from the story
+ * page and failed on the second, with the path and its images already cached. The URL moved to
+ * B6 while the picture stayed on B5; here the stale slide also settles back into the URL.
+ */
+describe('taking a branch on a second entry, with the path cached', () => {
+  afterEach(() => {
+    mocks.warm = false;
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  // The detail opens over the story page and closes back to it, as the modal does.
+  function StoryPage() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" data-testid="toggle-detail" onClick={() => setOpen(!open)} />
+        {open && <Reader placement="toolbar" />}
+      </>
+    );
+  }
+
+  const enterB5 = async () => {
+    getBrowserRouter().replace(
+      { query: { imageId: 350, storylineChapter: 35 } },
+      '/images/350?storylineChapter=35'
+    );
+    await expect.element(page.getByTestId('image')).toHaveTextContent('350');
+    await page.getByRole('button', { name: /map/i }).first().click();
+  };
+  // B6's first image, in the B6 walk: chapters 21-24, B5, B6.
+  const B6_SLIDE = 5;
+
+  test('the picture follows the URL to B6', async () => {
+    mocks.warm = true;
+    await page.viewport(1200, 800);
+    Object.assign(Router, {
+      query: { imageId: '350', storylineChapter: '35' },
+      asPath: '/images/350?storylineChapter=35',
+      pathname: '/images/[imageId]',
+    });
+    renderWithProviders(
+      <BrowserRouterProvider>
+        <ContainerProvider containerName="stage" style={{ width: 1200 }}>
+          <StoryPage />
+        </ContainerProvider>
+      </BrowserRouterProvider>
+    );
+    await expect.element(page.getByTestId('image')).toBeInTheDocument();
+    await enterB5();
+    await page.getByText('ch36').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    await vi.waitFor(() => expect(slideInView()).toBe(B6_SLIDE));
+
+    await page.getByTestId('toggle-detail').click();
+    getBrowserRouter().replace({ query: { id: 1 } }, '/storylines/1');
+    await page.getByTestId('toggle-detail').click();
+    await enterB5();
+    await page.getByText('ch36').click();
+
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
+    expect(getBrowserRouter().query?.imageId).toBe(360);
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    expect(slideInView()).toBe(B6_SLIDE);
   });
 });

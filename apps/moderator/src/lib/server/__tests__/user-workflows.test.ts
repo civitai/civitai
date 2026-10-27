@@ -146,7 +146,9 @@ describe('getUserGeneratedWorkflows', () => {
     expect(video.unavailable).toBe(0);
   });
 
-  it('asks the manager endpoint for that user, generations only, excluding failures', async () => {
+  // Changed deliberately: the default used to be the `gen` tag, which hid an account's untagged work
+  // entirely (two rows shown of ~10k a day). The default now sends no tag; each row carries its origin.
+  it('asks the manager endpoint for that user with no tag by default, excluding failures', async () => {
     respond({ items: [], next: null });
 
     await getUserGeneratedWorkflows(42, { cursor: 'abc' });
@@ -154,11 +156,76 @@ describe('getUserGeneratedWorkflows', () => {
     const url = new URL(fetchMock.mock.calls[0][0] as string);
     expect(url.pathname).toBe('/v1/manager/workflows');
     expect(url.searchParams.get('UserId')).toBe('42');
-    // Without the tag the list fills with prompt-enhancement and scan workflows, which answer nothing
-    // about what the account made.
-    expect(url.searchParams.get('Tags')).toBe('gen');
+    expect(url.searchParams.has('Tags')).toBe(false);
     expect(url.searchParams.get('ExcludeFailed')).toBe('true');
     expect(url.searchParams.get('Cursor')).toBe('abc');
+  });
+
+  it('asks for on-site generations under the `gen` tag', async () => {
+    respond({ items: [], next: null });
+    await getUserGeneratedWorkflows(42, { source: 'onsite' });
+    expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('Tags')).toBe('gen');
+  });
+
+  it("names each row's origin from its own tags", async () => {
+    respond({
+      items: [
+        { id: 'a', tags: ['civitai', 'gen', 'img'] },
+        { id: 'b', tags: ['civitai-comfy-nodes'] },
+        { id: 'c', tags: [] },
+        { id: 'd' },
+        { id: 'e', tags: ['civitai', 'modelVersion:1', 'training'] },
+        { id: 'f', tags: ['gen', 'civitai-comfy-nodes'] },
+        { id: 'g', tags: ['civitai', 'gen', 'training', 'app-block'] },
+        { id: 'h', tags: ['civitai', 'modelVersion:1'] },
+      ],
+      next: null,
+    });
+    const page = await getUserGeneratedWorkflows(42);
+    expect(page.items.map((w) => [w.id, w.origin, w.sourceTag])).toEqual([
+      ['a', 'onsite', null],
+      ['b', 'comfy', null],
+      ['c', 'untagged', null],
+      ['d', 'untagged', null],
+      // A non-generation row names what it was rather than a bare "other source".
+      ['e', 'other', 'training'],
+      // The site generator's own tag wins over Comfy Cloud's when a row carries both.
+      ['f', 'onsite', null],
+      // App blocks also tag `gen`; their trainings must not read as site generations.
+      ['g', 'appblock', null],
+      ['h', 'other', null],
+    ]);
+  });
+
+  it('says params are missing only for a generation that recorded none of them', async () => {
+    respond({
+      items: [
+        { id: 'blank', tags: [] },
+        { id: 'site-blank', tags: ['gen'] },
+        { id: 'block-step', tags: ['gen', 'app-block'] },
+        {
+          id: 'block-txt2img',
+          tags: ['gen', 'app-block'],
+          metadata: { params: { prompt: 'x', workflow: 'txt2img' } },
+        },
+        { id: 'upscale', tags: ['gen'], metadata: { params: { workflow: 'img-upscale' } } },
+        { id: 'comfy', tags: ['civitai-comfy-nodes'] },
+        { id: 'enhance', tags: ['prompt-enhancement'] },
+      ],
+      next: null,
+    });
+    const page = await getUserGeneratedWorkflows(42);
+    // An app block's own prompt is still shown; only the "no params" claim depends on origin.
+    expect(page.items.find((w) => w.id === 'block-txt2img')?.prompt).toBe('x');
+    expect(page.items.map((w) => [w.id, w.paramsMissing])).toEqual([
+      ['blank', true],
+      ['site-blank', true],
+      ['block-step', false],
+      ['block-txt2img', false],
+      ['upscale', false],
+      ['comfy', false],
+      ['enhance', false],
+    ]);
   });
 
   it('asks for Comfy Cloud under its own tag, not the on-site one', async () => {

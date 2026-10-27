@@ -46,7 +46,7 @@ const MyCollectionsDrawer = () => {
       >
         <Group gap={4}>
           <IconLayoutSidebarLeftExpand />
-          My Collections
+          Collections
         </Group>
       </Button>
       <Drawer
@@ -56,7 +56,7 @@ const MyCollectionsDrawer = () => {
         title={
           <Group gap="xs" wrap="nowrap">
             <Text size="lg" fw={500}>
-              My Collections
+              Collections
             </Text>
             <CollectionInvitesButton />
           </Group>
@@ -93,7 +93,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <Container fluid className={classes.container}>
       {/* The mobile drawer has always checked this; the desktop card never did,
-          so a signed-out visitor got an empty "My Collections" panel. */}
+          so a signed-out visitor got an empty "Collections" panel. */}
       {!!currentUser && (
         <MyCollections>
           {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
@@ -137,7 +137,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
               </Tooltip>
               <Card.Section p="xs" mx={0} className="border-t-0" withBorder>
                 <Group justify="space-between" wrap="nowrap">
-                  <Text fw={500}>My Collections</Text>
+                  <Text fw={500}>Collections</Text>
                   <Group gap={4} wrap="nowrap">
                     <CollectionInvitesButton />
                     <Button
