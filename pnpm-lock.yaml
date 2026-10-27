@@ -1692,6 +1692,9 @@ importers:
         specifier: ^4.6.6
         version: 4.6.7
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.4.6
+        version: 0.4.6
       '@types/pg':
         specifier: ^8.11.10
         version: 8.15.5
