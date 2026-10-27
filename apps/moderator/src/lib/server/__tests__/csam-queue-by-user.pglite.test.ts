@@ -42,6 +42,7 @@ CREATE TABLE "Image" (
   "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "scannedAt" TIMESTAMP(3),
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "postId" INTEGER,
   "userId" INTEGER NOT NULL
 );
@@ -50,7 +51,7 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
-  "images" JSONB NOT NULL DEFAULT '[]'
+  "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image'
 );
 `;
 
@@ -149,14 +150,18 @@ describe('the CSAM queue by user', () => {
 });
 
 describe('what a sent CSAM report takes out of the pending count', () => {
-  // Every send is 2026-03-01. 201: both images predate it, one scanned before it.
+  // Every send is 2026-03-01, and no image was edited after its creation unless said. 201: both
+  // images predate it, one scanned before it.
   // 202: one image before, one created after. 203: created before, scanned again after.
   // 204: listed on a report never sent. 205: no report. 206: created after, but listed on the sent
-  // report. 207: created after, listed only on a sent report about someone else.
+  // report. 207: created after, listed only on a sent report about someone else. 210: created
+  // and scanned before the send, edited (flagged by hand) after it. 211: only a sent report of another
+  // type.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "User" ("id", "username") VALUES
         (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm');
+      INSERT INTO "User" ("id", "username") VALUES (210, 'n'), (211, 'o');
       INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt", "scannedAt") VALUES
         (21, 201, 'csam', '2026-01-01', NULL),
         (22, 201, 'csam', '2026-01-01', '2026-01-02'),
@@ -168,6 +173,12 @@ describe('what a sent CSAM report takes out of the pending count', () => {
         (28, 206, 'csam', '2026-04-01', '2026-04-01'),
         (29, 207, 'csam', '2026-04-01', NULL),
         (30, 201, 'minor', '2026-01-01', NULL);
+      UPDATE "Image" SET "updatedAt" = "createdAt" WHERE id BETWEEN 21 AND 30;
+      INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt", "scannedAt", "updatedAt") VALUES
+        (31, 210, 'csam', '2026-01-01', '2026-01-01', '2026-04-01'),
+        (32, 211, 'csam', '2026-01-01', NULL, '2026-01-01');
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "type") VALUES
+        (210, '2026-03-01', 'Image'), (211, '2026-03-01', 'TrainingData');
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
         (201, '2026-03-01', '[]'), (202, '2026-03-01', '[]'), (203, '2026-03-01', '[]'),
         (204, NULL, '[{"id": 26}]'), (206, '2026-03-01', '[{"id": 28}]'),
@@ -177,9 +188,9 @@ describe('what a sent CSAM report takes out of the pending count', () => {
 
   afterAll(async () => {
     await db.exec(`
-      DELETE FROM "CsamReport" WHERE "userId" BETWEEN 201 AND 208;
-      DELETE FROM "Image" WHERE "userId" BETWEEN 201 AND 207;
-      DELETE FROM "User" WHERE id BETWEEN 201 AND 207;
+      DELETE FROM "CsamReport" WHERE "userId" BETWEEN 201 AND 211;
+      DELETE FROM "Image" WHERE "userId" BETWEEN 201 AND 211;
+      DELETE FROM "User" WHERE id BETWEEN 201 AND 211;
     `);
   });
 
@@ -205,6 +216,8 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       205: 1,
       206: 0,
       207: 1,
+      210: 1,
+      211: 1,
     });
   });
 
@@ -215,7 +228,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
 
   it('badges exactly what the by-user page shows as pending', async () => {
     const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
-    expect(pending).toBe(10);
+    expect(pending).toBe(12);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 
