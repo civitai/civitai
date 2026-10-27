@@ -167,6 +167,7 @@ export function detectLinkedClusters({
 
   const sinks: SinkEvidence[] = [];
   const createdTogether: number[][] = [];
+  const seenRuns = new Set<string>();
   const createdAt = new Map(accounts.map((a) => [a.userId, a]));
   for (const [sinkId, feederIds] of feedersBySink) {
     const rows = feederIds.flatMap((f) => outflow.get(f)?.get(sinkId) ?? []);
@@ -183,9 +184,13 @@ export function detectLinkedClusters({
       ),
     });
     const group = feederIds.flatMap((id) => (createdAt.has(id) ? [createdAt.get(id)!] : []));
-    createdTogether.push(
-      ...createdRuns(group, config.createdGapSeconds, config.createdMinAccounts)
-    );
+    for (const run of createdRuns(group, config.createdGapSeconds, config.createdMinAccounts)) {
+      const key = [...run].sort((a, b) => a - b).join(',');
+      if (!seenRuns.has(key)) {
+        seenRuns.add(key);
+        createdTogether.push(run);
+      }
+    }
   }
 
   const nodes = new Set<number>([

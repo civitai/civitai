@@ -60,6 +60,25 @@ describe('detectLinkedClusters', () => {
     expect(block[0].evidence.createdTogether).toEqual([[1, 2]]);
   });
 
+  it('reports one created-together run when several sinks share the same feeders', () => {
+    const [cluster] = detectLinkedClusters({
+      ...base,
+      tips: [
+        ...tipsFrom(1, 98, 2, 0, 1000),
+        ...tipsFrom(2, 98, 2, 0, 1000),
+        ...tipsFrom(1, 99, 2, 0, 1000),
+        ...tipsFrom(2, 99, 2, 0, 1000),
+      ],
+      accounts: [
+        { userId: 1, createdAt: new Date(0) },
+        { userId: 2, createdAt: new Date(30_000) },
+      ],
+    });
+
+    expect(cluster.evidence.sinks).toHaveLength(2);
+    expect(cluster.evidence.createdTogether).toEqual([[1, 2]]);
+  });
+
   it('ignores address groups over the account ceiling or below the shared minimum', () => {
     const crowded = detectLinkedClusters({
       ...base,

@@ -36,4 +36,24 @@ describe('describeEvidence', () => {
       )[0]
     ).toContain('#7 and #8');
   });
+
+  it('lists a repeated created-together run once', () => {
+    const lines = describeEvidence(
+      {
+        sinks: [],
+        ipLinks: [],
+        createdTogether: [
+          [1, 2],
+          [1, 2],
+          [2, 3],
+        ],
+      },
+      name
+    );
+
+    expect(lines).toEqual([
+      'alpha and beta were created within moments of each other.',
+      'beta and gamma were created within moments of each other.',
+    ]);
+  });
 });

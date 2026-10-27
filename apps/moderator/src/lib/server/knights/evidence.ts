@@ -50,5 +50,5 @@ export function describeEvidence(evidence: LinkEvidence, name: (id: number) => s
   for (const ids of evidence.createdTogether) {
     lines.push(`${list(ids.map(name))} were created within moments of each other.`);
   }
-  return lines;
+  return [...new Set(lines)];
 }

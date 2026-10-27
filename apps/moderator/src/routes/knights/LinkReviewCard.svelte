@@ -34,7 +34,7 @@
   </div>
 
   <ul class="flex flex-col gap-1 text-sm">
-    {#each review.lines as line (line)}
+    {#each review.lines as line, i (i)}
       <li>{line}</li>
     {/each}
   </ul>
