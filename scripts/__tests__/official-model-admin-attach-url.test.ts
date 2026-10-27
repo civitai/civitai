@@ -24,14 +24,21 @@ function setup({
   files,
   stored,
   lagging = 0,
+  cached = {},
+  storageHost = 'storage.test',
 }: {
   files: Files;
   stored: Record<string, Buffer>;
   lagging?: number;
+  /** What the cached file list says, where it has not caught up with `files`. */
+  cached?: Files;
+  storageHost?: string;
 }) {
   let lagLeft = lagging;
   const call = vi.fn(async (procedure: string, input: Record<string, unknown>) => {
-    if (procedure === 'modelFile.getByVersionId') return { files: files[input.id as number] ?? [] };
+    const id = input.id as number;
+    if (procedure === 'modelFile.getByVersionId') return { files: cached[id] ?? files[id] ?? [] };
+    if (procedure === 'modelVersion.getByIdForEdit') return { id, files: files[id] ?? [] };
     if (procedure === 'modelFile.create') {
       const created = { id: 99, ...input };
       (files[input.modelVersionId as number] ??= []).push(created);
@@ -49,7 +56,7 @@ function setup({
       if (!stored[key] || lagged) return new Response('File not found', { status: 404 });
       return new Response(null, {
         status: 307,
-        headers: { location: `https://storage.test/${key}` },
+        headers: { location: `https://${storageHost}/${key}` },
       });
     }
     const bytes = stored[pathname.slice(1)];
@@ -77,6 +84,7 @@ describe('attach-url', () => {
   it('dry run reads the source and its download, and creates nothing', async () => {
     const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
     expect(await attachUrl({ ...opts, writable: false }, t.deps)).toBe(true);
+    expect(t.lines.join('\n')).toContain('served from storage.test');
     expect(t.created()).toHaveLength(0);
     expect(t.fetchFn).toHaveBeenCalledTimes(2);
     expect(t.lines.join('\n')).toContain(SOURCE_URL);
@@ -149,6 +157,27 @@ describe('attach-url', () => {
     expect(t.created()).toHaveLength(0);
   });
 
+  it('stops before creating when the source is served from B2 under an R2 url', async () => {
+    const t = setup({
+      files: { 100: [SOURCE] },
+      stored: { '100:11': WEIGHTS, '200:99': WEIGHTS },
+      storageHost: 'b2.civitai.test',
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(false);
+    expect(t.created()).toHaveLength(0);
+    expect(t.lines.join('\n')).toContain('served from B2');
+  });
+
+  it('does not create a second file when the cached file list has not caught up', async () => {
+    const t = setup({
+      files: { 100: [SOURCE], 200: [{ id: 55, url: SOURCE_URL }] },
+      cached: { 200: [] },
+      stored: { '100:11': WEIGHTS, '200:55': WEIGHTS },
+    });
+    expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
+    expect(t.created()).toHaveLength(0);
+  });
+
   it('refuses a --url that names a different object', async () => {
     const t = setup({ files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
     const url =
@@ -184,6 +213,16 @@ describe('detach-url', () => {
 
   it('deletes a file that shares the source url', async () => {
     const t = setup({ files: { 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL }] }, stored: {} });
+    expect(await detachUrl(dOpts, t.deps)).toBe(true);
+    expect(t.call).toHaveBeenCalledWith('modelFile.delete', { id: 99 });
+  });
+
+  it('finds a file the cached file list does not show yet', async () => {
+    const t = setup({
+      files: { 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL }] },
+      cached: { 200: [] },
+      stored: {},
+    });
     expect(await detachUrl(dOpts, t.deps)).toBe(true);
     expect(t.call).toHaveBeenCalledWith('modelFile.delete', { id: 99 });
   });

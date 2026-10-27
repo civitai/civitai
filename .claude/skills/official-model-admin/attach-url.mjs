@@ -10,9 +10,13 @@ const TARGET_ATTEMPTS = 4;
 const RETRY_MS = 5000;
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** A file row as `modelFile.getByVersionId` returns it, or a reason it can't be used. */
+// Read from the primary database: the cached file list can predate a file created moments ago.
 async function findFile(call, versionId, fileId) {
-  const record = await call('modelFile.getByVersionId', { id: versionId }, 'GET');
+  const record = await call(
+    'modelVersion.getByIdForEdit',
+    { id: versionId, withFiles: true },
+    'GET'
+  );
   const files = record?.files ?? [];
   const file = files.find((f) => f.id === fileId);
   return { file, files };
@@ -40,6 +44,7 @@ export function sameObjectKey(a, b) {
  */
 export async function probeDownload({ apiUrl, apiKey, fetchFn, versionId, fileId }) {
   let res;
+  let servedFrom = null;
   try {
     const range = { Range: `bytes=0-${PROBE_BYTES - 1}` };
     res = await fetchFn(`${apiUrl}/api/download/models/${versionId}?fileId=${fileId}`, {
@@ -50,14 +55,16 @@ export async function probeDownload({ apiUrl, apiKey, fetchFn, versionId, fileId
     const location = res.headers.get('location');
     if (res.status >= 300 && res.status < 400 && location) {
       await res.body?.cancel?.();
-      res = await fetchFn(new URL(location, apiUrl).toString(), { headers: range });
+      const target = new URL(location, apiUrl);
+      servedFrom = target.hostname;
+      res = await fetchFn(target.toString(), { headers: range });
     }
   } catch (err) {
     return { ok: false, status: 0, error: err.message };
   }
   if (!res.ok) {
     await res.body?.cancel?.();
-    return { ok: false, status: res.status };
+    return { ok: false, status: res.status, servedFrom };
   }
 
   // A server that ignores Range answers 200 with the whole file, so read only what is compared.
@@ -75,13 +82,16 @@ export async function probeDownload({ apiUrl, apiKey, fetchFn, versionId, fileId
   const bytes = Buffer.concat(chunks).subarray(0, PROBE_BYTES);
   const range = /\/(\d+)$/.exec(res.headers.get('content-range') ?? '');
   const total = range ? Number(range[1]) : Number(res.headers.get('content-length')) || null;
-  return { ok: true, status: res.status, total, bytes };
+  return { ok: true, status: res.status, total, bytes, servedFrom };
 }
 
 function describeProbe(p) {
   if (!p.ok) return `FAILED (HTTP ${p.status}${p.error ? `: ${p.error}` : ''})`;
-  return `ok (HTTP ${p.status}, ${p.total ?? '?'} bytes, read ${p.bytes.length})`;
+  const from = p.servedFrom ? `, served from ${p.servedFrom}` : '';
+  return `ok (HTTP ${p.status}, ${p.total ?? '?'} bytes, read ${p.bytes.length}${from})`;
 }
+
+const isB2Host = (host) => /^b2\.|(^|\.)backblazeb2\.com$/.test(host ?? '');
 
 function sameBytes(a, b) {
   return a.ok && b.ok && a.total === b.total && a.bytes.length > 0 && a.bytes.equals(b.bytes);
@@ -134,6 +144,16 @@ export async function attachUrl(opts, deps) {
   log(`  download: ${describeProbe(sourceProbe)}`);
   if (!sourceProbe.ok) {
     log('The source does not download, so a copy of its url would not either. Stopping.');
+    return false;
+  }
+  // Downloads resolve a file's storage location by file id, and a new file's location is taken
+  // from its url. A source whose bytes now live on B2 under a url that still names R2 therefore
+  // copies to a file that resolves to R2, where the object no longer is.
+  if (isB2Host(sourceProbe.servedFrom) && !isB2Host(new URL(url).hostname)) {
+    log(
+      'The source is served from B2 but this url names R2, so the new file would not resolve. ' +
+        'Stopping before any write: it needs its storage location registered, or a real copy.'
+    );
     return false;
   }
 
