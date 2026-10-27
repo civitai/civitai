@@ -230,6 +230,19 @@ describe('challenge-entry gates when the replica has not caught up', () => {
     );
   });
 
+  // bulkSaveItems charges after its own write; every other caller charges inside the validator.
+  // A caller that validates early (addSimpleImagePost) must not pay before anything is saved.
+  it.each([
+    ['with image ids', { imageIds: [IMAGE_ID] }],
+    ['with no ids', { imageIds: [] }],
+  ])('never charges the entry fee when the charge is deferred, %s', async (_label, ids) => {
+    seed({ replica: [], primary: [challenge({ entryFee: 50 })] });
+
+    await expect(entry({ ...ids, deferEntryFeeCharge: true })).resolves.toBeUndefined();
+
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
   it('neither charges nor accepts an entry into a challenge the replica still sees as Active but the primary has Cancelled', async () => {
     seed({
       replica: [challenge({ entryFee: 50 })],
