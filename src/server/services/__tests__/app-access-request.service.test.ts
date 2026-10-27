@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
+import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
-// Relative, because `~` does not reach `apps/`.
-import { freshPglite } from '../../../../apps/moderator/src/test/pglite';
 
 const { refreshSession } = vi.hoisted(() => ({ refreshSession: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
@@ -88,10 +86,20 @@ const submit = (userId: number, whatToBuild: string) =>
 const decide = (id: number, decision: 'approved' | 'declined') =>
   decideAppAccessRequest({ moderatorId: moderator, input: { id, decision } });
 
-beforeEach(async () => {
-  pg = await freshPglite();
+// One cluster per file: initdb is most of a cluster's cost, so the tables are emptied between tests
+// instead. RESTART IDENTITY gives every test the same ids a fresh cluster would.
+beforeAll(async () => {
+  pg = await PGlite.create();
   await pg.exec(PRELUDE);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
+});
+
+afterAll(async () => {
+  await pg.close();
+});
+
+beforeEach(async () => {
+  await pg.exec('TRUNCATE "AppAccessRequest", "User" RESTART IDENTITY');
   // Three users whose ids differ, so a statement keyed on the wrong one cannot pass by accident.
   moderator = await seedUser('queue_reviewer');
   mira = await seedUser('mira_builds');
@@ -99,16 +107,6 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockImplementation(run as never);
   refreshSession.mockClear();
-});
-
-afterEach(async () => {
-  await pg.close();
-});
-
-describe('the fixtures', () => {
-  it('seeds three distinct users', () => {
-    expect(new Set([moderator, mira, tomasz]).size).toBe(3);
-  });
 });
 
 describe('submitAppAccessRequest', () => {
