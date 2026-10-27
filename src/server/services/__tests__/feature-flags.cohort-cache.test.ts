@@ -100,6 +100,9 @@ const contexts: { name: string; ctx: Ctx }[] = [
   { name: 'anon / green / US', ctx: { req: makeReq('green.test', 'US') } },
   { name: 'anon / green / FR (restricted)', ctx: { req: makeReq('green.test', 'FR') } },
   { name: 'anon / blue / US', ctx: { req: makeReq('blue.test', 'US') } },
+  // The only Flipt-free region-gated flag (`canViewNsfw`, `nonRestricted`) is also host-gated to
+  // blue/red, so the region pairs that can tell a region-blind cohort key apart are on red.
+  { name: 'anon / red / US', ctx: { req: makeReq('red.test', 'US') } },
   { name: 'anon / red / FR (restricted)', ctx: { req: makeReq('red.test', 'FR') } },
   { name: 'anon / unknown host / no region', ctx: { req: makeReq('other.test') } },
   { name: 'free 101 / green / US', ctx: { user: makeUser(101), req: makeReq('green.test', 'US') } },
@@ -151,6 +154,7 @@ const contexts: { name: string; ctx: Ctx }[] = [
     name: 'free 113 with permissions / green / FR (restricted)',
     ctx: { user: makeUser(113, { permissions: GRANTED_PERMS }), req: makeReq('green.test', 'FR') },
   },
+  { name: 'free 115 / red / US', ctx: { user: makeUser(115), req: makeReq('red.test', 'US') } },
   {
     name: 'free 114 early adopter / red / FR (restricted)',
     ctx: {
