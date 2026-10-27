@@ -87,7 +87,7 @@ const decide = (id: number, decision: 'approved' | 'declined') =>
   decideAppAccessRequest({ moderatorId: moderator, input: { id, decision } });
 
 // One cluster per file: initdb is most of a cluster's cost, so the tables are emptied between tests
-// instead. RESTART IDENTITY gives every test the same ids a fresh cluster would.
+// instead.
 beforeAll(async () => {
   pg = await PGlite.create();
   await pg.exec(PRELUDE);

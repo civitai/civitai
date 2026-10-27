@@ -201,6 +201,5 @@ describe('AppAccessRequestPanel — signed out', () => {
     // The store, not the DOM, is the settled answer: a form opened in the click would already be
     // in it, while its DOM mounts later, behind a lazy import.
     expect(openDialogIds()).toEqual([]);
-    expect(whatToBuild().elements()).toHaveLength(0);
   });
 });

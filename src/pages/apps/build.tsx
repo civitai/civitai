@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { AppAssistantWorkspaceSkeleton } from '~/components/Apps/AppAssistant/AppAssistantWorkspaceSkeleton';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppsBuildBody } from '~/components/Apps/AppsBuildBody';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
@@ -18,12 +19,15 @@ import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 /**
  * Split out of the page chunk: only the assistant view renders it, so a visitor in the build view
  * never downloads it. SSR stays on (the default), so the assistant view's server render still
- * includes the workspace.
+ * includes the workspace. A client-side navigation into the assistant view waits on the chunk, and
+ * shows the skeleton meanwhile.
  */
-const AppAssistantWorkspace = dynamic(() =>
-  import('~/components/Apps/AppAssistant/AppAssistantWorkspace').then(
-    (m) => m.AppAssistantWorkspace
-  )
+const AppAssistantWorkspace = dynamic(
+  () =>
+    import('~/components/Apps/AppAssistant/AppAssistantWorkspace').then(
+      (m) => m.AppAssistantWorkspace
+    ),
+  { loading: () => <AppAssistantWorkspaceSkeleton /> }
 );
 
 type AssistantProps = {
