@@ -1116,6 +1116,22 @@ describe('recordUnverifiedDeposit', () => {
       expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
     }
   );
+
+  it.each(['finished', 'held', 'unverified'])(
+    'leaves a %s row where it is when a paid IPN cannot be verified',
+    async (status) => {
+      let rowStatus = status;
+      mockDbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (!where.status.in.includes(rowStatus)) return { count: 0 };
+        rowStatus = data.status;
+        return { count: 1 };
+      });
+
+      await recordUnverifiedDeposit(makeWebhookEvent({ payment_status: 'finished' }));
+
+      expect(rowStatus).toBe(status);
+    }
+  );
 });
 
 const staffTipCitingPayment = {
@@ -1314,7 +1330,18 @@ describe('watchOpenDeposits', () => {
     expect(result.closed).toBe(1);
   });
 
-  it('credits a partially_paid row through the same guard', async () => {
+  it('credits a partially_paid row with no hand grant', async () => {
+    const result = await watch([openRow(810, 'partially_paid', 5)], { 810: 'partially_paid' });
+
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+    expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionId: 'np-deposit-810', userId: 42 })
+    );
+    expect(rowStatus[810]).toBe('finished');
+    expect(result.closed).toBe(1);
+  });
+
+  it('holds a partially_paid row a staff hand grant already paid', async () => {
     vi.mocked(findHandGrantsForDeposit).mockResolvedValueOnce(staffTipCitingPayment);
 
     await watch([openRow(803, 'partially_paid', 5)], { 803: 'partially_paid' });
