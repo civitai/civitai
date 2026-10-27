@@ -111,14 +111,16 @@ const view = (
   {
     activity = 'reportMedia:select:original',
     entityType = 'image',
+    // The report's filer.
+    userId = 10,
     // PGlite's clock ticks in whole milliseconds, so a row stamped "now" often equals the send's cutoff.
     createdAt = `CURRENT_TIMESTAMP - interval '1 second'`,
   } = {}
 ) =>
   db.pg.query(
     `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-     VALUES (10, $1, $2, $3, ${createdAt})`,
-    [entityType, activity, entityId]
+     VALUES ($4, $1, $2, $3, ${createdAt})`,
+    [entityType, activity, entityId, userId]
   );
 
 const imageRow = (id: number) => ({
@@ -389,6 +391,61 @@ describe('image report: fileViewedByEsp per file', () => {
     await processCsamReport(imageReport([501, 502]));
 
     expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+});
+
+// The report is filed an hour before the send, by user 10.
+describe('image report: a view of the CDN copy', () => {
+  const cdn = 'reportMedia:select:cdn-450';
+
+  it("counts the filer's view from the day before the filing", async () => {
+    await view(501, { activity: cdn, createdAt: `CURRENT_TIMESTAMP - interval '24 hours'` });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+
+  it("counts no other moderator's view", async () => {
+    await view(501, { activity: cdn, userId: 11 });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
+  });
+
+  it("counts any moderator's view of the original", async () => {
+    await view(501, { userId: 11 });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+
+  it("counts no filer's view from more than a day before the filing", async () => {
+    await view(501, { activity: cdn, createdAt: `CURRENT_TIMESTAMP - interval '26 hours'` });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
+  });
+
+  it("counts the filer's view made after the filing, on the retry", async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('synthetic replica outage'));
+    await processCsamReport(imageReport([501, 502]));
+
+    await view(501, { activity: cdn });
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+
+  it("counts no filer's view stamped later than the send", async () => {
+    await view(501, { activity: cdn, createdAt: `CURRENT_TIMESTAMP + interval '1 hour'` });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
   });
 });
 

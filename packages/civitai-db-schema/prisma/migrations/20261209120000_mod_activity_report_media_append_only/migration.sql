@@ -1,5 +1,6 @@
 -- The "reportMedia:*" rows of ModActivity are append-only: they cannot be updated or deleted, no
--- other row can be updated into one, and the table cannot be truncated. Every other row is
+-- other row can be updated into one, and the table cannot be truncated. Each is stamped with the
+-- database's UTC time as it is inserted, whatever "createdAt" the insert names. Every other row is
 -- unaffected.
 --
 -- No FK cascades into this table; app code never updates or deletes rows.
@@ -9,13 +10,29 @@
 -- timeout rolls the whole file back and leaves any earlier triggers in place. Re-run on timeout.
 --
 -- To revert (same locks), in one transaction:
+--   DROP TRIGGER IF EXISTS "ModActivity_stamp_report_media" ON "ModActivity";
 --   DROP TRIGGER IF EXISTS "ModActivity_guard_report_media" ON "ModActivity";
 --   DROP TRIGGER IF EXISTS "ModActivity_refuse_truncate" ON "ModActivity";
+--   DROP FUNCTION IF EXISTS mod_activity_stamp_report_media();
 --   DROP FUNCTION IF EXISTS mod_activity_guard_report_media();
 --   DROP FUNCTION IF EXISTS mod_activity_refuse_truncate();
 
 BEGIN;
 SET LOCAL lock_timeout = '3s';
+
+CREATE OR REPLACE FUNCTION mod_activity_stamp_report_media() RETURNS trigger AS $$
+BEGIN
+  IF NEW."activity" LIKE 'reportMedia:%' THEN
+    NEW."createdAt" := now() AT TIME ZONE 'UTC';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
+
+DROP TRIGGER IF EXISTS "ModActivity_stamp_report_media" ON "ModActivity";
+CREATE TRIGGER "ModActivity_stamp_report_media"
+BEFORE INSERT ON "ModActivity"
+FOR EACH ROW EXECUTE FUNCTION mod_activity_stamp_report_media();
 
 CREATE OR REPLACE FUNCTION mod_activity_guard_report_media() RETURNS trigger AS $$
 BEGIN

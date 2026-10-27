@@ -57,7 +57,7 @@ import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import type { ShownRendition } from '@civitai/shared/held-media';
-import { SHOWN_ACTIONS, SHOWN_RENDITIONS, shownActivity } from '@civitai/shared/held-media';
+import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -1119,7 +1119,10 @@ async function reportImages(claim: SendClaim) {
   // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
   let viewed: Map<number, ShownRendition>;
   try {
-    viewed = await getViewedImageIds(images.map((image) => image.id));
+    viewed = await getViewedImageIds(
+      images.map((image) => image.id),
+      report
+    );
   } catch (e) {
     return logSendFailure(report, e, 'send-view-check');
   }
@@ -1282,23 +1285,34 @@ async function reportImages(claim: SendClaim) {
 }
 
 /** The rows that count as a moderator having seen an image: opened or selected once on screen. */
-const SHOWN_ACTIVITIES = SHOWN_ACTIONS.flatMap((action) =>
-  SHOWN_RENDITIONS.map((rendition) => shownActivity(action, rendition))
-);
+const shownActivities = (rendition: ShownRendition) =>
+  SHOWN_ACTIONS.map((action) => shownActivity(action, rendition));
 
 /** Each image's earliest counted row stamped before now, by the database's own clock, as the
- *  rendition it records. `createdAt` is zoneless, stamped by its column default in the writing
- *  session's time zone; compared in UTC, which assumes the writers' sessions run in UTC. */
-async function getViewedImageIds(imageIds: number[]) {
+ *  rendition it records. A CDN row counts only when the report's filer wrote it, from a day before
+ *  the filing on. `createdAt` is zoneless and in UTC. */
+async function getViewedImageIds(
+  imageIds: number[],
+  report: Pick<CsamReportProps, 'reportedById' | 'createdAt'>
+) {
   const viewed = new Map<number, ShownRendition>();
   if (!imageIds.length) return viewed;
   // The primary: a replica may not have a view recorded just before the send.
   const rows = await dbWrite.$queryRaw<{ entityId: number; activity: string }[]>`
     SELECT DISTINCT ON ("entityId") "entityId", activity FROM "ModActivity"
-    WHERE activity = ANY(${SHOWN_ACTIVITIES}::text[])
-      AND "entityType" = 'image'
+    WHERE "entityType" = 'image'
       AND "entityId" = ANY(${imageIds}::int[])
       AND "createdAt" < (now() AT TIME ZONE 'UTC')
+      AND (
+        activity = ANY(${shownActivities('original')}::text[])
+        OR (
+          activity = ANY(${shownActivities('cdn-450')}::text[])
+          AND "userId" = ${report.reportedById}
+          AND "createdAt" >= (${new Date(
+            report.createdAt
+          ).toISOString()}::timestamptz AT TIME ZONE 'UTC') - interval '24 hours'
+        )
+      )
     ORDER BY "entityId", "createdAt", id
   `;
   for (const { entityId, activity } of rows)

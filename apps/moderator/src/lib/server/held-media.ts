@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { heldImageSql } from '@civitai/shared/held-media';
+import { heldImageSql, SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { dbRead } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
@@ -39,7 +39,7 @@ export function recordHeldView(moderatorId: number, imageId: number) {
     userId: moderatorId,
     entityType: 'image',
     entityId: imageId,
-    activity: 'heldMedia:view',
+    activity: SERVED_ACTIVITY,
   });
 }
 

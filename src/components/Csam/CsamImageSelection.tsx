@@ -235,6 +235,8 @@ export function CsamImageCard({
   const userId = image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
+  const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
+  const [opened, setOpened] = useState(false);
   // What the tile has put on screen so far; a selection made before then is not recorded.
   const shown = useRef<ShownRendition | null>(null);
   const [fullView, setFullView] = useState(false);
@@ -273,6 +275,16 @@ export function CsamImageCard({
           >
             <IconMaximize size={16} />
           </ActionIcon>
+          {preselected && checked && !opened && (
+            <Button
+              size="compact-xs"
+              color="dark"
+              onClick={() => setFullView(true)}
+              style={{ position: 'absolute', bottom: 5, left: 5, zIndex: 9 }}
+            >
+              Open full view to confirm viewed
+            </Button>
+          )}
           <Checkbox
             checked={checked}
             onChange={toggleSelected}
@@ -296,7 +308,10 @@ export function CsamImageCard({
         <CsamHeldMedia
           image={image}
           onClick={() => undefined}
-          onShown={(rendition) => recordShown({ imageId, userId, action: 'open', rendition })}
+          onShown={(rendition) => {
+            setOpened(true);
+            recordShown({ imageId, userId, action: 'open', rendition });
+          }}
         />
       </Modal>
     </MasonryCard>

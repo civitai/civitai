@@ -1,6 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { SHOWN_ACTIONS, SHOWN_RENDITIONS, shownActivity } from '@civitai/shared/held-media';
+import {
+  SERVED_ACTIVITY,
+  SHOWN_ACTIONS,
+  SHOWN_RENDITIONS,
+  shownActivity,
+} from '@civitai/shared/held-media';
 import { dbWrite } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getHeldMedia } from '~/server/services/held-media.service';
@@ -43,11 +48,24 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   if ((rendition === 'original') !== held)
     return void res.status(409).json({ error: 'Not shown that way' });
 
-  await trackModActivity(user.id, {
-    entityType: 'image',
-    entityId: imageId,
-    activity: shownActivity(action, rendition),
-  });
+  const activity = shownActivity(action, rendition);
+  if (rendition === 'cdn-450') {
+    await trackModActivity(user.id, { entityType: 'image', entityId: imageId, activity });
+    return void res.status(204).end();
+  }
+  // The original only as bytes this moderator was just served, in one statement with the serve read.
+  const recorded = await dbWrite.$executeRaw`
+    INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+    SELECT ${user.id}::int, 'image', ${activity}::text, ${imageId}::int
+    WHERE EXISTS (
+      SELECT 1 FROM "ModActivity"
+      WHERE activity = ${SERVED_ACTIVITY}::text AND "entityType" = 'image'
+        AND "entityId" = ${imageId}::int AND "userId" = ${user.id}::int
+        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - interval '30 minutes'
+    )
+    ON CONFLICT DO NOTHING
+  `;
+  if (!recorded) return void res.status(403).json({ error: 'Not served to you' });
   res.status(204).end();
 }
 

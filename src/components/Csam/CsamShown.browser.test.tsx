@@ -243,6 +243,34 @@ describe('selecting on the report page', () => {
     expect(shownPosts()).toEqual([]);
   });
 
+  test('a preselected image asks for its full view until that is recorded', async () => {
+    held();
+    useCsamImageSelectStore.getState().seedSelected(20, 41);
+    await renderCard(image);
+    const cue = page.getByRole('button', { name: 'Open full view to confirm viewed' });
+
+    await cue.click();
+    await expect
+      .poll(() => document.querySelectorAll('img[src="/api/mod/held-media/41"]').length)
+      .toBe(2);
+    loadImage(document.querySelectorAll<HTMLImageElement>('img[src="/api/mod/held-media/41"]')[1]);
+
+    expect(shownPosts()).toEqual([
+      { imageId: 41, userId: 20, action: 'open', rendition: 'original' },
+    ]);
+    await page.getByRole('button', { name: 'Close' }).click();
+    expect(document.body.textContent?.includes('Open full view to confirm viewed')).toBe(false);
+  });
+
+  test('an image the moderator selected shows no cue', async () => {
+    held();
+    await renderCard(image);
+    loadImage((await media('img')) as HTMLImageElement);
+    await page.getByRole('checkbox').click();
+
+    expect(document.body.textContent?.includes('Open full view to confirm viewed')).toBe(false);
+  });
+
   test('clicking the CDN copy of an image selects it and records it', async () => {
     notHeld();
     await renderCard(image);

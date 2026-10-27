@@ -50,8 +50,22 @@ const rows = async () =>
       entityType: string;
       entityId: number;
       createdAt: Date;
-    }>(`SELECT "userId", activity, "entityType", "entityId", "createdAt" FROM "ModActivity"`)
+    }>(
+      `SELECT "userId", activity, "entityType", "entityId", "createdAt" FROM "ModActivity"
+       WHERE activity LIKE 'reportMedia:%'`
+    )
   ).rows;
+
+/** The held route's row for bytes it served, `ago` before now. */
+const served = (
+  imageId: number,
+  { userId = 42, ago = '1 minute', activity = 'heldMedia:view' } = {}
+) =>
+  pg.query(
+    `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
+     VALUES ($1, 'image', $4, $2, LOCALTIMESTAMP - $3::interval)`,
+    [userId, imageId, ago, activity]
+  );
 
 async function post(body: unknown) {
   const req = Object.assign(new EventEmitter(), {
@@ -125,6 +139,7 @@ describe('POST /api/mod/held-media/shown', () => {
 
   it('records a held image as the original', async () => {
     getHeldMedia.mockResolvedValue({ url: 'key', type: 'image', mimeType: 'image/png' });
+    await served(501, { ago: '29 minutes' });
 
     expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(204);
 
@@ -163,6 +178,28 @@ describe('POST /api/mod/held-media/shown', () => {
     expect(await post({ ...valid, rendition: 'original' })).toBe(409);
     getHeldMedia.mockResolvedValue({ url: 'key', type: 'image', mimeType: 'image/png' });
     expect(await post({ ...valid, rendition: 'cdn-450' })).toBe(409);
+    expect(await rows()).toEqual([]);
+  });
+
+  it.each([
+    ['no serve', null],
+    ['a serve 31 minutes ago', { ago: '31 minutes' }],
+    ["another moderator's serve", { userId: 43 }],
+    ['a serve of another image', { imageId: 502 }],
+    ['a grid view only', { activity: 'heldMedia:grid' }],
+  ] as const)('refuses the original after %s, and writes nothing', async (_, serve) => {
+    getHeldMedia.mockResolvedValue({ url: 'key', type: 'image', mimeType: 'image/png' });
+    if (serve) {
+      const { imageId = 501, ...rest } = serve as {
+        imageId?: number;
+        ago?: string;
+        userId?: number;
+        activity?: string;
+      };
+      await served(imageId, rest);
+    }
+
+    expect(await post({ ...valid, rendition: 'original' })).toBe(403);
     expect(await rows()).toEqual([]);
   });
 

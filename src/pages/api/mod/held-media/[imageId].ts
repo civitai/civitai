@@ -13,6 +13,7 @@ import {
   isAuditedServe,
   NOT_HELD,
   NOT_HELD_HEADER,
+  SERVED_ACTIVITY,
 } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -108,7 +109,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     void trackModActivity(user.id, {
       entityType: 'image',
       entityId: imageId,
-      activity: 'heldMedia:view',
+      activity: SERVED_ACTIVITY,
     }).catch((e) => console.error('[held-media] audit row failed', e));
 
   res.writeHead(upstream.status, heldMediaHeaders(contentType, upstream.headers));

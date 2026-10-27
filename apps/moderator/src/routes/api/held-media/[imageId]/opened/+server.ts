@@ -1,10 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { sql } from 'kysely';
 import type { RequestHandler } from './$types';
-import { shownActivity } from '@civitai/shared/held-media';
+import { SERVED_ACTIVITY, shownActivity } from '@civitai/shared/held-media';
 import { requireIdParam } from '$lib/server/api-guard';
 import { dbWrite } from '$lib/server/db';
 import { getHeldMedia, HELD_MEDIA_PAGE } from '$lib/server/held-media';
-import { insertModActivityBatch } from '$lib/server/mod-activity';
 
 // Sent by the full view once the image is on screen. The row is the session moderator's, stamped by
 // the database; the page names only the image.
@@ -16,12 +16,21 @@ export const POST: RequestHandler = async ({ params, locals, request, url }) => 
   if ((await request.text()) !== '') error(400, 'This request takes no body.');
   if (!(await getHeldMedia(imageId))) error(404, 'Not available here.');
 
-  // Throwing, unlike recordModActivity: the page should see a row that did not land.
-  await insertModActivityBatch(dbWrite, {
-    userId: locals.user.id,
-    entityType: 'image',
-    entityIds: [imageId],
-    activity: shownActivity('open', 'original'),
-  });
+  // Only as bytes this moderator was just served, in one statement with the serve read. Throws on a
+  // failed write, unlike recordModActivity: the page should see a row that did not land.
+  const userId = locals.user.id;
+  const { rows } = await sql`
+    INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+    SELECT ${userId}::int, 'image', ${shownActivity('open', 'original')}::text, ${imageId}::int
+    WHERE EXISTS (
+      SELECT 1 FROM "ModActivity"
+      WHERE activity = ${SERVED_ACTIVITY}::text AND "entityType" = 'image'
+        AND "entityId" = ${imageId}::int AND "userId" = ${userId}::int
+        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - interval '30 minutes'
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id
+  `.execute(dbWrite);
+  if (!rows.length) error(403, 'Not served to you.');
   return new Response(null, { status: 204 });
 };

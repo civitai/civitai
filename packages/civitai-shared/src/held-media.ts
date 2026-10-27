@@ -181,6 +181,9 @@ export const SHOWN_RENDITIONS: readonly ShownRendition[] = ['original', 'cdn-450
 export const shownActivity = (action: ShownAction, rendition: ShownRendition) =>
   `reportMedia:${action}:${rendition}` as const;
 
+/** The ModActivity `activity` for held bytes served to a moderator from byte 0. */
+export const SERVED_ACTIVITY = 'heldMedia:view';
+
 /** The share of a video actually played: the union of its `played` ranges over its duration. A seek
  *  adds nothing, since `played` holds only what played. 0 while the duration is unknown. */
 export function playedFraction(video: {
