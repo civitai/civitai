@@ -86,6 +86,7 @@ vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import {
   assertUserEarlyAccessLimits,
   mergeVersions,
@@ -616,6 +617,45 @@ describe('assertUserEarlyAccessLimits', () => {
     await expect(
       assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
     ).resolves.toBeUndefined();
+  });
+
+  describe('on a published version', () => {
+    const published = (gate: { timeframeDays: number | null; endsAt: Date | null } | null) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValueOnce({
+        initialPublishedAt: new Date('2026-01-01T00:00:00Z'),
+        status: 'Published',
+      });
+      vi.mocked(getPaidAccess).mockResolvedValueOnce(gate ? { 10: gate } : {});
+    };
+
+    it('refuses restarting a window that has ended', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('refuses starting a window on a version that never had one', async () => {
+      published(null);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('lets a running window be re-saved', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() + 86_400_000) });
+      primeActive([10]);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+    });
+
+    it('lets a save that sends no window through', async () => {
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: undefined, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.modelVersion.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   it('allows a new version while under the cap', async () => {
