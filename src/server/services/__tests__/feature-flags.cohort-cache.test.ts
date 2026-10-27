@@ -52,7 +52,6 @@ function fakeIsFliptSync(
 vi.mock('~/server/flipt/client', () => ({
   isFliptSync: (...a: Parameters<typeof fakeIsFliptSync>) => fakeIsFliptSync(...a),
   ensureFliptInitialized: async () => undefined,
-  FLIPT_FEATURE_FLAGS: { FEATURE_FLAGS_COHORT_CACHE: 'feature-flags-cohort-cache' },
 }));
 
 import {
