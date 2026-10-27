@@ -36,12 +36,20 @@ describe('purgeUrlsOrThrow', () => {
     expect(batches().flat()).toEqual(urls);
   });
 
-  it('gives up on a batch that never answers, moves on, and reports busy', async () => {
+  it('gives up on a batch that never answers, moves on, and fails (not busy)', async () => {
     mockCfPurge.mockImplementationOnce(() => new Promise(() => undefined));
-    await expect(purgeUrlsOrThrow(urls, { timeoutMs: 20 })).rejects.toBeInstanceOf(
-      CloudflarePurgeBusyError
-    );
+    const error = await purgeUrlsOrThrow(urls, { timeoutMs: 20 }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).not.toBeInstanceOf(CloudflarePurgeBusyError);
     expect(batches()).toHaveLength(3);
+  });
+
+  it("says why a batch was refused, from Cloudflare's answer", async () => {
+    const refused = Object.assign(httpError(400), {
+      response: { body: { success: false, errors: [{ code: 1015, message: 'too many files' }] } },
+    });
+    mockCfPurge.mockRejectedValueOnce(refused);
+    await expect(purgeUrlsOrThrow(urls)).rejects.toThrow(/refused: 400 .*too many files/);
   });
 
   it('stops at a 429 and reports busy', async () => {

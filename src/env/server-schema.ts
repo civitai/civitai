@@ -1056,8 +1056,9 @@ export const serverSchema = z
     // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
-    // Retractions the cdn-access-sync job sends per run; each one also purges the CDN. The rest are
-    // denied for now and retracted on a later run. `.catch`, so a bad value cannot fail boot.
+    // Per call, the most retractions syncCdnAccess sends and the most CDN purges retryTakedownPersists
+    // makes; each retraction also purges. The rest wait for a later call. Anything but a positive
+    // integer (including 0) falls back to 15 rather than failing boot.
     CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: z.coerce.number().int().positive().catch(15),
 
     // Color environment domains (server-only; delivered to client via AppProvider).

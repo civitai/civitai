@@ -2274,6 +2274,68 @@ describe('retractions per run', () => {
     ]);
   });
 
+  it('the reconciler sees a url the drain has queued through its post', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await publishedPost(5);
+    await image(1, { postId: 5 });
+    await image(2, { postId: 5 });
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync' AND "entityType" = 'Image'`;
+    expect((await queued()).n).toBe(1);
+    calls.length = 0;
+
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 1 });
+    expect(calls).toEqual([]);
+  });
+
+  it('the reconciler sees a deleted url the drain has queued by the url its row carries', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    for (const [id, url] of [
+      [1, GONE],
+      [2, DELETED],
+    ] as const)
+      await sql`SELECT queue_cdn_access_sync(${id}::int, 'Image',
+          ${JSON.stringify({
+            url,
+            userId: OWNER,
+            csamReview: false,
+            moderatorDelete: true,
+          })}::jsonb)`;
+    await syncCdnAccess();
+    expect((await queued()).n).toBe(1);
+    calls.length = 0;
+
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 1 });
+    expect(calls).toEqual([]);
+  });
+
+  it('a retry whose persist landed but whose purge was rate limited owes only the purge', async () => {
+    const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
+    combinedOk.add(GONE);
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (7, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: GONE, retract: true, purgeEdge: true })}::jsonb)`;
+    purgeUrlsOrThrow.mockImplementationOnce(async () => {
+      throw new CloudflarePurgeBusyError([Object.assign(new Error('429'), { statusCode: 429 })]);
+    });
+
+    await retryTakedownPersists();
+    expect(calls.map(kind)).toEqual(['retract']);
+    expect((await retryRows())[0].data).toMatchObject({
+      retract: false,
+      purgeOnly: true,
+      attempts: 0,
+    });
+
+    await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
+    expect(await retryTakedownPersists()).toMatchObject({ sent: 1 });
+    // No second retraction or persist: only the purge was owed.
+    expect(calls.map(kind)).toEqual(['retract']);
+    expect(purged).toHaveLength(1);
+    expect(await retryRows()).toEqual([]);
+  });
+
   it('a busy CDN purge on a persist retry spends no attempt and is retried', async () => {
     const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
     const busy = async () => {

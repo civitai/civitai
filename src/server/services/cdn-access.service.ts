@@ -620,6 +620,8 @@ type PersistRetryRow = TakedownPersistRetry & {
   reservation?: string;
   /** What a row reserved over owed before (its own `retract` and schedule), handed back on settle. */
   reservedOver?: { retract?: boolean; purgeEdge?: boolean; nextAttemptAt?: string };
+  /** The persist landed and only the CDN purge is still owed; cleared by any new failure or reservation. */
+  purgeOnly?: boolean;
 };
 type UrlImage = { id: number | null; name: string | null; type: MediaType | null };
 
@@ -645,11 +647,12 @@ async function imagesOnUrl(url: string) {
  */
 async function sendTakedownPersist(
   url: string,
-  { retract, purgeEdge }: PersistOptions,
+  { retract, purgeEdge, purgeOnly }: PersistOptions & { purgeOnly?: boolean },
   images: UrlImage[],
   retraction?: Pick<CdnCallOptions, 'gate' | 'beforeSend'>
 ) {
-  await callCdnAccess(url, retract ? 'retract' : 'deny', { persist: true, ...retraction });
+  if (!purgeOnly)
+    await callCdnAccess(url, retract ? 'retract' : 'deny', { persist: true, ...retraction });
   if (!purgeEdge) return;
   const targets = images.length ? images : [{ id: null, name: null, type: null }];
   await purgeUrlsOrThrow(
@@ -728,7 +731,8 @@ export async function queueTakedownPersistRetry({
               ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", ${JSON.stringify(data)}::jsonb)
       ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
         (COALESCE("JobQueue".data, '{}'::jsonb)
-          - 'attempts' - 'backoffs' - 'gaveUpAt' - 'nextAttemptAt' - 'reservation' - 'reservedOver')
+          - 'attempts' - 'backoffs' - 'gaveUpAt' - 'nextAttemptAt' - 'reservation' - 'reservedOver'
+          - 'purgeOnly')
         || EXCLUDED.data
         || jsonb_build_object(
           'retract', COALESCE(("JobQueue".data->>'retract')::boolean, false)
@@ -806,7 +810,7 @@ export async function reserveTakedownRetractions(
            ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", e->'data'
     FROM jsonb_array_elements(${JSON.stringify(entries)}::jsonb) AS e
     ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
-      (COALESCE("JobQueue".data, '{}'::jsonb) - 'attempts' - 'backoffs' - 'gaveUpAt')
+      (COALESCE("JobQueue".data, '{}'::jsonb) - 'attempts' - 'backoffs' - 'gaveUpAt' - 'purgeOnly')
       || jsonb_build_object(
         'url', EXCLUDED.data->'url',
         'retract', true,
@@ -943,7 +947,7 @@ async function retryTakedownPersist(
         // belongs to went through, and that delete refuses a held image. An image the delete kept is
         // still there, so it never gets one here, whatever the row says; at most its deny persists.
         const retract = data.retract === true && !!facts?.gone;
-        if (!retract && !facts?.denyStands) return 'skipped' as const;
+        if (!data.purgeOnly && !retract && !facts?.denyStands) return 'skipped' as const;
         if (data.purgeEdge) {
           if (purges.busy || purges.left <= 0) return 'held' as const;
           purges.left--;
@@ -993,6 +997,9 @@ async function retryTakedownPersist(
       // A reservation still here outlived its delete's run; this retry owns the row now.
       delete next.reservation;
       delete next.reservedOver;
+      // Only the purge refused it: resending the persist (and any retraction) would repeat work done.
+      if (error instanceof CloudflarePurgeBusyError)
+        Object.assign(next, { retract: false, purgeOnly: true });
       if (gaveUp) totals.gaveUp++;
       else if (error instanceof CloudflarePurgeBusyError) totals.throttled++;
       else if (!(error instanceof RetractionNotDoneError)) totals.failed++;
@@ -1267,10 +1274,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       failed,
     }).catch(() => undefined);
 
-  // One job runs at a time, so retracts above the cap here mean overlapping runs.
   if (retracts || deferred.size)
     logToAxiom({
-      type: retracts > maxRetracts ? 'error' : 'info',
+      type: 'info',
       name: 'cdn-access-sync-retracts',
       message: 'retractions sent this run',
       retracts,
