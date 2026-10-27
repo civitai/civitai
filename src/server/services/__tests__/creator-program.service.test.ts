@@ -219,6 +219,18 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).not.toMatch(/'tip'/);
   });
 
+  it('counts user-paid tips and generation tips from the cutover', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      expect(sql).toMatch(/type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId/);
+      expect(sql).toMatch(/startsWith\(externalTransactionId, 'generation-tip-'\)/);
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
+  });
+
   it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
@@ -239,7 +251,10 @@ describe('userCapCache peak-earning query', () => {
       const { sql, result } = await runLookup([userId]);
 
       expect(sql).toContain(`WHERE ${PEAK_EARNING_PREDICATE_SQL}\n`);
-      expect(sql).not.toContain('compensation');
+      // Only generation tips, never the generation price itself.
+      expect(sql).not.toMatch(
+        /'compensation'(?! AND fromAccountId = 0 AND startsWith\(externalTransactionId, 'generation-tip-'\))/
+      );
       expect(result[userId].countsCompensation).toBe(false);
     } finally {
       vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));

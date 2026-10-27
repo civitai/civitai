@@ -543,12 +543,32 @@ describe('counterparty netting clauses', () => {
 });
 
 describe('peak-earning predicates', () => {
-  // Justin, 2026-10-09: generation tips are bankable but do not set the peak, like user tips.
-  it('counts licence fees and user-paid early access from the cutover', () => {
+  // Justin, 2026-10-27 (reverses 2026-10-09): tips received, direct and generation, set the peak.
+  it('counts licence fees, user-paid early access and tips from the cutover', () => {
     expect(PEAK_EARNING_PREDICATE_SQL).toBe(`(
   type = 'licenseFee'
   OR (type = 'purchase' AND fromAccountId != 0)
+  OR (type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)
+  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))
 )`);
+  });
+
+  // Hand grants are made as tips from account 0; they are support credits, not earnings.
+  it('counts direct tips only when a user other than the creator paid them', () => {
+    const tipClauses = PEAK_EARNING_PREDICATE_SQL.split('\n').filter((l) => l.includes("'tip'"));
+    expect(tipClauses).toEqual([
+      "  OR (type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)",
+    ]);
+  });
+
+  // Generation compensation stopped setting the peak at the cutover; only its tip rows still do.
+  it('leaves generation compensation out, except the generation-tip transactions', () => {
+    const compensationClauses = PEAK_EARNING_PREDICATE_SQL.split('\n').filter((l) =>
+      l.includes('compensation')
+    );
+    expect(compensationClauses).toEqual(
+      BANKABLE_EARNING_PREDICATE_SQL.split('\n').filter((l) => l.includes('compensation'))
+    );
   });
 
   it('also counts generation compensation before the cutover', () => {
