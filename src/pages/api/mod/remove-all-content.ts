@@ -25,8 +25,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       targetUserId: userId,
     });
   let incomplete: string[];
+  let keptModelIds: number[];
   try {
-    ({ incomplete } = await removeAllContent({
+    ({ incomplete, keptModelIds } = await removeAllContent({
       id: userId,
       claimedModeratorId: moderatorId ?? null,
     }));
@@ -45,5 +46,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   return res.status(200).json({
     userId,
     incomplete,
+    keptModelIds,
   });
 });

@@ -474,16 +474,32 @@ describe('availability', () => {
     expect(createData().availability).toBe(Availability.Public);
   });
 
-  it('records the creator as the first owner, in the create transaction', async () => {
+  it('records the creator as the first owner of the new model, in the create transaction', async () => {
     mockGetHighestTierSubscription.mockResolvedValue(null);
+    mockDbWrite.model.create.mockResolvedValueOnce({
+      id: 4242,
+      nsfwLevel: 0,
+      meta: null,
+      availability: Availability.Public,
+    } as never);
+    // A distinct client with its own raw writer, so a write on dbWrite would not pass for one on it.
+    const txExecuteRaw = vi.fn(async () => 1);
+    const tx = new Proxy(mockDbWrite, {
+      get: (target, key) =>
+        key === '$executeRaw' ? txExecuteRaw : (target as Record<string | symbol, unknown>)[key],
+    });
+    mockDbWrite.$transaction.mockImplementationOnce(async (fn: (client: unknown) => unknown) =>
+      fn(tx)
+    );
 
     await upsert({ userId: OWNER_ID, availability: Availability.Public });
 
-    const ownership = mockDbWrite.$executeRaw.mock.calls
-      .map(([sql]) => sql as { sql?: string; values?: unknown[] })
-      .find((sql) => sql.sql?.includes('"ModelOwnership"'));
-    expect(ownership, 'no ownership row for the new model').toBeDefined();
-    expect(ownership!.values!.slice(0, 3)).toEqual([OWNER_ID, 'create', OWNER_ID]);
+    const ownership = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
+      .map(([sql]) => sql)
+      .find((sql) => sql.sql.includes('"ModelOwnership"'));
+    expect(ownership, 'no ownership row written in the transaction').toBeDefined();
+    expect(ownership!.text).toMatch(/m\.id = \$4/);
+    expect(ownership!.values).toEqual([OWNER_ID, 'create', OWNER_ID, 4242]);
   });
 });
 

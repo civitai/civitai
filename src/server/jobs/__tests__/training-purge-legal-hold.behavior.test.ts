@@ -58,7 +58,11 @@ const TRANSFERRED_FROM_HELD = 16; // unheld; given the model of PENDING_REPORT
 const TRANSFERRED_FROM_UNHELD = 17; // unheld; given the model of UNHELD
 const REPORTED_IMAGE_HELD = 18; // named on no report; an image of theirs is listed on one
 const REPORTED_IMAGE_SUBJECT = 19; // owns nothing; the subject of that report
-const ONCE_PLACEHOLDER_OWNED = 20; // unheld; given back a model the placeholder owner had
+const ONCE_PLACEHOLDER_OWNED = 20; // unheld; given back by restore a model the placeholder owner had
+const PLACEHOLDER_NOT_RESTORED = 22; // unheld; moved a model off the placeholder with no restore
+const RESTORED_TO_HELD = 23; // named on a pending report; given back a placeholder-owned model
+const PLACEHOLDER_AGAIN = 24; // unheld; restored once, back to the placeholder, then moved off it
+const TRANSFERRED_FROM_IMAGE_HELD = 21; // unheld; given the model of IMAGE_REVIEW_HELD
 const OWNERS = [
   UNHELD,
   PENDING_REPORT,
@@ -77,6 +81,10 @@ const OWNERS = [
   TRANSFERRED_FROM_UNHELD,
   REPORTED_IMAGE_HELD,
   ONCE_PLACEHOLDER_OWNED,
+  TRANSFERRED_FROM_IMAGE_HELD,
+  PLACEHOLDER_NOT_RESTORED,
+  RESTORED_TO_HELD,
+  PLACEHOLDER_AGAIN,
 ];
 const ELIGIBLE = [
   UNHELD,
@@ -84,6 +92,7 @@ const ELIGIBLE = [
   SENT_JUST_OVER_A_YEAR_AGO,
   MARKER_RELEASED,
   TRANSFERRED_FROM_UNHELD,
+  ONCE_PLACEHOLDER_OWNED,
 ];
 const HELD = OWNERS.filter((owner) => !ELIGIBLE.includes(owner));
 
@@ -149,7 +158,18 @@ beforeAll(async () => {
       (${TRANSFERRED_FROM_UNHELD * 10}, ${UNHELD}, 'create'),
       (${TRANSFERRED_FROM_UNHELD * 10}, ${TRANSFERRED_FROM_UNHELD}, 'transfer'),
       (${ONCE_PLACEHOLDER_OWNED * 10}, -1, 'account-delete'),
-      (${ONCE_PLACEHOLDER_OWNED * 10}, ${ONCE_PLACEHOLDER_OWNED}, 'restore');
+      (${ONCE_PLACEHOLDER_OWNED * 10}, ${ONCE_PLACEHOLDER_OWNED}, 'restore'),
+      (${TRANSFERRED_FROM_IMAGE_HELD * 10}, ${IMAGE_REVIEW_HELD}, 'create'),
+      (${TRANSFERRED_FROM_IMAGE_HELD * 10}, ${TRANSFERRED_FROM_IMAGE_HELD}, 'transfer'),
+      (${PLACEHOLDER_NOT_RESTORED * 10}, -1, 'account-delete'),
+      (${PLACEHOLDER_NOT_RESTORED * 10}, ${PLACEHOLDER_NOT_RESTORED}, 'transfer'),
+      (${RESTORED_TO_HELD * 10}, ${RESTORED_TO_HELD}, 'create'),
+      (${RESTORED_TO_HELD * 10}, -1, 'account-delete'),
+      (${RESTORED_TO_HELD * 10}, ${RESTORED_TO_HELD}, 'restore'),
+      (${PLACEHOLDER_AGAIN * 10}, -1, 'account-delete'),
+      (${PLACEHOLDER_AGAIN * 10}, ${PLACEHOLDER_AGAIN}, 'restore'),
+      (${PLACEHOLDER_AGAIN * 10}, -1, 'account-delete'),
+      (${PLACEHOLDER_AGAIN * 10}, ${PLACEHOLDER_AGAIN}, 'transfer');
     INSERT INTO "Image" (id, "userId", "needsReview") VALUES
       (1, ${IMAGE_REVIEW_HELD}, 'csam'),
       (2, ${REPORTED_IMAGE_HELD}, NULL);
@@ -208,6 +228,7 @@ beforeEach(async () => {
       (${OLD_AND_PENDING_REPORTS}, now() - interval '400 days', now(), '{}'),
       (${OLD_AND_PENDING_REPORTS}, NULL, NULL, '{}');
     INSERT INTO "CsamReport" ("userId", images) VALUES (${REPORTED_IMAGE_SUBJECT}, '[{"id": 2}]');
+    INSERT INTO "CsamReport" ("userId") VALUES (${RESTORED_TO_HELD});
   `);
 });
 

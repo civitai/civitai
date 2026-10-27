@@ -7,6 +7,7 @@ import {
   LegalHoldError,
   LegalHoldStoppedError,
   modelDataHeldSql,
+  recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -1078,6 +1079,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
       ...(removeModels
         ? []
         : [
+            dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m."userId" = ${user.id}`)),
             dbWrite.$executeRaw(
               recordModelOwnershipSql({
                 where: Prisma.sql`m."userId" = ${user.id}`,
@@ -1697,7 +1699,20 @@ export const removeAllContent = async ({
       )
     );
 
-  await unindex('index-models', modelsSearchIndex, models);
+  // A model an earlier owner of which is held was kept: only the models that went leave search.
+  let keptModelIds: number[] = [];
+  await runStep('index-models', async () => {
+    const gone = await goneIds(
+      'Model',
+      models.map((m) => m.id)
+    );
+    const goneSet = new Set(gone);
+    keptModelIds = models.map((m) => m.id).filter((modelId) => !goneSet.has(modelId));
+    if (gone.length)
+      await modelsSearchIndex.queueUpdate(
+        gone.map((modelId) => ({ id: modelId, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  });
   await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
@@ -1809,7 +1824,7 @@ export const removeAllContent = async ({
   const docStoreError = await wipeAccountFromDocStore(id);
   if (docStoreError) failed('doc-store', docStoreError);
 
-  return { incomplete };
+  return { incomplete, keptModelIds };
 };
 
 /**

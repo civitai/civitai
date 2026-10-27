@@ -471,12 +471,31 @@ describe('permaDeleteModelById — legal hold', () => {
       expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'deleted', left: 0 });
     });
 
-    it('refuses a model the placeholder owner once had', async () => {
+    it('refuses a model moved off the placeholder owner without a restore', async () => {
+      await db.exec(`
+        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+          (${MODEL_ID}, -1, 'account-delete'), (${MODEL_ID}, ${OWNER_ID}, 'transfer')
+      `);
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'FORBIDDEN', left: 1 });
+    });
+
+    it('deletes a model restored from the placeholder owner to an unheld one', async () => {
       await db.exec(`
         INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
           (${MODEL_ID}, -1, 'account-delete'), (${MODEL_ID}, ${OWNER_ID}, 'restore')
       `);
-      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'FORBIDDEN', left: 1 });
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'deleted', left: 0 });
+    });
+
+    it('refuses a model restored from the placeholder owner to a held one', async () => {
+      await db.exec(`
+        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+          (${MODEL_ID}, -1, 'account-delete'), (${MODEL_ID}, ${REPORTED_OWNER}, 'restore')
+      `);
+      expect(await permaDeleteOwnedBy(REPORTED_OWNER)).toMatchObject({
+        result: 'FORBIDDEN',
+        left: 1,
+      });
     });
   });
 

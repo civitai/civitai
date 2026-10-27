@@ -27,6 +27,7 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 const CLEAN = 1;
 const CLEAN_MODEL = 100;
+const UNRECORDED_MODEL = 101;
 const PENDING_REPORT = 2;
 const RECENTLY_SENT = 3;
 const SENT_OVER_A_YEAR_AGO = 4;
@@ -127,22 +128,33 @@ async function createMarkerView() {
   `);
 }
 
+/** A query that runs only when awaited. */
+const lazy = <T>(run: () => Promise<T>) => {
+  let started: Promise<T> | undefined;
+  return {
+    then: <R1, R2>(res?: (v: T) => R1, rej?: (e: unknown) => R2) =>
+      (started ??= run()).then(res, rej),
+  };
+};
+
 beforeEach(async () => {
   vi.clearAllMocks();
   failQueries = false;
   unreadable = false;
   answer = null;
   beforeScrub = null;
-  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (sql: Prisma.Sql) => {
-    // The scrub is the transaction's first statement.
-    const hook = beforeScrub;
-    beforeScrub = null;
-    if (hook) await hook();
-    // A DO block takes no parameters; the guarded scrub is built to carry none.
-    if (sql.values.length) await holder.db.query(sql.text, sql.values);
-    else await holder.db.exec(sql.text);
-    return 1;
-  }) as never);
+  // Runs when awaited, as Prisma's does, so a transaction's statements run in its array's order.
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(((sql: Prisma.Sql) =>
+    lazy(async () => {
+      // The scrub is the transaction's first statement.
+      const hook = beforeScrub;
+      beforeScrub = null;
+      if (hook) await hook();
+      // A DO block takes no parameters; the guarded scrub is built to carry none.
+      if (sql.values.length) await holder.db.query(sql.text, sql.values);
+      else await holder.db.exec(sql.text);
+      return 1;
+    })) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
@@ -318,14 +330,37 @@ describe('isAccountUnderLegalHold', () => {
 describe('deleteUser under a legal hold', () => {
   const run = (id: number) => deleteUser({ id, username: 'someone' });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dbMock.dbWrite.user.findFirst.mockImplementation((async (args: { where: { id: number } }) => ({
       id: args.where.id,
       meta: {},
     })) as never);
     // Like Prisma's array form: a failing statement fails the transaction.
-    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown[]) =>
-      Promise.all(ops)) as never);
+    // Like Prisma's array form: in order, and a failing statement fails the transaction.
+    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown[]) => {
+      const results = [];
+      for (const op of ops) results.push(await op);
+      return results;
+    }) as never);
+    // The move to the placeholder, on the stand-in, so the history write is seen before or after it.
+    dbMock.dbWrite.model.updateMany.mockImplementation(((args: {
+      where: { userId: number };
+      data: { userId?: number };
+    }) =>
+      lazy(async () =>
+        args.data.userId === undefined
+          ? { count: 0 }
+          : {
+              count:
+                (
+                  await holder.db.query(`UPDATE "Model" SET "userId" = $1 WHERE "userId" = $2`, [
+                    args.data.userId,
+                    args.where.userId,
+                  ])
+                ).affectedRows ?? 0,
+            }
+      )) as never);
+    await holder.db.exec(`UPDATE "Model" SET "userId" = ${CLEAN} WHERE id = ${CLEAN_MODEL}`);
   });
 
   it.each([PENDING_REPORT, SECONDARY_ON_REPORT, IMAGE_IN_REVIEW, IMAGE_BLOCKED_UNREPORTED])(
@@ -375,6 +410,21 @@ describe('deleteUser under a legal hold', () => {
     await run(CLEAN);
 
     expect(await accountDeletes()).toBe(before + 1);
+  });
+
+  it('records the outgoing owner first when the model has no history yet', async () => {
+    await holder.db.exec(`INSERT INTO "Model" VALUES (${UNRECORDED_MODEL}, ${CLEAN})`);
+
+    await run(CLEAN);
+
+    const { rows } = await holder.db.query<{ userId: number; reason: string }>(
+      `SELECT "userId", reason FROM "ModelOwnership" WHERE "modelId" = $1 ORDER BY id`,
+      [UNRECORDED_MODEL]
+    );
+    expect(rows).toEqual([
+      { userId: CLEAN, reason: 'baseline' },
+      { userId: -1, reason: 'account-delete' },
+    ]);
   });
 
   it('records no new owner when the models are deleted rather than kept', async () => {

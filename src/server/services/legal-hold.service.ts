@@ -87,16 +87,17 @@ function holdLegsSql(id: Prisma.Sql) {
     // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
     // reports' image lists rather than the user's images: the lists are short, an account's images
     // are not. Compared as bigint so an id past int range still matches rather than being skipped.
-    'reported-image': Prisma.sql`EXISTS (
-      SELECT 1
+    // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
+    'reported-image': Prisma.sql`((${id}) IN (
+      SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(
         CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
       ) re
       JOIN "Image" ri
         ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ri."userId" = ${id} AND ${reportHolds('rr')}
-    )`,
+      WHERE ${reportHolds('rr')}
+    ))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -170,8 +171,24 @@ export function recordModelOwnershipSql({
 }
 
 /**
+ * Records the current owner of every model `where` matches (over `"Model" m`) that has no row for that
+ * owner yet, as a baseline: a model created before its history began, or before the backfill reached
+ * it, still keeps its owner on record when it moves. Run before the owner write.
+ */
+export function recordCurrentModelOwnersSql(where: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason")
+    SELECT m.id, m."userId", 'baseline' FROM "Model" m
+    WHERE ${where}
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModelOwnership" o WHERE o."modelId" = m.id AND o."userId" = m."userId"
+      )
+  `;
+}
+
+/**
  * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
- * owner it had before. `modelId` is an int SQL expression. Names "ModelOwnership": without the table
+ * owner it had before, the placeholder only until the model is restored to an owner. `modelId` is an int SQL expression. Names "ModelOwnership": without the table
  * the statement fails, and so deletes nothing.
  */
 export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Prisma.Sql {
@@ -183,7 +200,14 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
   ) OR EXISTS (
     SELECT 1 FROM "ModelOwnership" ho
     WHERE ho."modelId" = ${modelId}
-      AND (ho."userId" = ${placeholder} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
+      AND (
+        -- The placeholder holds until the model is restored; then its owner's own holds apply.
+        (ho."userId" = ${placeholder} AND NOT EXISTS (
+          SELECT 1 FROM "ModelOwnership" hrs
+          WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
+        ))
+        OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)}
+      )
   ))`;
 }
 

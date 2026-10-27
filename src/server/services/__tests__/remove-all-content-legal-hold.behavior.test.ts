@@ -366,7 +366,7 @@ const seeded = (userId: number) => ({ ...all(1), Image: userId === CLEAN ? 2 : 1
 
 describe('removeAllContent', () => {
   it('wipes an account no hold covers, and no one else’s', async () => {
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
@@ -535,7 +535,7 @@ describe('removeAllContent', () => {
   it('runs a second time without refusing, and with no models left to refund', async () => {
     await removeAllContent({ id: CLEAN });
     vi.mocked(refundBidsForVersions).mockClear();
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
   });
 
@@ -547,6 +547,7 @@ describe('removeAllContent', () => {
     });
     expect(await removeAllContent({ id: CLEAN, actorUserId: 9 })).toEqual({
       incomplete: ['bid-refunds'],
+      keptModelIds: [],
     });
     expect(refundAlerts()).toEqual([
       expect.objectContaining({
@@ -579,9 +580,12 @@ describe('removeAllContent', () => {
     expect(refundAlerts()).toEqual([]);
   });
 
-  it('names the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
+  it('names the model index and the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
     failGoneModels = true;
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['index-models', 'bid-refunds'],
+      keptModelIds: [],
+    });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
   });
 
@@ -596,7 +600,10 @@ describe('removeAllContent', () => {
   it('still refunds the next model when one model’s refund throws', async () => {
     await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL + 50}, ${CLEAN})`);
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('auction read failed'));
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['bid-refunds'],
+      keptModelIds: [],
+    });
     expect(refundBidsForVersions).toHaveBeenCalledTimes(2);
     expect(refundBidsForVersions).toHaveBeenLastCalledWith(
       expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL + 50)] })
@@ -617,20 +624,29 @@ describe('removeAllContent', () => {
 
   it('runs every later step when the bid refunds fail, and names the failed one', async () => {
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['bid-refunds'],
+      keptModelIds: [],
+    });
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledTimes(1);
     expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
   });
 
   it('still wipes the document store when the App Blocks purge fails, and names it', async () => {
     vi.mocked(purgeUserAppStorageForAccountWipe).mockRejectedValueOnce(new Error('apps db down'));
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['app-storage'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['app-storage'],
+      keptModelIds: [],
+    });
     expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
   });
 
   it('runs the later index and metric steps when one index fails', async () => {
     indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['index-models'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['index-models'],
+      keptModelIds: [],
+    });
     expect(dropped().users).toEqual([CLEAN]);
     expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
     expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
@@ -638,7 +654,10 @@ describe('removeAllContent', () => {
 
   it('names a document store wipe that failed', async () => {
     docStore.wipeAccount.mockRejectedValueOnce(new Error('store down'));
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['doc-store'] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({
+      incomplete: ['doc-store'],
+      keptModelIds: [],
+    });
   });
 
   it('keeps a model an earlier owner of which is held, and deletes one only unheld owners had', async () => {
@@ -646,10 +665,14 @@ describe('removeAllContent', () => {
       INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN}), (${GIVEN_BY_BYSTANDER}, ${CLEAN})
     `);
 
-    await removeAllContent({ id: CLEAN });
+    const result = await removeAllContent({ id: CLEAN });
 
     const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`);
     expect(left.rows.map((r) => r.id)).toContain(GIVEN_BY_HELD);
+    // Kept, so it stays in search and the caller is told.
+    expect(result.keptModelIds).toEqual([GIVEN_BY_HELD]);
+    expect(dropped().models).not.toContain(GIVEN_BY_HELD);
+    expect(dropped().models).toContain(GIVEN_BY_BYSTANDER);
     expect(left.rows.map((r) => r.id)).not.toContain(GIVEN_BY_BYSTANDER);
     expect(left.rows.map((r) => r.id)).not.toContain(MODEL);
   });
@@ -794,7 +817,7 @@ describe('/api/mod/remove-all-content', () => {
   it('wipes an unheld account', async () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ userId: CLEAN, incomplete: [] });
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: [], keptModelIds: [] });
     expect(moderatorReads(res)).toBeNull();
     expect(moderator.purgeWarning(res.body)).toBeUndefined();
     expect(await remaining(CLEAN)).toEqual(all(0));
@@ -804,7 +827,7 @@ describe('/api/mod/remove-all-content', () => {
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'], keptModelIds: [] });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
     expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
   });
