@@ -8,8 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const service = vi.hoisted(() => ({
   listServiceDealFiles: vi.fn(),
-  listServiceDealFileAccess: vi.fn(),
-  getServiceDealFileAccessRecordedSince: vi.fn(),
+  readServiceDealFileAccess: vi.fn(),
   resolveServiceDealFileDownload: vi.fn(),
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
@@ -32,9 +31,8 @@ const notFound = () => new TRPCError({ code: 'NOT_FOUND' });
 
 beforeEach(() => {
   service.listServiceDealFiles.mockReset();
-  service.listServiceDealFileAccess.mockReset();
-  service.listServiceDealFileAccess.mockResolvedValue([]);
-  service.getServiceDealFileAccessRecordedSince.mockResolvedValue(null);
+  service.readServiceDealFileAccess.mockReset();
+  service.readServiceDealFileAccess.mockResolvedValue({ rows: [], recordedSince: null });
   service.resolveServiceDealFileDownload.mockReset();
   service.getServiceDealFileDownloadUrl.mockReset();
   service.listServiceDealFiles.mockImplementation(async ({ dealId }: { dealId: number }) => [
@@ -66,13 +64,12 @@ describe('deal-files', () => {
       firstAt: at,
       lastAt: at,
     });
-    service.listServiceDealFileAccess.mockResolvedValue([
-      entry(30, 'Buyer', 2),
-      entry(30, 'Seller', 1),
-      entry(50, 'Buyer', 1),
-    ]);
+    service.readServiceDealFileAccess.mockResolvedValue({
+      rows: [entry(30, 'Buyer', 2), entry(30, 'Seller', 1), entry(50, 'Buyer', 1)],
+      recordedSince: at,
+    });
     const { items } = await files.handler({ dealIds: '3,5,7' }, actor);
-    expect(service.listServiceDealFileAccess).toHaveBeenCalledWith([3, 5, 7]);
+    expect(service.readServiceDealFileAccess).toHaveBeenCalledWith([3, 5, 7]);
     expect(
       items.map((i) => [
         i.id,
@@ -86,7 +83,7 @@ describe('deal-files', () => {
   });
 
   it('still lists the files when the access log cannot be read, with no access on them', async () => {
-    service.listServiceDealFileAccess.mockRejectedValue(new Error('ClickHouse query failed'));
+    service.readServiceDealFileAccess.mockResolvedValue(null);
     const result = await files.handler({ dealId: 4 }, actor);
     expect(result).toEqual({
       items: [{ dealId: 4, id: 40, kind: 'Final' }],

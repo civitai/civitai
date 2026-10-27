@@ -10721,23 +10721,21 @@ model ServiceDeal {
   @@index([status, closedAt])
 }
 
-/// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
 /// One review of a Disputed deal by the dispute agent. `proposal` null means it escalated to a human.
 /// The human* columns are filled on the latest row when a moderator resolves the deal.
 model ServiceDisputeReview {
   id           Int                       @id @default(autoincrement())
   dealId       Int
   deal         ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
-  /// A1..A3, B1..B3 or C.
+  /// Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
   class        String
   proposal     ServiceDisputeResolution?
   confidence   Float?
-  /// Shown to moderators.
   rationale    String
-  /// What the agent read: file facts, scores, access counts.
+  /// The evidence bundle the review read, as submitted.
   evidence     Json
   agentVersion String
-  /// shadow | propose | settle
+  /// Allowed values: DISPUTE_REVIEW_MODES in the same file.
   mode         String
   humanRuling  ServiceDisputeResolution?
   humanId      Int?
@@ -10747,6 +10745,7 @@ model ServiceDisputeReview {
   @@index([dealId])
 }
 
+/// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
 model ServiceDealEvent {
   id        Int                  @id @default(autoincrement())
   dealId    Int

@@ -1,11 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
-import {
-  getServiceDealFileAccessRecordedSince,
-  listServiceDealFileAccess,
-} from '~/server/services/creator-service-deal-file-access';
+import { readServiceDealFileAccess } from '~/server/services/creator-service-deal-file-access';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { ServiceDisputeResolution } from '~/shared/utils/prisma/enums';
 
@@ -73,6 +69,10 @@ export async function createServiceDisputeReview({
   return { id: row.id, createdAt: row.createdAt };
 }
 
+// A payout can hold a resolved deal again, which reopens its dispute. Reviews from before that
+// reopening judged a different hold, so only those since the current `disputeOpenedAt` count.
+const CURRENT_DISPUTE = Prisma.sql`r."createdAt" >= d."disputeOpenedAt"`;
+
 /** Fills the latest review's human ruling. Runs inside the resolve transaction, under its lock. */
 export const recordHumanRulingSql = (
   dealId: number,
@@ -83,9 +83,10 @@ export const recordHumanRulingSql = (
   SET "humanRuling" = ${resolution}::"ServiceDisputeResolution", "humanId" = ${moderatorId}::int,
       "agreed" = CASE WHEN "proposal" IS NULL THEN NULL
                       ELSE "proposal" = ${resolution}::"ServiceDisputeResolution" END
-  WHERE "id" = (
-    SELECT "id" FROM "ServiceDisputeReview" WHERE "dealId" = ${dealId}::int
-    ORDER BY "createdAt" DESC, "id" DESC LIMIT 1
+  WHERE "humanRuling" IS NULL AND "id" = (
+    SELECT r."id" FROM "ServiceDisputeReview" r JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    WHERE r."dealId" = ${dealId}::int AND ${CURRENT_DISPUTE}
+    ORDER BY r."createdAt" DESC, r."id" DESC LIMIT 1
   )`;
 
 export type ServiceDisputeReviewSummary = {
@@ -100,21 +101,18 @@ export type ServiceDisputeReviewSummary = {
   createdAt: Date;
 };
 
-/** The latest review of each deal that has one. */
 export async function getLatestServiceDisputeReviews(dealIds: number[]) {
   if (!dealIds.length) return [];
   return dbWrite.$queryRaw<ServiceDisputeReviewSummary[]>`
-    SELECT DISTINCT ON ("dealId") "id", "dealId", "class", "proposal"::text AS "proposal",
-      "confidence", "rationale", "agentVersion", "mode", "createdAt"
-    FROM "ServiceDisputeReview"
-    WHERE "dealId" IN (${Prisma.join(dealIds.map((id) => Prisma.sql`${id}::int`))})
-    ORDER BY "dealId", "createdAt" DESC, "id" DESC`;
+    SELECT DISTINCT ON (r."dealId") r."id", r."dealId", r."class", r."proposal"::text AS "proposal",
+      r."confidence", r."rationale", r."agentVersion", r."mode", r."createdAt"
+    FROM "ServiceDisputeReview" r JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    WHERE r."dealId" IN (${Prisma.join(dealIds.map((id) => Prisma.sql`${id}::int`))})
+      AND ${CURRENT_DISPUTE}
+    ORDER BY r."dealId", r."createdAt" DESC, r."id" DESC`;
 }
 
-/**
- * Everything a review reads for one deal, in one bundle. A moderator who is a party is refused, as
- * resolving refuses them. The access summary fails open to null: it lives in ClickHouse.
- */
+/** The access summary fails open to null: ClickHouse may be unreachable. */
 export async function getServiceDisputeEvidence({
   dealId,
   viewerId,
@@ -212,7 +210,7 @@ export async function getServiceDisputeEvidence({
         AND "disputeOpenedAt" >= now() - ${Prisma.raw(`interval '${PRIOR_DISPUTE_DAYS} days'`)}
         AND (${deal.buyerId}::int IN ("buyerId", "sellerId")
           OR ${deal.sellerId}::int IN ("buyerId", "sellerId"))`,
-    readAccess(dealId),
+    readServiceDealFileAccess([dealId]),
   ]);
 
   const { offeringId, offeringTitle, offeringDescription, ...dealFields } = deal;
@@ -227,23 +225,4 @@ export async function getServiceDisputeEvidence({
     accessRecordedSince: access?.recordedSince ?? null,
     priorDisputes: { days: PRIOR_DISPUTE_DAYS, ...(prior[0] ?? { buyer: 0, seller: 0 }) },
   };
-}
-
-async function readAccess(dealId: number) {
-  try {
-    const [rows, recordedSince] = await Promise.all([
-      listServiceDealFileAccess([dealId]),
-      getServiceDealFileAccessRecordedSince(),
-    ]);
-    return { rows, recordedSince };
-  } catch (error) {
-    logToAxiom({
-      name: 'creator-service-file-access',
-      type: 'error',
-      message: 'Could not read deal file accesses for dispute evidence',
-      dealId,
-      error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
-    return null;
-  }
 }

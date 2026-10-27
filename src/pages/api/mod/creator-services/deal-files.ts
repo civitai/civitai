@@ -1,33 +1,10 @@
 import * as z from 'zod';
 import { TRPCError } from '@trpc/server';
-import { logToAxiom } from '~/server/logging/client';
-import {
-  getServiceDealFileAccessRecordedSince,
-  listServiceDealFileAccess,
-} from '~/server/services/creator-service-deal-file-access';
+import { readServiceDealFileAccess } from '~/server/services/creator-service-deal-file-access';
 import { listServiceDealFiles } from '~/server/services/creator-service-deal-file.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 const MAX_DEALS = 25;
-
-/** Fails open: the file list a dispute needs must not depend on the access log. */
-async function readAccess(dealIds: number[]) {
-  try {
-    const [rows, recordedSince] = await Promise.all([
-      listServiceDealFileAccess(dealIds),
-      getServiceDealFileAccessRecordedSince(),
-    ]);
-    return { rows, recordedSince };
-  } catch (error) {
-    logToAxiom({
-      name: 'creator-service-file-access',
-      type: 'error',
-      message: 'Could not read deal file accesses',
-      error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
-    return null;
-  }
-}
 
 export default defineModeratorEndpoint('creatorServices.dealFiles', {
   method: 'GET',
@@ -78,7 +55,7 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
           }
         })
       ),
-      readAccess([...ids]),
+      readServiceDealFileAccess([...ids]),
     ]);
     return {
       items: perDeal.flat().map((file) => ({

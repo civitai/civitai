@@ -19,7 +19,7 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
     'A deal that is not Disputed answers CONFLICT. A moderator who is its buyer or seller answers FORBIDDEN.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
-  // Up to 64 KB, and kept whole on the review row itself.
+  // Up to 64 KB: keep it out of the audit log.
   auditExclude: ['evidence'],
   input: z.object({
     dealId: z.coerce.number().int().positive(),
@@ -29,8 +29,12 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
     rationale: z.string().trim().min(1).max(4000).describe('Shown to moderators.'),
     evidence: z
       .record(z.string(), z.unknown())
-      .refine((value) => JSON.stringify(value).length <= MAX_EVIDENCE_BYTES, {
+      .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= MAX_EVIDENCE_BYTES, {
         message: `At most ${MAX_EVIDENCE_BYTES} bytes of evidence.`,
+      })
+      // Postgres jsonb refuses a NUL character; refuse it here as bad input, not a server error.
+      .refine((value) => !JSON.stringify(value).includes('\\u0000'), {
+        message: 'Evidence may not contain a NUL character.',
       })
       .describe('The bundle the review read, as JSON.'),
     agentVersion: z.string().trim().min(1).max(100),

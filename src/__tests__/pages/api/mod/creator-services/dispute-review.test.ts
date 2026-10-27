@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as DisputeReview from '~/server/services/creator-service-dispute-review.service';
 
 /**
  * Who may read dispute evidence and who may write a review. `resolveDispute` alone can read the
@@ -40,9 +41,8 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
   },
 }));
-vi.mock('~/server/services/creator-service-dispute-review.service', () => ({
-  DISPUTE_REVIEW_CLASSES: ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'C'],
-  DISPUTE_REVIEW_MODES: ['shadow', 'propose', 'settle'],
+vi.mock('~/server/services/creator-service-dispute-review.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof DisputeReview>()),
   createServiceDisputeReview: (...a: unknown[]) => createReview(...(a as [])),
   getServiceDisputeEvidence: (...a: unknown[]) => getEvidence(...(a as [])),
 }));
@@ -125,7 +125,7 @@ describe('dispute evidence', () => {
 describe('writing a review', () => {
   it('is allowed with reviewDispute, as the session moderator', async () => {
     held.add('creatorServices.reviewDispute');
-    const { status } = await call(reviewHandler, 'POST', { ...REVIEW, reviewerId: 1 });
+    const { status } = await call(reviewHandler, 'POST', REVIEW);
     expect(status).toBe(200);
     expect(createReview).toHaveBeenCalledWith(
       expect.objectContaining({ dealId: 4, class: 'B1', mode: 'shadow', reviewerId: MODERATOR })
@@ -144,6 +144,8 @@ describe('writing a review', () => {
     ['class', { class: 'D' }],
     ['mode', { mode: 'auto' }],
     ['confidence', { confidence: 1.5 }],
+    ['evidence size', { evidence: { blob: 'é'.repeat(40 * 1024) } }],
+    ['evidence NUL', { evidence: { text: 'a\u0000b' } }],
   ])('refuses an unknown %s', async (_, override) => {
     held.add('creatorServices.reviewDispute');
     const { status } = await call(reviewHandler, 'POST', { ...REVIEW, ...override });

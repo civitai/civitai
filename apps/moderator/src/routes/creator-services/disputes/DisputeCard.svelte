@@ -183,11 +183,11 @@
 
   {#if row.latestReview}
     {@const review = row.latestReview}
-    <div class="mt-3 rounded-md border border-dark-4 bg-dark-7 p-2 text-sm">
+    <div class="mt-3 rounded-md bg-dark-7 p-2 text-sm">
       <div class="flex flex-wrap items-center gap-2">
-        <span class="font-medium">Agent review</span>
+        <span class="font-medium text-white">Agent review</span>
         <Badge variant="outline">{review.class}</Badge>
-        <span>
+        <span class="text-dark-0">
           {review.proposal ? `Proposes ${review.proposal.toLowerCase()}` : 'Escalated to a human'}
         </span>
         {#if review.confidence !== null}

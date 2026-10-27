@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 
@@ -12,9 +13,11 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   },
 }));
 
-const { listServiceDealFileAccess, getServiceDealFileAccessRecordedSince } = await import(
-  '../creator-service-deal-file-access'
-);
+const {
+  listServiceDealFileAccess,
+  getServiceDealFileAccessRecordedSince,
+  readServiceDealFileAccess,
+} = await import('../creator-service-deal-file-access');
 
 const answer = (rows: object[]) => {
   holder.client = { query: vi.fn(async () => ({ json: async () => rows })) };
@@ -102,5 +105,16 @@ describe('reading the deal file access log', () => {
     redisMock.redis.packed.set.mockRejectedValue(new Error('redis down'));
     answer([{ since: 1730000000000 }]);
     expect(await getServiceDealFileAccessRecordedSince()).toEqual(new Date(1730000000000));
+  });
+
+  it('reads both halves together, or null when either fails, and logs the failure', async () => {
+    answer([]);
+    expect(await readServiceDealFileAccess([1])).toEqual({ rows: [], recordedSince: null });
+
+    holder.client = undefined;
+    expect(await readServiceDealFileAccess([1])).toBeNull();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-service-file-access', type: 'error' })
+    );
   });
 });

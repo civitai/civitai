@@ -5269,22 +5269,19 @@ export type ServiceDisputeReview = {
   id: Generated<number>;
   dealId: number;
   /**
-   * A1..A3, B1..B3 or C.
+   * Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
    */
   class: string;
   proposal: ServiceDisputeResolution | null;
   confidence: number | null;
-  /**
-   * Shown to moderators.
-   */
   rationale: string;
   /**
-   * What the agent read: file facts, scores, access counts.
+   * The evidence bundle the review read, as submitted.
    */
   evidence: unknown;
   agentVersion: string;
   /**
-   * shadow | propose | settle
+   * Allowed values: DISPUTE_REVIEW_MODES in the same file.
    */
   mode: string;
   humanRuling: ServiceDisputeResolution | null;

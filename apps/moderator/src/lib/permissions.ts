@@ -140,10 +140,9 @@ export const PERMISSIONS = [
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
   },
-  // Writes a dispute review (a classification and proposed ruling) and reads the evidence behind it.
-  // Moves no Buzz, so a shadow agent can hold it without `resolveDispute`. Checked by this literal in
-  // the main app's `/api/mod/creator-services/dispute-review` and `dispute-evidence`
-  // (`ModeratorGrantId`), so rename them together.
+  // Moves no Buzz, so a shadow agent can hold it without `resolveDispute`. Checked by this literal
+  // in the main app's `/api/mod/creator-services/dispute-review` and `dispute-evidence`
+  // (`ModeratorGrantId`); rename together.
   {
     id: 'creatorServices.reviewDispute',
     label: 'Write Creator Services dispute reviews (no refund or release)',

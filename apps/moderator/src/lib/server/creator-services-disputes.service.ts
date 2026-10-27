@@ -34,7 +34,6 @@ export type DisputeRow = {
   latestReview?: DisputeReview | null;
 };
 
-/** The dispute agent's latest review. `proposal` null means it escalated to a human. */
 export type DisputeReview = {
   id: number;
   class: string;

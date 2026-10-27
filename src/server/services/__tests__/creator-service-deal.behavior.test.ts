@@ -10,6 +10,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as AccessLog from '~/server/services/creator-service-deal-file-access';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
@@ -89,6 +90,12 @@ dbMock.dbRead.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) 
 dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
   holder.db.transaction((tx) => fn(bridge(tx)))) as never);
 
+const accessLog = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock('~/server/services/creator-service-deal-file-access', async (importOriginal) => ({
+  ...(await importOriginal<typeof AccessLog>()),
+  readServiceDealFileAccess: async () => accessLog.value,
+}));
+
 const deals = await import('~/server/services/creator-service-deal.service');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
@@ -119,7 +126,6 @@ const REASON_CODE_MIGRATION = join(
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
 );
 
-// Columns the dispute evidence reads, and the review table itself.
 const LATER_MIGRATIONS = [
   '20261028160000_creator_service_deal_file_entries',
   '20261029140000_creator_service_deal_file_delivery',
@@ -275,6 +281,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  accessLog.value = null;
   // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
   for (const fn of Object.values(buzz)) fn.mockReset();
   notifications.createNotification.mockReset();
@@ -2772,12 +2779,12 @@ describe('site notifications', () => {
 });
 
 describe('dispute reviews', () => {
-  const disputed = async () => {
-    const { id } = await request();
+  const disputed = async (buyerId = BUYER) => {
+    const { id } = await request({ buyerId });
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     await deliver(id);
-    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
-    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: buyerId });
+    await deals.openServiceDealDispute({ dealId: id, userId: buyerId, reason: 'not as previewed' });
     return id;
   };
   const review = (dealId: number, proposal: 'Refund' | 'Release' | null, reviewerId = STRANGER) =>
@@ -2803,6 +2810,10 @@ describe('dispute reviews', () => {
        WHERE "dealId" = $1 ORDER BY id`,
       [dealId]
     );
+  const latestOnQueue = async (id: number) =>
+    (await deals.listDisputedServiceDeals({})).items.find((item) => item.id === id)?.latestReview;
+  const resolve = (id: number, resolution: 'Refund' | 'Release') =>
+    deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution });
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();
@@ -2810,23 +2821,30 @@ describe('dispute reviews', () => {
     expect(await rows(id)).toEqual([]);
   });
 
-  it('refuses a reviewer who is a party to the deal', async () => {
+  it.each([
+    ['buyer', BUYER],
+    ['seller', SELLER],
+  ])('refuses a reviewer who is the %s, and evidence to them', async (_, party) => {
     const id = await disputed();
-    await expect(review(id, 'Release', SELLER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(review(id, 'Release', party)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      reviews.getServiceDisputeEvidence({ dealId: id, viewerId: party })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await rows(id)).toEqual([]);
   });
 
-  it('shows the latest review on the dispute queue', async () => {
-    const id = await disputed();
-    await review(id, null);
-    await review(id, 'Refund');
-    const { items } = await deals.listDisputedServiceDeals({});
-    expect(items.find((item) => item.id === id)?.latestReview).toMatchObject({
+  it("shows each deal's latest review on the dispute queue, and null for a deal with none", async () => {
+    const reviewed = await disputed();
+    const unreviewed = await disputed();
+    await review(reviewed, null);
+    await review(reviewed, 'Refund');
+    expect(await latestOnQueue(reviewed)).toMatchObject({
       proposal: 'Refund',
       class: 'B1',
       mode: 'shadow',
       rationale: 'why',
     });
+    expect(await latestOnQueue(unreviewed)).toBeNull();
   });
 
   it.each([
@@ -2839,11 +2857,7 @@ describe('dispute reviews', () => {
       const id = await disputed();
       await review(id, 'Release');
       await review(id, proposal);
-      await deals.resolveServiceDealDispute({
-        dealId: id,
-        moderatorId: STRANGER,
-        resolution: 'Refund',
-      });
+      await resolve(id, 'Refund');
       expect(await rows(id)).toEqual([
         { proposal: 'Release', humanRuling: null, humanId: null, agreed: null },
         { proposal, humanRuling: 'Refund', humanId: STRANGER, agreed },
@@ -2853,16 +2867,40 @@ describe('dispute reviews', () => {
 
   it('refuses a review once the deal is resolved', async () => {
     const id = await disputed();
-    await deals.resolveServiceDealDispute({
-      dealId: id,
-      moderatorId: STRANGER,
-      resolution: 'Refund',
-    });
+    await resolve(id, 'Refund');
     await expect(review(id, 'Refund')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
+  it('does not carry a review over to a dispute reopened after its ruling', async () => {
+    const id = await disputed();
+    await review(id, 'Release');
+    // Ages the dispute and its review so the reopening below is unambiguously after both.
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = "disputeOpenedAt" - interval '2 hours' WHERE id = $1`,
+      [id]
+    );
+    await q(`UPDATE "ServiceDisputeReview" SET "createdAt" = "createdAt" - interval '1 hour'`);
+    await resolve(id, 'Release');
+    // As a payout that holds the deal again does: the dispute reopens with a new opening time.
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Disputed', "disputeResolution" = NULL,
+         "disputeResolvedAt" = NULL, "disputeResolvedById" = NULL, "disputeOpenedAt" = now()
+       WHERE id = $1`,
+      [id]
+    );
+    expect(await latestOnQueue(id)).toBeNull();
+
+    await review(id, null);
+    await resolve(id, 'Release');
+    expect(await rows(id)).toEqual([
+      { proposal: 'Release', humanRuling: 'Release', humanId: STRANGER, agreed: true },
+      { proposal: null, humanRuling: 'Release', humanId: STRANGER, agreed: null },
+    ]);
+  });
+
   it("bundles the deal's evidence, and counts each party's other recent disputes", async () => {
-    const earlier = await disputed();
+    // The seller's other dispute, with a different buyer: it counts for the seller only.
+    const sellersOther = await disputed(STRANGER);
     const id = await disputed();
     const evidence = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
     expect(evidence.deal).toMatchObject({
@@ -2876,24 +2914,44 @@ describe('dispute reviews', () => {
     expect(evidence.files).toEqual([
       expect.objectContaining({ kind: 'Final', scanStatus: 'Passed' }),
     ]);
-    expect(evidence.priorDisputes).toEqual({ days: 90, buyer: 1, seller: 1 });
+    expect(evidence.priorDisputes).toEqual({ days: 90, buyer: 0, seller: 1 });
     // ClickHouse is not configured here: the access log reads as unknown, never as empty.
     expect(evidence.files[0].access).toBeUndefined();
     expect(evidence.accessRecordedSince).toBeNull();
 
     await q(
       `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '91 days' WHERE id = $1`,
-      [earlier]
+      [sellersOther]
     );
     expect(
       (await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER })).priorDisputes
     ).toEqual({ days: 90, buyer: 0, seller: 0 });
   });
 
-  it('refuses evidence to a moderator who is a party', async () => {
+  it("puts each file's own accesses on it", async () => {
     const id = await disputed();
-    await expect(
-      reviews.getServiceDisputeEvidence({ dealId: id, viewerId: BUYER })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await finals(id);
+    const [a, b] = (
+      await q<{ id: number }>(`SELECT id FROM "ServiceDealFile" WHERE "dealId" = $1 ORDER BY id`, [
+        id,
+      ])
+    ).map((f) => f.id);
+    const at = new Date('2026-10-01T00:00:00Z');
+    const row = (fileId: number, role: 'Buyer' | 'Seller') => ({
+      dealId: id,
+      fileId,
+      role,
+      kind: 'Download' as const,
+      count: 1,
+      firstAt: at,
+      lastAt: at,
+    });
+    accessLog.value = { rows: [row(a, 'Buyer'), row(b, 'Seller')], recordedSince: at };
+    const evidence = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
+    expect(evidence.files.map((f) => [f.id, f.access?.map((x) => x.role)])).toEqual([
+      [a, ['Buyer']],
+      [b, ['Seller']],
+    ]);
+    expect(evidence.accessRecordedSince).toEqual(at);
   });
 });
