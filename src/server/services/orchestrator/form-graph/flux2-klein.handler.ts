@@ -4,8 +4,8 @@
  */
 
 import type {
-  Flux2KleinCreateImageInput,
-  Flux2KleinEditImageInput,
+  ComfyFlux2KleinCreateImageInput,
+  ComfyFlux2KleinEditImageInput,
   ImageGenStepTemplate,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -14,7 +14,7 @@ import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
-type Flux2KleinInput = Flux2KleinCreateImageInput | Flux2KleinEditImageInput;
+type Flux2KleinInput = ComfyFlux2KleinCreateImageInput | ComfyFlux2KleinEditImageInput;
 
 const baseModelToVariant: Record<string, Flux2KleinMode> = {
   Flux2Klein_9B: '9b',
@@ -51,8 +51,8 @@ export const createFlux2KleinInput = defineHandler<
     {
       $type: 'imageGen',
       input: removeEmpty({
-        engine: 'flux2',
-        model: 'klein',
+        engine: 'comfy',
+        ecosystem: 'flux2Klein',
         modelVersion,
         operation: hasImages ? 'editImage' : 'createImage',
         prompt: data.prompt,
@@ -61,8 +61,8 @@ export const createFlux2KleinInput = defineHandler<
         height: data.aspectRatio?.height,
         cfgScale,
         steps,
-        sampleMethod: ('sampler' in data ? data.sampler : undefined) ?? 'euler',
-        schedule: ('scheduler' in data ? data.scheduler : undefined) ?? 'simple',
+        sampler: ('sampler' in data ? data.sampler : undefined) ?? 'euler',
+        scheduler: ('scheduler' in data ? data.scheduler : undefined) ?? 'simple',
         quantity: data.quantity ?? 1,
         seed: data.seed,
         loras,
