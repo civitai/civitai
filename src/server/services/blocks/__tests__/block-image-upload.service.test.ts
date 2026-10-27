@@ -1,3 +1,5 @@
+import { isBlurhashValid } from 'blurhash';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -16,9 +18,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * All network/store/DB deps are mocked — no real fetch / S3 / Prisma / image.service.
  */
 
-const { mockUpload, mockCreateImage } = vi.hoisted(() => ({
+const { mockUpload, mockCreateImage, mockLog } = vi.hoisted(() => ({
   mockUpload: vi.fn(async (..._a: unknown[]): Promise<{ key: string }> => ({ key: 'uuid-key' })),
   mockCreateImage: vi.fn(async (..._a: unknown[]): Promise<{ id: number }> => ({ id: 4242 })),
+  mockLog: vi.fn(async (..._a: unknown[]) => undefined),
 }));
 
 // The service statically imports getEdgeUrl; stub it so the module graph never
@@ -27,6 +30,11 @@ vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u
 vi.mock('~/utils/s3-utils', () => ({ uploadImageBufferToStore: mockUpload }));
 // `createImage` is dynamically imported inside the service.
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
+// The blurhash helper's failure log — asserted on by the fallback test below.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  logToAxiom: mockLog,
+}));
 
 // A minimal fetch Response stand-in. A 3xx carries a `location` header; a 2xx
 // carries the body bytes. `body.cancel` is asserted to run on every redirect hop
@@ -76,18 +84,22 @@ const MAX_OUTPUT_REDIRECTS_EXPECTED = 3;
 
 const fetchMock = vi.fn();
 
-async function callPersist(imageUrl: string) {
+async function callPersist(
+  imageUrl: string,
+  dims: { width: number | null; height: number | null } = { width: 1024, height: 1024 }
+) {
   const { persistBlockWorkflowOutputImage } = await import('../block-image-upload.service');
   return persistBlockWorkflowOutputImage({
     imageUrl,
-    width: 1024,
-    height: 1024,
+    ...dims,
     userId: 7,
     appId: 'oc_app_1',
   });
 }
 
-async function captureError(fn: () => Promise<unknown>): Promise<{ code?: string; message?: string }> {
+async function captureError(
+  fn: () => Promise<unknown>
+): Promise<{ code?: string; message?: string }> {
   try {
     await fn();
     throw new Error('expected the publish to reject, but it resolved');
@@ -187,5 +199,92 @@ describe('persistBlockWorkflowOutputImage — orchestrator output-blob redirect 
     expect(err.code).toBe('BAD_REQUEST');
     expect(err.message).toBe('could not fetch the generation output to publish');
     expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The blurhash placeholder. An on-site upload stores `metadata.hash/width/height` (computed in
+ * the browser) and `MediaHash` needs all three to draw the blurred placeholder while the image
+ * loads; a published workflow output used to get `metadata: { size }` only, so its tile was
+ * blank until the image arrived. These run the real sharp decode on real bytes.
+ */
+describe('persistBlockWorkflowOutputImage — blurhash placeholder', () => {
+  const OUTPUT_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/abc.png?sig=xyz';
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    mockUpload.mockReset().mockResolvedValue({ key: 'uuid-key' });
+    mockCreateImage.mockReset().mockResolvedValue({ id: 4242 });
+    mockLog.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function createImageArg() {
+    expect(mockCreateImage).toHaveBeenCalledTimes(1);
+    return mockCreateImage.mock.calls[0][0] as {
+      hash?: string | null;
+      width?: number | null;
+      height?: number | null;
+      metadata?: Record<string, unknown>;
+    };
+  }
+
+  it('stores the hash and the measured size in metadata, as an on-site upload does', async () => {
+    const png = await sharp({
+      create: { width: 300, height: 200, channels: 3, background: { r: 200, g: 40, b: 40 } },
+    })
+      .png()
+      .toBuffer();
+    fetchMock.mockResolvedValueOnce(imageResponse(png));
+
+    await callPersist(OUTPUT_URL, { width: null, height: null });
+
+    const arg = createImageArg();
+    const hash = arg.metadata?.hash;
+    expect(typeof hash).toBe('string');
+    expect(isBlurhashValid(hash as string).result).toBe(true);
+    expect(arg.metadata).toEqual({ size: png.byteLength, hash, width: 300, height: 200 });
+    // The `Image.hash` column, which the on-site path sets from the same value.
+    expect(arg.hash).toBe(hash);
+    // The orchestrator supplied no dimensions, so the columns come from the bytes.
+    expect({ width: arg.width, height: arg.height }).toEqual({ width: 300, height: 200 });
+  });
+
+  it('keeps the orchestrator-supplied dimension columns when it supplied them', async () => {
+    const png = await sharp({
+      create: { width: 300, height: 200, channels: 3, background: { r: 8, g: 8, b: 8 } },
+    })
+      .png()
+      .toBuffer();
+    fetchMock.mockResolvedValueOnce(imageResponse(png));
+
+    await callPersist(OUTPUT_URL, { width: 1216, height: 832 });
+
+    const arg = createImageArg();
+    expect({ width: arg.width, height: arg.height }).toEqual({ width: 1216, height: 832 });
+    expect(arg.metadata).toMatchObject({ width: 300, height: 200 });
+  });
+
+  it('still publishes, without a placeholder, when the bytes cannot be decoded', async () => {
+    // Passes the magic-byte sniff (JPEG SOI) but is not a decodable image.
+    fetchMock.mockResolvedValueOnce(imageResponse(JPEG_BYTES));
+
+    const res = await callPersist(OUTPUT_URL, { width: null, height: null });
+
+    expect(res).toEqual({ imageId: 4242 });
+    const arg = createImageArg();
+    // Exactly the pre-change shape: no hash/width/height keys at all.
+    expect(arg.metadata).toEqual({ size: JPEG_BYTES.byteLength });
+    expect(arg.hash).toBeUndefined();
+    expect(arg.width).toBeUndefined();
+    expect(arg.height).toBeUndefined();
+    expect(mockLog).toHaveBeenCalledTimes(1);
+    expect(mockLog.mock.calls[0][0]).toMatchObject({
+      name: 'image-blurhash',
+      source: 'block-workflow-output',
+    });
   });
 });
