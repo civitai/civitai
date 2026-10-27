@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -116,6 +116,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 
 // NOTE the disable is the LAST comment line before the statement — an
 // `eslint-disable-next-line` followed by MORE comment lines disables the next
@@ -164,6 +175,9 @@ let replaceCalls = 0;
  */
 function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
   const [, force] = useReducer((x: number) => x + 1, 0);
+  // The store is mounted only once `replace` is patched: the sub-nav controls read it on their
+  // first render, which (unlike the store body) does not wait on a data load.
+  const [patched, setPatched] = useState(false);
   useEffect(() => {
     forceRerender = force;
     const original = router.replace;
@@ -180,13 +194,14 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
         }, latencyMs);
       });
     }) as typeof router.replace;
+    setPatched(true);
     return () => {
       router.replace = original;
       forceRerender = null;
     };
   }, [latencyMs]);
 
-  return <AppListingsMarketplaceBody />;
+  return patched ? <StoreWithControls /> : null;
 }
 
 /** Simulate a browser Back / an external navigation to `next`. */
@@ -356,8 +371,8 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
-    await userEvent.click(page.getByLabelText('Sort').first());
-    await userEvent.click(page.getByRole('option', { name: 'Newest' }));
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
       expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
     });
