@@ -45,7 +45,7 @@ const getHelp = group('help', 'Get help', IconLifebuoy, [
 ]);
 
 export const USER_MENU_LAYOUT: UserMenuNode[] = [
-  group('your-stuff', 'Your stuff', IconBookmark, [
+  group('your-stuff', 'Your Stuff', IconBookmark, [
     item('collections'),
     item('liked-models'),
     item('bookmarked-articles'),

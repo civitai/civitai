@@ -59,7 +59,7 @@ describe('decideMediaPublish', () => {
     /**
      * 🔴 A REGRESSION GUARD ON A SHIPPED DEFECT, not a style rule. The first wording said
      * "Delete it", and neither surface this message reaches has a delete: the spoke's
-     * ingestion-errors page exposes exactly one action, `resolve`, and `deleteImagesByIds` is
+     * ingestion-errors page exposes exactly one action, `resolve`, and the spoke's image delete is
      * wired only into article moderation. The moderator was told to do something impossible and
      * re-clicked, spending one existence probe per click.
      *

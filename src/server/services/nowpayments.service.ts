@@ -27,8 +27,11 @@ import {
   getChainForNetworkWithFallback,
   isDepositComplete,
   outcomeAmountToBuzz,
+  OPEN_DEPOSIT_DIGEST_AFTER_DAYS,
+  OPEN_DEPOSIT_STATUSES,
   UNVERIFIED_DEPOSIT_STATUSES,
 } from '~/server/common/chain-config';
+import type { OpenDepositDigestItem } from '~/server/email/templates/openCryptoDepositDigest.email';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
 const getIpnCallbackUrl = () =>
@@ -188,7 +191,10 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
   // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
   // after the upsert so a row another delivery created meanwhile is still handed over.
   await dbWrite.cryptoDeposit.updateMany({
-    where: { paymentId, status: { in: ['waiting', 'confirming', 'sending', 'partially_paid', 'failed'] } },
+    where: {
+      paymentId,
+      status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid', 'failed', 'expired'] },
+    },
     data: { status: 'buzz_failed', retryCount: 0 },
   });
 };
@@ -458,16 +464,17 @@ export const processDeposit = async (
         chain,
       };
 
-      // `failed` outranks the in-flight statuses so a rejection advances a stuck row, but
-      // sits below buzz_failed and finished: a late `failed` must not pull an owed
-      // (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
-      // into a terminal state, and a `finished` arriving after `failed` must still win.
+      // `failed`, `expired` and `refunded` outrank the in-flight statuses so NP's final word
+      // closes a stuck row, but sit below buzz_failed and finished: a late one must not pull an
+      // owed (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
+      // into a terminal state, and a `finished` arriving after any of them must still win.
       const statusRank: Record<string, number> = {
         // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
         // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
-        waiting: 0, unverified_exhausted: 0, confirming: 1, sending: 1, partially_paid: 1, unverified: 1.5,
+        waiting: 0, unverified_exhausted: 0, confirming: 1, confirmed: 1, sending: 1, partially_paid: 1,
+        unverified: 1.5,
         // Nothing automatic moves a held deposit; only a credit that finishes it can.
-        failed: 2, buzz_failed: 3, held: 3.5, finished: 4,
+        failed: 2, expired: 2, refunded: 2, buzz_failed: 3, held: 3.5, finished: 4,
       };
       const nextRank = statusRank[depositStatus] ?? 0;
 
@@ -647,6 +654,9 @@ export const reconcileDeposits = async ({
 
   // 2. Filter for completed payments only
   const completedPayments = allPayments.filter((p) => isDepositComplete(p.payment_status));
+  const openPayments = allPayments.filter(
+    (p) => OPEN_DEPOSIT_STATUSES.includes(p.payment_status) && Number(p.actually_paid) > 0
+  );
 
   // 3. Process each completed payment with bounded concurrency
   const details = await mapWithConcurrency(
@@ -655,6 +665,10 @@ export const reconcileDeposits = async ({
     (payment) => reconcileSinglePayment(payment)
   );
 
+  const recordedOpen = (
+    await mapWithConcurrency(openPayments, RECONCILE_PROCESS_CONCURRENCY, recordOpenPayment)
+  ).filter(Boolean).length;
+
   const results = {
     totalPayments: allPayments.length,
     completedPayments: completedPayments.length,
@@ -662,6 +676,7 @@ export const reconcileDeposits = async ({
     newlyProcessed: 0,
     failed: 0,
     skipped: 0,
+    recordedOpen,
     details,
   };
 
@@ -674,6 +689,31 @@ export const reconcileDeposits = async ({
 
   return results;
 };
+
+/**
+ * Records a paid, in-flight payment as an open deposit row (or advances its status), so the
+ * open-deposit watch keeps polling it after it leaves the reconcile window. Credits nothing.
+ */
+async function recordOpenPayment(payment: NOWPayments.CreatePaymentResponse) {
+  const paymentId = Number(payment.payment_id);
+  if (!userIdFromOrderId(payment.order_id)) return false;
+  try {
+    const local = await dbRead.cryptoDeposit.findUnique({
+      where: { paymentId: BigInt(paymentId) },
+      select: { status: true },
+    });
+    if (local?.status === payment.payment_status) return false;
+    await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
+    return true;
+  } catch (e) {
+    await log({
+      message: 'Failed to record open deposit',
+      paymentId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return false;
+  }
+}
 
 /** Fetch individual payments by ID with bounded concurrency. */
 async function fetchPaymentsByIds(ids: number[]): Promise<NOWPayments.CreatePaymentResponse[]> {
@@ -906,6 +946,99 @@ export const retryFailedDeposits = async () => {
   }
 
   return { retried: failedDeposits.length, succeeded, failed, exhausted, held };
+};
+
+const openDepositWhere = () => ({
+  status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid'] },
+  payAmount: { gt: 0 },
+});
+
+/**
+ * The open-deposit list and its health counts, read from CryptoDeposit only: no NOWPayments
+ * call and no writes, so support can read it as often as it likes.
+ */
+export const getOpenDepositReport = async () => {
+  const [rows, finishedUncredited] = await Promise.all([
+    dbRead.cryptoDeposit.findMany({
+      where: { OR: [openDepositWhere(), { status: HELD }] },
+      select: {
+        paymentId: true,
+        userId: true,
+        status: true,
+        payCurrency: true,
+        payAmount: true,
+        createdAt: true,
+        user: { select: { username: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    dbRead.cryptoDeposit.count({
+      where: { OR: [{ status: 'buzz_failed' }, { status: 'finished', buzzCredited: null }] },
+    }),
+  ]);
+
+  const now = dayjs.utc();
+  const items: OpenDepositDigestItem[] = rows.map((row) => ({
+    paymentId: row.paymentId.toString(),
+    userId: row.userId,
+    username: row.user?.username ?? 'unknown',
+    status: row.status,
+    payCurrency: row.payCurrency,
+    payAmount: row.payAmount,
+    daysOpen: now.diff(row.createdAt, 'day'),
+    held: row.status === HELD,
+  }));
+  const open = items.filter((i) => !i.held);
+
+  return {
+    items,
+    counts: {
+      open: open.length,
+      oldestOpenDays: open[0]?.daysOpen ?? 0,
+      held: items.length - open.length,
+      finishedUncredited,
+    },
+  };
+};
+
+/**
+ * Polls NOWPayments once for each paid deposit still in flight. The reconcile job only lists
+ * payments created in the last 72h, so a payment that settles later is otherwise credited only
+ * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
+ */
+export const watchOpenDeposits = async () => {
+  const open = await dbRead.cryptoDeposit.findMany({
+    where: openDepositWhere(),
+    select: { paymentId: true, status: true },
+  });
+
+  const outcomes = await mapWithConcurrency(open, RECONCILE_FETCH_CONCURRENCY, async (row) => {
+    const paymentId = Number(row.paymentId);
+    try {
+      const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+      if (!payment) throw new Error('not found on NowPayments');
+      if (payment.payment_status !== row.status || isDepositComplete(payment.payment_status)) {
+        await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
+      }
+      return { lookupFailed: false, closed: !OPEN_DEPOSIT_STATUSES.includes(payment.payment_status) };
+    } catch (e) {
+      await log({
+        message: 'Open deposit check failed',
+        paymentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { lookupFailed: true, closed: false };
+    }
+  });
+
+  const report = await getOpenDepositReport();
+  return {
+    checked: open.length,
+    closed: outcomes.filter((o) => o.closed).length,
+    lookupFailed: outcomes.filter((o) => o.lookupFailed).length,
+    counts: report.counts,
+    digest: report.items.filter((i) => !i.held && i.daysOpen >= OPEN_DEPOSIT_DIGEST_AFTER_DAYS),
+  };
 };
 
 /** Hard cap on perPage to prevent abuse */

@@ -305,7 +305,7 @@ function DesktopGroup({
       onChange={setOpened}
       position="left-start"
       offset={4}
-      width={240}
+      width="max-content"
       shadow="md"
       // Inside the parent's dropdown, so a click in the flyout is not a click outside the menu;
       // fixed, so the parent's scroll box does not clip it.
@@ -351,7 +351,7 @@ function DesktopGroup({
       </Menu.Target>
       <Menu.Dropdown
         ref={dropdown}
-        className="p-1"
+        className="min-w-[240px] max-w-[22rem] p-1"
         onMouseEnter={() => window.clearTimeout(timer.current)}
         onMouseLeave={() => later(() => setOpened(false), HOVER_CLOSE_MS)}
       >

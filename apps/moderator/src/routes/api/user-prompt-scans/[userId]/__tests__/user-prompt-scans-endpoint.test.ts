@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromptScans from '$lib/server/prompt-scans.service';
 
 const getPromptScans = vi.fn();
-vi.mock('$lib/server/prompt-scans.service', () => ({ getPromptScans }));
+vi.mock('$lib/server/prompt-scans.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromptScans>()),
+  getPromptScans,
+}));
 const logToAxiom = vi.fn(async (_data: Record<string, unknown>) => undefined);
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 const canAccess = vi.fn((_user: unknown, _path: string) => true);
@@ -88,5 +92,14 @@ describe('/api/user-prompt-scans', () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'Could not read the prompt scans.' });
     expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('says the scan timed out when ClickHouse cut it off', async () => {
+    getPromptScans.mockRejectedValue(
+      Object.assign(new Error('Timeout exceeded'), { code: '159', type: 'TIMEOUT_EXCEEDED' })
+    );
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/took longer than \d+ seconds/);
   });
 });
