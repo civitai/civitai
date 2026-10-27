@@ -4224,12 +4224,29 @@ export type ModerationRuleVersion = {
   createdById: number;
   createdAt: Generated<Timestamp>;
 };
+export type NewOrderLinkReview = {
+  id: Generated<number>;
+  fingerprint: string;
+  userIds: number[];
+  evidence: unknown;
+  buzzMoved: Generated<number>;
+  autoBlocked: Generated<boolean>;
+  status: Generated<string>;
+  reviewedBy: number | null;
+  reviewedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type NewOrderPlayer = {
   userId: number;
   rankType: NewOrderRankType;
   startAt: Generated<Timestamp>;
   exp: Generated<number>;
   fervor: Generated<number>;
+  payoutBlockedAt: Timestamp | null;
+  payoutBlockReason: string | null;
+  payoutBlockedBy: number | null;
+  payoutReleaseFrom: Timestamp | null;
 };
 export type NewOrderRank = {
   type: NewOrderRankType;
@@ -6495,6 +6512,7 @@ export type DB = {
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
+  NewOrderLinkReview: NewOrderLinkReview;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;

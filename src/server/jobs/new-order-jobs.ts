@@ -41,7 +41,105 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('new-order-jobs');
 
-const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * * *', async () => {
+type GrantCandidate = { userId: number; balance: number; totalExp: number };
+
+const isPayablePlayer = (p: { payoutBlockedAt: Date | null; user: { bannedAt: Date | null } }) =>
+  p.payoutBlockedAt == null && p.user.bannedAt == null;
+
+const playerPayoutSelect = {
+  userId: true,
+  payoutBlockedAt: true,
+  payoutReleaseFrom: true,
+  user: { select: { bannedAt: true } },
+} as const;
+
+async function grantBatches(grants: Array<GrantCandidate & { externalId: string }>) {
+  const batches = chunk(grants, 100);
+  let loopCount = 1;
+  for (const batch of batches) {
+    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
+
+    const transactions = batch
+      .filter((g) => g.balance > 0)
+      .map((g) => ({
+        fromAccountId: 0,
+        toAccountId: g.userId,
+        amount: g.balance,
+        type: TransactionType.Reward,
+        description: 'Content Moderation Correct Judgment',
+        externalTransactionId: g.externalId,
+      }));
+    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+    const granted = new Map<number, number>();
+    for (const g of batch) {
+      if (g.balance > 0) granted.set(g.userId, (granted.get(g.userId) ?? 0) + g.totalExp);
+    }
+    await Promise.all(
+      [...granted].map(([userId, totalExp]) =>
+        Promise.all([
+          blessedBuzzCounter.decrement({ id: userId, value: totalExp }),
+          pendingBuzzCounter.reset({ id: userId }),
+          recentlyGrantedBuzzCounter.reset({ id: userId }),
+        ])
+      )
+    );
+    const ungranted = [...new Set(batch.map((g) => g.userId))].filter((id) => !granted.has(id));
+    if (ungranted.length > 0) {
+      await Promise.all(ungranted.map((id) => pendingBuzzCounter.reset({ id })));
+    }
+    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
+    loopCount++;
+  }
+}
+
+async function grantReleasedPayouts(endDate: Date) {
+  if (!clickhouse) return;
+  const released = (
+    await dbRead.newOrderPlayer.findMany({
+      where: {
+        payoutReleaseFrom: { not: null },
+        payoutBlockedAt: null,
+        rankType: { not: NewOrderRankType.Acolyte },
+      },
+      select: playerPayoutSelect,
+    })
+  ).filter(isPayablePlayer);
+  if (released.length === 0) return;
+
+  const earliest = released.reduce(
+    (min, p) => (p.payoutReleaseFrom! < min ? p.payoutReleaseFrom! : min),
+    released[0].payoutReleaseFrom!
+  );
+  const rows = await clickhouse.$query<GrantCandidate & { dayMs: number }>`
+    SELECT
+      userId,
+      toUnixTimestamp(toStartOfDay(createdAt)) * 1000 as dayMs,
+      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
+      SUM(grantedExp * multiplier) as totalExp
+    FROM knights_new_order_image_rating FINAL
+    WHERE createdAt >= ${earliest} AND createdAt < ${endDate}
+      AND userId IN (${released.map((p) => p.userId).join(',')})
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+    GROUP BY userId, dayMs
+  `;
+  const from = new Map(released.map((p) => [p.userId, p.payoutReleaseFrom!]));
+  const grants = rows
+    .filter((r) => new Date(Number(r.dayMs)) >= startOfDay(from.get(r.userId)!))
+    .map((r) => ({
+      ...r,
+      externalId: `new-order-${r.userId}-${new Date(Number(r.dayMs)).toISOString()}`,
+    }));
+  await grantBatches(grants);
+  await dbWrite.newOrderPlayer.updateMany({
+    where: { userId: { in: released.map((p) => p.userId) }, payoutBlockedAt: null },
+    data: { payoutReleaseFrom: null },
+  });
+}
+
+const startOfDay = (d: Date) => dayjs(d).startOf('day').toDate();
+
+export async function runGrantBlessedBuzz() {
   if (!clickhouse) return;
   log('BlessedBuzz :: Granting Blessed Buzz');
 
@@ -68,70 +166,38 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   if (judgments.length) {
     log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
 
-    // Get current player data for knights and templars only
-    const players = await dbRead.newOrderPlayer.findMany({
-      where: {
-        userId: { in: judgments.map((j) => j.userId) },
-        rankType: { not: NewOrderRankType.Acolyte },
-      },
-      select: { userId: true },
-    });
+    // Knights and templars only; blocked and banned players keep their amounts pending
+    const players = (
+      await dbRead.newOrderPlayer.findMany({
+        where: {
+          userId: { in: judgments.map((j) => j.userId) },
+          rankType: { not: NewOrderRankType.Acolyte },
+        },
+        select: playerPayoutSelect,
+      })
+    ).filter(isPayablePlayer);
 
-    const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
+    const payable = new Set(players.map((p) => p.userId));
+    const validPlayers = judgments.filter((j) => payable.has(j.userId));
 
     if (validPlayers.length) {
-      // Create buzz transactions in batches
-      const batches = chunk(validPlayers, 100);
-      let loopCount = 1;
-      for (const batch of batches) {
-        log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-
-        const grantedPlayers = batch.filter((player) => player.balance > 0);
-        const ungrantedPlayers = batch.filter((player) => player.balance <= 0);
-
-        const transactions = grantedPlayers.map((validPlayer) => ({
-          fromAccountId: 0,
-          toAccountId: validPlayer.userId,
-          amount: validPlayer.balance,
-          type: TransactionType.Reward,
-          description: 'Content Moderation Correct Judgment',
-          externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-        }));
-
-        if (transactions.length > 0) await createBuzzTransactionMany(transactions);
-
-        // Deduct the actual EXP from the blessed buzz counter only for players who received buzz.
-        // Players with balance <= 0 (< 10 correct votes) keep their EXP so it rolls over
-        // and accumulates until the next payout threshold is reached.
-        // Counter stores EXP values, not converted buzz, so we deduct totalExp.
-        // Reset pending buzz counter so it recalculates the new day on next fetch.
-        await Promise.all(
-          grantedPlayers.map((player) => {
-            return Promise.all([
-              blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
-              pendingBuzzCounter.reset({ id: player.userId }),
-              recentlyGrantedBuzzCounter.reset({ id: player.userId }),
-            ]);
-          })
-        );
-
-        // For ungranted players, only reset the pending buzz counter
-        // so it recalculates next cycle — but preserve their blessed buzz EXP
-        if (ungrantedPlayers.length > 0) {
-          await Promise.all(
-            ungrantedPlayers.map((player) => pendingBuzzCounter.reset({ id: player.userId }))
-          );
-        }
-        log(
-          `BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`
-        );
-        loopCount++;
-      }
+      await grantBatches(
+        validPlayers.map((j) => ({
+          ...j,
+          externalId: `new-order-${j.userId}-${startDate.toISOString()}`,
+        }))
+      );
     } else {
       log('BlessedBuzz :: No valid players found');
     }
   } else {
     log('BlessedBuzz :: No correct judgments found');
+  }
+
+  try {
+    await grantReleasedPayouts(startDate);
+  } catch (error: unknown) {
+    log(`BlessedBuzz :: Released payout catch-up failed, will retry next run: ${error}`);
   }
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
@@ -193,7 +259,13 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   } catch (error: unknown) {
     log(`BlessedBuzz :: Stale counter reconciliation failed, will retry next run: ${error}`);
   }
-});
+}
+
+const newOrderGrantBlessedBuzz = createJob(
+  'new-order-grant-bless-buzz',
+  '0 0 * * *',
+  runGrantBlessedBuzz
+);
 
 type DailyResetQueryResult = {
   userId: number;

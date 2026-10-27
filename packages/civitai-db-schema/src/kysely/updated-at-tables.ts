@@ -67,6 +67,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'ModelVersion',
   'ModelVersionSale',
   'ModerationRule',
+  'NewOrderLinkReview',
   'NewOrderRank',
   'OauthClient',
   'OauthConsent',
