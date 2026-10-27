@@ -16,7 +16,11 @@ const MODERATION = 900;
 const SOMEONE = 5;
 
 const h = vi.hoisted(() => ({
-  getSessionUserById: vi.fn(async (id: number) => ({ id, bannedAt: null })),
+  getSessionUserById: vi.fn(async (id: number) => ({
+    id,
+    username: id === 902 ? 'CivitaiModeration' : 'someone',
+    bannedAt: null,
+  })),
   decodeLegacySessionCookie: vi.fn(),
 }));
 
@@ -83,6 +87,12 @@ describe('an API key', () => {
     dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(key(MODERATION) as never);
     expect(await getSessionFromBearerToken('k')).toBeNull();
     refusalLogged();
+  });
+
+  it('resolves to no session for the account by username when no id is configured', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(key(902) as never);
+    expect(await getSessionFromBearerToken('k')).toBeNull();
   });
 
   it('still resolves for anyone else', async () => {

@@ -216,7 +216,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     if (
       !actor.isModerator ||
       actor.bannedAt ||
-      refuseModerationAccountSession(actor.id, 'moderator-endpoint')
+      refuseModerationAccountSession(actor, 'moderator-endpoint')
     ) {
       return res.status(403).json({ error: 'Moderator role required' });
     }

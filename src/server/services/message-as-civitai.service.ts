@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -23,6 +23,7 @@ const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
 const PENDING_TTL_SECONDS = 5 * 60;
 const SEND_LOCK_SECONDS = 30;
 const PENDING = 'pending';
+const RELEASE_IF_OWNER = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0`;
 
 function requireModerationAccountId(): number {
   const id = getModerationAccountId();
@@ -138,12 +139,16 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
   // One send per target at a time: the cap is a count followed by an insert, and a first message creates
   // the thread, so two concurrent sends would each pass the count or race to create it.
   const lockKey = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
-  if ((await sysRedis.set(lockKey, '1', { NX: true, EX: SEND_LOCK_SECONDS })) === null)
+  const owner = randomUUID();
+  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: SEND_LOCK_SECONDS })) === null)
     throw throwConflictError('Another message to this user is being sent; retry in a moment.');
   try {
     return await sendLocked({ actorId, userId, message, context, moderationId });
   } finally {
-    await sysRedis.del(lockKey).catch(() => undefined);
+    // Only our own lock: a send that outlived the TTL must not free the next sender's.
+    await sysRedis
+      .eval(RELEASE_IF_OWNER, { keys: [lockKey], arguments: [owner] })
+      .catch(() => undefined);
   }
 }
 

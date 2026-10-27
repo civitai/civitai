@@ -164,6 +164,14 @@ beforeEach(async () => {
   redisMock.sysRedis.get.mockImplementation(
     (async (key: string) => redisStore.get(key) ?? null) as never
   );
+  redisMock.sysRedis.eval.mockImplementation((async (
+    _script: string,
+    { keys, arguments: args }: { keys: string[]; arguments: string[] }
+  ) => {
+    if (redisStore.get(keys[0]) !== args[0]) return 0;
+    redisStore.delete(keys[0]);
+    return 1;
+  }) as never);
   redisMock.sysRedis.del.mockImplementation((async (key: string) =>
     Number(redisStore.delete(key))) as never);
 });
@@ -291,6 +299,16 @@ describe('sendAsCivitai refusals that must not take the thread', () => {
     redisStore.clear();
     await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'x' });
     expect([...redisStore.keys()].filter((k) => k.includes('send-lock'))).toEqual([]);
+  });
+
+  it("does not free another sender's lock when its own has expired", async () => {
+    h.createMessage.mockImplementationOnce(async ({ chatId, userId, content }) => {
+      // Our lock lapsed mid-send and someone else took it.
+      redisStore.set(`message-as-civitai:send-lock:${USER}`, 'someone-else');
+      return postAs(chatId, userId, content);
+    });
+    await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'slow' });
+    expect(redisStore.get(`message-as-civitai:send-lock:${USER}`)).toBe('someone-else');
   });
 
   it('keeps the author record when the report link cannot be written', async () => {

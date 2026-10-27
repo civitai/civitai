@@ -1,9 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
 import { error } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import {
-  isModerationAccountUser,
   isSecureCookie,
   maybeCreateSessionSigner,
   SESSION_COOKIE_BASE,
@@ -18,7 +16,7 @@ import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
-import { logToAxiom } from '../axiom';
+import { isRefusedModerationAccount } from './moderation-account';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -79,14 +77,7 @@ export function refuseModerationAccount(
   user: { id: number; username?: string | null },
   source: string
 ): void {
-  if (!isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID)) return;
-  logToAxiom({
-    name: 'moderation-account-session-refused',
-    type: 'error',
-    source: `auth-hub:${source}`,
-    userId: user.id,
-  }).catch(() => undefined);
-  error(403, 'This account cannot sign in.');
+  if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
 }
 
 /**
@@ -149,6 +140,7 @@ export async function establishSession(
   // accounts). Read it from the incoming cookie (not locals) so this works on every login path uniformly. Done
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
+  refuseModerationAccount(user, 'login');
   const priorUserId = await resolvePriorSessionUserId(cookies);
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub

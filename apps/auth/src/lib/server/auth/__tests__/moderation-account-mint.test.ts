@@ -8,18 +8,30 @@ import type { SessionUser } from '@civitai/auth';
 const h = vi.hoisted(() => ({
   mintSessionToken: vi.fn(async () => 'minted-token'),
   logToAxiom: vi.fn(async () => undefined),
+  verifyToken: vi.fn(async () => ({ sub: '901', jti: 't' })),
 }));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => ({ mintSessionToken: h.mintSessionToken, maxAge: 1234 }),
 }));
 vi.mock('../registry', () => ({ sessions: { trackToken: vi.fn(async () => {}) } }));
-vi.mock('../verifier', () => ({ verifier: { verifyToken: vi.fn() } }));
+vi.mock('../verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('../cookie', () => ({ cookieDomain: () => undefined }));
 vi.mock('../device', () => ({ getOrCreateDeviceId: vi.fn(), linkAccount: vi.fn() }));
 vi.mock('../../axiom', () => ({ logToAxiom: h.logToAxiom }));
+vi.mock('../../db/db', () => ({ db: {} }));
+vi.mock('../../redis', () => ({
+  getRedis: () => ({
+    packed: {
+      get: async (key: string) => ({ id: Number(key.split(':').pop()), username: 'cached' }),
+    },
+  }),
+  getSysRedis: () => null,
+}));
 
-const { mintUserSession } = await import('../session');
+const { mintUserSession, establishSession } = await import('../session');
+const { getOrProduceSessionUser } = await import('../session-producer');
+const { createOAuthTokenPair } = await import('../../oauth/token-helpers');
 
 const user = (id: number, username: string) => ({ id, username } as unknown as SessionUser);
 
@@ -50,5 +62,27 @@ describe('mintUserSession and the moderation account', () => {
 
   it('mints for everyone else', async () => {
     await expect(mintUserSession(user(901, 'someone'))).resolves.toBe('minted-token');
+  });
+});
+
+describe('other ways to become the moderation account at the hub', () => {
+  it('a login is refused before any cookie or hand-off', async () => {
+    // A prior session for someone else is what routes a login into the cross-domain hand-off, which
+    // never mints; the refusal has to come first.
+    const cookies = { get: () => 'prior-token', set: vi.fn(), delete: vi.fn() };
+    await expect(establishSession(cookies as never, user(900, 'renamed'))).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(cookies.set).not.toHaveBeenCalled();
+    expect(h.verifyToken).not.toHaveBeenCalled();
+  });
+
+  it('a token, pending authorization or id resolves to no user', async () => {
+    expect(await getOrProduceSessionUser(900)).toBeNull();
+    expect(await getOrProduceSessionUser(901)).toMatchObject({ id: 901 });
+  });
+
+  it('no OAuth token pair is issued for it', async () => {
+    await expect(createOAuthTokenPair(900, 'client', 1)).rejects.toMatchObject({ status: 403 });
   });
 });

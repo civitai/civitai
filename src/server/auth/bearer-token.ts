@@ -81,7 +81,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
-  if (refuseModerationAccountSession(user.id, 'bearer-token')) return null;
+  if (refuseModerationAccountSession(user, 'bearer-token')) return null;
 
   // OAuth-issued tokens key their subject on clientId (stable across access-token
   // rotations) and read their limit from the user's OauthConsent. Other keys use
