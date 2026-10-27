@@ -45,6 +45,35 @@ function executableStatements(): string[] {
 }
 
 /**
+ * Every `$queryRaw` SELECT the job issued, normalised the same way as
+ * `executableStatements` (comments stripped, whitespace collapsed) for the same
+ * reason: a `--` comment that quotes a predicate is not a predicate.
+ */
+function selectStatements(): string[] {
+  return mockDbWrite.$queryRaw.mock.calls.map(([strings]) =>
+    (strings as string[])
+      .join('?')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+}
+
+/** The one SELECT a version matches by having no `Post` from the model owner. */
+function noPostsSelectSql(): string {
+  const matches = selectStatements().filter((sql) => sql.includes('FROM "Post" p'));
+  expect(matches, 'expected exactly one no-posts SELECT to have been issued').toHaveLength(1);
+  return matches[0];
+}
+
+/** The one SELECT a version matches by having no `ModelFile`. */
+function noFilesSelectSql(): string {
+  const matches = selectStatements().filter((sql) => sql.includes('FROM "ModelFile" f'));
+  expect(matches, 'expected exactly one no-files SELECT to have been issued').toHaveLength(1);
+  return matches[0];
+}
+
+/**
  * The single `UPDATE "Model"` statement — the one that flips the parent model to
  * Draft/Unpublished. Asserting there is exactly one is the positive control for
  * every guard built on it: without it a job that stopped issuing the statement
@@ -195,6 +224,51 @@ describe('resetToDraftWithoutRequirements', () => {
         updatedAt?.[1],
         'a conditional or offset bump would leave rows carrying a stale clock into the backfill and the reaper'
       ).toBe('now()');
+    });
+  });
+
+  describe('the no-posts SELECT', () => {
+    // 🔴 THE FIX. Official models (Model."isOfficial") are created by Civitai, not
+    // by a community author, and have no owner showcase Post by design. On
+    // 2026-10-27 this sweep unpublished all 14 official upscaler copies, including
+    // DEFAULT_UPSCALER, and every non-moderator upscale failed until they were
+    // republished by hand. The exemption is the explicit flag, ANDed into the
+    // top-level WHERE, so it narrows the sweep and cannot widen it.
+    it('excludes official models, so an official version with no owner Post stays Published', async () => {
+      await runJob();
+
+      expect(
+        noPostsSelectSql(),
+        'an official version with no owner Post would be unpublished (the default upscaler went down this way)'
+      ).toContain('AND m."isOfficial" = false');
+    });
+
+    // CONTROL for the guard above: the exemption must be additive. A
+    // non-official Published version with no owner Post is still selected, so
+    // the sweep keeps every predicate that makes it match such a version.
+    it('still selects a non-official Published version with no owner Post', async () => {
+      await runJob();
+
+      const sql = noPostsSelectSql();
+      expect(sql).toContain(`mv.status = 'Published'`);
+      expect(sql).toContain(`m.status = 'Published'`);
+      expect(sql).toContain(
+        'AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")'
+      );
+      expect(sql, 'the exemption must not be OR-ed in, which would widen the sweep').not.toMatch(
+        /\bOR\b/
+      );
+      expect(versionUpdateSqls()[0]).toContain(`'{unpublishedReason}', '"no-posts"'`);
+    });
+  });
+
+  describe('the no-files SELECT', () => {
+    // Deliberately NOT exempted: a fileless official version cannot serve
+    // anything (an upscaler or checkpoint needs its file), so it is still swept.
+    it('still sweeps fileless official versions', async () => {
+      await runJob();
+
+      expect(noFilesSelectSql()).not.toMatch(/isOfficial/);
     });
   });
 
