@@ -138,6 +138,73 @@ describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
     expect(markedDeleted()).toBe(true);
   });
 
+  it('refunds the bid’s own prefix and deletes the bid', async () => {
+    refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [{ amount: 50 }, { amount: 50 }],
+    });
+
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: PREFIX })
+    );
+    expect(markedDeleted()).toBe(true);
+  });
+
+  it('keeps the bid and throws when the refund answers with no transactions', async () => {
+    refundMultiAccountTransaction.mockResolvedValue({ refundedTransactions: [] });
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/No transactions/);
+
+    expect(markedDeleted()).toBe(false);
+  });
+
+  it('refunds nothing twice when two deletes of one bid race', async () => {
+    refundMultiAccountTransaction
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 50 }, { amount: 50 }] })
+      .mockRejectedValueOnce(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-') ? { externalTransactionId: id } : null
+    );
+
+    await Promise.all([deleteBid({ userId: 1, bidId: 77 }), deleteBid({ userId: 1, bidId: 77 })]);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a bid whose second charge fails to refund, and a retry refunds only that one', async () => {
+    dbMock.dbWrite.bid.findFirst.mockResolvedValue({
+      userId: 1,
+      transactionIds: [PREFIX, TX],
+      auction: {
+        id: 5,
+        startAt: new Date(Date.now() - day),
+        endAt: new Date(Date.now() + day),
+        auctionBase: { slug: 'sd1' },
+      },
+    } as never);
+    refundMultiAccountTransaction
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 50 }, { amount: 50 }] })
+      .mockRejectedValue(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-leg-') ? { externalTransactionId: id } : null
+    );
+    refundTransaction.mockRejectedValue(new BuzzApiError(500, 'Internal Server Error'));
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow();
+    expect(markedDeleted()).toBe(false);
+
+    refundTransaction.mockReset().mockResolvedValue({ transactionId: TX });
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(markedDeleted()).toBe(true);
+    // The prefix refund went through once; the retry found its legs refunded and paid none again.
+    expect(refundTransaction.mock.calls.map(([id]) => id)).toEqual([TX]);
+  });
+
   it('keeps the bid and throws when the prefix lists no transactions', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(404, 'Not Found'));
 
