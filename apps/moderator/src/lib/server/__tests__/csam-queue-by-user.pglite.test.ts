@@ -41,8 +41,6 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-  "scannedAt" TIMESTAMP(3),
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "postId" INTEGER,
   "userId" INTEGER NOT NULL
 );
@@ -150,39 +148,35 @@ describe('the CSAM queue by user', () => {
 });
 
 describe('what a sent CSAM report takes out of the pending count', () => {
-  // Every send is 2026-03-01, and no image was edited after its creation unless said. 201: both
-  // images predate it, one scanned before it.
-  // 202: one image before, one created after. 203: created before, scanned again after.
-  // 204: listed on a report never sent. 205: no report. 206: created after, but listed on the sent
-  // report. 207: created after, listed only on a sent report about someone else. 210: created
-  // and scanned before the send, edited (flagged by hand) after it. 211: only a sent report of another
-  // type.
+  // Every image predates every send (2026-03-01) unless said, so dates never cover one.
+  // 201: both listed, one as { id }, one as a bare id. 202: one of two listed. 203: none listed.
+  // 204: listed on a report never sent. 205: no report. 206: created after the send, listed.
+  // 207: listed only on a report about someone else. 211: listed only on a report of another type.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "User" ("id", "username") VALUES
-        (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm');
-      INSERT INTO "User" ("id", "username") VALUES (210, 'n'), (211, 'o');
-      INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt", "scannedAt") VALUES
-        (21, 201, 'csam', '2026-01-01', NULL),
-        (22, 201, 'csam', '2026-01-01', '2026-01-02'),
-        (23, 202, 'csam', '2026-01-01', NULL),
-        (24, 202, 'csam', '2026-04-01', NULL),
-        (25, 203, 'csam', '2026-01-01', '2026-04-01'),
-        (26, 204, 'csam', '2026-01-01', NULL),
-        (27, 205, 'csam', '2026-01-01', NULL),
-        (28, 206, 'csam', '2026-04-01', '2026-04-01'),
-        (29, 207, 'csam', '2026-04-01', NULL),
-        (30, 201, 'minor', '2026-01-01', NULL);
-      UPDATE "Image" SET "updatedAt" = "createdAt" WHERE id BETWEEN 21 AND 30;
-      INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt", "scannedAt", "updatedAt") VALUES
-        (31, 210, 'csam', '2026-01-01', '2026-01-01', '2026-04-01'),
-        (32, 211, 'csam', '2026-01-01', NULL, '2026-01-01');
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "type") VALUES
-        (210, '2026-03-01', 'Image'), (211, '2026-03-01', 'TrainingData');
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
-        (201, '2026-03-01', '[]'), (202, '2026-03-01', '[]'), (203, '2026-03-01', '[]'),
-        (204, NULL, '[{"id": 26}]'), (206, '2026-03-01', '[{"id": 28}]'),
-        (208, '2026-03-01', '[{"id": 29}]');
+        (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm'),
+        (211, 'o');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt") VALUES
+        (21, 201, 'csam', '2026-01-01'),
+        (22, 201, 'csam', '2026-01-01'),
+        (23, 202, 'csam', '2026-01-01'),
+        (24, 202, 'csam', '2026-01-01'),
+        (25, 203, 'csam', '2026-01-01'),
+        (26, 204, 'csam', '2026-01-01'),
+        (27, 205, 'csam', '2026-01-01'),
+        (28, 206, 'csam', '2026-04-01'),
+        (29, 207, 'csam', '2026-01-01'),
+        (30, 201, 'minor', '2026-01-01'),
+        (32, 211, 'csam', '2026-01-01');
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "type") VALUES
+        (201, '2026-03-01', '[{"id": 21}, 22]', 'Image'),
+        (202, '2026-03-01', '[{"id": 23}]', 'Image'),
+        (203, '2026-03-01', '[]', 'Image'),
+        (204, NULL, '[{"id": 26}]', 'Image'),
+        (206, '2026-03-01', '[{"id": 28}]', 'Image'),
+        (208, '2026-03-01', '[{"id": 29}]', 'Image'),
+        (211, '2026-03-01', '[{"id": 32}]', 'TrainingData');
     `);
   });
 
@@ -202,9 +196,9 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       ])
     );
 
-  it('leaves pending only what no sent report on its owner covers', async () => {
+  it('leaves pending every image no sent report on its owner lists', async () => {
     expect(await pendingOf()).toEqual({
-      // 101's sends predate its images, but one of them lists image 2.
+      // One of 101's sent reports lists image 2.
       101: 2,
       102: 1,
       103: 1,
@@ -216,7 +210,6 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       205: 1,
       206: 0,
       207: 1,
-      210: 1,
       211: 1,
     });
   });
@@ -228,7 +221,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
 
   it('badges exactly what the by-user page shows as pending', async () => {
     const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
-    expect(pending).toBe(12);
+    expect(pending).toBe(11);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 

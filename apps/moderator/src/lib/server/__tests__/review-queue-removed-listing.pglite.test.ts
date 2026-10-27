@@ -49,8 +49,6 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-  "scannedAt" TIMESTAMP(3),
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "postId" INTEGER,
   "userId" INTEGER NOT NULL DEFAULT 7
 );
