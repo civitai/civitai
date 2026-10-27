@@ -90,6 +90,7 @@ import {
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
+import { hasSessionCookie } from '~/shared/utils/session-cookie';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -494,13 +495,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       : undefined
   );
 
-  // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
-  // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
-  // don't subsume each other — `civitai-token` does NOT end with `civ-token` — so both checks are required.
+  // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = Object.keys(cookies).some(
-    (x) => x.endsWith('civ-token') || x.endsWith('civitai-token')
-  );
+  let hasAuthCookie = hasSessionCookie(cookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =

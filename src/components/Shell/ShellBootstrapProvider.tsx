@@ -162,8 +162,10 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
   }, [active, queryClient]);
 
   const ready = !!data && !!cookies;
+  // An unknown session seeds `undefined`, so SessionProvider fetches it rather than adopting the
+  // body's `null` as signed out.
   const sessionSeed = useMemo(
-    () => (data && ready ? { session: data.session } : null),
+    () => (data && ready ? { session: data.sessionUnknown ? undefined : data.session } : null),
     [data, ready]
   );
   const flagsSeed = useMemo(() => (data && ready ? { flags: data.flags } : null), [data, ready]);
@@ -190,7 +192,8 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     ...(page.onShellPage
       ? {
           cookies: cookies ?? pageValues.cookies,
-          hasAuthCookie: data && ready ? !!data.session : page.hasAuthCookie,
+          hasAuthCookie:
+            data && ready ? !!data.session || data.sessionUnknown === true : page.hasAuthCookie,
           adsGated: data && ready ? data.adsGated : true,
         }
       : pageValues),

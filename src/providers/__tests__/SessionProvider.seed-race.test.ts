@@ -65,11 +65,11 @@ const last = () => statuses[statuses.length - 1];
 
 async function render(seed: SessionSeed | null) {
   // As `_app` passes it on a shell page: no session prop (unknown), the seed on its way.
-  const tree = React.createElement(SessionProvider, {
-    session: undefined,
-    seed,
-    children: React.createElement(Probe),
-  });
+  const tree = React.createElement(
+    SessionProvider,
+    { session: undefined, seed } as never,
+    React.createElement(Probe)
+  );
   if (!root) root = createRoot(document.createElement('div'));
   await act(async () => {
     root!.render(tree);
@@ -138,10 +138,11 @@ describe('SessionProvider: a pending seed is not pre-empted by an undetermined r
   });
 
   it('control: with no seed coming, a failed first fetch still resolves to signed-out', async () => {
-    const tree = React.createElement(SessionProvider, {
-      session: undefined,
-      children: React.createElement(Probe),
-    });
+    const tree = React.createElement(
+      SessionProvider,
+      { session: undefined } as never,
+      React.createElement(Probe)
+    );
     root = createRoot(document.createElement('div'));
     await act(async () => {
       root!.render(tree);

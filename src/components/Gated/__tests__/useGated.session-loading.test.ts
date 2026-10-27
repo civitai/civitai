@@ -91,14 +91,12 @@ afterEach(async () => {
 });
 
 async function render(seed: SessionSeed | null) {
-  const tree = React.createElement(SessionProvider, {
-    session: undefined,
-    seed,
-    children: [
-      React.createElement(Probe, { key: PG13, level: PG13 }),
-      React.createElement(Probe, { key: R, level: R }),
-    ],
-  });
+  const tree = React.createElement(
+    SessionProvider,
+    { session: undefined, seed } as never,
+    React.createElement(Probe, { level: PG13 }),
+    React.createElement(Probe, { level: R })
+  );
   if (!root) root = createRoot(document.createElement('div'));
   await act(async () => {
     root!.render(tree);
