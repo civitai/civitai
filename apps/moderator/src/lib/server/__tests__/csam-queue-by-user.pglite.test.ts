@@ -170,7 +170,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
         (30, 201, 'minor', '2026-01-01'),
         (32, 211, 'csam', '2026-01-01');
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "type") VALUES
-        (201, '2026-03-01', '[{"id": 21}, 22]', 'Image'),
+        (201, '2026-03-01', '[{"id": 21}, 22, {"id": 30}]', 'Image'),
         (202, '2026-03-01', '[{"id": 23}]', 'Image'),
         (203, '2026-03-01', '[]', 'Image'),
         (204, NULL, '[{"id": 26}]', 'Image'),
@@ -226,7 +226,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
   });
 
   it('leaves the other queues’ badges alone', async () => {
-    // 104's image, and 201's, whose report covers its CSAM-queue images.
+    // 104's image, and 201's, though a sent report on 201 lists it.
     expect(Number((await getImageReviewCounts()).minor)).toBe(2);
   });
 });
