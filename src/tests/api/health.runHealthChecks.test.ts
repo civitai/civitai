@@ -63,7 +63,6 @@ vi.mock('~/server/db/pgDb', () => ({
 
 vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: null,
-  withMeiliHealthProbe: (fn: () => Promise<boolean>) => fn(),
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
 

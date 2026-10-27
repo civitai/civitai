@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The highest-consequence property in the hubs diff: a hub query must never reach
@@ -41,6 +42,17 @@ const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources 
   forcedBrowsingLevel: 0,
   excluded: { userIds: [], modelVersionIds: [], tagGroups: [] },
   ...over,
+});
+
+// The feeds index (`metrics_images_v1`) is retired, and its readers then answer without it. These
+// tests pin the Meilisearch read path kept for a restore, so they run with that index un-retired.
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) => {
+  const actual = await importOriginal<typeof RetiredIndexes>();
+  return {
+    ...actual,
+    isRetiredSearchIndex: (index: string) =>
+      index !== 'metrics_images_v1' && actual.isRetiredSearchIndex(index),
+  };
 });
 
 vi.mock('../../../../event-engine-common/feeds', () => ({

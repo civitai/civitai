@@ -7,6 +7,7 @@ import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbReadLong } from '~/server/db/pgDb';
 import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
@@ -200,6 +201,11 @@ const updateMethods = { addFields, updateBaseModel, addCollections };
 
 export default ModEndpoint(
   async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
+    // A backfill into a retired index writes to a server that may already be shut down.
+    if (isRetiredSearchIndex(INDEX_ID))
+      return res
+        .status(410)
+        .json({ ok: false, message: `The ${INDEX_ID} search index is retired.` });
     const { update } = schema.parse(req.query);
     const start = Date.now();
     const updateMethod = updateMethods[update as keyof typeof updateMethods];

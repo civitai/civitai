@@ -5,6 +5,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { metricsSearchClient } from '~/server/meilisearch/client';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -48,6 +49,11 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
 
+  // The stub check reads the feeds index; retired, it is frozen and nothing re-pulls into it.
+  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX)) {
+    res.status(410).json({ error: `The ${METRICS_IMAGES_SEARCH_INDEX} search index is retired` });
+    return;
+  }
   if (!metricsSearchClient) {
     res.status(500).json({ error: 'metricsSearchClient not configured' });
     return;

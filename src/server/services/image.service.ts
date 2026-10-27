@@ -179,6 +179,7 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
+import { refuseRetiredIndexRead } from '~/server/search-index/retired-index-read';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -3874,7 +3875,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 async function searchImages(input: ImageSearchInput) {
-  if (!metricsSearchClient)
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'searchImages'))
     return {
       data: [],
       nextCursor: undefined,
@@ -3915,6 +3916,9 @@ async function searchImages(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
+  // ImagesFeed reads the feeds index (`metrics_images_v1`) through FEED_IMAGE_HOST.
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'feedSearch'))
+    return { nextCursor: undefined, items: [] };
   // The fifth filter builder, and the one with no hub clause. Unreachable today
   // only because the REST zod for /api/v1/images does not declare `hubId` and
   // strips unknown keys — the same accident the hideChallenges comment above
@@ -4311,7 +4315,8 @@ function buildHubFilter(
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'preFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {
@@ -4950,7 +4955,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'postFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {

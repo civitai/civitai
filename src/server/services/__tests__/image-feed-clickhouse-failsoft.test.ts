@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import { TRPCError } from '@trpc/server';
 
 // getImagesFromFeedSearch is the DEFAULT (non-legacy) /api/v1/images +
@@ -21,6 +22,17 @@ const { populatedQueryMock, chFailSoftIncMock } = vi.hoisted(() => ({
   populatedQueryMock: vi.fn(),
   chFailSoftIncMock: vi.fn(),
 }));
+
+// The feeds index (`metrics_images_v1`) is retired, and its readers then answer without it. These
+// tests pin the Meilisearch read path kept for a restore, so they run with that index un-retired.
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) => {
+  const actual = await importOriginal<typeof RetiredIndexes>();
+  return {
+    ...actual,
+    isRetiredSearchIndex: (index: string) =>
+      index !== 'metrics_images_v1' && actual.isRetiredSearchIndex(index),
+  };
+});
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/prom/client')>();
