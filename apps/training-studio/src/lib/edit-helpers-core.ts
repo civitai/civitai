@@ -45,6 +45,8 @@ interface RawImageGenStep {
 
 const MAX_EDIT_GENERATIONS = 200;
 const ORCHESTRATOR_BLOB_PATH = '/v2/consumer/blobs/';
+// The generator tags every workflow with its workflow key; an image edit is this one.
+const EDIT_WORKFLOW_TAG = 'img2img:edit';
 
 /** The caller's recent single-image edits, one item per result. Edits from several input images
  *  are left out — a pair has one starting image — and so are inputs that aren't the caller's
@@ -55,7 +57,12 @@ export async function listEditGenerations(
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
-    query: { tags: [CIVITAI_TAG, 'gen', 'img'], take: 100, fromDate, hideMatureContent: false },
+    query: {
+      tags: [CIVITAI_TAG, 'gen', 'img', EDIT_WORKFLOW_TAG],
+      take: 100,
+      fromDate,
+      hideMatureContent: false,
+    },
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
 
