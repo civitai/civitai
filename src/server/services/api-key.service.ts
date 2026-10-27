@@ -83,11 +83,14 @@ export async function addApiKey(
  * The spend limit of an API key, read from the PRIMARY. `/api/v1/me` hands this to the orchestrator,
  * which caches it for its own TTL, so it must never come from the bearer path's short-lived row cache:
  * a lowered limit whose cache eviction failed would otherwise be picked up stale and held there.
- * `undefined` when the key no longer exists (revoked mid-request) — never `null`, which means "no cap".
+ * `undefined` when the key no longer exists or has expired (revoked mid-request) — never `null`, which means "no cap".
  */
 export async function readApiKeyBuzzLimit(id: number): Promise<BuzzLimit | null | undefined> {
-  const row = await dbWrite.apiKey.findUnique({ where: { id }, select: { buzzLimit: true } });
-  if (!row) return undefined;
+  const row = await dbWrite.apiKey.findUnique({
+    where: { id },
+    select: { buzzLimit: true, expiresAt: true },
+  });
+  if (!row || (row.expiresAt && row.expiresAt < new Date())) return undefined;
   return (row.buzzLimit as BuzzLimit | null) ?? null;
 }
 
@@ -167,6 +170,29 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
   const userIds = [...new Set(rows.map((row) => row.userId))];
   await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
   return result;
+}
+
+/**
+ * Revokes every live key the user holds by expiring it in place, so the rows survive as a record
+ * of what the account held (a ban can be an evidence case). Every reader of the table refuses an
+ * expired row; the bearer cache and the orchestrator's auth cache are evicted like `deleteApiKeys`.
+ */
+export async function expireUserApiKeys(userId: number) {
+  const now = new Date();
+  const rows = await dbWrite.apiKey.findMany({
+    where: { userId, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    select: { id: true, key: true },
+  });
+  if (rows.length) {
+    await dbWrite.apiKey.updateMany({
+      where: { id: { in: rows.map((row) => row.id) } },
+      data: { expiresAt: now },
+    });
+    await evictCachedApiKeys(rows.map((row) => row.key));
+  }
+  // Even with no live rows: an earlier attempt may have expired them and then failed this call.
+  const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
+  return { expired: rows.length, orchestratorConfirmed };
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {

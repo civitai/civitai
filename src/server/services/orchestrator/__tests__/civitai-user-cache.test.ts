@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { envMock } from '~/__tests__/mocks/env.mock';
 
-const { deleteMock } = vi.hoisted(() => ({ deleteMock: vi.fn(async () => undefined) }));
+const { deleteMock } = vi.hoisted(() => ({
+  deleteMock:
+    vi.fn<(args: { url: string }) => Promise<{ response: { ok: boolean; status: number } }>>(),
+}));
 vi.mock('~/server/services/orchestrator/client', () => ({
   createOrchestratorClient: vi.fn(() => ({ delete: deleteMock })),
 }));
@@ -11,7 +14,8 @@ const { invalidateCivitaiUser, revokeCivitaiUserTokens } = await import(
 );
 
 beforeEach(() => {
-  deleteMock.mockClear();
+  deleteMock.mockReset();
+  deleteMock.mockResolvedValue({ response: { ok: true, status: 204 } });
   envMock.set({ ORCHESTRATOR_ACCESS_TOKEN: 'system-token' });
 });
 
@@ -27,8 +31,24 @@ describe('orchestrator user cache invalidation', () => {
     expect(deleteMock).toHaveBeenCalledWith({ url: '/v2/consumer/civitai/501' });
   });
 
-  it('a failed call does not throw', async () => {
+  it('reports a 2xx as confirmed', async () => {
+    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(true);
+  });
+
+  // The client resolves, rather than throws, on an error status.
+  it('reports an error status as unconfirmed', async () => {
+    deleteMock.mockResolvedValueOnce({ response: { ok: false, status: 503 } });
+    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+  });
+
+  it('a failed call does not throw, and is unconfirmed', async () => {
     deleteMock.mockRejectedValueOnce(new Error('orchestrator down'));
-    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBeUndefined();
+    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+  });
+
+  it('is unconfirmed when there is no system token to call with', async () => {
+    envMock.set({ ORCHESTRATOR_ACCESS_TOKEN: undefined });
+    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 });

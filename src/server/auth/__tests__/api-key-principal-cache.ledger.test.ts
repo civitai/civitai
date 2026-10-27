@@ -76,7 +76,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
-const { deleteApiKey, deleteApiKeys, setApiKeyBuzzLimit } = await import(
+const { deleteApiKey, deleteApiKeys, expireUserApiKeys, setApiKeyBuzzLimit } = await import(
   '~/server/services/api-key.service'
 );
 const orchestratorKeyRoute = (await import('~/pages/api/user/orchestrator-key'))
@@ -104,10 +104,10 @@ const LEDGER: Record<string, { count: number; why: string }> = {
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
   },
   'src/server/services/api-key.service.ts': {
-    count: 5,
+    count: 6,
     why:
-      'create: a new key, and misses are never cached. setApiKeyBuzzLimit update and the ' +
-      'deleteApiKeys helper: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
+      'create: a new key, and misses are never cached. setApiKeyBuzzLimit update, and the ' +
+      'deleteApiKeys and expireUserApiKeys helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
       "caller's own rotated generation keys, not a revocation; the first only removes keys within " +
       '30 s of their own expiry (entries never outlive expiresAt), the second a legacy key name. ' +
       'Accepted: such a key can keep working for at most the cache TTL after the clean-up.',
@@ -252,6 +252,11 @@ const seed = (): Row[] => [
 const matches = (row: Row, where: Record<string, unknown>): boolean =>
   Object.entries(where).every(([field, cond]) => {
     if (field === 'AND') return (cond as Record<string, unknown>[]).every((c) => matches(row, c));
+    if (field === 'OR') return (cond as Record<string, unknown>[]).some((c) => matches(row, c));
+    if (cond && typeof cond === 'object' && 'gt' in cond) {
+      const value = row[field as keyof Row] as Date | null;
+      return value !== null && value > (cond as { gt: Date }).gt;
+    }
     if (cond && typeof cond === 'object' && 'in' in cond)
       return (cond as { in: unknown[] }).in.includes(row[field as keyof Row]);
     return row[field as keyof Row] === cond;
@@ -273,10 +278,24 @@ beforeEach(() => {
   dbMock.dbWrite.apiKey.findFirst.mockImplementation((async ({
     where,
   }: {
-    where: { key: string };
+    where: { key: string; OR?: unknown };
   }) => {
-    const row = rows.find((r) => r.key === where.key);
+    // The bearer lookup's `OR: [{ expiresAt: { gte: now } }, { expiresAt: null }]`.
+    const row = rows.find(
+      (r) => r.key === where.key && (!where.OR || r.expiresAt === null || r.expiresAt >= new Date())
+    );
     return row ? { ...row } : null;
+  }) as never);
+  dbMock.dbWrite.apiKey.updateMany.mockImplementation((async ({
+    where,
+    data,
+  }: {
+    where: Record<string, unknown>;
+    data: Partial<Row>;
+  }) => {
+    const hit = rows.filter((r) => matches(r, where));
+    hit.forEach((r) => Object.assign(r, data));
+    return { count: hit.length };
   }) as never);
   dbMock.dbWrite.apiKey.findMany.mockImplementation((async ({
     where,
@@ -347,6 +366,32 @@ describe('writes that evict the bearer cache', () => {
     expect(tombstoned('hash-of-personal')).toBe(false);
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it('expireUserApiKeys stops every key of the user on the next request and keeps the rows', async () => {
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    rows.push({ ...seed()[0], id: 53, key: 'hash-of-other-user', userId: 502 });
+    await warm('personal');
+    await warm('orchestrator');
+    await warm('other-user');
+    await expect(expireUserApiKeys(501)).resolves.toMatchObject({ expired: 2 });
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+    expect((await getSessionFromBearerToken('other-user'))?.apiKeyId).toBe(53);
+    expect(rows.map((r) => [r.id, r.expiresAt])).toEqual([
+      [51, T0],
+      [52, T0],
+      [53, null],
+    ]);
+    expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
+  });
+
+  it('expireUserApiKeys leaves an already-expired key at its own expiry', async () => {
+    const past = new Date(T0.getTime() - 60_000);
+    rows[0].expiresAt = past;
+    await expireUserApiKeys(501);
+    expect(rows[0].expiresAt).toEqual(past);
   });
 
   it('a failed tombstone write does not fail the delete, and the row is gone', async () => {

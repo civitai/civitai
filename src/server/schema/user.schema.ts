@@ -582,6 +582,11 @@ export const userMeta = z.object({
       lastError: z.string().optional(),
     })
     .optional(),
+  // Orchestrator auth-cache revocation after a ban or deletion; cleared when either is applied anew.
+  // Read by the `revoke-user-tokens` job.
+  tokenRevocation: z
+    .object({ confirmedAt: z.string().optional(), alertedAt: z.string().optional() })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
