@@ -42,6 +42,7 @@ import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -1896,11 +1897,7 @@ function SubmitEntryButton({
   if (blocked)
     return (
       <Tooltip
-        label={
-          isOwner
-            ? "You can't submit entries to your own challenge"
-            : 'You are banned from participating in contests'
-        }
+        label={isOwner ? "You can't submit entries to your own challenge" : CONTEST_BANNED_MESSAGE}
         withArrow
       >
         {button}

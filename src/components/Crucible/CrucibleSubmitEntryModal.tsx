@@ -40,6 +40,7 @@ import {
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
@@ -988,7 +989,7 @@ export default function CrucibleSubmitEntryModal({
         <div className="flex-1 overflow-y-auto px-5 pb-5">
           {contestBanned && (
             <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
-              You are banned from participating in contests
+              {CONTEST_BANNED_MESSAGE}
             </Alert>
           )}
           {entriesClosed && (

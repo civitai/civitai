@@ -240,3 +240,21 @@ describe('challenge-entry gates when the replica has not caught up', () => {
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 });
+
+describe('contest ban', () => {
+  it('refuses a user on the contest-ban list before any other gate', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      id: USER_ID,
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(entry()).rejects.toThrow('You are banned from participating in contests');
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: USER_ID } })
+    );
+  });
+
+  it('does not refuse an unbanned user for the ban', async () => {
+    await expect(entry()).rejects.not.toThrow('banned from participating');
+  });
+});
