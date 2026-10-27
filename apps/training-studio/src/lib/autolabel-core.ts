@@ -92,6 +92,8 @@ export interface AutoLabelResult {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
+  /** Why a failed item was refused, when the submit itself was rejected (shown on the tile). */
+  error?: string;
 }
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);

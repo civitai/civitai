@@ -24,10 +24,11 @@ import {
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentCountByModelSchema,
+  getCommentCountsByModelSchema,
   getCommentReactionsSchema,
   toggleReactionInput,
 } from '~/server/schema/comment.schema';
-import { getVisibleCommentCount } from '~/server/services/comment.service';
+import { getVisibleCommentCount, getVisibleCommentCounts } from '~/server/services/comment.service';
 import {
   guardedProcedure,
   middleware,
@@ -129,6 +130,12 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentCountByModelSchema)
     .query(({ input, ctx }) => getVisibleCommentCount({ input, user: ctx.user })),
+  // Both of the model page's counts (the plain and the hidden view) in one call. The single-count
+  // procedure above stays for client bundles that still call it.
+  getVisibleCountsByModel: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getCommentCountsByModelSchema)
+    .query(({ input, ctx }) => getVisibleCommentCounts({ input, user: ctx.user })),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentUpsertInput)

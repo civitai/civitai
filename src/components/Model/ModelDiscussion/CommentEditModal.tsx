@@ -42,6 +42,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
       // Placements just spent uses, so the picker's counts are stale.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
       if (commentId) await queryUtils.comment.getById.invalidate({ id: commentId });

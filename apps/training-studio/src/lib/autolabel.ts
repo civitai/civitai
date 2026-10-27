@@ -93,8 +93,12 @@ async function runBatch(
   signal: AbortSignal
 ): Promise<void> {
   const applied = new Set<string>();
+  let submitError: string | undefined;
   try {
-    const workflowId = await submitBatch(mode, media, batch);
+    const workflowId = await submitBatch(mode, media, batch).catch((err) => {
+      if (!isAbort(err) && err instanceof Error) submitError = err.message;
+      throw err;
+    });
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
@@ -118,7 +122,8 @@ async function runBatch(
     // fails so the tile stops showing "labeling…". Skipped on abort — the caller resets those.
     if (!signal.aborted) {
       for (const item of batch) {
-        if (!applied.has(item.key)) onResult({ key: item.key, status: 'failed' });
+        if (!applied.has(item.key))
+          onResult({ key: item.key, status: 'failed', ...(submitError && { error: submitError }) });
       }
     }
   }

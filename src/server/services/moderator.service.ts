@@ -98,6 +98,8 @@ type UserModActivity = {
     | `mintMembershipCode:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
     | `revokeMembershipCode:${string}`
+    // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
+    | `endBuzzMembership:${string}`
     // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
     // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
     | `grantCreatorScore:${string}`

@@ -59,6 +59,15 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts`, which runs in CI on the
   same Postgres service and also fails if any statement names a relation declared as a view.
 
+  `hot-reads-4.db.ts` holds the model page's comment reads: the visible top-level comment count
+  (`comment.getVisibleCountByModel`) and the first page of `comment.getAll` (the unpinned list and the
+  pinned block, each with its author, reactions and model name in one statement where Prisma issues
+  one query per relation). Both apply one viewer filter (hidden and blocked users, ToS violations
+  outside the moderator view, the hidden view). They are served behind the default-off server Flipt
+  flag `kysely-hot-reads-4` and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

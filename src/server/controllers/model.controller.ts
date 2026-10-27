@@ -682,6 +682,7 @@ export const getModelsInfiniteHandler = async ({
       metricPrivacyEnabled,
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
       eventDecorationViewer: ctx.user,
+      coverage: await coverageAudience(ctx.user ?? undefined),
     };
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are
