@@ -27,6 +27,7 @@ import {
 } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import { reservedAppSlugReason } from '~/server/services/blocks/reserved-app-slug';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
 // the notifications client in its body). approve/reject call it POST-COMMIT to notify
 // the submitting developer of the moderator decision — best-effort, wrapped in a
@@ -1014,6 +1015,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       `manifest.blockId "${manifest.blockId}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter, end with a letter or digit`
     );
   }
+  const reservedSlug = reservedAppSlugReason(manifest.blockId);
+  if (reservedSlug) throw new Error(reservedSlug);
   if (typeof manifest.version !== 'string' || !SEMVER_REGEX.test(manifest.version)) {
     throw new Error(`manifest.version "${manifest.version ?? ''}" must be semver (e.g. 0.1.0)`);
   }

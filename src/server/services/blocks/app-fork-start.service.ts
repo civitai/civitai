@@ -47,6 +47,7 @@ import {
   setPublishRequestForkProvenance,
 } from '~/server/services/blocks/app-fork.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { reservedAppSlugReason } from '~/server/services/blocks/reserved-app-slug';
 import {
   FORK_BUSY_MESSAGE,
   FORK_NOT_ALLOWED_MESSAGE,
@@ -243,9 +244,10 @@ export function forkSlugFor(parentSlug: string, hex4: string): string {
   return `${base}-fork-${hex4}`;
 }
 
-/** Whether `slug` is valid for both the sandbox service and a block (no `--` runs). */
+/** Whether `slug` is valid for both the sandbox service and a block (no `--` runs, not a
+ *  reserved app id). */
 export function isValidForkSlug(slug: string): boolean {
-  return FORK_SLUG_RE.test(slug) && !slug.includes('--');
+  return FORK_SLUG_RE.test(slug) && !slug.includes('--') && reservedAppSlugReason(slug) === null;
 }
 
 function forkSessionKey(forkSlug: string) {

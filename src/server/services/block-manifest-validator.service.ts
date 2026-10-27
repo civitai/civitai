@@ -13,6 +13,7 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
+import { reservedAppSlugReason } from '~/server/services/blocks/reserved-app-slug';
 import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
 import {
   appStorageScopeErrors,
@@ -468,6 +469,9 @@ export class BlockManifestValidator {
       errors.push(
         'blockId must be 3–40 chars, lowercase, start with a letter, and contain only a–z, 0–9, hyphen (it becomes <blockId>.civit.ai)'
       );
+    } else {
+      const reserved = reservedAppSlugReason(m.blockId);
+      if (reserved) errors.push(reserved);
     }
     // version must be a semantic version (canonical rule, single-sourced).
     if (typeof m.version !== 'string') {
