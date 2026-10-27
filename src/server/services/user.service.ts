@@ -28,6 +28,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { contestBannedSql } from '~/server/services/contest-ban';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
@@ -358,9 +359,7 @@ export const getUsers = async ({
       }
       AND u."deletedAt" IS NULL
       AND u."id" != -1
-      AND ${
-        contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
-      }
+      AND ${contestBanned ? contestBannedSql : Prisma.sql`TRUE`}
       ${Prisma.raw(orderBy)}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;

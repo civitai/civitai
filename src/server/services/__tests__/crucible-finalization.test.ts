@@ -228,14 +228,18 @@ describe('finalizeCrucible — positions', () => {
   });
 
   describe('contest-banned entrants', () => {
+    // The predicate is a nested Prisma.Sql value, so flatten the call the way Prisma would.
+    const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+      Prisma.sql(strings, ...values).sql;
     const banQuery = (client: typeof dbMock.dbWrite.$queryRaw) =>
-      client.mock.calls.filter(([strings]) =>
-        (strings as TemplateStringsArray).join('').includes('contestBanDetails')
+      client.mock.calls.filter(([strings, ...values]) =>
+        sqlOf(strings as TemplateStringsArray, values).includes('contestBanDetails')
       );
 
     it("leaves their entries out of the ranking, asking the primary once for this crucible's entrants", async () => {
-      dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
-        strings.join('').includes('contestBanDetails') ? [{ userId: 7 }, { userId: 9 }] : []
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          sqlOf(strings, values).includes('contestBanDetails') ? [{ userId: 7 }, { userId: 9 }] : []
       );
       pageEntries([[dbEntry(1, 7, 1000)], [dbEntry(2, 8, 2000)]]);
 
@@ -249,11 +253,13 @@ describe('finalizeCrucible — positions', () => {
 
       const queries = banQuery(dbMock.dbWrite.$queryRaw);
       expect(queries).toHaveLength(1);
-      const sql = (queries[0][0] as TemplateStringsArray).join('');
+      const [strings, ...values] = queries[0];
+      const sql = sqlOf(strings as TemplateStringsArray, values);
       expect(sql).toMatch(/FROM "CrucibleEntry" ce\s+JOIN "User" u ON u\.id = ce\."userId"/);
-      expect(sql).toMatch(/ce\."crucibleId" = \s+AND/);
-      expect(sql).toMatch(/u\.meta ->> 'contestBanDetails' IS NOT NULL/);
-      expect(queries[0][1]).toBe(1);
+      expect(sql).toMatch(
+        /ce\."crucibleId" = \?\s+AND u\.meta ->> 'contestBanDetails' IS NOT NULL/
+      );
+      expect(Prisma.sql(strings as TemplateStringsArray, ...values).values).toEqual([1]);
       expect(banQuery(dbMock.dbRead.$queryRaw)).toHaveLength(0);
     });
   });

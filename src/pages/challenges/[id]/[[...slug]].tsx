@@ -42,6 +42,7 @@ import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -260,6 +261,7 @@ const DEEP_LINK_TARGETS: Record<string, string[]> = {
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -425,7 +427,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       challenge.status === ChallengeStatus.Active &&
       !!challenge.collectionId &&
       !currentUser?.muted &&
-      !currentUser?.meta?.contestBanDetails;
+      !isContestBanned;
     if (wantsSubmit && canSubmit && challenge.collectionId)
       dialogStore.trigger({
         component: ChallengeSubmitModal,
@@ -433,7 +435,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       });
 
     return abortScroll;
-  }, [challenge, router, currentUser?.muted, currentUser?.meta?.contestBanDetails]);
+  }, [challenge, router, currentUser?.muted, isContestBanned]);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -1873,8 +1875,7 @@ function SubmitEntryButton({
   size?: MantineSize;
   fullWidth?: boolean;
 }) {
-  const currentUser = useCurrentUser();
-  const isContestBanned = !!currentUser?.meta?.contestBanDetails;
+  const isContestBanned = useIsContestBanned();
   const blocked = isOwner || isContestBanned;
   const button = (
     <Button

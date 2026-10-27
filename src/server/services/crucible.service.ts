@@ -149,7 +149,11 @@ import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
 import { createPrizes, voidPrizes } from '~/server/services/prize.service';
-import type { UserMeta } from '~/server/schema/user.schema';
+import {
+  CONTEST_BANNED_MESSAGE,
+  contestBannedSql,
+  isContestBanned,
+} from '~/server/services/contest-ban';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
@@ -1775,13 +1779,6 @@ export const createCrucibleEntryPost = async ({
     metadata: { [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY]: true },
   });
   return { id: post.id };
-};
-
-const CONTEST_BANNED_MESSAGE = 'You are banned from participating in contests';
-
-const isContestBanned = async (userId: number) => {
-  const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
-  return !!(user?.meta as UserMeta | null | undefined)?.contestBanDetails;
 };
 
 const CANNOT_ENTER_OWN_CRUCIBLE = "You can't enter a crucible you created";
@@ -3455,7 +3452,7 @@ const getContestBannedEntrantIds = async (
       FROM "CrucibleEntry" ce
       JOIN "User" u ON u.id = ce."userId"
       WHERE ce."crucibleId" = ${crucibleId}
-        AND u.meta ->> 'contestBanDetails' IS NOT NULL
+        AND ${contestBannedSql}
     `
   ).map((u) => u.userId);
 

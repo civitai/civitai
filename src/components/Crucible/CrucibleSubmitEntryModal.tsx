@@ -40,6 +40,7 @@ import {
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
   clipLengthAllowed,
@@ -360,6 +361,7 @@ export default function CrucibleSubmitEntryModal({
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const queryUtils = trpc.useUtils();
   const isVideo = contentType === MediaType.video;
   const noun = isVideo ? 'video' : 'image';
@@ -570,8 +572,7 @@ export default function CrucibleSubmitEntryModal({
   // The ban covers every image, so it gets one notice and not a badge on each. The server's answer
   // is the truth; the session meta only shows it before any image has been checked.
   const contestBanned =
-    !!currentUser?.meta?.contestBanDetails ||
-    !!eligibility?.some(({ reasons }) => reasons.includes('contest-banned'));
+    isContestBanned || !!eligibility?.some(({ reasons }) => reasons.includes('contest-banned'));
   const canSubmitMore = remainingEntries > 0 && !entriesClosed && !contestBanned;
 
   // Validate image and check if it's selectable

@@ -701,9 +701,10 @@ describe('crucible.getMinVotesToPlace', () => {
 
     await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
 
-    const banQuery = queryRaw.mock.calls.at(-1)!;
-    expect((banQuery[0] as TemplateStringsArray).join('')).toContain('contestBanDetails');
-    expect(banQuery[1]).toBe(CRUCIBLE_ID);
+    const [strings, ...values] = queryRaw.mock.calls.at(-1)!;
+    const banSql = Prisma.sql(strings as TemplateStringsArray, ...values);
+    expect(banSql.sql).toContain("u.meta ->> 'contestBanDetails' IS NOT NULL");
+    expect(banSql.values).toEqual([CRUCIBLE_ID]);
     const where = (timeAdjusted ? findEntries : aggregate).mock.calls.at(-1)![0].where;
     expect(where.userId).toEqual({ notIn: [7] });
   });
