@@ -339,6 +339,21 @@ describe('image report: fileViewedByEsp per file', () => {
     expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
   });
 
+  it("reads the views of the report's own images only", async () => {
+    await view(501);
+    await view(900);
+    await view(901, { activity: 'reportMedia:open:cdn-450' });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    const { calls, results } = dbMock.dbWrite.$queryRaw.mock;
+    const lookups = calls.flatMap(([strings], i) =>
+      (strings as TemplateStringsArray).join('').includes('"ModActivity"') ? [results[i].value] : []
+    );
+    expect(lookups).toHaveLength(1);
+    expect((await lookups[0]).map((row: { entityId: number }) => row.entityId)).toEqual([501]);
+  });
+
   it('counts no other record for the same id', async () => {
     await view(501, { activity: 'heldMedia:grid', entityType: 'heldMediaGrid' });
     await view(502, { activity: 'trainingData:download', entityType: 'modelVersion' });
