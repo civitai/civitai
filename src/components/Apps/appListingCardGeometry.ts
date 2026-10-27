@@ -34,6 +34,9 @@ export const LISTING_CARD_ICON_OVERLAP_PX = 14;
 export const LISTING_CARD_HEADER_CENTER_PX =
   LISTING_CARD_ICON_SIZE_PX / 2 - LISTING_CARD_ICON_OVERLAP_PX;
 
+/** The title's font size (Mantine `xl`). The anchor around it inherits 16px, so margins must not use `em`. */
+export const LISTING_CARD_TITLE_FONT_PX = 20;
+
 /**
  * The title's line-height, a unitless multiple of its own font size. The title is ONE
  * line (ellipsized, full name in a tooltip when it clips), so its height is this times

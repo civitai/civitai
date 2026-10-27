@@ -32,6 +32,7 @@ import {
   LISTING_CARD_ICON_OVERLAP_PX,
   LISTING_CARD_ICON_SIZE_PX,
   LISTING_CARD_MENU_TRIGGER_PX,
+  LISTING_CARD_TITLE_FONT_PX,
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
@@ -457,9 +458,9 @@ export function AppListingCard({
             style={{
               minWidth: 0,
               flex: 1,
-              marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
-                LISTING_CARD_TITLE_LINE_HEIGHT / 2
-              }em)`,
+              marginTop:
+                LISTING_CARD_HEADER_CENTER_PX -
+                (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
             }}
           >
             {/* 🔴 20px/700/#fefefe, matching the `/models` card title (`c="white"` is the token

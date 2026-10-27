@@ -14,11 +14,6 @@ import {
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
 import * as geometry from '~/components/Apps/appListingCardGeometry';
-import {
-  LISTING_CARD_TITLE_LINES,
-  LISTING_CARD_TITLE_LINE_HEIGHT,
-  LISTING_CARD_TITLE_MIN_HEIGHT,
-} from '~/components/Apps/appListingCardGeometry';
 import type {
   ListingCard,
   ListingRecommendRollup,
@@ -487,7 +482,7 @@ describe('the card geometry module', () => {
       'appListingCardGeometry gained or lost an export. If you added one, the loop ' +
         'above already proved the card reads it — bump this count deliberately, and ' +
         'make sure AppListingCardSkeleton reads it too.'
-    ).toHaveLength(9);
+    ).toHaveLength(10);
   });
 
   /**

@@ -9,6 +9,7 @@ import {
   LISTING_CARD_HEADER_CENTER_PX,
   LISTING_CARD_ICON_OVERLAP_PX,
   LISTING_CARD_ICON_SIZE_PX,
+  LISTING_CARD_TITLE_FONT_PX,
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { listingGridColumnsAt, MANTINE_BREAKPOINT_PX } from '~/components/Apps/appListingGrid';
@@ -224,12 +225,12 @@ export function AppListingCardSkeleton() {
               position: 'relative',
               flex: 1,
               minWidth: 0,
-              fontSize: 'var(--mantine-font-size-xl)',
+              fontSize: LISTING_CARD_TITLE_FONT_PX,
               lineHeight: LISTING_CARD_TITLE_LINE_HEIGHT,
-              height: `${LISTING_CARD_TITLE_LINE_HEIGHT}em`,
-              marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
-                LISTING_CARD_TITLE_LINE_HEIGHT / 2
-              }em)`,
+              height: LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT,
+              marginTop:
+                LISTING_CARD_HEADER_CENTER_PX -
+                (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
             }}
           >
             <Skeleton style={{ position: 'absolute', inset: 0, width: '70%' }} />
