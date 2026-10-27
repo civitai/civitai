@@ -29,7 +29,7 @@ export class LegalHoldError extends Error {
 export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
 
 /** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
-export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; see the bid-refund-failed alert.`;
+export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
 
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {

@@ -65,6 +65,11 @@ vi.mock('~/server/services/moderator-grants', () => ({
 
 import handler from '~/pages/api/mod/user/delete';
 import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
+import {
+  GENERIC_SERVER_ERROR_MESSAGE,
+  REST_ERROR_CODE,
+  restErrorBody,
+} from '~/server/utils/rest-error-envelope';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
@@ -538,6 +543,8 @@ describe('user.delete — an account under a legal hold', () => {
     const { status, body } = await call({ userId: TARGET, username: NAME });
 
     expect(status).toBe(500);
-    expect(JSON.stringify(body)).not.toContain('legal hold');
+    expect(body).toEqual(
+      restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE)
+    );
   });
 });

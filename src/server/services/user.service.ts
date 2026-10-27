@@ -599,7 +599,8 @@ export const updateUserById = async ({
       ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
       : undefined;
 
-  const user = await dbWrite.user.update({ where: { id }, data });
+  // The row goes back to clients (profile save, ban); the legacy billing pointer stays server-side.
+  const user = await dbWrite.user.update({ where: { id }, data, omit: { subscriptionId: true } });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
@@ -2431,7 +2432,7 @@ export const toggleBan = async ({
             data: { userId, entityType: 'user', entityId: id, activity: banActivity },
           });
         }
-        return tx.user.findUniqueOrThrow({ where: { id } });
+        return tx.user.findUniqueOrThrow({ where: { id }, omit: { subscriptionId: true } });
       })
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
