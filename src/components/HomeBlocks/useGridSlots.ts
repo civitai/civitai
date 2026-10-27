@@ -31,3 +31,13 @@ export function useGridSlots(rows: number, enabled: boolean, ready = true) {
 
   return { gridRef, slots };
 }
+
+/**
+ * Which crucibles show and whether the host tile follows them. The tile needs an event and at
+ * least one crucible to sit beside, and keeps one of the `slots` the grid has room for.
+ */
+export function layoutCrucibleRow<T>(items: T[], eventTag: string | undefined, slots?: number) {
+  const showTile = !!eventTag && items.length > 0;
+  const cards = showTile && slots !== undefined ? items.slice(0, Math.max(slots - 1, 1)) : items;
+  return { cards, showTile };
+}

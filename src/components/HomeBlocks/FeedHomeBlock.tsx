@@ -19,7 +19,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HostCrucibleTile } from '~/components/HomeBlocks/HostCrucibleTile';
-import { useGridSlots } from '~/components/HomeBlocks/useGridSlots';
+import { layoutCrucibleRow, useGridSlots } from '~/components/HomeBlocks/useGridSlots';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -305,13 +305,7 @@ function CrucibleFeedGrid({
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
-  // Only ever beside at least one crucible: a row whose crucibles are all hidden for this viewer
-  // shows nothing, as an untagged event row does.
-  const showTile = !!eventTag && hiddenFiltered.length > 0;
-  const visible =
-    showTile && slots !== undefined
-      ? hiddenFiltered.slice(0, Math.max(slots - 1, 1))
-      : hiddenFiltered;
+  const { cards: visible, showTile } = layoutCrucibleRow(hiddenFiltered, eventTag, slots);
 
   return (
     <div
@@ -324,7 +318,7 @@ function CrucibleFeedGrid({
           <CrucibleCard data={item} />
         </div>
       ))}
-      {showTile && (
+      {showTile && eventTag && (
         <div className="p-2">
           <HostCrucibleTile eventTag={eventTag} signedIn={!!currentUser} />
         </div>
