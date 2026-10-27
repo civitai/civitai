@@ -1,9 +1,9 @@
 import { createAssistantModel, FreeTier, freeTierFetch } from '@civitai/components-chat/core';
 import type { LanguageModel } from 'ai';
 
-import type { Logger, ModelCallLedger, ModelContext, ModelProvider } from './interfaces';
+import type { Logger, ModelContext, ModelProvider } from './core/interfaces';
 import { MintRefusedError, type TokenSource } from './minter';
-import { ModelCalls } from './model-calls';
+import { ModelCalls, type ModelCallLedger } from './model-calls';
 import type { OrchestrationClient } from './orchestration';
 
 export interface OrchestrationModelOptions {

@@ -2,10 +2,10 @@ import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import { jsonSchema, tool, type ModelMessage } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import { startTurn } from '../head';
-import type { ConversationStore } from '../interfaces';
-import { MemoryConversationStore } from '../memory-store';
-import { ProgressWriter, runAfterSaved } from '../progress';
+import { startTurn } from '../core/head';
+import type { ConversationStore } from '../core/interfaces';
+import { MemoryConversationStore } from '../core/memory-store';
+import { ProgressWriter, runAfterSaved } from '../core/progress';
 
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 

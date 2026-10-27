@@ -2,11 +2,11 @@ import { PROVIDER_OPTIONS } from '@civitai/components-chat/core';
 import { jsonSchema, streamText, tool } from 'ai';
 import { describe, expect, it } from 'vitest';
 
-import type { Logger, ModelContext, ModelProvider } from '../interfaces';
+import type { Logger, ModelContext, ModelProvider } from '../core/interfaces';
 import type { TokenSource } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
-import { carriesOnSteps } from '../runner';
+import { carriesOnSteps } from '../core/runner';
 import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { MemoryModelCalls } from '../test-support/memory-model-calls';
 

@@ -5,12 +5,12 @@ import type { RunEvent, StartRunRequest } from '@civitai/components-chat/runner-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp, lastEventId, loggerOptions } from '../app';
-import type { JournalEntry, RunService, StartOutcome } from '../service';
+import type { JournalEntry, RunService, StartOutcome } from '../core/service';
 import { MintRefusedError } from '../minter';
 import { createTokenVerifier } from '../tokens';
-import { bearerAuthenticator } from '../test-support/fakes';
+import { bearerAuthenticator } from '../core/test-support/fakes';
 import { signGrant, signViewer, testKeys } from '../test-support/keys';
-import { readEvents } from '../test-support/sse';
+import { readEvents } from '../core/test-support/sse';
 
 const startRequest: StartRunRequest = {
   v: 1,

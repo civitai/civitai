@@ -1,3 +1,5 @@
+import type { IncomingHttpHeaders } from 'node:http';
+
 import type { StartRunRequest } from '@civitai/components-chat/runner-protocol';
 
 /**
@@ -18,3 +20,13 @@ export const RUNNER_FEATURES: readonly string[] = ['edit'];
 export type StartRequest = Omit<StartRunRequest, 'turn'> & {
   turn: StartRunRequest['turn'] & { edit?: boolean };
 };
+
+/** The request header a start (and a patch) carries its run grant in. */
+export const GRANT_HEADER = 'x-run-grant';
+
+/** The run grant a request carries, if any (the first, when a client sent it twice). */
+export function grantHeader(headers: IncomingHttpHeaders): string | undefined {
+  const value = headers[GRANT_HEADER];
+  const grant = Array.isArray(value) ? value[0] : value;
+  return grant ? grant.trim() : undefined;
+}

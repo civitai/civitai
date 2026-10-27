@@ -12,10 +12,13 @@ import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
 import type { EndedReply } from './head';
 
 /**
- * The four seams a deployment fills in (tests use fakes). None of them is handed a credential by the runner:
- * the runner passes a user id, and an implementation that needs a token mints it itself, per call,
- * inside its own fetch. Anything passed to a DBOS workflow or returned from a step is persisted in
- * Postgres, so a token must never cross these interfaces as an argument or a return value.
+ * The seams a deployment fills in (tests use fakes): everything under `core/` reaches the deployment
+ * only through these and the options of `Runner` and `buildRunApp`. The model and tool seams are never handed a credential by the runner: it passes
+ * a user id, and an implementation that needs a token mints it itself, per call, inside its own
+ * fetch. Anything passed to a DBOS workflow or returned from a step is persisted in Postgres, so a
+ * token must never cross the model, tool or conversation-store seams as an argument or a return value.
+ * The run grant is the one credential the runner holds: it goes to the grant store, and a patch's own
+ * grant reaches the conversation store's calls out of band (`withRequestGrant`), never into DBOS.
  */
 
 export type AuthResult =
@@ -25,6 +28,33 @@ export type AuthResult =
 /** Turns a request into the viewer it acts for. Sees the headers; returns only a user id. */
 export interface Authenticator {
   authenticate(headers: IncomingHttpHeaders): Promise<AuthResult>;
+}
+
+/**
+ * A run grant the deployment verified (civitai's is a signed JWT, `tokens.ts`): who it acts for, in
+ * which conversation, for which start, until when. The runner keeps `token` in its grant store, never
+ * in DBOS.
+ */
+export interface RunGrant {
+  /** The grant itself, as its issuer signed it. */
+  token: string;
+  userId: string;
+  conversationId: string;
+  idempotencyKey: string;
+  expiresAt: Date;
+  /** The viewer may start read-only subagents. */
+  subagents?: boolean;
+  /**
+   * A grant for one request other than a run (civitai's preview grant): good only where a route
+   * asks for one, and never for a start or a patch.
+   */
+  preview?: boolean;
+}
+
+/** Checks a run grant a request carries. */
+export interface GrantVerifier {
+  /** The grant, or `null` when it is not a valid, current one. */
+  grant(token: string): Promise<RunGrant | null>;
 }
 
 export interface ModelContext {
@@ -55,27 +85,6 @@ export interface ModelProvider {
    * and its grant goes.
    */
   settle?(runId: string): Promise<void>;
-}
-
-/** The model requests one stored orchestration workflow may answer. */
-export interface ModelCallScope {
-  runId: string;
-  userId: string;
-  conversationId: string;
-  seq: number;
-  /** Also a workflow an earlier run of the same turn sent (`ModelContext.carriesOn`). */
-  carriesOn?: boolean;
-}
-
-/**
- * Which orchestration workflow each model request was sent as, kept the moment orchestration names
- * it (before its answer is read), so a request asked again after a crash finds it. Keyed by run and
- * by a hash of what the request asks (`callKey`). Holds ids only: never a token.
- */
-export interface ModelCallLedger {
-  /** The workflow the latest request with this key in `scope` was sent as, else `null`. */
-  find(scope: ModelCallScope, key: string): Promise<string | null>;
-  save(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
 }
 
 export interface ToolContext {
