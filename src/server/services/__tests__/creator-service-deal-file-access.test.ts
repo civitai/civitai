@@ -117,4 +117,12 @@ describe('reading the deal file access log', () => {
       expect.objectContaining({ name: 'creator-service-file-access', type: 'error' })
     );
   });
+
+  it('is null when only one half of the read fails', async () => {
+    const query = answer([]);
+    query
+      .mockResolvedValueOnce({ json: async () => [] })
+      .mockRejectedValueOnce(new Error('timeout'));
+    expect(await readServiceDealFileAccess([1])).toBeNull();
+  });
 });

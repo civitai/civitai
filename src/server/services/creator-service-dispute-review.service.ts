@@ -21,6 +21,9 @@ const partyRefused = () =>
 /**
  * Records one review of a Disputed deal. The deal is read FOR SHARE, so a review racing a resolve
  * waits for it and is then refused, never written after the ruling it should have preceded.
+ *
+ * `disputeOpenedAt` is the opening the reviewer read in the evidence. A dispute reopened since then
+ * is a different hold, so the review is refused rather than scored against a ruling on it.
  */
 export async function createServiceDisputeReview({
   dealId,
@@ -32,9 +35,11 @@ export async function createServiceDisputeReview({
   evidence,
   agentVersion,
   mode,
+  disputeOpenedAt,
 }: {
   dealId: number;
   reviewerId: number;
+  disputeOpenedAt: Date;
   class: DisputeReviewClass;
   proposal: ServiceDisputeResolution | null;
   confidence: number | null;
@@ -44,27 +49,41 @@ export async function createServiceDisputeReview({
   mode: DisputeReviewMode;
 }) {
   const [row] = await dbWrite.$queryRaw<
-    { status: string; party: boolean; id: number | null; createdAt: Date | null }[]
+    {
+      status: string;
+      party: boolean;
+      sameOpening: boolean;
+      id: number | null;
+      createdAt: Date | null;
+    }[]
   >`
     WITH deal AS (
       SELECT "id", "status"::text AS "status",
-        ${reviewerId}::int IN ("buyerId", "sellerId") AS "party"
+        ${reviewerId}::int IN ("buyerId", "sellerId") AS "party",
+        "disputeOpenedAt" IS NOT DISTINCT FROM
+          (${disputeOpenedAt.toISOString()}::timestamptz AT TIME ZONE 'UTC') AS "sameOpening"
       FROM "ServiceDeal" WHERE "id" = ${dealId}::int FOR SHARE
     ), ins AS (
       INSERT INTO "ServiceDisputeReview"
         ("dealId", "class", "proposal", "confidence", "rationale", "evidence", "agentVersion", "mode")
       SELECT "id", ${reviewClass}, ${proposal}::"ServiceDisputeResolution", ${confidence}::float8,
         ${rationale}, ${JSON.stringify(evidence ?? {})}::jsonb, ${agentVersion}, ${mode}
-      FROM deal WHERE "status" = 'Disputed' AND NOT "party"
+      FROM deal WHERE "status" = 'Disputed' AND NOT "party" AND "sameOpening"
       RETURNING "id", "createdAt"
     )
-    SELECT deal."status", deal."party", ins."id", ins."createdAt" FROM deal LEFT JOIN ins ON true`;
+    SELECT deal."status", deal."party", deal."sameOpening", ins."id", ins."createdAt"
+    FROM deal LEFT JOIN ins ON true`;
   if (!row) throw throwNotFoundError('Deal not found');
   if (row.party) throw partyRefused();
-  if (row.id === null)
+  if (row.id === null && row.status !== 'Disputed')
     throw new TRPCError({
       code: 'CONFLICT',
       message: `Only a Disputed deal can be reviewed; this one is ${row.status}.`,
+    });
+  if (row.id === null)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'The dispute was reopened after the evidence this review read. Read it again.',
     });
   return { id: row.id, createdAt: row.createdAt };
 }
