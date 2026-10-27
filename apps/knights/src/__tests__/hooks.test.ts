@@ -4,6 +4,10 @@ const { guardCheck } = vi.hoisted(() => ({
   guardCheck: vi.fn(async (..._: unknown[]) => ({} as unknown)),
 }));
 vi.mock('$lib/server/auth', () => ({ guard: { check: guardCheck } }));
+const { accessFor } = vi.hoisted(() => ({
+  accessFor: vi.fn(async (..._: unknown[]) => 'closed' as 'allow' | 'closed'),
+}));
+vi.mock('$lib/server/access', () => ({ accessFor }));
 
 const { handle } = await import('../hooks.server');
 
@@ -21,7 +25,7 @@ const signedIn = (user: object) => ({ status: 'ok', user, setCookies: [] });
 
 beforeEach(() => {
   guardCheck.mockReset();
-  process.env.KNIGHTS_TESTER_USER_IDS = '42';
+  accessFor.mockReset().mockResolvedValue('closed');
 });
 
 describe('knights access gate', () => {
@@ -33,17 +37,12 @@ describe('knights access gate', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('lets a moderator through', async () => {
+  it('lets a user through when the access decision allows them', async () => {
+    accessFor.mockResolvedValue('allow');
     guardCheck.mockResolvedValue(signedIn({ id: 1, isModerator: true }));
     const { response, resolve } = await run();
     expect(resolve).toHaveBeenCalled();
     expect(await response.text()).toBe('game');
-  });
-
-  it('lets a listed tester through', async () => {
-    guardCheck.mockResolvedValue(signedIn({ id: 42 }));
-    const { resolve } = await run();
-    expect(resolve).toHaveBeenCalled();
   });
 
   it('shows everyone else the not-open-yet page', async () => {

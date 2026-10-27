@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/brand',
         '@civitai/db',
         '@civitai/db-schema',
+        '@civitai/flipt',
         '@civitai/redis',
       ],
     },

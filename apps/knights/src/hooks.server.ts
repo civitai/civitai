@@ -50,7 +50,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     return new Response(null, { status: 303, headers: { location: FORBIDDEN_REDIRECT } });
   }
 
-  if (accessFor(result.user) === 'closed') {
+  if ((await accessFor(result.user)) === 'closed') {
     return withSetCookies(closedPage(), result.setCookies);
   }
 

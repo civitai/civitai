@@ -12,19 +12,21 @@ Postgres through `@civitai/db/kysely` and the existing `NewOrderPlayer` tables; 
 
 ## Access gate
 
-No feature flag. `src/hooks.server.ts` runs the `@civitai/auth` spoke guard, then `decideAccess`
-(`src/lib/access.ts`, pure and unit-tested):
+Flipt flag `knights-of-new-order-app` (`KNIGHTS_APP_FLAG` in `src/lib/server/access.ts`), evaluated per user
+through `@civitai/flipt`; the `testers` segment is configured in Flipt, not here. `src/hooks.server.ts` runs the
+`@civitai/auth` spoke guard, then `accessFor` -> `decideAccess` (`src/lib/access.ts`, pure and unit-tested):
 
 - anonymous: redirected to the auth hub sign-in
-- moderator, or a user id in `KNIGHTS_TESTER_USER_IDS` (comma-separated): allowed
-- anyone else: a plain "not yet open" page (403)
+- moderator: always allowed
+- anyone else: allowed iff the flag is on for them; flag missing or Flipt down fails closed
+- denied: a plain "not yet open" page (403)
 
 To open the app to everyone, drop the `accessFor` check in the hook.
 
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/brand` (favicon), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
-`@civitai/redis` (sys client, only for the guard's session revocation check). Add others when a task needs them.
+`@civitai/flipt` (access flag), `@civitai/redis` (sys client, only for the guard's session revocation check). Add others when a task needs them.
 
 ## Tests
 
