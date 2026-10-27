@@ -27,6 +27,7 @@ import clsx from 'clsx';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogId } from '~/components/Dialog/DialogProvider';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
@@ -292,10 +293,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const node = useScrollAreaRef();
 
     // ensure that video only plays when it is in the current view/dialog
-    const dialogCount = useDialogStore((state) => state.dialogs.length);
-    const stackRef = useRef<number | null>(null);
-    if (stackRef.current === null) stackRef.current = dialogCount;
-    const isCurrentStack = stackRef.current === dialogCount;
+    // Not a depth captured at mount: a player that mounts under an already-open dialog (the page
+    // behind the image detail remounts on a remix click) would take that depth as its own.
+    const dialogId = useDialogId();
+    const isCurrentStack = useDialogStore((state) => {
+      const top = state.dialogs[state.dialogs.length - 1];
+      return dialogId === undefined ? !top : top?.id === dialogId;
+    });
 
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
