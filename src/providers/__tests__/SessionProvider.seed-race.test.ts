@@ -2,8 +2,8 @@
 /**
  * A shell page mounts SessionProvider with a seed on its way (`seed: null`) and adopts the
  * session from the page data once it arrives. Nothing may resolve the session to signed-out
- * before then on an answer that was not authoritative, and a seed that is itself unknown
- * (`session: undefined`) makes the provider fetch the session, as an unknown `session` prop does.
+ * before then on an answer that was not authoritative — nor while another fetch that can still
+ * decide it is running.
  */
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -94,7 +94,7 @@ async function answer(index: number, res: Response) {
 const failed = () => new Response('', { status: 502 });
 const signedIn = () => new Response(JSON.stringify(SIGNED_IN), { status: 200 });
 
-describe('SessionProvider: a pending seed is not pre-empted by an undetermined refetch', () => {
+describe('SessionProvider: an undetermined refetch does not pre-empt a seed or fetch still on its way', () => {
   it('a focus refetch that fails while the seed is on its way leaves the session loading', async () => {
     await render(null);
     expect(last()).toBe('loading');
@@ -108,31 +108,24 @@ describe('SessionProvider: a pending seed is not pre-empted by an undetermined r
     expect(statuses).not.toContain('unauthenticated');
   });
 
-  it('an unknown seed fetches the session and resolves to what it answers', async () => {
-    await render(null);
-    expect(pending).toHaveLength(0);
-
-    await render({ session: undefined });
-    expect(last()).toBe('loading');
+  it('a failed refetch that lands while the first fetch is still running does not decide', async () => {
+    const tree = React.createElement(
+      SessionProvider,
+      { session: undefined } as never,
+      React.createElement(Probe)
+    );
+    root = createRoot(document.createElement('div'));
+    await act(async () => {
+      root!.render(tree);
+    });
     expect(pending).toHaveLength(1);
+
+    await focus();
+    expect(pending).toHaveLength(2);
+    await answer(1, failed());
+    expect(last()).toBe('loading');
 
     await answer(0, signedIn());
-    expect(last()).toBe('authenticated');
-    expect(statuses).not.toContain('unauthenticated');
-  });
-
-  it('a failed refetch that lands while the unknown seed’s own fetch is running does not decide', async () => {
-    await render(null);
-    await focus();
-    expect(pending).toHaveLength(1);
-
-    await render({ session: undefined });
-    expect(pending).toHaveLength(2);
-
-    await answer(0, failed());
-    expect(last()).toBe('loading');
-
-    await answer(1, signedIn());
     expect(last()).toBe('authenticated');
     expect(statuses).not.toContain('unauthenticated');
   });

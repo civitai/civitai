@@ -16,7 +16,6 @@ import {
   settingsBootstrapRequest,
 } from '~/server/services/settings-bootstrap.service';
 import { getRegion } from '~/server/utils/region-blocking';
-import { hasSessionCookie } from '~/shared/utils/session-cookie';
 import { syncShellRouteCookie } from '~/server/shell/shell-response';
 import {
   dehydrateSsgState,
@@ -44,10 +43,6 @@ import {
  *
  * The session lookup gets the REAL response: it may roll the session cookie on it, which is the
  * point — a viewer of a shell page has no other request that would.
- *
- * `session: null` is authoritative "signed out" only when the request carried no session cookie.
- * With one, a null lookup (which fails soft) is answered with `sessionUnknown: true` as well, and
- * the client resolves the session itself (`useShellBootstrap`).
  *
  * Gated by the `shell-images` flag: 404 for anyone it is off for. Only the session lookup runs
  * first (the flag is per user); no bootstrap seed and no page data is read for them. It keeps the
@@ -87,11 +82,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const session = jsonRoundTrip(
       bootstrapSession(await getServerAuthSession({ req: sessionRequest, res }))
     );
-    // No session, yet the request carries a session cookie: the lookup fails soft to null, so this
-    // is not known to be a signed-out viewer (a full render's degraded bootstrap is the same case,
-    // and leaves the session unknown too). Said so on the body, so the shell fetches the session
-    // itself instead of adopting a `null` that would sign the viewer out.
-    const sessionUnknown = !session && hasSessionCookie(req.cookies);
 
     // The same evaluation as both `_app` (which passes the request's own host) and
     // `createServerSideProps`. Decided before the rest of the bootstrap is read.
@@ -129,16 +119,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
     if ('notFound' in result) return send(404, { error: 'Not found' });
 
-    // Left alone when the session is unknown: clearing it would drop a signed-in viewer from the
-    // shell over a lookup that merely failed.
-    if (!sessionUnknown)
-      syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
+    syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
 
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
     // gains later is not published here unreviewed.
     return send(200, {
       session,
-      ...(sessionUnknown ? { sessionUnknown: true } : {}),
       settings,
       tosMeta: bootstrap.tosMeta,
       announcements: bootstrap.announcements,

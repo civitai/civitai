@@ -18,9 +18,6 @@ import type { Session } from '~/types/session';
  */
 export type ShellPageData = {
   session: Session | null;
-  /** Present (true) when `session` is null but the request carried a session cookie: unknown, not
-   *  signed out. */
-  sessionUnknown?: boolean;
   settings?: UserContentSettings;
   tosMeta?: TosMeta;
   following?: number[];

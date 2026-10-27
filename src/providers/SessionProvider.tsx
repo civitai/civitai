@@ -62,13 +62,8 @@ function reloadForLostSession() {
   window.location.reload();
 }
 
-/**
- * A session that arrives after mount (a shell page's page data), adopted once. `session` is
- * three-valued like the `session` prop: a Session, `null` (signed out), or `undefined` when the
- * server could not determine it (a session cookie its lookup did not resolve) — the provider then
- * fetches `/api/auth/session` itself, as it does for an unknown `session` prop.
- */
-export type SessionSeed = { session: Session | null | undefined };
+/** A session that arrives after mount (a shell page's page data), adopted once. */
+export type SessionSeed = { session: Session | null };
 
 export function SessionProvider({
   children,
@@ -82,8 +77,7 @@ export function SessionProvider({
   /** SSR seed: a Session when known-authed, `null` when known-unauthed (skip the fetch), `undefined` when
    *  unknown (fetch on mount). */
   session?: Session | null;
-  /** `null` while a seed is on its way (no fetch), then the seed. `undefined` when none is coming.
-   *  A seed whose `session` is `undefined` is unknown: the provider fetches. */
+  /** `null` while a seed is on its way (no fetch), then the seed. `undefined` when none is coming. */
   seed?: SessionSeed | null;
   refetchOnWindowFocus?: boolean;
   refetchWhenOffline?: boolean;
@@ -97,19 +91,18 @@ export function SessionProvider({
   const [data, setData] = useState<Session | null | undefined>(() =>
     seed === null ? undefined : initial
   );
-  // True once the session is settled (a known seed or prop, or a fetch that set it).
+  // True once we have an authoritative value (a non-undefined seed, or a completed fetch).
   const resolved = useRef(seed !== null && initial !== undefined);
   // Read by `update` when its fetch returns, so it sees the seed as it is THEN, not at the call.
   const seedPending = useRef(seed === null);
   seedPending.current = seed === null;
 
   // Adopted while rendering, so the providers below see the session in the same render as the
-  // rest of the seed (the per-user flag overlay query is enabled by it). An unknown seed
-  // (`session: undefined`) changes nothing here; the effect below fetches instead.
+  // rest of the seed (the per-user flag overlay query is enabled by it).
   const [seedAdopted, setSeedAdopted] = useState(false);
   if (seed && !seedAdopted) {
     setSeedAdopted(true);
-    if (seed.session !== undefined) setData((prev) => (prev === undefined ? seed.session : prev));
+    setData((prev) => (prev === undefined ? seed.session : prev));
   }
 
   const hadSession = useRef(false);
@@ -139,10 +132,9 @@ export function SessionProvider({
     return next ?? null;
   }, []);
 
-  // Fetch when the session is unknown — no prop or seed decided it — and no seed is still coming:
-  // on mount for an unknown prop, or when a seed arrives that is itself unknown.
+  // Initial fetch only when the seed was `undefined` (unknown) and no later seed is coming.
   useEffect(() => {
-    if (seed && seed.session !== undefined) resolved.current = true;
+    if (seed) resolved.current = true;
     if (!resolved.current && seed !== null) void update();
   }, [update, seed]);
 

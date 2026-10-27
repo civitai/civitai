@@ -141,19 +141,6 @@ describe('useGated while the session is unknown, on the mature-content site', ()
     }
   );
 
-  it.each([
-    ['PG13', PG13],
-    ['R', R],
-  ])('%s: an unknown seed, then the fetched session — loading, then the page', async (_, level) => {
-    await render(null);
-    await render({ session: undefined });
-    expect(lastState(level)).toBe('loading');
-
-    await answer(0, new Response(JSON.stringify(SIGNED_IN), { status: 200 }));
-    expect(lastState(level)).toBe('page');
-    expect(states[level]).not.toContain('login');
-  });
-
   it('control: a signed-out seed shows the login gate for above-PG content', async () => {
     await render(null);
     await render({ session: null });
