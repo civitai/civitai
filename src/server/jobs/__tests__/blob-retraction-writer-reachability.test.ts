@@ -269,6 +269,13 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
+
+  // remove-blocked-images: the batch fetch, leaving out the held ids bound as one array.
+  if (sql.includes('FROM "JobQueue"') && sql.includes('NOT EXISTS (SELECT 1 FROM unnest(')) {
+    const bound = (strings as unknown as { values: unknown[] }).values;
+    const excluded = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    return store.queue.filter((q) => !excluded.includes(q.entityId));
+  }
   // The hold marker's view exists, as on prod, and holds nobody.
   if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
   if (sql.includes('FROM "EvidenceHeldUser"')) return [];
@@ -435,11 +442,6 @@ beforeEach(async () => {
   dbMock.dbWrite.image.updateMany.mockImplementation(applyUpdate as never);
   dbMock.dbWrite.image.update.mockImplementation((async (args: any) =>
     applyUpdate({ where: args.where, data: args.data })) as never);
-
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(async ({ where }: any) => {
-    const excluded = where?.entityId?.notIn ?? [];
-    return store.queue.filter((q) => !excluded.includes(q.entityId));
-  });
 
   // The shared db mock only defaults the READ verbs; `toggleBan` fires several fire-and-forget
   // writes whose result it immediately `.catch()`es, and an undefined return throws before the

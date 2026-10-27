@@ -166,6 +166,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-blocked-images: users under a legal hold. None in this fixture.
   if (sql.includes('FROM "CsamReport"')) return [];
 
+  // remove-blocked-images: the batch fetch, leaving out the held ids bound as one array.
+  if (sql.includes('FROM "JobQueue"') && sql.includes('NOT EXISTS (SELECT 1 FROM unnest(')) {
+    const bound = (strings as unknown as { values: unknown[] }).values;
+    const excluded = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    return store.queue.filter((q) => !excluded.includes(q.entityId));
+  }
+
   // remove-deleted-user-images: the two account-state re-reads. They differ by whether the
   // predicate also inspects the stored removal choice.
   if (sql.includes('AS "stillDeleted"')) {
@@ -386,13 +393,6 @@ beforeEach(() => {
   dbMock.dbRead.$queryRaw.mockImplementation(runQuery);
   dbMock.dbWrite.$queryRaw.mockImplementation(runQuery);
   dbMock.dbWrite.$executeRaw.mockImplementation(runExec);
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(
-    async ({ where }: { where?: { entityId?: { notIn?: number[] } } }) => {
-      // Stand in for the DB actually applying the held-media exclusion.
-      const excluded = where?.entityId?.notIn ?? [];
-      return store.queue.filter((q) => !excluded.includes(q.entityId));
-    }
-  );
 });
 
 describe('self-service account deletion never reaches blob retraction', () => {

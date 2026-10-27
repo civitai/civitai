@@ -109,6 +109,28 @@ const {
     IMAGE_SCANNING_PENDING_TIMEOUT: 30,
     DATABASE_IS_PROD: true,
   };
+  // Prisma's query engine refuses a statement over this many bind variables; nothing in the unit
+  // suite runs the engine, so the mocked boundary enforces it with the engine's own message.
+  const PRISMA_BIND_LIMIT = 32767;
+  const assertBindable = (count: number) => {
+    if (count > PRISMA_BIND_LIMIT)
+      throw new Error(
+        `too many bind variables in prepared statement, expected maximum of ${PRISMA_BIND_LIMIT}, received ${count}`
+      );
+  };
+  // Stands in for the database applying the queue filters.
+  const queueRows = (where: any) => {
+    const excluded = new Set<number>(where?.entityId?.notIn ?? []);
+    const only: Set<number> | undefined = where?.entityId?.in && new Set(where.entityId.in);
+    const before: Date | undefined = where?.createdAt?.lte;
+    queueWhereLog.push(where);
+    return [...QUEUE, ...extraQueue].filter(
+      (q) =>
+        !excluded.has(q.entityId) &&
+        (!only || only.has(q.entityId)) &&
+        (!before || q.createdAt <= before)
+    );
+  };
   // Inlines nested `Prisma.sql` fragments, so a query built from a shared fragment is routed by
   // the text it actually sends.
   type SqlLike = { strings: readonly string[]; values: unknown[] };
@@ -135,6 +157,31 @@ const {
       ? flatten(first.strings, first.values)
       : flatten(first, rawValues);
     sqlLog.push(sql);
+    assertBindable(values.length);
+    if (sql.includes('SELECT j."entityId"') && sql.includes('FROM "JobQueue"')) {
+      // Each binding is found by what follows its placeholder, so reordering the WHERE clauses
+      // cannot hand one filter's value to another.
+      const parts = sql.split('?');
+      const followedBy = (text: string) =>
+        values[parts.slice(1).findIndex((p) => p.startsWith(text))];
+      const precededBy = (text: string) =>
+        values[parts.slice(0, -1).findIndex((p) => p.trimEnd().endsWith(text))];
+      const type = followedBy('::"JobQueueType"');
+      const entityType = followedBy('::"EntityType"');
+      const ids = (values.find(Array.isArray) as number[] | undefined) ?? [];
+      if (sql.includes('NOT EXISTS (SELECT 1 FROM unnest(')) {
+        const rows = queueRows({ type, entityType, entityId: { notIn: ids } });
+        return rows
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+          .slice(0, Number(precededBy('LIMIT')));
+      }
+      return queueRows({
+        type,
+        entityType,
+        entityId: { in: ids },
+        createdAt: { lte: precededBy('"createdAt" <=') as Date },
+      });
+    }
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
@@ -201,17 +248,11 @@ const {
     mockDbRead: {
       jobQueue: {
         findMany: vi.fn(async ({ where }: any) => {
-          queueWhereLog.push(where);
-          // Stand in for the DB actually applying the filters.
-          const excluded: number[] = where?.entityId?.notIn ?? [];
-          const only: number[] | undefined = where?.entityId?.in;
-          const before: Date | undefined = where?.createdAt?.lte;
-          return [...QUEUE, ...extraQueue].filter(
-            (q) =>
-              !excluded.includes(q.entityId) &&
-              (!only || only.includes(q.entityId)) &&
-              (!before || q.createdAt <= before)
-          );
+          // Prisma renders an `in`/`notIn` list as one bind variable per element.
+          const list = where?.entityId?.in ?? where?.entityId?.notIn ?? [];
+          const scalars = Object.keys(where ?? {}).filter((k) => k !== 'entityId').length;
+          assertBindable(list.length + scalars);
+          return queueRows(where);
         }),
       },
       $queryRaw: vi.fn(queryRaw),
@@ -605,11 +646,32 @@ describe('remove-blocked-images retention clock', () => {
     heldUsers.length = 0;
     const result = await runJob();
 
-    expect(batchWhere()?.entityId).toBeUndefined();
+    expect(batchWhere()?.entityId?.notIn).toEqual([]);
     expect(result.csamHeld).toBe(0);
     // id 5 is now an ordinary expired block.
     expect(deletedIds()).toContain(5);
     expect(wouldSkipLogs()).toEqual([]);
+  });
+
+  // A Prisma `in`/`notIn` list spends one bind variable per id, so a held set past the engine's
+  // limit made every run fail the hold lookup and delete nothing.
+  it('still runs, and still holds, when the held set is past the bind-variable limit', async () => {
+    const HELD_COUNT = 33_000;
+    for (let i = 0; i < HELD_COUNT; i++) {
+      const id = 100_000 + i;
+      extraImages.push({ id, userId: HELD_USER, blockedFor: 'CSAM' });
+      extraQueue.push({ entityId: id, createdAt: EXPIRED });
+    }
+    const result = await runJob();
+
+    expect(result.skipped).toBeUndefined();
+    expect(result.csamHeld).toBe(HELD_COUNT + 3);
+    // The unheld expired block is deleted; no held image past retention is.
+    expect(deletedIds()).toContain(1);
+    expect(deletedIds()).not.toContain(5);
+    expect(deletedIds().some((id) => id >= 100_000)).toBe(false);
+    expect(queuePruneIds().some((id) => id >= 100_000)).toBe(false);
+    expect(wouldSkipLogs()[0]).toMatchObject({ count: HELD_COUNT + 2 });
   });
 
   it('sweeps AiNotVerified and no-longer-blocked rows without deleting them', async () => {

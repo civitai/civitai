@@ -604,6 +604,34 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
   `;
 }
 
+// The held sets below have no size bound, so each is bound as ONE array parameter: a Prisma
+// `in`/`notIn` list spends a bind variable per id and fails once a set passes the driver's limit.
+// Joined through unnest rather than `= ANY`/`<> ALL`: under a generic plan those scan the array
+// per row, while the join hashes it.
+
+/** Queued blocked-image deletes among `ids` whose retention ran out by `cutoff`. */
+export function blockedQueueExpiredAmongSql(ids: number[], cutoff: Date) {
+  return Prisma.sql`
+    SELECT j."entityId" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND EXISTS (SELECT 1 FROM unnest(${ids}::int[]) h(id) WHERE h.id = j."entityId")
+      AND j."createdAt" <= ${cutoff}
+  `;
+}
+
+/** The oldest queued blocked-image deletes, leaving out `excluded`; an empty set leaves out none. */
+export function blockedQueueBatchSql(excluded: number[], take: number) {
+  return Prisma.sql`
+    SELECT j."entityId", j."createdAt" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND NOT EXISTS (SELECT 1 FROM unnest(${excluded}::int[]) h(id) WHERE h.id = j."entityId")
+    ORDER BY j."createdAt" ASC
+    LIMIT ${take}
+  `;
+}
+
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
@@ -646,15 +674,9 @@ export const removeBlockedImages = createJob(
 
       // The held images that are past retention, i.e. the ones this run would otherwise delete.
       const wouldSkip = heldActive.length
-        ? await dbRead.jobQueue.findMany({
-            where: {
-              type: JobQueueType.BlockedImageDelete,
-              entityType: EntityType.Image,
-              entityId: { in: heldActive },
-              createdAt: { lte: cutoff },
-            },
-            select: { entityId: true },
-          })
+        ? await dbRead.$queryRaw<{ entityId: number }[]>(
+            blockedQueueExpiredAmongSql(heldActive, cutoff)
+          )
         : [];
       if (wouldSkip.length) {
         logToAxiom({
@@ -744,15 +766,9 @@ export const removeBlockedImages = createJob(
         ...accountHeld,
       ]),
     ];
-    const jobQueue = await dbRead.jobQueue.findMany({
-      where: {
-        type: JobQueueType.BlockedImageDelete,
-        entityType: EntityType.Image,
-        ...(held.length ? { entityId: { notIn: held } } : {}),
-      },
-      take: 15000,
-      orderBy: { createdAt: 'asc' },
-    });
+    const jobQueue = await dbRead.$queryRaw<{ entityId: number; createdAt: Date }[]>(
+      blockedQueueBatchSql(held, 15000)
+    );
 
     if (!jobQueue.length) {
       console.log('No blocked images in queue', {
