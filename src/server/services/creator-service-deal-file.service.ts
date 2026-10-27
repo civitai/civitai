@@ -623,8 +623,8 @@ export async function resolveServiceDealFileDownload({
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
-  /** The moderator dispute tool. Recorded under the caller's own role on the deal, so a moderator
-   *  who is the buyer still reads as the buyer having the file. */
+  /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
+   *  it never counts as the buyer's download. */
   moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
@@ -687,8 +687,8 @@ export async function resolveServiceDealFileDownload({
   };
 }
 
-/** The access record is not awaited, so it never slows or fails a download. It still waits for
- *  delivery on its own, so a write the tracker could not deliver is logged here, not lost silently. */
+/** Not awaited, so recording never slows or fails a download; it still awaits delivery so a lost
+ *  row is logged. */
 export async function getServiceDealFileDownloadUrl(
   target: ServiceDealFileDownload,
   tracker: Pick<Tracker, 'serviceDealFileAccess'>

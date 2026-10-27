@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 
 /**
  * The download route is thin: it must send an allowed user to a signed URL, answer every refusal
@@ -14,7 +15,15 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
-const { Tracker } = await import('~/server/clickhouse/client');
+const trackers = vi.hoisted(() => [] as unknown[][]);
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  Tracker: class {
+    constructor(...args: unknown[]) {
+      trackers.push(args);
+    }
+  },
+}));
 const { default: handler } = (await import(
   '../../../pages/api/service-deals/files/[fileId]/download'
 )) as unknown as {
@@ -46,9 +55,11 @@ const response = () => {
   return res;
 };
 
+let lastReq: unknown;
 const call = (fileId: unknown, user = { id: 7, isModerator: false }) => {
   const res = response();
-  return handler({ query: { fileId }, headers: {} }, res, user).then(() => res);
+  lastReq = { query: { fileId }, headers: {} };
+  return handler(lastReq, res, user).then(() => res);
 };
 
 beforeEach(() => {
@@ -67,9 +78,11 @@ describe('download route', () => {
     const res = await call('12');
     expect(res.redirected).toBe('https://signed/url');
     expect(res.headers['Cache-Control']).toMatch(/no-store/);
+    // The tracker is built from this request, so the row carries its session and client.
+    expect(trackers.at(-1)).toEqual([lastReq, res]);
     expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'k' }),
-      expect.any(Tracker)
+      expect.anything()
     );
     expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith({
       fileId: 12,

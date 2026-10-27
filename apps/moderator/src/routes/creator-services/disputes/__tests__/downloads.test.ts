@@ -51,13 +51,13 @@ describe('buyerFinalDownloads', () => {
     });
   });
 
-  it('counts a buyer who fetched through the dispute tool as the buyer', () => {
+  it('does not count a buyer who is a moderator fetching through the dispute tool', () => {
     const result = buyerFinalDownloads(
       [file(1, 'Final', [entry('Buyer', 'ModeratorFetch', 1, '2026-10-03T00:00:00Z')])],
       deal,
       RECORDING
     );
-    expect(result).toMatchObject({ state: 'yes', count: 1 });
+    expect(result).toEqual({ state: 'never' });
   });
 
   it('is never when only the seller, a moderator or a preview was taken', () => {

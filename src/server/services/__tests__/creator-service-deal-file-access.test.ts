@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 
 const holder = vi.hoisted(() => ({
@@ -22,6 +23,8 @@ const answer = (rows: object[]) => {
 
 beforeEach(() => {
   holder.client = undefined;
+  redisMock.redis.packed.get.mockReset().mockResolvedValue(null);
+  redisMock.redis.packed.set.mockReset().mockResolvedValue('OK');
 });
 
 describe('reading the deal file access log', () => {
@@ -70,6 +73,34 @@ describe('reading the deal file access log', () => {
     answer([{ since: null }]);
     expect(await getServiceDealFileAccessRecordedSince()).toBeNull();
     answer([{ since: '1730000000000' }]);
+    expect(await getServiceDealFileAccessRecordedSince()).toEqual(new Date(1730000000000));
+  });
+
+  it('caches a found start date, never a null one', async () => {
+    answer([{ since: null }]);
+    await getServiceDealFileAccessRecordedSince();
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+
+    answer([{ since: '1730000000000' }]);
+    await getServiceDealFileAccessRecordedSince();
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
+      expect.any(String),
+      1730000000000,
+      expect.anything()
+    );
+  });
+
+  it('answers from the cache without asking ClickHouse', async () => {
+    const query = answer([]);
+    redisMock.redis.packed.get.mockResolvedValue(1730000000000);
+    expect(await getServiceDealFileAccessRecordedSince()).toEqual(new Date(1730000000000));
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('still reads ClickHouse when the cache is down', async () => {
+    redisMock.redis.packed.get.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.packed.set.mockRejectedValue(new Error('redis down'));
+    answer([{ since: 1730000000000 }]);
     expect(await getServiceDealFileAccessRecordedSince()).toEqual(new Date(1730000000000));
   });
 });

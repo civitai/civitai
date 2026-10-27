@@ -1,4 +1,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ServiceDealAccessKind, ServiceDealAccessRole } from '~/server/clickhouse/tracker';
 
 export type ServiceDealFileAccessSummary = {
@@ -51,8 +54,27 @@ export async function listServiceDealFileAccess(
 
 /** When the first access was recorded, or null if none has been: nothing before it was recorded. */
 export async function getServiceDealFileAccessRecordedSince() {
-  const [row] = await queryAccessLog<{ since: number | null }>(
+  const key = REDIS_KEYS.CREATOR_SERVICES.ACCESS_RECORDED_SINCE;
+  // The first row never changes once written, so only a found date is cached: until then each read
+  // asks again, and the first download shows up without waiting out a TTL.
+  const cached = await redis.packed.get<number>(key).catch(logCacheFailure);
+  if (typeof cached === 'number') return new Date(cached);
+
+  const [row] = await queryAccessLog<{ since: number | string | null }>(
     `SELECT toUnixTimestamp64Milli(minOrNull(time)) AS since FROM default.serviceDealFileAccess`
   );
-  return row?.since == null ? null : new Date(Number(row.since));
+  if (row?.since == null) return null;
+  const since = Number(row.since);
+  await redis.packed.set(key, since, { EX: CacheTTL.day }).catch(logCacheFailure);
+  return new Date(since);
 }
+
+const logCacheFailure = (error: unknown) => {
+  logToAxiom({
+    name: 'creator-service-file-access',
+    type: 'warning',
+    message: 'Access log cache unavailable',
+    error: error instanceof Error ? error.message : String(error),
+  }).catch(() => null);
+  return null;
+};

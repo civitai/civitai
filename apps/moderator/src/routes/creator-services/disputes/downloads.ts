@@ -31,7 +31,10 @@ export function buyerFinalDownloads(
 
   const partial =
     !!deal.completedAt && (!recordedSince || utcMs(deal.completedAt) < utcMs(recordedSince));
-  const entries = finals.flatMap((file) => file.access ?? []).filter((e) => e.role === 'Buyer');
+  // A moderator fetch never counts, even by a moderator who is the buyer.
+  const entries = finals
+    .flatMap((file) => file.access ?? [])
+    .filter((e) => e.role === 'Buyer' && e.kind === 'Download');
   if (!entries.length)
     return partial ? { state: 'unknown', reason: 'before-recording' } : { state: 'never' };
 
