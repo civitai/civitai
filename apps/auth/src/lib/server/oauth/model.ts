@@ -14,7 +14,7 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
-import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
+import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } from './constants';
 import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
@@ -420,12 +420,27 @@ export async function resolveClientLite(
       redirectUris: string[];
       isFirstParty: boolean;
       accessMode: string;
+      /**
+       * No consent screen: first-party, or a confidential system app (owned by the civitai system account)
+       * staff marked `skipConsent`. A public
+       * app never skips it: with no secret, any program could start its sign-in, and consent is what stops one
+       * getting a token silently.
+       */
+      skipConsent: boolean;
     }
   | undefined
 > {
   const dbClient = await db
     .selectFrom('OauthClient')
-    .select(['id', 'grants', 'redirectUris', 'accessMode'])
+    .select([
+      'id',
+      'grants',
+      'redirectUris',
+      'accessMode',
+      'skipConsent',
+      'isConfidential',
+      'userId',
+    ])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (dbClient) {
@@ -440,6 +455,8 @@ export async function resolveClientLite(
       redirectUris: dbClient.redirectUris,
       isFirstParty: false,
       accessMode: dbClient.accessMode,
+      skipConsent:
+        dbClient.skipConsent && dbClient.isConfidential && dbClient.userId === SYSTEM_USER_ID,
     };
   }
   // First-party: NO DB row, resolved purely from the redirect_uri ORIGIN (host checked against the registry),
@@ -455,6 +472,7 @@ export async function resolveClientLite(
         isFirstParty: true,
         // First-party (spoke) clients are never gated — they're our own login hosts.
         accessMode: 'open',
+        skipConsent: true,
       }
     : undefined;
 }

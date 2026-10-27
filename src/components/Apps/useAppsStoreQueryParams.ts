@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   appsStoreFiltersToQuery,
   appsStoreQuerySchema,
@@ -29,6 +29,30 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
  * (`window.location`, `localStorage`, a media query) would re-create the
  * hydration bail that left every `/apps` page inert.
  */
+/**
+ * 🔴 THE WRITE STATE IS SHARED BY EVERY INSTANCE, NOT HELD PER INSTANCE. Sort and Filters are
+ * mounted by the site sub-nav and search by the store body: two instances of this hook over ONE
+ * URL. With per-instance state, a sort click while the search box's debounced write was still in
+ * flight merged onto a URL that did not yet carry the term, wrote the term back out as '', and
+ * the box then adopted that URL: the typed term vanished without a trace.
+ *
+ * It is module state because what it describes, writes issued but not yet observed in
+ * `router.query`, belongs to the page and not to a component. It is reset when the last instance
+ * unmounts, so a stale in-flight count cannot outlive the page and override the URL on return.
+ */
+const shared: {
+  pending: AppsStoreFilters | null;
+  inFlight: number;
+  lastQuery: unknown;
+  mounted: number;
+} = { pending: null, inFlight: 0, lastQuery: undefined, mounted: 0 };
+
+function resetShared() {
+  shared.pending = null;
+  shared.inFlight = 0;
+  shared.lastQuery = undefined;
+}
+
 export function useAppsStoreQueryParams(): {
   filters: AppsStoreFilters;
   /** Patch one or more filters; omitted keys are untouched. */
@@ -84,10 +108,15 @@ export function useAppsStoreQueryParams(): {
    * surface this PR has not tested. The work-around is local; the underlying
    * sharp edge in the shared hook is flagged in the PR.
    */
-  const pendingRef = useRef<AppsStoreFilters | null>(null);
-  /** Writes issued but not yet observed arriving in `router.query`. */
-  const inFlightRef = useRef(0);
-  const lastQueryRef = useRef(query);
+  // (State: the module-level `shared` above, so every instance sees the same in-flight writes.)
+  if (shared.lastQuery === undefined) shared.lastQuery = query;
+  useEffect(() => {
+    shared.mounted += 1;
+    return () => {
+      shared.mounted -= 1;
+      if (shared.mounted === 0) resetShared();
+    };
+  }, []);
 
   /**
    * 🔴 THE IN-FLIGHT WINDOW IS COUNTED, NOT COMPARED — and both value-comparing
@@ -112,20 +141,22 @@ export function useAppsStoreQueryParams(): {
    * state; a Back drops it to zero and `urlFilters` wins — even when the value
    * it lands on happens to equal where we started.
    */
-  if (query !== lastQueryRef.current) {
-    lastQueryRef.current = query;
-    if (inFlightRef.current > 0) inFlightRef.current -= 1;
-    if (inFlightRef.current === 0) pendingRef.current = null;
+  // Shared across instances, so the first one to render a new `router.query` consumes the write
+  // and the rest see it already consumed.
+  if (query !== shared.lastQuery) {
+    shared.lastQuery = query;
+    if (shared.inFlight > 0) shared.inFlight -= 1;
+    if (shared.inFlight === 0) shared.pending = null;
   }
 
-  const filters = pendingRef.current ?? urlFilters;
+  const filters = shared.pending ?? urlFilters;
 
   const setFilters = useCallback(
     (next: Partial<AppsStoreFilters>) => {
-      const merged = { ...(pendingRef.current ?? urlFilters), ...next };
+      const merged = { ...(shared.pending ?? urlFilters), ...next };
       // Set synchronously — two clicks in the same tick must both see it.
-      pendingRef.current = merged;
-      inFlightRef.current += 1;
+      shared.pending = merged;
+      shared.inFlight += 1;
       // The COMPLETE state, not just the patch. `appsStoreFiltersToQuery` still
       // maps defaults to `undefined`, so this does not add noise to the URL — a
       // cleared filter is still removed, not re-added from the merge.
@@ -139,7 +170,7 @@ export function useAppsStoreQueryParams(): {
    * dependency array — or, as the search box does, in an effect with NO
    * dependency array — without re-subscribing.
    */
-  const hasPendingWrite = useCallback(() => inFlightRef.current > 0, []);
+  const hasPendingWrite = useCallback(() => shared.inFlight > 0, []);
 
   return { filters, setFilters, hasPendingWrite };
 }
