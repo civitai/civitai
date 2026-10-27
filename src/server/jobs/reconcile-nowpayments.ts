@@ -48,7 +48,7 @@ export const reconcileNowpaymentsJob = createJob(
     }
 
     // Phase 2: Retry sweep for buzz_failed deposits (no window, runs every time)
-    let retryResults = { retried: 0, succeeded: 0, failed: 0, exhausted: 0 };
+    let retryResults = { retried: 0, succeeded: 0, failed: 0, exhausted: 0, held: 0 };
     try {
       retryResults = await retryFailedDeposits();
     } catch (e) {
@@ -64,7 +64,7 @@ export const reconcileNowpaymentsJob = createJob(
       logToAxiom({
         name: 'reconcile-nowpayments-job',
         type: retryResults.exhausted > 0 ? 'error' : 'info',
-        message: `Retry sweep: ${retryResults.succeeded} succeeded, ${retryResults.failed} still failing, ${retryResults.exhausted} exhausted`,
+        message: `Retry sweep: ${retryResults.succeeded} succeeded, ${retryResults.failed} still failing, ${retryResults.exhausted} exhausted, ${retryResults.held} held`,
         ...retryResults,
       });
     }

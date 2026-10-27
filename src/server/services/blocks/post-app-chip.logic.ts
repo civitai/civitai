@@ -271,6 +271,17 @@ export function readBlockPublishedAppId(metadata: unknown): string | null {
  * sibling precedent; they are closed here instead of inherited, because unlike
  * that resolver this one already has the host threaded to it.
  */
+const chipListingSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  status: true,
+  kind: true,
+  contentRating: true,
+  revisionOfId: true,
+  icon: { select: listingMediaImageSelect },
+};
+
 export function postAppChipQuery(appId: string) {
   return {
     where: { id: appId },
@@ -280,20 +291,11 @@ export function postAppChipQuery(appId: string) {
         select: {
           status: true,
           currentVersionDeployedAt: true,
-          appListing: {
-            select: {
-              id: true,
-              slug: true,
-              name: true,
-              status: true,
-              kind: true,
-              contentRating: true,
-              revisionOfId: true,
-              icon: { select: listingMediaImageSelect },
-            },
-          },
+          appListing: { select: chipListingSelect },
         },
       },
+      // An offsite Connect listing names its client through `connectClientId` and has no block.
+      connectListings: { where: { kind: 'offsite' }, select: chipListingSelect },
     },
   };
 }
@@ -302,7 +304,20 @@ export function postAppChipQuery(appId: string) {
 export type PostAppChipRow = {
   name?: unknown;
   appBlocks?: unknown;
+  connectListings?: unknown;
 };
+
+/**
+ * The row's blocks plus each offsite Connect listing as a block-shaped candidate. An offsite
+ * listing has no block, so the block-status and deploy terms do not apply and its own status gates.
+ */
+function chipCandidateBlocks(row: PostAppChipRow | null | undefined): unknown[] {
+  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const offsite = (Array.isArray(row?.connectListings) ? row.connectListings : [])
+    .filter((l) => (l as { kind?: unknown } | null)?.kind === 'offsite')
+    .map((appListing) => ({ status: APPROVED_STATUS, currentVersionDeployedAt: null, appListing }));
+  return [...blocks, ...offsite];
+}
 
 type ListingCandidate = {
   slug: string;
@@ -516,7 +531,7 @@ const EMPTY_HIDDEN: ReadonlySet<string> = new Set<string>();
  * reader here narrows defensively rather than trusting it.
  */
 export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
-  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const blocks = chipCandidateBlocks(row);
   const ids: string[] = [];
   for (const b of blocks) {
     const listing = (b as { appListing?: unknown } | null)?.appListing as
@@ -548,8 +563,7 @@ export function projectPostAppChip(
 ): PostAppChip | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
-  const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
-  const candidates = blocks
+  const candidates = chipCandidateBlocks(row)
     .map((b) => readListingCandidate(b, opts.host, opts.viewerBrowsingLevel, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));

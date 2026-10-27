@@ -236,6 +236,27 @@ describe('listModelRuleHolds', () => {
     expect(row.fields).toHaveLength(1);
   });
 
+  it('reads each rule’s category and references from the hold snapshot, and tolerates one without', async () => {
+    const refs = [{ url: 'https://example.com/ref', label: 'Official art' }];
+    await seed([
+      {
+        id: 1,
+        meta: meta({
+          rules: [
+            { ...rule(1), category: 'ip', references: refs },
+            { ...rule(2), category: 'nope', references: 'nope' },
+            rule(3),
+          ],
+        }),
+      },
+    ]);
+    const [row] = (await listModelRuleHolds(PENDING)).items;
+    expect(row.rules[0]).toMatchObject({ category: 'ip', references: refs });
+    expect(row.rules[1]).toMatchObject({ references: [] });
+    expect(row.rules[1].category).toBeUndefined();
+    expect(row.rules[2]).toMatchObject({ references: [] });
+  });
+
   it('says whether a ruling clears the rules instead of restoring the model', async () => {
     await seed([{ id: 1, meta: meta({ source: 'training' }) }, { id: 2 }, { id: 3 }]);
     await db.exec(`INSERT INTO "Model" ("id","name","status")
@@ -310,6 +331,23 @@ describe('history and owner holds', () => {
       decision: 'dismiss_allowed',
       decidedByUsername: 'Mod_Person',
     });
+  });
+
+  it('carries each earlier hold’s rule category and references', async () => {
+    const refs = [{ url: 'https://example.com/ref' }];
+    await seed([
+      {
+        id: 1,
+        entityId: 7,
+        status: 'Dismissed',
+        meta: meta({ rules: [{ ...rule(1), category: 'artist', references: refs }] }),
+      },
+      { id: 3, entityId: 7 },
+    ]);
+    const [entry] = await getModelRuleHoldHistory(3);
+    expect(entry.rules).toEqual([
+      { id: 1, subject: 'Subject 1', category: 'artist', references: refs },
+    ]);
   });
 
   it('says per earlier hold whether its ruling cleared rules rather than restored the model', async () => {

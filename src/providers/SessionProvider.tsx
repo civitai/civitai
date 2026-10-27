@@ -46,6 +46,22 @@ async function fetchSession(): Promise<Session | null | undefined> {
   }
 }
 
+// A reload that brings back a session the page then loses again must not reload a second time.
+const LOST_SESSION_RELOAD_KEY = 'civitai:lost-session-reload';
+const LOST_SESSION_RELOAD_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** Reloads the page once so it re-syncs with the server after the signed-in session ended elsewhere. */
+function reloadForLostSession() {
+  try {
+    const last = Number(window.sessionStorage.getItem(LOST_SESSION_RELOAD_KEY));
+    if (last && Date.now() - last < LOST_SESSION_RELOAD_COOLDOWN_MS) return;
+    window.sessionStorage.setItem(LOST_SESSION_RELOAD_KEY, String(Date.now()));
+  } catch {
+    // Storage unavailable: the per-page guard in SessionProvider still limits this to one reload.
+  }
+  window.location.reload();
+}
+
 /** A session that arrives after mount (a shell page's page data), adopted once. */
 export type SessionSeed = { session: Session | null };
 
@@ -86,8 +102,16 @@ export function SessionProvider({
     setData((prev) => (prev === undefined ? seed.session : prev));
   }
 
+  const hadSession = useRef(false);
+  if (data?.user) hadSession.current = true;
+  const reloadedForLostSession = useRef(false);
+
   const update = useCallback(async () => {
     const next = await fetchSession();
+    if (next === null && hadSession.current && !reloadedForLostSession.current) {
+      reloadedForLostSession.current = true;
+      reloadForLostSession();
+    }
     // `undefined` = couldn't determine: keep the current session, but resolve a still-loading INITIAL state to
     // signed-out so we never hang on 'loading'. `null`/Session are authoritative.
     setData((prev) => (next !== undefined ? next : prev ?? null));
@@ -119,7 +143,10 @@ export function SessionProvider({
 
   // Memoize so the ~13 useSession consumers re-render only when the session actually changes — not on every
   // _app re-render (e.g. each route change), which a fresh value object would otherwise force.
-  const value = useMemo<SessionContextValue>(() => ({ data, status, update }), [data, status, update]);
+  const value = useMemo<SessionContextValue>(
+    () => ({ data, status, update }),
+    [data, status, update]
+  );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

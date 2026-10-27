@@ -501,11 +501,12 @@ describe('feedback areas', () => {
     'site-bug-report',
     'app-block',
     'apps-platform',
+    'semantic-image-search',
   ];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the five declared surfaces', () => {
+  it('are exactly the six declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 

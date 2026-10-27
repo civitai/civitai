@@ -20,8 +20,12 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   mobile: false,
   user: null as { id: number } | null,
+  openFirstChapter: vi.fn(),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+vi.mock('~/components/Storyline/openStorylineFirstChapterModal', () => ({
+  openStorylineFirstChapterModal: mocks.openFirstChapter,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -325,6 +329,15 @@ describe('a storyline with no chapter 1 yet', () => {
       .toHaveAttribute('href', '/storylines/8');
   });
 
+  test('its owner can use a post already published as chapter 1', async () => {
+    mocks.user = { id: 18 };
+    mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
+    renderWithProviders(<StorylinesFeed />);
+
+    await page.getByRole('button', { name: "Use a post you've published" }).click();
+    expect(mocks.openFirstChapter).toHaveBeenCalledWith({ storylineId: 8 });
+  });
+
   test('a chapter-less storyline is not offered for writing to anyone but its owner', async () => {
     mocks.user = { id: 99 };
     mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
@@ -333,6 +346,9 @@ describe('a storyline with no chapter 1 yet', () => {
     await expect.element(page.getByRole('link', { name: /Story 8/ })).toBeVisible();
     expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);
     expect(page.getByRole('link', { name: 'Write chapter 1' }).elements()).toHaveLength(0);
+    expect(
+      page.getByRole('button', { name: "Use a post you've published" }).elements()
+    ).toHaveLength(0);
   });
 
   test("the owner's storylines that have chapters read as before", async () => {
@@ -342,5 +358,8 @@ describe('a storyline with no chapter 1 yet', () => {
 
     await expect.element(page.getByRole('link', { name: /Story 7/ })).toBeVisible();
     expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);
+    expect(
+      page.getByRole('button', { name: "Use a post you've published" }).elements()
+    ).toHaveLength(0);
   });
 });

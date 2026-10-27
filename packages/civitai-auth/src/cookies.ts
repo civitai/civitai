@@ -1,5 +1,6 @@
 import {
   DEVICE_COOKIE_BASE,
+  HOST_COOKIE_PREFIX,
   LEGACY_SESSION_COOKIE_BASE,
   SECURE_COOKIE_PREFIX,
   SESSION_COOKIE_BASE,
@@ -50,3 +51,20 @@ export const deviceCookieName = (secure: boolean = isSecureCookie()): string =>
 // so prod reads `__Secure-civitai-token` and dev reads `civitai-token`. READ-ONLY during the cutover.
 export const legacySessionCookieName = (secure: boolean = isSecureCookie()): string =>
   `${cookiePrefix(secure)}${LEGACY_SESSION_COOKIE_BASE}`;
+
+// Every name a cookie with this base can live under (dev, `__Secure-`, `__Host-`), for logout to expire all.
+export const allCookieNames = (base: string): string[] => [
+  base,
+  `${SECURE_COOKIE_PREFIX}${base}`,
+  `${HOST_COOKIE_PREFIX}${base}`,
+];
+
+/** Pull a single cookie value out of a `Cookie` header string. */
+export function readCookie(header: string, name: string): string | undefined {
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return undefined;
+}

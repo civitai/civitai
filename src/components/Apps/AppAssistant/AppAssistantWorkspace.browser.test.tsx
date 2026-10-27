@@ -2172,10 +2172,11 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
 });
 
 describe('AppAssistantWorkspace tool gate', () => {
-  test('offers create_app, report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
+  test('offers create_app, generate_app_cover, report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
+      'generate_app_cover',
       'report_ready',
       'set_checklist',
       'start_preview',
@@ -2376,6 +2377,17 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
   const reported = (name: string, output: unknown, isError = false) =>
     m.chat!.onToolResult!({ name, input: {}, output, isError });
   const pane = () => page.getByTestId('app-assistant-preview-pane');
+
+  test('does not hand the chat the page-only generate_app_cover tool', async () => {
+    await mountRunner();
+    expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'create_app',
+      'report_ready',
+      'set_checklist',
+      'start_preview',
+      'stop_preview',
+    ]);
+  });
 
   test('shows the preview the runner started, a fresh frame on each start, and hides it on stop', async () => {
     await mountRunner();

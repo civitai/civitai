@@ -1,0 +1,216 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+/**
+ * Deleting an empty storyline, run as written against an in-process Postgres built from the
+ * shipped storyline migrations, so the cascades and the refusals are the database's own.
+ *
+ * PGlite has one session, so nothing here interleaves two transactions. The delete's lock against
+ * a concurrent chapter add was checked once against a real Postgres (see the PR).
+ */
+
+const { deleteStoryline } = await import('~/server/services/storyline.service');
+
+const migration = (name: string) =>
+  readFileSync(
+    path.resolve(
+      __dirname,
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
+    'utf8'
+  );
+
+const db = { pg: null as unknown as PGlite };
+const w = dbMock.dbWrite;
+
+const OWNER = 1;
+const CONTRIBUTOR = 2;
+
+const rows = async <T>(sql: string, params: unknown[] = []) =>
+  (await db.pg.query<T>(sql, params)).rows;
+
+const storylineIds = async () =>
+  (await rows<{ id: number }>(`SELECT id FROM "Storyline" ORDER BY id`)).map((r) => r.id);
+
+let txQueue: Promise<unknown> = Promise.resolve();
+const runTransaction = (fn: (tx: unknown) => Promise<unknown>) => {
+  const run = txQueue.then(async () => {
+    await db.pg.exec('BEGIN');
+    try {
+      const result = await fn(w);
+      await db.pg.exec('COMMIT');
+      return result;
+    } catch (error) {
+      await db.pg.exec('ROLLBACK');
+      throw error;
+    }
+  });
+  txQueue = run.catch(() => undefined);
+  return run;
+};
+
+beforeAll(async () => {
+  db.pg = new PGlite();
+  await db.pg.exec(`
+    CREATE TABLE "User" ("id" integer PRIMARY KEY);
+    CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer, "nsfwLevel" integer NOT NULL DEFAULT 0,
+      "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "Report" ("id" integer PRIMARY KEY);
+    CREATE TABLE "PlacementSpace" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
+      "entityType" text NOT NULL, "entityId" integer NOT NULL, "mode" text NOT NULL, "price" integer);
+    CREATE TABLE "Placement" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
+      "targetType" text NOT NULL, "targetId" integer NOT NULL, "status" text NOT NULL,
+      "amount" integer NOT NULL DEFAULT 0, "data" jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "PlacementTransaction" ("id" serial PRIMARY KEY,
+      "placementId" integer NOT NULL REFERENCES "Placement"("id") ON DELETE CASCADE,
+      "kind" text NOT NULL, "amount" integer NOT NULL);
+  `);
+  for (const name of [
+    '20261023120000_storylines',
+    '20261023130000_storyline_children_index',
+    '20261023140000_storyline_engagement',
+    '20261024120000_storyline_chapter_removed',
+    '20261024150000_storyline_moderator_takedown',
+    '20261024160000_storyline_minor_by_scan',
+    '20261106120000_storyline_rejoin',
+    '20261122120000_storyline_pending_chapter',
+  ])
+    await db.pg.exec(migration(name));
+  await db.pg.exec(`INSERT INTO "User" (id) VALUES (1), (2), (3);`);
+});
+
+afterAll(async () => {
+  await db.pg.close();
+});
+
+beforeEach(async () => {
+  await db.pg.exec(`
+    DELETE FROM "PlacementTransaction";
+    DELETE FROM "Placement";
+    DELETE FROM "PlacementSpace";
+    DELETE FROM "StorylinePendingChapter";
+    DELETE FROM "StorylineCollaborator";
+    DELETE FROM "StorylineChapterEdge";
+    DELETE FROM "StorylineChapter";
+    DELETE FROM "Storyline";
+    DELETE FROM "Post";
+    INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
+      (1, ${OWNER}, 'A story with no story', 1, now()),
+      (2, ${OWNER}, 'Someone else is reading this one', 1, now());
+  `);
+  const raw = pgliteRaw(db.pg);
+  w.$transaction.mockImplementation(runTransaction as never);
+  w.$queryRaw.mockImplementation(raw.queryRaw as never);
+  w.$executeRaw.mockImplementation(raw.executeRaw as never);
+});
+
+const addRootChapter = (storylineId = 1, { postId = null as number | null } = {}) =>
+  db.pg.query(
+    `INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "postId")
+     VALUES ($1, $2, ${OWNER}, 0, $3)`,
+    [storylineId * 10, storylineId, postId]
+  );
+
+describe('deleteStoryline', () => {
+  it('deletes an empty storyline and nothing else', async () => {
+    await db.pg.exec(`
+      INSERT INTO "PlacementSpace" (surface, "entityType", "entityId", mode, price) VALUES
+        ('storyline', 'storyline', 1, 'review', 50),
+        ('storyline', 'storyline', 2, 'review', 50),
+        ('storyline', 'user', 1, 'review', 25);
+      INSERT INTO "StorylineCollaborator" ("storylineId", "userId") VALUES (1, ${CONTRIBUTOR});
+    `);
+
+    expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
+
+    expect(await storylineIds()).toEqual([2]);
+    expect(await rows(`SELECT * FROM "StorylineCollaborator"`)).toEqual([]);
+    // The storyline's own price goes with it; another storyline's and the owner's default stay.
+    expect(
+      await rows(`SELECT "entityType", "entityId" FROM "PlacementSpace" ORDER BY "entityType"`)
+    ).toEqual([
+      { entityType: 'storyline', entityId: 2 },
+      { entityType: 'user', entityId: 1 },
+    ]);
+  });
+
+  it('unlinks a chapter-1 draft, which stays an ordinary draft', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (500, ${OWNER});
+      INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "userId") VALUES (500, 1, ${OWNER});
+    `);
+
+    await deleteStoryline({ id: 1, userId: OWNER });
+
+    expect(await rows(`SELECT * FROM "StorylinePendingChapter"`)).toEqual([]);
+    expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 500 }]);
+  });
+
+  it('refuses a storyline with a chapter', async () => {
+    await db.pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (501, ${OWNER})`);
+    await addRootChapter(1, { postId: 501 });
+
+    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+      'Only a storyline with no chapters can be deleted'
+    );
+    expect(await storylineIds()).toEqual([1, 2]);
+  });
+
+  // A chapter whose post was deleted keeps its row with postId NULL, and a removed chapter keeps
+  // its row with removedAt: both are history readers and moderators still see.
+  it('refuses a storyline whose only chapter is a tombstone', async () => {
+    await addRootChapter(1);
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`);
+
+    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+      'Only a storyline with no chapters can be deleted'
+    );
+    expect(await storylineIds()).toEqual([1, 2]);
+  });
+
+  // No storyline-keyed placement exists: a continuation targets the post of the chapter it
+  // continues, so there is no placement or Buzz hold without a chapter. Before adding a
+  // placement check of its own, show a placement this test does not already refuse.
+  it('refuses a storyline holding a pending continuation and its Buzz', async () => {
+    await db.pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (502, ${OWNER})`);
+    await addRootChapter(1, { postId: 502 });
+    await db.pg.exec(`
+      INSERT INTO "Placement" (id, surface, "targetType", "targetId", status, amount, data)
+        VALUES (900, 'storyline', 'post', 502, 'pending', 100, '{"postId": 503}');
+      INSERT INTO "PlacementTransaction" ("placementId", kind, amount) VALUES (900, 'hold', 100);
+    `);
+
+    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+      'Only a storyline with no chapters can be deleted'
+    );
+    expect(await storylineIds()).toEqual([1, 2]);
+  });
+
+  it('refuses anyone but the owner', async () => {
+    await expect(deleteStoryline({ id: 1, userId: CONTRIBUTOR })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Only the owner can delete this storyline',
+    });
+    expect(await storylineIds()).toEqual([1, 2]);
+  });
+
+  it('refuses a taken-down storyline, keeping the takedown on record', async () => {
+    await db.pg.exec(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`);
+
+    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+      'This storyline was taken down'
+    );
+    expect(await storylineIds()).toEqual([1, 2]);
+  });
+
+  it('says not found for a storyline that is gone', async () => {
+    await deleteStoryline({ id: 1, userId: OWNER });
+    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow('Storyline not found');
+  });
+});

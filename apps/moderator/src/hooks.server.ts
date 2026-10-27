@@ -20,7 +20,7 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
 // where there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+const PUBLIC_PATHS = new Set(['/favicon.svg', '/logout']);
 
 /**
  * The `event` string every credential-attribution line carries. One constant so a soak query and the

@@ -218,7 +218,11 @@
 
       {#if row.scannedText}
         {#key row.id}
-          <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
+          <ScannedTextCard
+            text={row.scannedText}
+            entityLabel={typeLabel.toLowerCase()}
+            reason={row.scan?.reason}
+          />
         {/key}
       {/if}
     </div>

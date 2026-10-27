@@ -93,11 +93,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     // Length guard — timingSafeEqual throws on a length mismatch (a legacy/plaintext secret). Fail closed.
     clientAuthenticated = a.length === b.length && timingSafeEqual(a, b);
   }
-  // Authenticate: a valid session OR matching client credentials.
-  const authenticatedUserId: number | null =
-    locals.user?.id ?? (clientAuthenticated && client ? client.userId : null);
-  // RFC 7009 §2.1: a public client may revoke a token issued to it — the token is its own credential.
-  const publicClientId = client && !client.isConfidential ? client.id : null;
+  const sessionUserId = locals.user?.id ?? null;
+  // RFC 7009 §2.1: a client may revoke tokens issued to it. A public client has no secret, so the
+  // token is its own credential; a confidential client must prove its secret first. The client's
+  // owner is not the token holder, so client credentials never act as the owner's session.
+  const revokingClientId =
+    client && (clientAuthenticated || !client.isConfidential) ? client.id : null;
 
   try {
     const hash = generateSecretHash(token);
@@ -119,8 +120,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         const mayRevoke =
           apiKey.type === 'Worker'
             ? clientAuthenticated && apiKey.clientId === client?.id
-            : (!!authenticatedUserId && apiKey.userId === authenticatedUserId) ||
-              (!!publicClientId && apiKey.clientId === publicClientId);
+            : (!!sessionUserId && apiKey.userId === sessionUserId) ||
+              (!!revokingClientId && apiKey.clientId === revokingClientId);
         // Silently, not as an error (RFC 7009 — don't reveal token existence).
         if (!mayRevoke) break;
 

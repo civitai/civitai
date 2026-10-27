@@ -16,6 +16,8 @@ import {
 } from '~/server/services/placement-space.service';
 import {
   assertCanContinueStoryline,
+  continuationPostSelect,
+  continuationReadiness,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
 import {
@@ -93,51 +95,6 @@ export type StorylinePlacementData = {
   /** ISO time the readiness pass admitted it. Absent on a row that never waited. */
   readyAt?: string;
 };
-
-/** What the refusals and the readiness check read off a continuation post. */
-export const continuationPostSelect = {
-  userId: true,
-  publishedAt: true,
-  nsfwLevel: true,
-  tosViolation: true,
-  storylineChapter: { select: { id: true } },
-  images: {
-    select: { ingestion: true, tosViolation: true, minor: true, poi: true, needsReview: true },
-  },
-} satisfies Prisma.PostSelect;
-
-type ContinuationPost = Prisma.PostGetPayload<{ select: typeof continuationPostSelect }>;
-
-/**
- * Where a continuation post stands.
- *
- * `doomed` is a moderation verdict on the post or any image in it and never
- * passes by waiting. `pending` is a state that resolves on its own: not
- * published, scheduled for later, an image still scanning, or no rating yet.
- * `inReview` is a scanned image a moderator has to look at.
- */
-export function continuationReadiness(
-  post: Pick<ContinuationPost, 'publishedAt' | 'nsfwLevel' | 'tosViolation' | 'images'>,
-  now = new Date()
-): 'doomed' | 'pending' | 'inReview' | 'ready' {
-  if (
-    post.tosViolation ||
-    post.images.some(
-      (image) => image.tosViolation || image.minor || image.poi || image.ingestion === 'Blocked'
-    )
-  )
-    return 'doomed';
-  if (
-    !post.publishedAt ||
-    post.publishedAt > now ||
-    !post.images.length ||
-    post.images.some((image) => image.ingestion !== 'Scanned') ||
-    !post.nsfwLevel
-  )
-    return 'pending';
-  if (post.images.some((image) => image.needsReview != null)) return 'inReview';
-  return 'ready';
-}
 
 /**
  * Submits a continuation to a storyline, priced or not.

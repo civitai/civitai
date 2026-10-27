@@ -25,6 +25,7 @@ import {
   sortPicked,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceDealFileKind } from '~/shared/utils/prisma/enums';
@@ -41,6 +42,7 @@ export function useServiceDealFiles(deal: ServiceDealView) {
     {
       enabled: deal.id > 0,
       retry: false,
+      ...DEAL_FRESHNESS,
       refetchInterval: (query) => filesPollMs(query.state.data ?? [], deal),
     }
   );

@@ -56,6 +56,7 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
     'gated-reader',
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 'post-attribution',
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
   // The server-owned key list `createImage` and the image input schemas strip client copies
   // against. It decides what is DROPPED, never what an app may read.

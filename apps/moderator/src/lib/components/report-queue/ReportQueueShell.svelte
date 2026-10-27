@@ -44,7 +44,11 @@
       {@render queue()}
     </aside>
 
-    <section aria-label={detailLabel} class="flex min-w-0 flex-1 flex-col bg-dark-8 xl:min-h-0">
+    <!-- `relative` bounds a `SelectionBar` in the detail to this pane, off the queue column. -->
+    <section
+      aria-label={detailLabel}
+      class="relative flex min-w-0 flex-1 flex-col bg-dark-8 xl:min-h-0"
+    >
       {@render detail()}
     </section>
   </div>

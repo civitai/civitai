@@ -305,14 +305,15 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       ).toEqual(before.otherUsage);
       expect(before.otherUsage).toHaveLength(1);
 
-      // The app's usage lost exactly the deleted documents, private and shared.
+      // The app's usage lost exactly the deleted SHARED documents: private documents were
+      // never charged to it, so their deletion refunds it nothing.
       const [usageAfter] = await h.raw(
         `SELECT bytes::int AS bytes, docs FROM appdata.usage_app WHERE app_id = $1 AND ns = 'prod'`,
         [app]
       );
       expect(usageAfter).toEqual({
-        bytes: usageBefore.bytes - privBefore.bytes - sharedBefore.bytes,
-        docs: usageBefore.docs - 4,
+        bytes: usageBefore.bytes - sharedBefore.bytes,
+        docs: usageBefore.docs - 2,
       });
       await assertUsageConsistent(h, app, NS_PROD);
     });

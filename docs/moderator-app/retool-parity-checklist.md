@@ -354,6 +354,9 @@ Open, with the evidence each audit produced:
       filter-row work rendered it on *Reviews written*. **Reviews received still dropped it**, while its
       own Search filter matched against it, so a moderator could search for text the page would not show.
       Now rendered on both.
+- [x] **Reviews written: paged, filtered in the query** (2026-10-26). The list left `/api/user-account`
+      for `/api/user-reviews/[userId]` (50 a page, plus a model-owner filter), so a filter searches every
+      review rather than the newest 100. Bulk review actions batch at 500 ids.
 - [x] **Review text rendered as raw markup** (2026-08-11 — found while verifying the item above, not
       previously listed). `details` is stored as HTML, and Svelte escapes it, so moderators read literal
       `<p>` tags; the Search filter matched the tags too, making a search for "p" hit every row. A shared

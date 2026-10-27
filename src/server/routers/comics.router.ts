@@ -1,6 +1,8 @@
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
+import { COMIC_ON_RED_ERROR } from '~/utils/comic-helpers';
 import {
   router,
   protectedProcedure,
@@ -1874,16 +1876,6 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
-      // Block NSFW projects on green domain.
-      // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-      if (
-        ctx.features.isGreen &&
-        project.nsfwLevel !== 0 &&
-        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
-      ) {
-        throw throwNotFoundError('Comic not found');
-      }
-
       // Block TOS-violated projects for non-owner, non-mod
       const isOwnerOrModViewer =
         ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
@@ -1959,6 +1951,16 @@ export const comicsRouter = router({
       // chapter has been pulled by the moderation gates.
       if (filteredChapters.length === 0 && !canViewDrafts) {
         throw throwNotFoundError('Comic not found');
+      }
+
+      // After every visibility gate, so only a comic red would actually serve gets the red prompt;
+      // anything else still 404s.
+      if (
+        ctx.features.isGreen &&
+        project.nsfwLevel !== 0 &&
+        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: COMIC_ON_RED_ERROR });
       }
 
       // Check early access for chapters that are currently in EA

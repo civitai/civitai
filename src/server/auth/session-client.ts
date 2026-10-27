@@ -5,7 +5,11 @@ import { createSessionClient, createSessionTokenClient, sessionCookieName } from
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
-import { observeSessionLeg, observeLegacyUpgrade } from './session-metrics';
+import {
+  observeSessionLeg,
+  observeLegacyUpgrade,
+  observeSessionRollFailed,
+} from './session-metrics';
 import { logToAxiom } from '~/server/logging/client';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
@@ -79,7 +83,9 @@ export async function maybeRollHubCookie(
 
   try {
     // Only the hub can mint — the package helper forwards the bearer token (+ device cookie) and times out.
-    const fresh = (await sessionTokenClient.refresh(token, { deviceCookie }))?.token;
+    const fresh = (
+      await sessionTokenClient.refresh(token, { deviceCookie, onFailure: observeSessionRollFailed })
+    )?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
     setSessionCookie(res, fresh, { deviceCookie, host });

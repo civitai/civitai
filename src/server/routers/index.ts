@@ -69,12 +69,16 @@ export const appRouter = router({
   storyline: lazy(() => import('./storyline.router').then((m) => m.storylineRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
+  postIntent: lazy(() => import('./post-intent.router').then((m) => m.postIntentRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
+  semanticImageSearch: lazy(() =>
+    import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter)
+  ),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
   stickerBook: lazy(() => import('./sticker-book.router').then((m) => m.stickerBookRouter)),
   stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),

@@ -210,3 +210,43 @@ describe('createAuthVerifier', () => {
     });
   });
 });
+
+describe('createAuthVerifier — 90-day sign-in limit', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const T0 = Date.UTC(2026, 9, 1);
+  const verifierAt = (t: number, over: Parameters<typeof createAuthVerifier>[0] = {}) =>
+    createAuthVerifier({ publicKeyPem, issuer, audience, clock: () => t, ...over });
+  const mint = (claims: Record<string, unknown>) =>
+    signer.mintSessionToken({ sub: '7', signedAt: T0, ...claims }, { jti: 'j' });
+
+  it('verifier rejects past iat0+90d', async () => {
+    const token = await mint({ iat0: T0 });
+    expect(await verifierAt(T0 + 90 * DAY - 1).verifyToken(token)).not.toBeNull();
+    expect(await verifierAt(T0 + 90 * DAY).verifyToken(token)).toBeNull();
+  });
+
+  it('rejects an impersonation token past impExp', async () => {
+    const token = await mint({ iat0: T0, impersonatedBy: 100, impExp: T0 + 4 * 60 * 60 * 1000 });
+    expect(await verifierAt(T0 + 60 * 1000).verifyToken(token)).not.toBeNull();
+    expect(await verifierAt(T0 + 4 * 60 * 60 * 1000).verifyToken(token)).toBeNull();
+  });
+
+  it('accepts a token without iat0 unless required', async () => {
+    const token = await mint({});
+    expect(await verifierAt(T0 + 365 * DAY).verifyToken(token)).not.toBeNull();
+    expect(await verifierAt(T0, { requireIat0: true }).verifyToken(token)).toBeNull();
+  });
+
+  it('requires iat0 only when AUTH_REQUIRE_IAT0 is set', async () => {
+    const token = await mint({});
+    vi.resetModules();
+    vi.stubEnv('AUTH_REQUIRE_IAT0', 'true');
+    try {
+      const { createAuthVerifier: fresh } = await import('../verify');
+      expect(await fresh({ publicKeyPem, issuer, audience }).verifyToken(token)).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+});

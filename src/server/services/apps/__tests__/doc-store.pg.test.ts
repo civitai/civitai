@@ -121,7 +121,7 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     });
     const { ok, codes } = await settle(
       Array.from({ length: N }, (_, i) =>
-        store.put(ctx(app, NS_PROD, 1000 + i), PREFS, `k${i}`, DOC)
+        store.put(ctx(app, NS_PROD, 1000 + i), BOARD, `k${i}`, DOC)
       )
     );
     expect(gate.arrived).toBe(N);
@@ -136,6 +136,38 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       docs: 3,
       seq: 3,
     });
+    await assertUsageConsistent(h, app, NS_PROD);
+  });
+
+  it(`private writes: ${N} viewers parked at the charge under an app ceiling that fits none — all land, each with its own seq`, async () => {
+    const app = freshApp('race_private');
+    const gate = barrier(N);
+    const store = createDocStore({
+      db: h.db,
+      // Smaller than ONE document: were private writes charged to the app, every one would fail.
+      limits: { appBytes: DOC_BYTES - 1, appDocs: 1, userBytes: 10_000, userDocs: 1000 },
+      hooks: { beforeUsageCharge: () => gate.wait() },
+    });
+    const { ok, codes } = await settle(
+      Array.from({ length: N }, (_, i) =>
+        store.put(ctx(app, NS_PROD, 2000 + i), PREFS, `k${i}`, DOC)
+      )
+    );
+    expect(gate.arrived).toBe(N);
+    expect(codes).toEqual([]);
+    expect(ok).toBe(N);
+    const [u] = await h.raw(
+      `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1`,
+      [app]
+    );
+    expect({ bytes: Number(u.bytes), docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({
+      bytes: 0,
+      docs: 0,
+      seq: N,
+    });
+    // The seq still serialises on usage_app: N writes, N distinct seqs 1..N.
+    const seqs = await h.raw(`SELECT seq FROM appdata.doc WHERE app_id = $1 ORDER BY seq`, [app]);
+    expect(seqs.map((r) => Number(r.seq))).toEqual(Array.from({ length: N }, (_, i) => i + 1));
     await assertUsageConsistent(h, app, NS_PROD);
   });
 

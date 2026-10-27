@@ -65,6 +65,11 @@ export const addOwnerChapterSchema = z.object({
   postId: z.number().int().positive(),
 });
 
+export const setFirstChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
 export const storylineChapterSchema = z.object({ chapterId: z.number().int().positive() });
 
 /** `browsingLevel` is optional so the request's own level and the domain cap can fill it in. */

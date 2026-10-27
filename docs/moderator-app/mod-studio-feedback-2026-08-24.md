@@ -61,6 +61,8 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       **Reviews has the same shape and was left alone** — its panel is the other one that bulk-actions a
       list and refreshes the account behind it. Not reported, so not changed; the component it would
       reuse now exists.
+      **Update 2026-10-26:** Reviews now has its own paged endpoint (`/api/user-reviews`) and uses the
+      shared `SelectionBar`.
 
 - [x] **Ban and Bulk Ban cannot purge comments.** They can now — **"Remove their comments"**, opt-in
       like "remove their images", on both the ban panel and Bulk Ban. There was nothing to add at the

@@ -1,5 +1,11 @@
 import type { Icon, IconProps } from '@tabler/icons-react';
-import { IconBookmark, IconChartHistogram, IconCrown, IconLifebuoy } from '@tabler/icons-react';
+import {
+  IconBookmark,
+  IconBrush,
+  IconChartHistogram,
+  IconCrown,
+  IconLifebuoy,
+} from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { UserMenuGroupId } from '~/shared/constants/user-menu-groups.constants';
@@ -80,6 +86,25 @@ export const USER_MENU_SIGNED_OUT_LAYOUT: UserMenuNode[] = [
   getHelp,
   item('sign-in'),
 ];
+
+// The header's Create dropdown is desktop-only, so phones reach these through the menu.
+const create = group('create', 'Create', IconBrush, [
+  item('create-generate'),
+  item('create-post-images'),
+  item('create-post-videos'),
+  item('create-model'),
+  item('create-model3d'),
+  item('create-train'),
+  item('create-article'),
+  item('create-comic'),
+  item('create-bounty'),
+  item('create-challenge'),
+]);
+
+export function getUserMenuLayout({ signedIn, mobile }: { signedIn: boolean; mobile: boolean }) {
+  const layout = signedIn ? USER_MENU_LAYOUT : USER_MENU_SIGNED_OUT_LAYOUT;
+  return mobile ? [create, ...layout] : layout;
+}
 
 /** The innermost group holding `id` in `layout`: null for a top-level item, undefined if absent. */
 export function findUserMenuGroup(

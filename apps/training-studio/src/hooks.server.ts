@@ -19,7 +19,7 @@ const DEV_USER = { id: 0, username: 'dev-preview' } as unknown as SessionUser;
 //
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build, where
 // there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+const PUBLIC_PATHS = new Set(['/favicon.svg', '/logout']);
 
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 

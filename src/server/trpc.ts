@@ -399,7 +399,7 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
 // read, once per request, through the same per-key evaluator as `getFeatureFlags`. Off, it is read
 // out of the whole registry, as before. Same answer per key either way. `?.`: a context built
 // without `features` takes the old path.
-function guardFlagEnabled(
+export function guardFlagEnabled(
   ctx: FeatureAccessContext & { features?: FeatureAccess },
   flag: keyof FeatureAccess
 ): boolean {

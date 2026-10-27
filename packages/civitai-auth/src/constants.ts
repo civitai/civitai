@@ -14,6 +14,7 @@ export const DEVICE_COOKIE_BASE = 'civ-device';
 // (prod is `__Secure-civitai-token`, not `civitai-token`).
 export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
+export const HOST_COOKIE_PREFIX = '__Host-';
 
 // Cross-domain account sync query param — the single marker the hub re-attaches after login and the
 // destination's useDomainSync reads to kick off the auth-code flow (/api/auth/authorize).

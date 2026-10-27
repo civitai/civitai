@@ -13,6 +13,8 @@ export async function nextCoverageEnabled() {
   return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_COVERAGE_NEXT);
 }
 
+export type CoverageAudience = { next: boolean; member: boolean };
+
 /**
  * The coverage rule AND the audience for it, resolved once per request.
  *
@@ -153,6 +155,23 @@ export function coveredByForUser(
 export function coveragePair(row: CoverageColumns | null | undefined, next: boolean) {
   return {
     covered: pickCovered(row, next) ?? false,
+    coveredLive: pickCovered(row, false) ?? false,
+  };
+}
+
+/**
+ * `coveragePair` where the audience gate applies, for coverage columns whose readiness was read
+ * separately. No readiness reads as cold. The row's own coverage wins over any the readiness
+ * source also carries.
+ */
+export function coveragePairWithReadiness(
+  row: CoverageColumns,
+  readiness: VersionReadiness | undefined,
+  next: boolean,
+  audience: { member: boolean; isCheckpoint: boolean }
+) {
+  return {
+    covered: coveredForUser({ ...readiness, ...row }, next, audience) ?? false,
     coveredLive: pickCovered(row, false) ?? false,
   };
 }

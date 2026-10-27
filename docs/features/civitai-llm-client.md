@@ -137,13 +137,13 @@ Same retry semantics as `openrouter.getJsonCompletion`: on "no content" or "all 
 
 ## Daily-Challenge Defaults
 
-Every daily-challenge stage (reviews, winner picks, articles, collection details, theme elements, resource concepts) runs on `civitai/qwen3.8` through the orchestrator, with GPT-4o Mini on OpenRouter as the fallback. Any call site can pass another model through the dispatcher, e.g. from the Playground.
+Every daily-challenge stage (reviews, winner picks, articles, collection details, theme elements, resource concepts) runs on `civitai/qwen3.8` through the orchestrator, with GPT-6 Luna on OpenRouter as the fallback. Any call site can pass another model through the dispatcher, e.g. from the Playground.
 
 `src/server/games/daily-challenge/generative-content.ts`:
 
 ```ts
 const DEFAULT_MODEL: AIModel = 'civitai/qwen3.8';
-const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
+const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_6_LUNA;
 export const DEFAULT_REVIEW_MODEL: AIModel = DEFAULT_MODEL;
 export const REVIEW_FALLBACK_MODEL: AIModel = FALLBACK_MODEL;
 ```

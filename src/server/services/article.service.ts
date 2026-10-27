@@ -92,7 +92,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { generateJSON } from '@tiptap/html/server';
+import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { createNotification } from '~/server/services/notification.service';

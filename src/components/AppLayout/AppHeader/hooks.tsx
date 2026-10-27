@@ -37,6 +37,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import { myShopNavVisible } from '~/components/AppLayout/AppHeader/myShopNavVisibility';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
@@ -45,10 +46,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { OnboardingSteps } from '~/server/common/enums';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
-import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
@@ -144,10 +143,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           id: 'my-shop',
           href: `/user/${currentUser?.username as string}/shop`,
-          // Only Creator Program members qualify to run a shop.
-          visible:
-            features.creatorShop &&
-            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
+          // Same rule as the shop itself (`creatorShopProcedure`): the `creatorShop` flag.
+          visible: myShopNavVisible(features),
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Shop',
@@ -426,6 +423,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
 
   return [
     {
+      id: 'create-generate',
       href: '/generate',
       visible: !isMuted,
       rel: 'nofollow',
@@ -434,6 +432,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate',
     },
     {
+      id: 'create-post-images',
       href: '/posts/create',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -443,6 +442,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Images',
     },
     {
+      id: 'create-post-videos',
       href: '/posts/create?video=true',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -452,6 +452,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Videos',
     },
     {
+      id: 'create-model',
       href: '/models/create',
       visible: !isMuted && canCreate,
       redirectReason: 'upload-model',
@@ -463,6 +464,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     {
       // Opens the generation panel with the 3D Model tab selected. The
       // Model3D generator surface is gated separately by `model3dGenerator`.
+      id: 'create-model3d',
       href: '/generate?type=model3d',
       visible: !isMuted && features.model3dGenerator,
       rel: 'nofollow',
@@ -473,6 +475,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     {
       // The user-toggleable trainingStudioUi flag swaps the trainer entry for the new Training
       // Studio; the old wizard stays reachable by toggling it back off.
+      id: 'create-train',
       href: features.trainingStudioUi ? '/training-studio' : '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
@@ -483,6 +486,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-article',
       href: '/articles/create',
       visible: !isMuted && canCreate && features.articles,
       redirectReason: 'create-article',
@@ -492,6 +496,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Write an Article',
     },
     {
+      id: 'create-comic',
       href: '/comics/create',
       visible: !isMuted && canCreate && features.comicCreator,
       redirectReason: 'post-images',
@@ -501,6 +506,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Comic',
     },
     {
+      id: 'create-bounty',
       href: '/bounties/create',
       visible: !isMuted && canCreate && features.bounties,
       redirectReason: 'create-bounty',
@@ -511,6 +517,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-challenge',
       href: '/challenges/create',
       visible: !isMuted && canCreate && features.challengePlatform && features.userChallenges,
       redirectReason: 'create-challenge',

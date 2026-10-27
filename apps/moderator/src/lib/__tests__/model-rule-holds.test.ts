@@ -11,6 +11,7 @@ import {
   modelRuleHoldFilterParams,
   modelStatusLabel,
   DEFAULT_MODEL_RULE_HOLD_FILTERS,
+  referenceText,
 } from '../model-rule-holds';
 
 describe('decisionButtons', () => {
@@ -138,5 +139,15 @@ describe('modelStatusLabel', () => {
   it('reads a stored status in words', () => {
     expect(modelStatusLabel('UnpublishedViolation')).toBe('Unpublished violation');
     expect(modelStatusLabel('Draft')).toBe('Draft');
+  });
+});
+
+describe('referenceText', () => {
+  it('prefers the label, else names the site without www', () => {
+    expect(referenceText({ url: 'https://www.example.com/a/b', label: 'Portfolio' })).toBe(
+      'Portfolio'
+    );
+    expect(referenceText({ url: 'https://www.example.com/a/b' })).toBe('example.com');
+    expect(referenceText({ url: 'not a url' })).toBe('not a url');
   });
 });

@@ -1,3 +1,4 @@
+import { familyId } from './family';
 import type { SessionClaims } from './types';
 
 // The revocation/refresh MARKER PROTOCOL — a shared redis contract: spokes READ it (isRevoked),
@@ -36,14 +37,20 @@ export interface SessionKeys {
   tokenState: string;
   userTokens: string;
   all: string;
+  familyState: string;
+  /** Prefix; the key is `${userCut}:${userId}`. */
+  userCut: string;
 }
 
 export interface SessionRegistryConfig {
   redis: SessionRegistryRedis;
   /** Redis key namespaces, from @civitai/redis's REDIS_(SYS_)KEYS. */
   keys: SessionKeys;
-  /** Token-tracking + marker TTL in seconds (default 30d). */
+  /** Token-tracking TTL in seconds (default 30d). */
   ttlSeconds?: number;
+  /** TTL of the revocation markers in seconds (default 91d). Must outlast the 90-day session limit, or a
+   *  marker lapses while the token it revokes is still accepted. */
+  markerTtlSeconds?: number;
   /** App side-effects to run after an invalidation (signal, cache clear, orchestrator). */
   onInvalidate?: (info: InvalidateInfo) => void | Promise<void>;
   /** Clock injection (tests). */
@@ -80,6 +87,7 @@ export interface SessionRegistry {
 }
 
 const DEFAULT_TTL = 30 * 24 * 60 * 60;
+const DEFAULT_MARKER_TTL = 91 * 24 * 60 * 60;
 // 500 is ~87x the observed mean tracked-token count and above 99.9% of accounts.
 const DEFAULT_MAX_TOKENS_PER_USER = 500;
 const DEFAULT_MAX_EVICTIONS_PER_TRACK = 50;
@@ -96,6 +104,7 @@ const INVALIDATE_BATCH = 100;
 export function createSessionRegistry(config: SessionRegistryConfig): SessionRegistry {
   const { keys } = config;
   const ttl = config.ttlSeconds ?? DEFAULT_TTL;
+  const markerTtl = config.markerTtlSeconds ?? DEFAULT_MARKER_TTL;
   const maxTokens = config.maxTokensPerUser ?? DEFAULT_MAX_TOKENS_PER_USER;
   const maxEvictions = config.maxEvictionsPerTrack ?? DEFAULT_MAX_EVICTIONS_PER_TRACK;
   // ENFORCED, not merely documented: the floor must outlast the refresh interval, or a live session that has
@@ -109,10 +118,11 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   const now = config.now ?? (() => Date.now());
   const { redis } = config;
   const userTokensKey = (userId: number) => `${keys.userTokens}:${userId}`;
+  const userCutKey = (userId: number | string) => `${keys.userCut}:${userId}`;
 
   async function setState(tokenId: string, state: 'invalid' | 'refresh') {
     await redis.hSet(keys.tokenState, tokenId, state);
-    if (redis.hExpire) await redis.hExpire(keys.tokenState, tokenId, ttl);
+    if (redis.hExpire) await redis.hExpire(keys.tokenState, tokenId, markerTtl);
   }
 
   async function trackToken(tokenId: string, userId: number) {
@@ -210,6 +220,8 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   async function invalidateUserSessions(userId: number) {
     if (!redis.hGetAll)
       throw new Error('[@civitai/auth] invalidateUserSessions requires redis.hGetAll');
+    // Written first: it also ends the user's tokens that are no longer (or never were) tracked.
+    await redis.set(userCutKey(userId), String(now()), { EX: markerTtl });
     const key = userTokensKey(userId);
     const tokenIds = Object.keys(await redis.hGetAll(key));
     // NOTE: this read is still the whole hash. That is tolerable only because this path is rare (ban / mass
@@ -233,7 +245,7 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   async function invalidateAll() {
     // TTL the cutoff marker (matches the main app's prior EX): it only revokes tokens signed before it, which
     // all expire within `ttl` anyway, so the marker self-cleans rather than lingering forever.
-    await redis.set(keys.all, new Date(now()).toISOString(), { EX: ttl });
+    await redis.set(keys.all, new Date(now()).toISOString(), { EX: markerTtl });
     await config.onInvalidate?.({ scope: 'all' });
   }
 
@@ -241,15 +253,32 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     await setState(tokenId, 'refresh');
   }
 
+  /**
+   * Revoked when the token, its family, or (by signing time) everyone, its user, or the moderator
+   * impersonating as that user has been cut off. Throws on a read error; callers choose fail-open.
+   */
   async function isRevoked(claims: SessionClaims): Promise<boolean> {
     const tokenId = claims.jti;
     if (!tokenId) return false;
-    const [state, allStr] = await Promise.all([
-      redis.hGet(keys.tokenState, tokenId),
-      redis.get(keys.all),
-    ]);
+    const family = familyId(claims);
+    const userId = claims.sub ?? claims.user?.id;
+    // Issued in one tick so the client pipelines them into a single round trip.
+    const [state, familyState, allStr, userCut, impersonatorCut] = (
+      await Promise.all([
+        redis.hGet(keys.tokenState, tokenId),
+        family ? redis.hGet(keys.familyState, family) : null,
+        redis.get(keys.all),
+        userId != null ? redis.get(userCutKey(userId)) : null,
+        claims.impersonatedBy != null ? redis.get(userCutKey(claims.impersonatedBy)) : null,
+      ])
+    ).map(asString);
     if (state === 'invalid') return true;
-    if (allStr && claims.signedAt && new Date(allStr).getTime() > claims.signedAt) return true;
+    if (familyState === 'invalid') return true;
+    if (!claims.signedAt) return false;
+    const signedAt = claims.signedAt;
+    if (allStr && new Date(allStr).getTime() > signedAt) return true;
+    if (userCut && Number(userCut) > signedAt) return true;
+    if (impersonatorCut && Number(impersonatorCut) > signedAt) return true;
     return false;
   }
 
@@ -261,4 +290,10 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     markForRefresh,
     isRevoked,
   };
+}
+
+// The HA sys client returns string replies as Buffers.
+function asString(value: unknown): string | null {
+  if (value == null) return null;
+  return typeof value === 'string' ? value : String(value);
 }

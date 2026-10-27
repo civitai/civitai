@@ -7,6 +7,8 @@ const KEYS = {
   tokenState: 'session:token-state',
   userTokens: 'session:user-tokens2',
   all: 'session:all',
+  familyState: 'session:family-state',
+  userCut: 'session:user-cut',
 };
 
 // In-memory redis mock implementing the SessionRegistryRedis surface.
@@ -125,6 +127,89 @@ describe('createSessionRegistry', () => {
   it('isRevoked is false for a token with no id', async () => {
     const reg = createSessionRegistry({ redis: makeRedis(), keys: KEYS });
     expect(await reg.isRevoked({})).toBe(false);
+  });
+
+  describe('one revocation check', () => {
+    const DAY = 24 * 60 * 60;
+
+    it("a ban ends the user's tokens signed before it, tracked or not, and leaves other users alone", async () => {
+      let clock = 5_000;
+      const redis = makeRedis();
+      const reg = createSessionRegistry({ redis, keys: KEYS, now: () => clock });
+      await reg.trackToken('tracked', 7);
+      await reg.invalidateUserSessions(7);
+      clock = 9_000;
+
+      expect(await reg.isRevoked({ jti: 'untracked', sub: '7', signedAt: 4_000 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'tracked', sub: '7', signedAt: 4_000 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'signed-in-again', sub: '7', signedAt: 6_000 })).toBe(
+        false
+      );
+      expect(await reg.isRevoked({ jti: 'other-user', sub: '8', signedAt: 4_000 })).toBe(false);
+    });
+
+    it("a ban of the moderator ends the impersonation tokens they hold, not the target's own", async () => {
+      const redis = makeRedis();
+      const reg = createSessionRegistry({ redis, keys: KEYS, now: () => 5_000 });
+      await reg.invalidateUserSessions(100); // moderator 100
+
+      const asTarget = { sub: '7', impersonatedBy: 100, signedAt: 4_000 };
+      expect(await reg.isRevoked({ ...asTarget, jti: 'imp-host-a' })).toBe(true);
+      expect(await reg.isRevoked({ ...asTarget, jti: 'imp-host-b', sid: 'fam' })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'target-own', sub: '7', signedAt: 4_000 })).toBe(false);
+    });
+
+    it('an invalid family ends every member, the root included', async () => {
+      const redis = makeRedis();
+      await redis.hSet(KEYS.familyState, 'root-jti', 'invalid');
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+
+      expect(await reg.isRevoked({ jti: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'child', sid: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'unrelated', sid: 'other', signedAt: 1 })).toBe(false);
+    });
+
+    it('reads Buffer replies, as the HA sys client returns them', async () => {
+      const redis = makeRedis();
+      redis.hGet = async (key, field) =>
+        key === KEYS.tokenState && field === 'buf' ? (Buffer.from('invalid') as never) : null;
+      redis.get = async (key) =>
+        key === `${KEYS.userCut}:7` ? (Buffer.from('5000') as never) : null;
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+
+      expect(await reg.isRevoked({ jti: 'buf', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'x', sub: '7', signedAt: 4_000 })).toBe(true);
+    });
+
+    it('issues every read before awaiting any, so the client sends them as one pipeline', async () => {
+      const redis = makeRedis();
+      let issued = 0;
+      let issuedBeforeFirstReply = 0;
+      const gate = Promise.resolve().then(() => (issuedBeforeFirstReply = issued));
+      redis.hGet = async () => (issued++, await gate, null);
+      redis.get = async () => (issued++, await gate, null);
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+
+      await reg.isRevoked({ jti: 'j', sid: 'f', sub: '7', impersonatedBy: 100, signedAt: 1 });
+      expect(issued).toBe(5);
+      expect(issuedBeforeFirstReply).toBe(5);
+    });
+
+    it('keeps revocation markers past the 90-day limit while tracking stays 30 days', async () => {
+      const ttls = new Map<string, number>();
+      const redis = makeRedis();
+      redis.hExpire = async (key, field, seconds) => void ttls.set(`${key}|${field}`, seconds);
+      redis.set = async (key, _value, opts) => void ttls.set(key, opts?.EX ?? -1);
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+      await reg.trackToken('t', 7);
+      await reg.invalidateUserSessions(7);
+      await reg.invalidateAll();
+
+      expect(ttls.get(`${KEYS.userTokens}:7|t`)).toBe(30 * DAY);
+      expect(ttls.get(`${KEYS.tokenState}|t`)).toBe(91 * DAY);
+      expect(ttls.get(`${KEYS.userCut}:7`)).toBe(91 * DAY);
+      expect(ttls.get(KEYS.all)).toBe(91 * DAY);
+    });
   });
 
   describe('per-user token ceiling', () => {

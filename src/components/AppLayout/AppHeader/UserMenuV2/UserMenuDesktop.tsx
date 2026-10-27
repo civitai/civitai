@@ -8,14 +8,13 @@ import clsx from 'clsx';
 import { createContext, useContext, useRef, useState } from 'react';
 import {
   AccountSwitcher,
+  BuzzBalances,
   UserMenuCtx,
   UserMenuFooter,
 } from '~/components/AppLayout/AppHeader/UserMenu';
 import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { UserBuzz } from '~/components/User/UserBuzz';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -82,6 +81,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
     opened: true,
     pins: pins.pins,
     muted: pins.mutedBadges,
+    mobile: false,
   });
   const { toggle, toggleMute, announce, region } = usePinActions(pins);
 
@@ -522,7 +522,6 @@ export function DesktopHeaderRows({
 function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
   const features = useFeatureFlags();
   const onBuyBuzz = useBuyBuzz();
-  const [mainBuzzColor] = useAvailableBuzz();
   if (!features.buzz) return null;
 
   return (
@@ -550,21 +549,12 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       }
     >
       <span className="flex items-center gap-1">
-        <UserBuzz
+        <BuzzBalances
           animated={features.buzzSpendPop}
           iconSize={16}
           textSize="md"
           withAbbreviation
           withTooltip
-          accountTypes={['blue']}
-        />
-        <UserBuzz
-          animated={features.buzzSpendPop}
-          iconSize={16}
-          textSize="md"
-          withAbbreviation
-          withTooltip
-          accountTypes={[mainBuzzColor]}
         />
       </span>
     </Menu.Item>
