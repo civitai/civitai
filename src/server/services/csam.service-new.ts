@@ -1276,7 +1276,8 @@ async function reportImages(claim: SendClaim) {
 }
 
 /** The images with a `heldMedia:view` row stamped before now, by the database's own clock.
- *  `createdAt` is zoneless UTC, so it is compared in UTC whatever the session time zone. */
+ *  `createdAt` is zoneless, stamped by its column default in the server's time zone (UTC), so it
+ *  is compared in UTC whatever the reading session's time zone. */
 async function getViewedImageIds(imageIds: number[]) {
   if (!imageIds.length) return new Set<number>();
   // The primary: a replica may not have a view recorded just before the send.
