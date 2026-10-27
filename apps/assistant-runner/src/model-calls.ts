@@ -423,9 +423,8 @@ export class ModelCalls {
 
   /**
    * The response, its body passed through as read: the request's signal aborting, or its reader
-   * cancelling the body (the free-tier fetch giving up on a slow free answer cancels it before it
-   * aborts), before the body ends cancels the workflow; the body breaking off by itself leaves the
-   * workflow for a request asked again to wait for.
+   * cancelling the body, before the body ends cancels the workflow; the body breaking off by itself
+   * leaves the workflow for a request asked again to wait for.
    */
   #watched(
     call: Call,
