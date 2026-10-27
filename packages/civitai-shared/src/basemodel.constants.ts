@@ -144,8 +144,8 @@ export type BaseModelRecord = {
 // Ecosystem Constants
 // =============================================================================
 
-/** The upscaler the generator uses when none is picked. A CivitaiOfficial version, so no creator fee applies. */
-export const DEFAULT_UPSCALER = { modelId: 147759, versionId: 164821 } as const;
+/** The upscaler used when none is picked: CivitaiOfficial's copy of Remacri, so it carries no creator fee. */
+export const DEFAULT_UPSCALER = { modelId: 3022421, versionId: 3432055 } as const;
 export const DEFAULT_UPSCALER_AIR = `urn:air:other:upscaler:civitai:${DEFAULT_UPSCALER.modelId}@${DEFAULT_UPSCALER.versionId}`;
 
 export const ECO = {
