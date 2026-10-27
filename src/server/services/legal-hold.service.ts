@@ -201,11 +201,12 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
     SELECT 1 FROM "ModelOwnership" ho
     WHERE ho."modelId" = ${modelId}
       AND (
-        -- The placeholder holds until the model is restored; then its owner's own holds apply.
-        (ho."userId" = ${placeholder} AND NOT EXISTS (
+        -- An account deletion's placeholder holds until the model is restored; then its owner's own
+        -- holds apply. A backfilled one always holds: who owned the model before it is not recorded.
+        (ho."userId" = ${placeholder} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
           SELECT 1 FROM "ModelOwnership" hrs
           WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
-        ))
+        )))
         OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)}
       )
   ))`;

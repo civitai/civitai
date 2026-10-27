@@ -62,6 +62,7 @@ const ONCE_PLACEHOLDER_OWNED = 20; // unheld; given back by restore a model the 
 const PLACEHOLDER_NOT_RESTORED = 22; // unheld; moved a model off the placeholder with no restore
 const RESTORED_TO_HELD = 23; // named on a pending report; given back a placeholder-owned model
 const PLACEHOLDER_AGAIN = 24; // unheld; restored once, back to the placeholder, then moved off it
+const LEGACY_PLACEHOLDER_RESTORED = 25; // unheld; restored a model the backfill found with the placeholder
 const TRANSFERRED_FROM_IMAGE_HELD = 21; // unheld; given the model of IMAGE_REVIEW_HELD
 const OWNERS = [
   UNHELD,
@@ -85,6 +86,7 @@ const OWNERS = [
   PLACEHOLDER_NOT_RESTORED,
   RESTORED_TO_HELD,
   PLACEHOLDER_AGAIN,
+  LEGACY_PLACEHOLDER_RESTORED,
 ];
 const ELIGIBLE = [
   UNHELD,
@@ -169,7 +171,10 @@ beforeAll(async () => {
       (${PLACEHOLDER_AGAIN * 10}, -1, 'account-delete'),
       (${PLACEHOLDER_AGAIN * 10}, ${PLACEHOLDER_AGAIN}, 'restore'),
       (${PLACEHOLDER_AGAIN * 10}, -1, 'account-delete'),
-      (${PLACEHOLDER_AGAIN * 10}, ${PLACEHOLDER_AGAIN}, 'transfer');
+      (${PLACEHOLDER_AGAIN * 10}, ${PLACEHOLDER_AGAIN}, 'transfer'),
+      (${LEGACY_PLACEHOLDER_RESTORED * 10}, -1, 'baseline'),
+      (${LEGACY_PLACEHOLDER_RESTORED * 10}, ${LEGACY_PLACEHOLDER_RESTORED}, 'baseline'),
+      (${LEGACY_PLACEHOLDER_RESTORED * 10}, ${LEGACY_PLACEHOLDER_RESTORED}, 'restore');
     INSERT INTO "Image" (id, "userId", "needsReview") VALUES
       (1, ${IMAGE_REVIEW_HELD}, 'csam'),
       (2, ${REPORTED_IMAGE_HELD}, NULL);

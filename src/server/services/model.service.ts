@@ -6659,10 +6659,9 @@ export async function transferModelOwnership({
   // never belonged to this account, so unsetting it here would revoke a claim it didn't grant.
   const becomesOfficial = targetUserId === constants.system.officialUserId;
 
-  await dbWrite.$executeRaw(
-    recordCurrentModelOwnersSql(Prisma.sql`m.id = ANY(${modelIds}::int[])`)
-  );
-  const result = await dbWrite.$transaction([
+  const [, ...result] = await dbWrite.$transaction([
+    // Before the move, while the models still name their owner.
+    dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m.id = ANY(${modelIds}::int[])`)),
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
       data: { userId: targetUserId, ...(becomesOfficial ? { isOfficial: true } : {}) },

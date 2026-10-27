@@ -422,12 +422,27 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       modUserId: MOD_USER_ID,
     });
 
-    const [statement] = statementsFor('ModelOwnership');
+    const statement = statementsFor('ModelOwnership').find((st) => st.values.includes('transfer'));
     expect(
       statement,
       'no ownership row: a hold on the previous owner no longer reaches the model'
     ).toBeDefined();
     expect(statement.values).toEqual([TARGET_USER_ID, 'transfer', MOD_USER_ID, MODEL_IDS]);
+  });
+
+  it('records the outgoing owner first, before the move, in the same transaction', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const ops = transactionOps as { __raw?: RawCall; __op?: string }[];
+    const baseline = ops.findIndex((op) => op?.__raw?.sql.includes("'baseline'"));
+    const move = ops.findIndex((op) => op?.__op === 'model');
+    expect(baseline, 'no baseline for the outgoing owner in the transfer transaction').toBe(0);
+    expect(move).toBeGreaterThan(baseline);
+    expect(ops[baseline].__raw!.values).toEqual([MODEL_IDS]);
   });
 
   it('does not fail a COMMITTED transfer when an invalidation throws', async () => {
