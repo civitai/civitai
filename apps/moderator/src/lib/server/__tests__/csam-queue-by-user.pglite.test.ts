@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
@@ -52,6 +53,15 @@ CREATE TABLE "CsamReport" (
   "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image'
 );
 `;
+
+// The migration itself, so the trigger it installs is the one under test.
+const SET_ASIDE_MIGRATION = readFileSync(
+  new URL(
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
+    import.meta.url
+  ),
+  'utf8'
+);
 
 // Every level, Blocked included, so the browsing-level filter is not what decides a row.
 const ALL_LEVELS = 63;
@@ -294,13 +304,8 @@ describe('images set aside from the CSAM queue', () => {
   // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
   // held: dismissed 400 days ago (65), set aside after a report (66).
   beforeAll(async () => {
+    await db.exec(SET_ASIDE_MIGRATION);
     await db.exec(`
-      CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
-      CREATE TABLE "CsamQueueSetAside" (
-        "imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL,
-        "outcome" "CsamQueueSetAsideOutcome" NOT NULL, "csamReportId" INTEGER,
-        "moderatorId" INTEGER NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL
-      );
       CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
       CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
       INSERT INTO "EvidenceHold" ("userId") VALUES (302);
@@ -319,8 +324,11 @@ describe('images set aside from the CSAM queue', () => {
   afterAll(async () => {
     await db.exec(`
       DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
+      DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
+      DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
       DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
-      DELETE FROM "Image" WHERE "userId" IN (301, 302); DELETE FROM "User" WHERE id IN (301, 302);
+      DELETE FROM "Image" WHERE "userId" IN (301, 302, 303);
+      DELETE FROM "User" WHERE id IN (301, 302, 303);
     `);
   });
 
@@ -361,6 +369,62 @@ describe('images set aside from the CSAM queue', () => {
         `CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId"`
       );
     }
+  });
+
+  const setAsideIds = async (ids: number[]) =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" WHERE "imageId" = ANY($1) ORDER BY 1`,
+        [ids]
+      )
+    ).rows.map((r) => r.imageId);
+
+  it('ends a set-aside when the flag changes, so an image flagged again is pending again', async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (303, 'u');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (67, 303, 'csam', 'Blocked'), (68, 303, 'csam', 'Blocked');
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
+        (67, 303, 'Dismissed', 1), (68, 303, 'Dismissed', 1);
+    `);
+    expect(await listed(303)).toEqual([]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 67`);
+    expect(await setAsideIds([67, 68])).toEqual([68]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 67`);
+    expect(await listed(303)).toEqual([67]);
+    expect(await pendingOf(303)).toBe(1);
+  });
+
+  it('keeps a set-aside through a write that leaves the flag as it was', async () => {
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam', "nsfwLevel" = 16 WHERE id = 68`);
+    expect(await setAsideIds([68])).toEqual([68]);
+    expect(await listed(303)).toEqual([67]);
+  });
+
+  it('leaves the other queues alone', async () => {
+    // A row on an image in another queue: the trigger keeps this from happening, the reads do not
+    // rely on it.
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (69, 303, 'minor', 'Scanned');
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
+        (69, 303, 'Dismissed', 1);
+    `);
+    const minorListed = async () =>
+      (
+        await getImageReviewQueue({
+          needsReview: 'minor',
+          browsingLevel: ALL_LEVELS,
+          userId: 303,
+          limit: 50,
+        })
+      ).items.map((i) => i.id);
+    const withRow = Number((await getImageReviewCounts()).minor);
+    expect(await minorListed()).toEqual([69]);
+
+    await db.exec(`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = 69`);
+    expect(Number((await getImageReviewCounts()).minor)).toBe(withRow);
   });
 
   it('shows every image while the table is missing', async () => {

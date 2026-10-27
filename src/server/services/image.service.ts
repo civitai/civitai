@@ -7847,6 +7847,12 @@ export async function reportCsamImages({
       where: { id: { in: imageIds } },
       data: { needsReview: 'csam' },
     });
+    // A new report puts a set-aside image back in the CSAM queue. The table is applied by hand, so
+    // a report made before it exists still goes through.
+    const [setAside] = await tx.$queryRaw<{ exists: boolean }[]>`
+      SELECT to_regclass('"CsamQueueSetAside"') IS NOT NULL AS exists`;
+    if (setAside?.exists)
+      await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
     // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
     // the uploader is not told.
     await tx.appeal.updateMany({

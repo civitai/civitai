@@ -17,3 +17,23 @@ CREATE TABLE "CsamQueueSetAside" (
 );
 
 CREATE INDEX "CsamQueueSetAside_userId_idx" ON "CsamQueueSetAside" ("userId");
+
+-- A changed flag ends a set-aside: the image left the queue or came back to it, so the next set-aside
+-- is a new decision. The moderation log keeps the old one.
+CREATE OR REPLACE FUNCTION csam_queue_set_aside_end() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM "CsamQueueSetAside" WHERE "imageId" = NEW."id";
+  RETURN NULL;
+END;
+$$;
+
+-- lock_timeout because CREATE TRIGGER locks "Image" against writes: better to fail fast than to queue
+-- behind a long transaction and block every write to the table.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+CREATE TRIGGER "Image_csam_queue_set_aside_end"
+  AFTER UPDATE OF "needsReview" ON "Image"
+  FOR EACH ROW
+  WHEN (OLD."needsReview" IS DISTINCT FROM NEW."needsReview")
+  EXECUTE FUNCTION csam_queue_set_aside_end();
+COMMIT;

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -145,11 +146,11 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"/.test(flat.text)) return 0;
+    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"/.test(flat.text)) return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal";
+    TRUNCATE "Image", "Appeal" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
@@ -388,5 +389,64 @@ describe('reportCsamImages', () => {
     } as never);
 
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+});
+
+describe('reportCsamImages and images set aside from the CSAM queue', () => {
+  const moderator = { id: 2, isModerator: true } as never;
+
+  beforeAll(async () => {
+    await holder.db.exec(`CREATE TABLE "CsamReport" (id serial PRIMARY KEY)`);
+    await holder.db.exec(
+      readFileSync(
+        new URL(
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+  });
+
+  beforeEach(async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...v: unknown[]) =>
+        (await run(Prisma.sql(strings, ...(v as never[])))).rows) as never
+    );
+    // REVIEW_FLAGGED already carries the CSAM flag, so reporting it changes nothing on the image.
+    await holder.db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES
+        (${REVIEW_FLAGGED}, 10, 'Dismissed', 1), (${DECIDED}, 9, 'Dismissed', 1);
+    `);
+  });
+
+  const setAsideIds = async () =>
+    (
+      await holder.db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" ORDER BY 1`
+      )
+    ).rows.map((r) => r.imageId);
+
+  it('puts a reported image back in the queue, and only that image', async () => {
+    await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+
+    expect(await setAsideIds()).toEqual([DECIDED]);
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+  });
+
+  it('still reports before the migration is applied', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" DISABLE TRIGGER "Image_csam_queue_set_aside_end";
+      ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway";
+    `);
+    try {
+      await reportCsamImages({ imageIds: [FLAGGED], user: moderator });
+      expect((await imageRow(FLAGGED)).needsReview).toBe('csam');
+    } finally {
+      await holder.db.exec(`
+        ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside";
+        ALTER TABLE "Image" ENABLE TRIGGER "Image_csam_queue_set_aside_end";
+      `);
+    }
   });
 });
