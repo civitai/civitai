@@ -4,7 +4,8 @@ import { articleModerationFloorText } from '@civitai/shared/rated-entity-sql';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
-import { deleteImagesByIds } from './image-deletion';
+import { deleteImageRows, finishImageDeletes } from './image-deletion';
+import { profilePictureUserIds } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
@@ -275,7 +276,9 @@ async function deleteArticle(id: number): Promise<void> {
       .execute()
   ).map((c) => c.imageId);
 
-  const coverId = await dbWrite.transaction().execute(async (trx): Promise<number | null> => {
+  // The orphaned images go in the same transaction, so a delete that cannot finish leaves the
+  // article and its images as they were, and can be retried.
+  const { rows, avatarUserIds } = await dbWrite.transaction().execute(async (trx) => {
     const article = await trx
       .selectFrom('Article')
       .select('coverId')
@@ -295,33 +298,34 @@ async function deleteArticle(id: number): Promise<void> {
       .execute();
     await trx.deleteFrom('Article').where('id', '=', id).execute();
 
-    return article.coverId;
-  });
+    // "Orphaned" means no remaining ImageConnection; a post membership (postId) does NOT keep an image alive.
+    const toDelete: number[] = [];
+    if (article.coverId) toDelete.push(article.coverId);
 
-  // "Orphaned" means no remaining ImageConnection; a post membership (postId) does NOT keep an image alive.
-  const toDelete: number[] = [];
-
-  if (coverId) toDelete.push(coverId);
-
-  const orphanCandidates = contentImageIds.filter((imageId) => imageId !== coverId);
-  if (orphanCandidates.length) {
-    const orphaned = await dbWrite
-      .selectFrom('Image')
-      .select('Image.id')
-      .where('Image.id', 'in', orphanCandidates)
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('ImageConnection')
-              .select('ImageConnection.imageId')
-              .whereRef('ImageConnection.imageId', '=', 'Image.id')
+    const orphanCandidates = contentImageIds.filter((imageId) => imageId !== article.coverId);
+    if (orphanCandidates.length) {
+      const orphaned = await trx
+        .selectFrom('Image')
+        .select('Image.id')
+        .where('Image.id', 'in', orphanCandidates)
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('ImageConnection')
+                .select('ImageConnection.imageId')
+                .whereRef('ImageConnection.imageId', '=', 'Image.id')
+            )
           )
         )
-      )
-      .execute();
-    toDelete.push(...orphaned.map((o) => o.id));
-  }
+        .execute();
+      toDelete.push(...orphaned.map((o) => o.id));
+    }
 
-  if (toDelete.length) await deleteImagesByIds(toDelete);
+    if (!toDelete.length) return { rows: null, avatarUserIds: [] };
+    const avatarUserIds = await profilePictureUserIds(toDelete).catch(() => []);
+    return { rows: await deleteImageRows(trx, toDelete), avatarUserIds };
+  });
+
+  if (rows) await finishImageDeletes(rows, avatarUserIds);
 }
