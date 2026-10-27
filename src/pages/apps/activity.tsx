@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  Collapse,
   Divider,
   Group,
   Loader,
@@ -29,7 +28,6 @@ import {
   IconShieldLock,
   IconTrash,
 } from '@tabler/icons-react';
-import type { inferRouterOutputs } from '@trpc/server';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
@@ -76,8 +74,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import type { AppRouter } from '~/server/routers';
 import { trpc } from '~/utils/trpc';
+import type { RouterOutput } from '~/types/router';
 
 /** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
  *  and it is `appBlocks || appBlocksPages`. See `canAccessAppsActivity`. */
@@ -614,12 +612,25 @@ export function ScopeGrantsPanel({ defaultOpened = false }: { defaultOpened?: bo
   );
 }
 
-type ActivityGrant = inferRouterOutputs<AppRouter>['blocks']['listMyScopeGrants'][number];
+type ActivityGrant = RouterOutput['blocks']['listMyScopeGrants'][number];
 
 function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpened: boolean }) {
   const [opened, { toggle }] = useDisclosure(defaultOpened);
   const panelId = `grant-permissions-${grant.appBlockId}`;
-  const count = grant.scopes.length;
+  const revoked = new Set(grant.revokedScopes ?? []);
+  const active = grant.scopes.filter((scope) => !revoked.has(scope)).length;
+  const countLabel = grant.grantWithheldAt
+    ? 'On hold'
+    : [
+        active === 0 && revoked.size === 0
+          ? 'No permissions listed'
+          : active === 1
+          ? '1 permission'
+          : `${active} permissions`,
+        revoked.size > 0 ? `${revoked.size} removed` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
   return (
     <Card withBorder padding="sm" radius="md" data-testid="apps-grant-card">
       <Stack gap="xs">
@@ -646,11 +657,7 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
             </Group>
             <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
               <Text size="xs" c="dimmed" data-testid="apps-grant-count">
-                {count === 0
-                  ? 'No permissions listed'
-                  : count === 1
-                  ? '1 permission'
-                  : `${count} permissions`}
+                {countLabel}
               </Text>
               <IconChevronDown
                 size={16}
@@ -662,7 +669,7 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
             </Group>
           </Group>
         </UnstyledButton>
-        <Collapse in={opened} id={panelId}>
+        <div id={panelId} hidden={!opened}>
           <Stack gap="xs">
             <Divider />
             {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
@@ -694,26 +701,26 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
                 on the UNFILTERED feed, so a link promising "what IT did" delivered what every
                 app did. The prose half is kept — the drawer shares that label and has no tab to
                 link to — and the link is deleted rather than narrowed. */}
-            {/* Only for an app the viewer has actually GRANTED the spend scope to —
-                `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
-                `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
-                the app may be granted). ⚠️ This sentence used to contrast the grant with "the
-                manifest"; that named the wrong set once the displayed list became the
-                intersection. The identical sentence in `AppPermissionsActivityDrawer` was
-                corrected and this sibling was missed. A budget on an app that cannot spend bounds
-                nothing, and the server would ignore the write. */}
-            {grant.spendScopeGranted ? (
-              <>
-                <Divider />
-                <AppBudgetControl
-                  appBlockId={grant.appBlockId}
-                  appName={grant.name}
-                  budget={grant.buzzBudgetPerDay}
-                />
-              </>
-            ) : null}
           </Stack>
-        </Collapse>
+        </div>
+        {/* Only for an app the viewer has actually GRANTED the spend scope to —
+            `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
+            `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
+            the app may be granted). ⚠️ This sentence used to contrast the grant with "the
+            manifest"; that named the wrong set once the displayed list became the
+            intersection. The identical sentence in `AppPermissionsActivityDrawer` was
+            corrected and this sibling was missed. A budget on an app that cannot spend bounds
+            nothing, and the server would ignore the write. */}
+        {grant.spendScopeGranted ? (
+          <>
+            <Divider />
+            <AppBudgetControl
+              appBlockId={grant.appBlockId}
+              appName={grant.name}
+              budget={grant.buzzBudgetPerDay}
+            />
+          </>
+        ) : null}
       </Stack>
     </Card>
   );

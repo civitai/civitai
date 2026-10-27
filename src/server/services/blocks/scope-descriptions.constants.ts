@@ -99,7 +99,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
 
 /** Short plain-language name per scope, shown as the row title on the viewer's permissions list. */
 export const SCOPE_PLAIN_TITLES: Record<string, string> = {
-  'user:read:self': 'See your username',
+  'user:read:self': 'See your username and account status',
   'models:read:self': 'See the model it sits on',
   'buzz:read:self': 'See your Buzz balance',
   'ai:write:budgeted': 'Run AI work with your Buzz',
@@ -108,7 +108,7 @@ export const SCOPE_PLAIN_TITLES: Record<string, string> = {
   'apps:storage:write': 'Save data for you',
   'apps:storage:shared:read': 'Read community data',
   'apps:storage:shared:write': 'Post to community data',
-  'apps:storage': 'Keep your data in the app',
+  'apps:storage': 'Store your data and read shared entries',
   'apps:storage:publish': 'Share entries with other users',
   'collections:read:self': 'Browse collections',
   'collections:write:self': 'Follow collections for you',

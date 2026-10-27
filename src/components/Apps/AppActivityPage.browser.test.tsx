@@ -646,14 +646,6 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
   });
 });
 
-async function renderWithGrantsExpanded() {
-  renderWithProviders(<AppActivityPage />);
-  await expect.element(page.getByTestId('apps-grant-toggle').first()).toBeInTheDocument();
-  document
-    .querySelectorAll<HTMLElement>('[data-testid="apps-grant-toggle"]')
-    .forEach((toggle) => toggle.click());
-}
-
 /**
  * The per-app daily Buzz limit on the Permissions panel.
  *
@@ -910,7 +902,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('Save sends the new limit for THAT app, and widens no scope', async () => {
-    await renderWithGrantsExpanded();
+    renderWithProviders(<AppActivityPage />);
     await page.getByTestId('app-budget-edit').click();
     const input = page.getByTestId('app-budget-input');
     await input.clear();
@@ -929,7 +921,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('Remove limit sends an EXPLICIT null (the clear branch), not an omitted key', async () => {
-    await renderWithGrantsExpanded();
+    renderWithProviders(<AppActivityPage />);
     await page.getByTestId('app-budget-edit').click();
     await page.getByTestId('app-budget-clear').click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
@@ -947,7 +939,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('an out-of-range value disables Save rather than sending one the server refuses', async () => {
-    await renderWithGrantsExpanded();
+    renderWithProviders(<AppActivityPage />);
     await page.getByTestId('app-budget-edit').click();
     const input = page.getByTestId('app-budget-input');
     await input.clear();
@@ -957,7 +949,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('warns when the entered limit is too low to fund a generation', async () => {
-    await renderWithGrantsExpanded();
+    renderWithProviders(<AppActivityPage />);
     await page.getByTestId('app-budget-edit').click();
     // 750 (the stored value the editor opens on) is fundable → no warning.
     expect(page.getByTestId('app-budget-low-warning').elements()).toHaveLength(0);
@@ -1155,24 +1147,44 @@ describe('Apps & permissions — each app is a collapsible row', () => {
 
   test('starts collapsed with a permission count, and the toggle opens the plain-language list', async () => {
     renderWithProviders(<AppActivityPage />);
-    const toggle = page.getByTestId('apps-grant-toggle').first();
+    // Spender is the fixture app holding a described, titled scope (`ai:write:budgeted`).
+    const toggle = page.getByTestId('apps-grant-toggle').nth(1);
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect
-      .element(page.getByTestId('apps-grant-count').first())
-      .toHaveTextContent(/permission/);
+    await expect.element(toggle).toHaveTextContent('1 permission');
     const panel = document.getElementById(
       toggle.element().getAttribute('aria-controls') ?? 'missing'
-    );
+    ) as HTMLElement;
     expect(panel, 'the toggle points at no panel').not.toBeNull();
-    expect((panel as HTMLElement).offsetHeight).toBe(0);
+    expect(panel.offsetHeight).toBe(0);
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect.element(page.getByTestId('block-scope-title').first()).toBeVisible();
-    // The developer id stays as the secondary badge beside the plain title.
-    await expect.element(page.getByTestId('block-scope-id').first()).toBeVisible();
+    await expect.poll(() => panel.offsetHeight).toBeGreaterThan(0);
+    expect(panel.querySelector('[data-testid="block-scope-title"]')?.textContent).toBe(
+      'Run AI work with your Buzz'
+    );
+    expect(panel.querySelector('[data-testid="block-scope-id"]')?.textContent).toBe(
+      'ai:write:budgeted'
+    );
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel.offsetHeight).toBe(0);
+  });
+
+  test('rows open independently, and an untitled scope falls back to its id alone', async () => {
+    renderWithProviders(<AppActivityPage />);
+    const toggles = page.getByTestId('apps-grant-toggle');
+    await toggles.nth(0).click();
+    await toggles.nth(1).click();
+    await expect.element(toggles.nth(0)).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(toggles.nth(1)).toHaveAttribute('aria-expanded', 'true');
+    // Demo App's `read:profile` has no plain title; Spender's scope does.
+    const titlesIn = (toggle: HTMLElement) =>
+      document
+        .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
+        ?.querySelectorAll('[data-testid="block-scope-title"]').length;
+    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toBe(0);
+    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toBe(1);
   });
 });
