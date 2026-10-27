@@ -1677,6 +1677,40 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   const inputs = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ id: String(i + 1), imageUrl: 'u' }));
 
+  // The orchestrator owners asked for the quota to be ignored while its value is provisional;
+  // honoured, a reported r=0 shrank every workflow to one step.
+  test('with the quota not honoured, workflows keep their full size and the cap its configured value; a 429 still holds', async () => {
+    let clock = 0;
+    const sizes: number[] = [];
+    const sleeps: number[] = [];
+    let calls = 0;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 500,
+      maxRetries: 2,
+      batchSize: 32,
+      priority: 'low',
+      honorQuota: false,
+      now: () => clock,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        if (++calls === 2)
+          return new Response('', { status: 429, headers: { 'Retry-After': '7' } });
+        sizes.push(stepIds(init).length);
+        return ok(init, 0);
+      }) as unknown as typeof fetch,
+    });
+    const result = await e.embed(inputs(128));
+    expect(result.vectors.size).toBe(128);
+    expect(sizes).toEqual([32, 32, 32, 32]);
+    expect(e.budget.capacity).toBe(500);
+    expect(Math.max(...sleeps)).toBeGreaterThanOrEqual(7000);
+  });
+
   test('parses the RateLimit and RateLimit-Policy headers', () => {
     expect(parseRateLimitHeader(POLICY)).toEqual(
       new Map([
