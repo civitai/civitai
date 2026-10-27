@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
  * `/api/mod/user/delete` — the moderator path to a data-subject erasure request.
@@ -43,19 +45,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => {
-    // The REAL mapper, not a hand-written table. A table here has to be extended every time the
-    // handler learns a new refusal code, and the failure when it is not is a 500 in a test asserting
-    // a 4xx — which reads as a bug in the endpoint.
-    const status = e instanceof TRPCError ? getHTTPStatusCodeFromError(e) : 500;
-    return res
-      .status(status)
-      .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
-  },
+// The REAL envelope: the moderator app reads the refusal out of exactly this body.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
 }));
 
 const deleteUser = vi.fn(async () => ({}));
@@ -72,7 +64,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 import handler from '~/pages/api/mod/user/delete';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
@@ -506,6 +498,37 @@ describe('user.delete — an account under a legal hold', () => {
     expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
     expect(trackModActivity).not.toHaveBeenCalled();
     expect(mockUserActivity).not.toHaveBeenCalled();
+  });
+
+  /** The moderator app's body reader and refusal texts, loaded by path across the app boundary. */
+  const moderatorSide = async () => {
+    const lib = path.resolve(__dirname, '../../../../../..', 'apps/moderator/src/lib');
+    const { restErrorReason } = (await import(
+      /* @vite-ignore */ `${lib}/server/rest-error-reason.ts`
+    )) as { restErrorReason: (body: unknown, status: number) => string | null };
+    const texts = (await import(/* @vite-ignore */ `${lib}/legal-hold.ts`)) as Record<
+      string,
+      string
+    >;
+    return { restErrorReason, ...texts };
+  };
+
+  it.each([
+    ['a hold', () => new LegalHoldError(), 'LEGAL_HOLD_REFUSAL'],
+    [
+      'a hold status it could not read',
+      () => new LegalHoldUnconfirmedError(),
+      'HOLD_UNKNOWN_REFUSAL',
+    ],
+  ])('refuses %s with the text the moderator app maps it by', async (_, error, refusal) => {
+    deleteUser.mockRejectedValueOnce(error());
+    const moderator = await moderatorSide();
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(moderator[refusal]).toEqual(expect.any(String));
+    expect(moderator.restErrorReason(body, status)).toBe(moderator[refusal]);
   });
 
   // THE CONTROL: any other failure is not reported as a hold.
