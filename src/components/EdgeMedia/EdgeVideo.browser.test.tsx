@@ -86,24 +86,48 @@ describe('EdgeVideo — only the frontmost layer plays', () => {
     function Detail() {
       return <EdgeVideo src={SRC} autoPlay />;
     }
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     renderWithProviders(<DialogProvider />);
     dialogStore.trigger({ id: 'imageDetail_1', component: Detail, type: 'routed-dialog' });
     await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(1));
     dialogStore.trigger({ id: 'imageDetail_2', component: () => null, type: 'routed-dialog' });
-    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(2));
+    await vi.waitFor(() => expect(pause).toHaveBeenCalled());
 
     dialogStore.closeById('imageDetail_2');
 
     await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    pause.mockRestore();
   });
 
   test('a player on the page plays while no dialog is open, and again after one closes', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     renderWithProviders(<EdgeVideo src={SRC} autoPlay />);
     await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(1));
 
     dialogStore.trigger({ id: 'imageDetail_1', component: () => null, type: 'routed-dialog' });
+    await vi.waitFor(() => expect(pause).toHaveBeenCalled());
     dialogStore.closeById('imageDetail_1');
 
     await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    pause.mockRestore();
+  });
+});
+
+describe('EdgeVideo — standby', () => {
+  test('an on-screen slide that is not the current one never plays', async () => {
+    // The carousel keeps its neighbours mounted, and one that is still partly in view mid-slide
+    // used to start itself through the in-view check.
+    renderWithProviders(<EdgeVideo src={SRC} options={{ anim: true }} standby />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    // long enough for the in-view observer to have reported (frames, not the faked timers)
+    for (let i = 0; i < 10; i++) await new Promise(requestAnimationFrame);
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  test('the current slide, same placement, does play', async () => {
+    renderWithProviders(<EdgeVideo src={SRC} options={{ anim: true }} />);
+
+    await vi.waitFor(() => expect(play).toHaveBeenCalled());
   });
 });

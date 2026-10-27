@@ -52,6 +52,8 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
+  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  standby?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -94,6 +96,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       imageId,
       hoverPlay = true,
+      standby = false,
       onLoad,
       onError,
       onLoadedData,
@@ -321,7 +324,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) {
+      if (!standby && isCurrentStack && (canPlay || props.autoPlay)) {
         // Coming back from the detail dialog, this element is still paused where it was left;
         // the other player kept the position moving.
         const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
@@ -338,7 +341,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, props.autoPlay, isSelfFullscreen, resumeId]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
