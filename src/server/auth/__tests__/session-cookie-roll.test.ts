@@ -8,11 +8,6 @@ const h = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   refresh: vi.fn(),
 }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { set: vi.fn() },
-  REDIS_SYS_KEYS: { SESSION: { LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock' } },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-}));
 vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
   return {
@@ -26,7 +21,6 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   };
 });
 vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
-vi.mock('~/env/server', () => ({ env: { NEXTAUTH_SECRET: undefined, WEBHOOK_TOKEN: 'wh' } }));
 vi.mock('../bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
 
 const HOST = '__Host-civ-token';
