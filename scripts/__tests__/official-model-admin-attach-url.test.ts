@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { attachUrl, detachUrl, sameObjectKey } = await import(
+const { attachUrl, detachUrl, verifyUrl, sameObjectKey } = await import(
   '../../.claude/skills/official-model-admin/attach-url.mjs'
 );
 
@@ -38,7 +38,8 @@ function setup({
   const call = vi.fn(async (procedure: string, input: Record<string, unknown>) => {
     const id = input.id as number;
     if (procedure === 'modelFile.getByVersionId') return { files: cached[id] ?? files[id] ?? [] };
-    if (procedure === 'modelVersion.getByIdForEdit') return { id, files: files[id] ?? [] };
+    if (procedure === 'modelVersion.getByIdForEdit')
+      return { id, model: { id: id + 100 }, files: files[id] ?? [] };
     if (procedure === 'modelFile.create') {
       const created = { id: 99, ...input };
       (files[input.modelVersionId as number] ??= []).push(created);
@@ -193,6 +194,55 @@ describe('attach-url', () => {
     });
     expect(await attachUrl({ ...opts, writable: true }, t.deps)).toBe(true);
     expect(t.created()).toHaveLength(0);
+  });
+});
+
+describe('attach-url --storage-registration-follows', () => {
+  const b2Served = { storageHost: 'b2.civitai.test' };
+  const flagged = { ...opts, storageRegistrationFollows: true };
+  const PENDING = 'PENDING REGISTRATION file 99 version 200 model 300 source 11';
+
+  it('creates the file with the identical url and prints the line the registration job reads', async () => {
+    const t = setup({ ...b2Served, files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
+    expect(await attachUrl({ ...flagged, writable: true }, t.deps)).toBe(true);
+    expect(t.created()[0][1]).toMatchObject({ modelVersionId: 200, url: SOURCE_URL });
+    expect(t.lines).toContain(PENDING);
+  });
+
+  it('dry run creates nothing', async () => {
+    const t = setup({ ...b2Served, files: { 100: [SOURCE] }, stored: { '100:11': WEIGHTS } });
+    expect(await attachUrl({ ...flagged, writable: false }, t.deps)).toBe(true);
+    expect(t.created()).toHaveLength(0);
+    expect(t.lines).not.toContain(PENDING);
+  });
+
+  it('a re-run before registration creates no second file and prints the line again', async () => {
+    const t = setup({
+      ...b2Served,
+      files: { 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL }] },
+      stored: { '100:11': WEIGHTS },
+    });
+    expect(await attachUrl({ ...flagged, writable: true }, t.deps)).toBe(true);
+    expect(t.created()).toHaveLength(0);
+    expect(t.lines).toContain(PENDING);
+  });
+});
+
+describe('verify-url', () => {
+  const vOpts = { file: 99, version: 200, fromFile: 11, fromVersion: 100 };
+  const files = () => ({ 100: [SOURCE], 200: [{ id: 99, url: SOURCE_URL }] });
+
+  it('VERIFIED once the copy downloads the same bytes', async () => {
+    const t = setup({ files: files(), stored: { '100:11': WEIGHTS, '200:99': WEIGHTS } });
+    expect(await verifyUrl(vOpts, t.deps)).toBe(true);
+    expect(t.lines).toContain('VERIFIED file 99 version 200');
+    expect(t.call).not.toHaveBeenCalledWith('modelFile.create', expect.anything());
+  });
+
+  it('NOT VERIFIED while the copy does not download', async () => {
+    const t = setup({ files: files(), stored: { '100:11': WEIGHTS } });
+    expect(await verifyUrl(vOpts, t.deps)).toBe(false);
+    expect(t.lines).toContain('NOT VERIFIED file 99 version 200');
   });
 });
 
