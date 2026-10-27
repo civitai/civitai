@@ -247,6 +247,36 @@ describe('createSpokeGuard (cookie mode)', () => {
       expect(onRollFailed).toHaveBeenCalledWith('declined');
     });
 
+    it('concurrent requests carrying the same old token share one hub refresh', async () => {
+      const fresh = aged(0);
+      const pending: Array<(v: { token: string }) => void> = [];
+      const refresh = vi.fn(() => new Promise<{ token: string }>((r) => pending.push(r)));
+      const guard = guardOf({ sessionTokenClient: { refresh } });
+      const old = aged(2);
+      const checks = Array.from({ length: 5 }, () => guard.check(`${HOST}=${old}`, PAGE));
+      // Let every request reach the roll before the hub answers.
+      await new Promise((r) => setTimeout(r, 0));
+      for (const release of pending) release({ token: fresh });
+      const results = await Promise.all(checks);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      for (const r of results) {
+        expect((r as { setCookies: string[] }).setCookies[0]).toMatch(`${HOST}=${fresh};`);
+      }
+    });
+
+    it('a failed refresh is not reused: the next request asks the hub again', async () => {
+      const refresh = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('hub down'))
+        .mockResolvedValueOnce({ token: aged(0) });
+      const guard = guardOf({ sessionTokenClient: { refresh } });
+      const old = aged(2);
+      await expect(guard.check(`${HOST}=${old}`, PAGE)).rejects.toThrow('hub down');
+      const r = await guard.check(`${HOST}=${old}`, PAGE);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect((r as { setCookies: string[] }).setCookies[0]).toMatch(/^__Host-civ-token=/);
+    });
+
     it('shared mode still rolls a host-only session it falls back to (after a rollback)', async () => {
       delete process.env.AUTH_SESSION_COOKIE_MODE;
       const refresh = vi.fn(async () => ({ token: aged(0) }));
