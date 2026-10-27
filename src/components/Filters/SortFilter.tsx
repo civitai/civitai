@@ -29,6 +29,8 @@ type SortFilterComponentProps = {
   type: Exclude<FilterSubTypes, 'changelogs' | 'auctions'>;
   ignoreNsfwLevel?: boolean;
   options?: { label: SortOption; value: SortOption }[];
+  /** Only the sort icon, for a tight row. */
+  iconOnly?: boolean;
 } & Omit<ButtonProps, 'children' | 'type' | 'style'>;
 
 type SortFilterProps = StatefulProps | DumbProps;
@@ -83,7 +85,7 @@ function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...pr
 
   return (
     <SelectMenuV2
-      label={resolved}
+      label={props.iconOnly ? `Sort: ${resolved}` : resolved}
       onClick={onChange}
       value={resolved}
       options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) =>

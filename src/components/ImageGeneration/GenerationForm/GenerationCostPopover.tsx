@@ -202,13 +202,14 @@ function BuzzValue({ amount, type }: { amount: number | string; type?: BuzzSpend
   );
 }
 
-function GenerationCostPopoverDetail({
+export function GenerationCostPopoverDetail({
   workflowCost,
   readOnly,
   hideCreatorTip,
   hideCivitaiTip,
   buzzAccountType,
-}: Props) {
+  withTotal = true,
+}: Props & { withTotal?: boolean }) {
   const { creatorTip, civitaiTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
@@ -367,11 +368,13 @@ function GenerationCostPopoverDetail({
         </>
       )}
 
-      <CostRow
-        variant="total"
-        label="Total"
-        value={<BuzzValue amount={grandTotal} type={buzzAccountType} />}
-      />
+      {withTotal && (
+        <CostRow
+          variant="total"
+          label="Total"
+          value={<BuzzValue amount={grandTotal} type={buzzAccountType} />}
+        />
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { DialogProvider, useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
-import { resetHistoryLayers } from '~/utils/history-layers';
+import { historyLayersSettled, resetHistoryLayers } from '~/utils/history-layers';
 
 function TestDialog() {
   const dialog = useDialogContext();
@@ -23,7 +23,8 @@ const openDialog = async () => {
 };
 
 describe('DialogProvider and Back', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await historyLayersSettled();
     resetHistoryLayers();
     dialogStore.closeAll();
   });

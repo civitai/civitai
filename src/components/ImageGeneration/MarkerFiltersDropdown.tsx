@@ -103,6 +103,7 @@ export function DumbMarkerFiltersDropdown({
   isFeed,
   text,
   hideMediaTypes = false,
+  iconOnly,
   ...buttonProps
 }: Props & {
   filters: Partial<GenerationFilterSchema>;
@@ -149,7 +150,12 @@ export function DumbMarkerFiltersDropdown({
     : { withinPortal: false };
 
   const button = (
-    <FilterButton icon={IconFilter} active={opened} onClick={() => setOpened((o) => !o)}>
+    <FilterButton
+      icon={IconFilter}
+      active={opened}
+      iconOnly={iconOnly}
+      onClick={() => setOpened((o) => !o)}
+    >
       Filters
     </FilterButton>
   );
@@ -328,4 +334,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   isFeed?: boolean;
   text?: ReactNode;
   hideMediaTypes?: boolean;
+  /** Only the filter icon, for a tight row. */
+  iconOnly?: boolean;
 };

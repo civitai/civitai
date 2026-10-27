@@ -12,6 +12,8 @@ import Router from 'next/router';
  */
 
 const LAYER_KEY = '__layer';
+/** How many layer entries sit under this one, itself included; entries left from earlier count too. */
+const DEPTH_KEY = '__layerDepth';
 
 type Layer = { id: number; close: () => void };
 
@@ -30,11 +32,13 @@ function listen() {
   if (listening) return;
   listening = true;
   window.addEventListener('popstate', (e) => handleHistoryPop(e.state));
-  // A navigation leaves the layers' entries behind it; they no longer need going back over.
-  Router.events.on('routeChangeStart', () => {
-    layers = [];
-    layerPath = undefined;
-  });
+  Router.events.on('routeChangeStart', forgetHistoryLayers);
+}
+
+/** A navigation leaves the layers' entries behind it; they no longer need going back over. */
+export function forgetHistoryLayers() {
+  layers = [];
+  layerPath = undefined;
 }
 
 /** Opens a layer above the current entry. `close` runs when Back pops it. */
@@ -44,8 +48,15 @@ export function openHistoryLayer(close: () => void) {
   const layer = { id: ++nextId, close };
   layers.push(layer);
   const state = history.state ?? {};
+  // A key of its own: ClientHistoryStore indexes entries by `state.key`, and a copy of the page's
+  // key would read as the page's own entry when Back returns to it.
   history.pushState(
-    { ...state, [LAYER_KEY]: layer.id, key: `${state.key ?? 'layer'}~${layer.id}` },
+    {
+      ...state,
+      [LAYER_KEY]: layer.id,
+      [DEPTH_KEY]: historyLayerDepth() + 1,
+      key: `${state.key ?? 'layer'}~${layer.id}`,
+    },
     ''
   );
   return layer.id;
@@ -93,11 +104,33 @@ function applyPop(state: unknown) {
   if (id > layers[layers.length - 1].id) return true;
   const index = layers.findIndex((layer) => layer.id === id);
   while (layers.length > index + 1) layers.pop()?.close();
+  // An entry left behind by a layer that is gone (the page was left with it open, then returned to)
+  // has nothing to show: step past it, so the next Back leaves the page.
+  if (id && index < 0) {
+    ownPops++;
+    history.back();
+  }
   return true;
 }
 
+/** How many layer entries sit above the page's own entry, including ones left from earlier. */
+export function historyLayerDepth() {
+  return Number(history.state?.[DEPTH_KEY] ?? 0);
+}
+
+/** For tests: the layers open now. */
 export function countHistoryLayers() {
   return layers.length;
+}
+
+/** For tests: resolves once the layers closed so far have gone back over their entries. */
+export async function historyLayersSettled() {
+  // Closing from the UI goes back a tick later (useHistoryLayer defers it), then waits for the pop.
+  await new Promise((resolve) => setTimeout(resolve));
+  while (ownPops > 0)
+    await new Promise((resolve) =>
+      addEventListener('popstate', () => setTimeout(resolve), { once: true })
+    );
 }
 
 /** For tests: forget every layer without touching history. */

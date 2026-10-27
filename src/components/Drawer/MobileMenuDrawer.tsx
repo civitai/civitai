@@ -1,6 +1,8 @@
 import type { DrawerProps } from '@mantine/core';
 import { Drawer } from '@mantine/core';
+import { useHistoryLayer } from '~/hooks/useHistoryLayer';
 import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
 /**
  * The bottom sheet every menu-shaped thing opens into on touch: sort, filters, the
@@ -18,8 +20,15 @@ import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
  *   `mobileMenuSheetZIndex`. Mantine's default of 200 puts the sheet behind the
  *   fullscreen generation panel and behind routed dialogs, where the tap registers
  *   and nothing appears.
+ *
+ * Over the mobile generator, Back closes it before it closes the generator.
  */
 export function MobileMenuDrawer({ children, styles, ...props }: DrawerProps) {
+  useHistoryLayer(
+    props.opened,
+    props.onClose,
+    useMobileGeneratorStore((state) => state.showing)
+  );
   return (
     <Drawer
       position="bottom"

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import type * as ResourceItemContentModule from './ResourceItemContent';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -87,10 +88,8 @@ vi.mock('~/components/Dialog/triggers/resource-select', () => ({
   openResourceSelectModal: vi.fn(),
 }));
 
-vi.mock('./ResourceItemContent', async () => {
-  const actual = await vi.importActual<typeof import('./ResourceItemContent')>(
-    './ResourceItemContent'
-  );
+vi.mock('./ResourceItemContent', async (importOriginal) => {
+  const actual = await importOriginal<typeof ResourceItemContentModule>();
   return {
     // Keep the real pure helpers (getResourceStatus/getStatusClasses/
     // isResourceDisabled) — ResourceSelectInput imports them and they're pure
@@ -309,5 +308,54 @@ describe('ResourceSelectInput (required-context-backed)', () => {
 
     expect(getResourceData).toHaveBeenCalledWith(200);
     expect(onChange).toHaveBeenCalledWith(v200);
+  });
+
+  test('three versions stay buttons', async () => {
+    useResourceDataMock.mockReturnValue(useResourceDataResult({ data: makeResource({ id: 100 }) }));
+    renderWithProviders(
+      <ResourceSelectInput
+        value={{ id: 100 }}
+        onChange={vi.fn()}
+        versions={[
+          { label: 'Ver A', value: 100 },
+          { label: 'Ver B', value: 200 },
+          { label: 'Ver C', value: 300 },
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'Ver C', exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: 'Version' })).not.toBeInTheDocument();
+  });
+
+  test('past three versions the version buttons become a select', async () => {
+    const v400 = makeResource({ id: 400 });
+    const getResourceData = vi.fn((id: number) => (id === 400 ? v400 : undefined));
+    contextMock.mockReturnValue(makeContext({ getResourceData }));
+    useResourceDataMock.mockReturnValue(useResourceDataResult({ data: makeResource({ id: 100 }) }));
+    const onChange = vi.fn();
+
+    renderWithProviders(
+      <ResourceSelectInput
+        value={{ id: 100 }}
+        onChange={onChange}
+        versions={[
+          { label: 'Ver A', value: 100 },
+          { label: 'Ver B', value: 200 },
+          { label: 'Ver C', value: 300 },
+          { label: 'Ver D', value: 400 },
+        ]}
+      />
+    );
+
+    const select = page.getByRole('textbox', { name: 'Version' });
+    await expect.element(select).toHaveValue('Ver A');
+    await expect
+      .element(page.getByRole('button', { name: 'Ver B', exact: true }))
+      .not.toBeInTheDocument();
+    await select.click();
+    await page.getByRole('option', { name: 'Ver D' }).click();
+    expect(onChange).toHaveBeenCalledWith(v400);
   });
 });

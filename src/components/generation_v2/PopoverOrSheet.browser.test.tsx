@@ -7,6 +7,8 @@ import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import type { GeneratorLayout } from '~/hooks/useMobileGenerator';
 import type * as MobileGenerator from '~/hooks/useMobileGenerator';
+import { historyLayersSettled, resetHistoryLayers } from '~/utils/history-layers';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
 // The layout comes from the flag and media queries, which the test browser can't vary.
 let layout: GeneratorLayout = 'desktop';
@@ -47,8 +49,11 @@ const openPicker = async (narrow?: 'sheet' | 'fullscreen') => {
 };
 
 describe('PopoverOrSheet', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await historyLayersSettled();
+    resetHistoryLayers();
     layout = 'desktop';
+    useMobileGeneratorStore.setState({ showing: false });
   });
 
   test('opens a popover on desktop', async () => {
@@ -75,6 +80,7 @@ describe('PopoverOrSheet', () => {
 
   test('Back closes the sheet in the mobile generator', async () => {
     layout = 'mobile';
+    useMobileGeneratorStore.setState({ showing: true });
     // An entry of the test page's own under the layer: without the layer, Back fails the test here
     // instead of leaving the page.
     history.pushState(history.state, '');

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as TrpcModule from '~/utils/trpc';
 
 // ---------------------------------------------------------------------------
 // Module mocks — the store transitively imports trpc + several other zustand
@@ -12,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // `fetchGenerationData` is the seam — tests override it directly via
 // vi.mock returning a controllable Promise per test.
 const fetchMock = vi.fn();
-vi.mock('~/utils/trpc', () => ({
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpcVanilla: {
     generation: {
       getGenerationData: {
@@ -50,6 +52,8 @@ vi.mock('~/store/remix.store', () => ({
 // Imported after mocks are declared above (vitest hoists vi.mock calls).
 import { useGenerationGraphStore, withExternalFetch } from '~/store/generation-graph.store';
 import { remixStore } from '~/store/remix.store';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
 function resetStore() {
   useGenerationGraphStore.setState({
@@ -481,5 +485,28 @@ describe('useGenerationGraphStore — funnel attribution', () => {
     ).rejects.toThrow('engine lookup failed');
 
     expect(useGenerationGraphStore.getState().loading).toBe(false);
+  });
+});
+
+describe('setData on the /generate page', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('location', { pathname: '/generate' });
+    vi.mocked(useGenerationPanelStore.setState).mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useMobileGeneratorStore.setState({ showing: false });
+  });
+
+  it('opens the form in the mobile generator (Remix from its results)', () => {
+    useMobileGeneratorStore.setState({ showing: true });
+    useGenerationGraphStore.getState().setData({ params: {}, resources: [], runType: 'remix' });
+    expect(useGenerationPanelStore.setState).toHaveBeenCalledWith({ view: 'generate' });
+  });
+
+  it('leaves the desktop page alone, where the form is always on screen', () => {
+    useGenerationGraphStore.getState().setData({ params: {}, resources: [], runType: 'remix' });
+    expect(useGenerationPanelStore.setState).not.toHaveBeenCalledWith({ view: 'generate' });
   });
 });

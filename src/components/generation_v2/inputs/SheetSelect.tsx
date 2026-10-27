@@ -8,10 +8,10 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { IconCheck, IconChevronDown, IconSearch } from '@tabler/icons-react';
-import clsx from 'clsx';
+import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
+import { SheetOption } from '~/components/Drawer/SheetOption';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 
@@ -74,24 +74,15 @@ function SelectInSheet({
   const row = (option: ComboboxItem) => {
     const checked = option.value === value;
     return (
-      <button
+      <SheetOption
         key={option.value}
-        type="button"
         role="option"
-        aria-selected={checked}
+        selected={checked}
         disabled={option.disabled}
         onClick={() => choose(option)}
-        className={clsx(
-          'flex min-h-12 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-base',
-          'disabled:opacity-50',
-          checked ? 'bg-blue-0 dark:bg-dark-5' : 'active:bg-gray-1 dark:active:bg-dark-6'
-        )}
       >
-        <span className="min-w-0 flex-1">
-          {renderOption ? renderOption({ option, checked }) : option.label}
-        </span>
-        {checked && <IconCheck size={18} className="shrink-0 text-blue-6" />}
-      </button>
+        {renderOption ? renderOption({ option, checked }) : option.label}
+      </SheetOption>
     );
   };
 

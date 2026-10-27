@@ -2,7 +2,6 @@ import type { PopoverDropdownProps, PopoverProps } from '@mantine/core';
 import { Modal, Popover, Text } from '@mantine/core';
 import type { ReactElement, ReactNode } from 'react';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
-import { useHistoryLayer } from '~/hooks/useHistoryLayer';
 import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 
@@ -48,8 +47,6 @@ export function PopoverOrSheet({
   dropdownProps,
 }: PopoverOrSheetProps) {
   const surface = usePickerSurface(narrow);
-  // In the mobile generator Back closes the sheet; the legacy surfaces keep today's behaviour.
-  useHistoryLayer(opened, onClose, useGeneratorLayout() === 'mobile');
   const content = typeof children === 'function' ? children(surface) : children;
 
   if (surface === 'popover') {

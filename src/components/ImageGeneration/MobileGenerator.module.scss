@@ -1,12 +1,14 @@
-// The generator on a phone. Sized to the visual viewport (set by MobileGenerator), so the open
-// form's footer sits above the iOS keyboard instead of under it.
+// The generator on a phone. Its bottom edge rises with the on-screen keyboard (set by
+// MobileGenerator), so the open form's footer sits above it instead of under it.
 .root {
-  --sheet-peek: calc(72px + var(--safe-area-inset-bottom, 0px));
+  // The closed sheet shows its title row: 48px tall, plus its top border.
+  --sheet-peek: calc(49px + var(--safe-area-inset-bottom, 0px));
 
   position: fixed;
-  inset-inline: 0;
-  top: var(--generator-top, 0px);
-  height: var(--generator-height, 100dvh);
+  inset: 0;
+  bottom: var(--generator-keyboard, 0px);
+  // Fixed, so it pays its own inset: the header stays clear of the status bar.
+  padding-top: var(--safe-area-inset-top, 0px);
   z-index: 210;
   display: flex;
   flex-direction: column;
@@ -16,16 +18,36 @@
 
 // Header and results are their own stacking contexts, so nothing in them (Mantine's Indicator
 // sits at z-index 200) shows through the sheet.
+// It folds away while the results scroll down: its one row collapses to nothing.
 .header {
   position: relative;
   z-index: 0;
   flex: none;
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  transition: grid-template-rows 0.2s ease;
+
+  &[data-hidden] {
+    grid-template-rows: 0fr;
+    border-bottom-width: 0;
+  }
+}
+
+// What folds: no padding of its own, since a fold can shrink content to 0 but never padding.
+.headerFold {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.headerRow {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
   min-height: 56px;
   padding-inline: 8px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
 // The closed sheet covers the bottom of the results, so they end above it.
@@ -38,8 +60,8 @@
   padding-bottom: var(--sheet-peek);
 }
 
-// The open sheet stops short of the top: the dimmed screen above it shows it is a layer that
-// goes away, and tapping that strip closes it.
+// Dims the results behind the open sheet; visible through the status-bar inset and when the sheet is
+// dragged down.
 .scrim {
   position: absolute;
   inset: 0;
@@ -51,14 +73,14 @@
 
   &[data-visible] {
     opacity: 1;
-    pointer-events: auto;
   }
 }
 
 .sheet {
   position: absolute;
   inset-inline: 0;
-  top: 40px;
+  // Open, it fills the screen below the status bar.
+  top: var(--safe-area-inset-top, 0px);
   bottom: 0;
   z-index: 20;
   display: flex;
@@ -73,6 +95,8 @@
 
   &[data-expanded] {
     transform: translateY(var(--sheet-drag, 0px));
+    // Full screen when open, so square corners.
+    border-radius: 0;
   }
 
   &[data-dragging] {
@@ -84,24 +108,12 @@
   }
 }
 
-// Only the handle and title row drag the sheet; the form body scrolls.
+// Only the head drags the sheet (touch-action: none); the form body scrolls.
 .head {
   flex: none;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-}
-
-.grab {
-  width: 48px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--mantine-color-gray-5);
-}
-
-// The closed bar's handle sits above its summary line.
-.grabAbove {
-  margin: 10px auto 2px;
 }
 
 .body {

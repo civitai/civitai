@@ -7,7 +7,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEffect } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-export function openChallengeInvitation(challengeIds: number[]) {
+function openChallengeInvitation(challengeIds: number[]) {
   dialogStore.trigger({
     component: ChallengeInvitation,
     props: { onClose: () => dismissChallenges(challengeIds) },

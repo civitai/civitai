@@ -1,7 +1,7 @@
 # Mobile generator
 
-> **Status: phases 1–2 committed and phase 3 built on `feat/mobile-generator`, checked on an emulated
-> Pixel 5; real-device check pending. Phase 4 not started.**
+> **Status: phases 1–4 committed on `feat/mobile-generator` and in review as one PR, checked on an
+> emulated Pixel 5 and in a desktop browser; the end-to-end test and real devices still to do.**
 >
 > **Closes when** the `mobileGenerator` flag is on for everyone, the generator on a phone opens on
 > the queue with the form as a bottom sheet, the `feat/mobile-generator` PR is merged to `main`, and every phase's
@@ -30,25 +30,33 @@ Settled in review of the mockups (private artifacts; the "Sheet Generator" is th
 direction). Applies on phones, by the phone rule below, held upright or sideways; everything else
 keeps today's layout.
 
-- **The queue is the screen.** Header: a menu button, "Generator" with the queue count, and Close.
-  The menu holds daily challenges, presets and the tour. No Generate / Queue / Feed tabs.
-- **Feed becomes a density toggle** on the queue (Batches or Grid). Same outputs, filters,
+- **The queue is the screen.** Header, one 56px row: the desktop daily-challenges button
+  (`ChallengeIndicator`), "Generator" with the queue count, the Batches/Grid toggle, sort and
+  filters as icons, and Close. It folds away while the results scroll down and comes back on the
+  way up or near the top; while images are selected it is their actions instead, and stays.
+  Presets act on the form, so they sit in the form's title row (a product decision). No Generate /
+  Queue / Feed tabs.
+- **Feed becomes a density toggle** in the header (Batches or Grid). Same outputs, filters,
   selection, bulk actions and lightbox as today's Feed.
 - **The form is a bottom sheet** with two states:
-  - _Closed:_ a one-line summary bar over the queue (workflow, prompt, model, ratio, quantity).
-  - _Open:_ the full form under a title row (workflow name, a labelled Reset button, collapse
-    chevron), scrolling inside the sheet, with the footer docked at its bottom.
+  - _Closed:_ its title row over the queue (workflow name, up chevron), without the
+    form's own actions (a product decision).
+  - _Open:_ full screen, the form under the same title row (workflow name, Presets, Reset,
+    collapse chevron), scrolling inside the sheet, with the footer docked at its bottom.
+  - No drag handle (a product decision): the whole title row drags, and the chevron shows which way. The
+    title has the row's width up to its buttons, so the longest workflow names fit at 360px.
   - It never fully hides, so the way back to the form is always on screen.
-  - It drags only from its handle and title row, never from the form body.
-  - After Generate it closes to the summary bar and the new batch appears at the top of the queue.
+  - It drags only from its title row, never from the form body.
+  - After Generate it closes to its title row and the new batch appears at the top of the queue.
 - **The form keeps today's fields, order and grouping.** Advanced holds exactly what it holds today
   (CFG, sampler, scheduler, steps, seed, CLIP skip, denoise, VAE and the rest).
-- **Footer:** quantity stepper · Generate · Buzz button showing the cost. The cost moves off the
+- **Footer:** quantity (a QTY button that opens a sheet of the tier's options) · Generate · Buzz button showing the cost. The cost moves off the
   Generate button onto the Buzz button (as today's selector already shows it), so 4–5 digit prices
   grow that button instead of overflowing Generate.
 - **Cost sheet** (opened from the Buzz button): total with the tips it includes, creator and
   Civitai tip steppers, Pay with and the balance after the run, and the line-item breakdown folded
-  behind "How this is calculated". The footer's Breakdown link goes away.
+  behind "How this is calculated". The footer's Breakdown link goes away. Desktop uses the same
+  picker as a popover (a product decision), so the cost and Buzz type are one control everywhere.
 
 ### Rules from review
 
@@ -123,17 +131,19 @@ Two other rules exist and must not be used for this:
 - `useIsMobile()` with no options measures the panel's own width (a container query), and the
   desktop sidebar can be narrower than a phone.
 
-**Decide the layout in one place.** The mobile container is chosen once, in
-`src/components/ImageGeneration/GenerationTabs.tsx`, from `useMobileGenerator()`. It wraps today's
-form (`FormGraphGenerator`) and results (`GenerationResults`). Other screens do not render it.
+**Decide the layout in one place.** The default export of
+`src/components/ImageGeneration/GenerationTabs.tsx` chooses once, from `useMobileGenerator()`:
+`MobileGenerator` (`MobileGenerator.tsx`), or `TabbedGenerationPanel`, the legacy tabbed panel.
+`MobileGenerator` is given today's form as a prop and renders today's results. Other screens do not
+render it.
 
 **Phone sizes belong to the mobile generator's root.** Touch sizes (44px targets, 16px inputs, the
 slider's band and thumb) live in one stylesheet, `src/components/generation_v2/PhoneControls.module.scss`,
 whose class is applied only while the mobile generator is showing. It sizes the Mantine primitives the
 generator is built from, sets the slider's sizes through CSS variables, and lifts our own small
 controls marked `data-tap-target`. So the legacy generator keeps today's look on every screen, and
-no mobile prop is threaded through. Until phase 3 builds the container, the class sits on
-`GenerationSurface`.
+no mobile prop is threaded through. The class sits on `GenerationSurface`
+(`GenerationSidebar.tsx`), the root of both generators.
 
 **Styling: CSS modules where the two generators differ, Tailwind where they don't.** This repo
 puts CSS modules in a cascade layer and leaves Tailwind utilities unlayered, so a Tailwind class always
@@ -193,27 +203,27 @@ replaced in phase 4.
 - `SheetSelect`: in the mobile generator every select in the form (sampler, scheduler, the graph's
   other selects, the ControlNet and preprocessor selects) shows as a field that opens a sheet;
   everywhere else it is Mantine's Select. `SelectInput` now ties its wrapper label to the field.
-- Not covered here: the VAE and upscaler pickers are resource pickers, and the output format and
-  priority pickers are menus (all phase 4); the preset picker's select sits inside its own modal.
+- Not covered here: the output format and priority pickers are menus (phase 4); the VAE and
+  upscaler pickers are the resource search (see phase 4); the preset picker's select sits inside its
+  own modal.
 
 **Done when** `grep -rnE "useIsMobile|useMediaQuery" src/components/generation_v2 src/components/form-graph`
 finds nothing outside test files, and the only layout decision is `useGeneratorLayout()`.
 
 ### 3. The mobile container
 
-- Queue as the screen, the header and its menu, the Batches/Grid toggle (the grid is today's Feed).
-- The form sheet: closed and open states, handle-only drag, summary bar, title row with the
-  workflow name and collapse. Reset moves into the title row with the footer rebuild (phase 4); until
-  then it stays in the footer, where its clean-up of the footer's own warnings lives.
+- Queue as the screen and its one-row header (challenges, count, Batches/Grid toggle, sort, filters,
+  Close); the grid is today's Feed.
+- The form sheet: closed and open states, title-row drag, title row with the
+  workflow name, Reset (phase 4) and collapse.
 - Generate closes the sheet and scrolls the queue to the new batch. Remix and "Generate with this
   resource" open it pre-filled.
 - The footer docks to the visual viewport so the iOS keyboard does not cover it.
 - **Make the pull-up obvious.** Pulling the form up from the bottom is a new interaction, so the
   closed bar has to invite it:
-  - the bar says what it does ("Create Image · tap to open") and the whole bar is a tap target, not
-    only the handle;
-  - on first visit (empty queue) the sheet opens already expanded;
-  - the first time the sheet is closed, the handle nudges up once and a one-line hint ("Pull up or
+  - the whole closed bar is a tap target;
+  - on first visit the sheet opens already expanded, whatever is in the queue;
+  - the first time the sheet is closed, the up chevron nudges once and a one-line hint ("Pull up or
     tap to open the form") shows above the bar; dismissed for good after the first open.
 - **No tour on phones.** The generator tour does not start in the mobile container, and its Help
   entry is not shown there. Desktop keeps it.
@@ -247,22 +257,34 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
 Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
 
 - The panel's `view` drives the sheet: `generate` is the open sheet, `queue` and `feed` are the
-  Batches and Grid densities under it. So every entry that opens the form (`generationGraphPanel.open`,
-  `setView('generate')`) opens the sheet, with no change at the call sites.
+  Batches and Grid densities under it. So every entry that opens the form (`generationGraphPanel.open` with
+  input, `setView('generate')`) opens the sheet, with no change at the call sites.
 - On a phone `GenerationSidebar` sends the open generator to `/generate`, and leaving that page in
   any way closes it.
 - Back: `src/utils/history-layers.ts` gives each open layer a same-URL history entry marked with its
-  id in `history.state`. `useHistoryLayer` attaches it to the form sheet, to picker sheets in the
-  mobile generator (`PopoverOrSheet`), and to every `dialogStore` dialog while the mobile
-  generator is showing. Next sees those pops through `RoutedDialogProvider`'s `beforePopState`,
+  id in `history.state`. `useHistoryLayer` attaches it to the form sheet, to every `MobileMenuDrawer`
+  (picker, sort and filter sheets) while the mobile generator is showing, and to every
+  `dialogStore` dialog likewise. Next sees those pops through `RoutedDialogProvider`'s `beforePopState`,
   which returns false for them.
-- The open sheet stops under the header, which stays visible but dimmed, so it reads as a layer that
-  goes away; tapping the dimmed strip closes it, as do the chevron, a drag down and Back.
-- Generate closes the sheet (`useMobileGeneratorStore.submittedAt`) and scrolls the results to the top.
-- The header menu holds daily challenges and presets; the tour does not start, and moderator tools
-  and Maximize are not shown.
-- Not yet checked: generating while signed in, the lightbox and image editors over the sheet, the iOS
-  keyboard, and the INP and memory measurement. The end-to-end test below is still to write.
+- The open sheet fills the screen below the status bar (the first-run hint teaches the pull-up, so
+  it no longer leaves a strip of header showing); the chevron, a drag down and Back close it. The
+  generator pays its own top safe-area inset, being fixed.
+- `useMobileGeneratorStore.submittedAt` is what closes the sheet on Generate.
+- The header has desktop's `ChallengeIndicator`; presets (`PresetHeaderButton`, a sheet here) sit
+  in the open form's title row beside Reset, both icons so they fit at 360px. The tour does not
+  start, and moderator tools
+  and Maximize are not shown. Pull-to-refresh is off in the form, so a downward drag there scrolls
+  instead of reloading the page.
+- The sheet opens on the first visit in a page load, whatever is in the queue (the panel's default
+  `view` is `generate`), and on every entry that brings input, such as Remix. A plain reopen, such as
+  Create, keeps the sheet as it was left.
+- Not yet checked: generating while signed in, the lightbox and image editors over the sheet, the
+  Prompt Enhance panel inside the sheet (it renders in the form, so it should sit there unchanged),
+  the iOS keyboard, and the INP and memory measurement.
+- Known gap: a dialog over the generator that opens a routed (query-string) dialog and then closes
+  leaves its history entry under the routed one, so one later Back does nothing visible. Entries left
+  by leaving the page with a layer open are stepped past, and "Go back" counts them from
+  `history.state`. The end-to-end test below is still to write.
 
 **Done when** a phone can open the generator, change every field, generate, watch the batch run and
 remix it without leaving the screen, with the keyboard open and closed, on iOS Safari and Android
@@ -270,17 +292,66 @@ Chrome; and a first-time tester opens the form without being told how.
 
 ### 4. Footer, cost sheet and resource cards
 
-- Footer: quantity stepper bounded by tier, Generate, Buzz button with the cost; Reset in the title
+- Footer: a QTY button opening the tier's quantities, Generate, Buzz button with the cost; Reset in the title
   row. Today's footer is in `src/components/form-graph/generation/FormFooter.tsx`.
-- Cost sheet built from `GenerationCostPopover` content, reordered around tips.
-- Compact model and resource cards (`ResourceItemContent`): one header row plus one strength row.
+- Cost sheet built from `GenerationCostPopover` content, reordered around tips; the same picker
+  replaces desktop's Pay-with menu and Breakdown link.
+- Compact model and resource cards (`ResourceItemContent`): already one header row plus one
+  strength row after phase 1; no change.
 - Footer alerts as single-line strips above the footer row.
-- The VAE and upscaler pickers, and the output format and priority menus, open as sheets in the
-  mobile generator.
+- The output format and priority menus open as sheets in the mobile generator. The VAE and
+  upscaler pickers stay the resource search (decided).
 - A resource's version picker (`ButtonGroupInput` in `ResourceSelectInput.tsx`) stays buttons up to
   three versions and becomes a select above that (a sheet in the mobile generator), keeping the
   experimental marker on each option.
 - Queue and grid tiles: four actions in the tile footer, the rest in the tile's ⋮ menu.
+
+Built:
+
+- Footer (`MobileFooterParts.tsx`): QTY opens a sheet of the tier's quantities in its steps, with
+  the ones a membership unlocks shown locked; Reset, an icon, renders into the sheet's title row (the
+  `titleActions` slot in `mobile-generator-slots.tsx`) and leaves the footer.
+- Cost picker (`CostPicker.tsx`), the Buzz button on every layout: a sheet on a phone, a popover on
+  desktop. Total, creator and Civitai tip steppers (5% steps), Pay with and the balance after, and
+  `GenerationCostPopoverDetail` folded behind "How this is calculated". It replaces desktop's
+  Pay-with menu and the Breakdown link beside the queue snackbar, and keeps the menu's glow until
+  first opened. Training keeps `BuzzTypeSelector`.
+- Queue slots: a line of their own along the bottom of the mobile header (`QueueSlots fill`), one
+  bar per slot sharing the width, so up to 12 slots fit; the header's count badge stays. The phone
+  footer drops the queue line and keeps only the free tier's full-queue banner
+  (`QueueLimitBanner`). The mobile generator provides `GenerationProvider` around its header and
+  form, and the form's provider defers to it, so both read one queue state.
+- Queue cards: "Additional Details" is a Details button in the card header (`QueueItemDetails`),
+  a popover on desktop and a sheet on a phone. On a phone the card is its header and outputs, and
+  the prompt and resources move into Details; desktop keeps both inline (a product decision).
+- Remix and the other `setData` entries open the form in the mobile generator; on desktop
+  `/generate` the form is always on screen, so they still leave the view alone there.
+- Every `MobileMenuDrawer` over the mobile generator closes on Back (the sort and filter sheets
+  included), so `PopoverOrSheet` no longer registers its own layer. Sheet option rows are one
+  component, `SheetOption` (`src/components/Drawer/`), shared with the site's sort menu.
+- Tapping a checkbox's or radio's description toggles it, site-wide (`choice-label.module.scss` in
+  the theme). Switch already did.
+- Strips fold only what informs. What stops Generate stays in full (`data-strip-full`): the terms,
+  the generation status and self-hosted blocks, and the footer's blocking alerts (missing field,
+  mature source, trial blocked, cost estimate failed, submit error, not enough Buzz). The footer
+  drops its top padding while strips show, so the top strip meets its rounded edge.
+- Footer strips that are not alerts (the queue banner, the daily-boost claim) get the footer's side
+  padding back.
+- `FooterStrips` wraps the footer's alerts and the layout's notices (status, terms, daily boost):
+  edge-to-edge strips folded to one line until tapped, in a stack that scrolls past 35% of the
+  height. The status message moves above the Generate row. The membership upsell, being a choice,
+  keeps its full height.
+- Output format and priority open their choices as a sheet (`SheetOption` rows, shared with
+  `SheetSelect`); a member-only priority still offers the membership to a non-member.
+- Version picker: past three versions, a `SheetSelect` (a select on desktop too).
+- Tiles in the mobile generator keep favourite, thumbs up and down and Improve; Download moves into
+  the tile's ⋮ menu, and Remix and Details are in the lightbox, as in the mockup.
+- The VAE and upscaler pickers stay the resource search, which opens full screen on a phone and
+  closes on Back.
+- Known gap: "balance after" in the cost sheet leaves out a download-boost fee accepted at submit;
+  the balance check at submit still includes it.
+- Not covered by a test: `FormFooter` choosing the mobile parts, and Download in the tile's ⋮ menu
+  (both render trees too heavy to stand up in a browser test). Check them on the device.
 
 **Done when** the footer fits at 360px wide with 12 images and a 5-digit cost, and no footer alert
 moves the Generate row.
