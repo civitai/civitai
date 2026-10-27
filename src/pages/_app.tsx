@@ -812,7 +812,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       following,
       seed: Date.now(),
       hasAuthCookie,
-      sessionCookie,
+      sessionCookie: hasAuthCookie, // MUTANT M3
       region,
       domain,
       serverDomains,

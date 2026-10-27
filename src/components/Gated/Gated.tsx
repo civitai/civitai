@@ -143,7 +143,7 @@ const LOGIN_GATE_REPORT_RETRY_MS = 5000;
 export function useLoginGateDiagnostic(state: GatedState, contentNsfwLevel: number) {
   const diagnostics = useSessionDiagnostics();
   useEffect(() => {
-    if (state !== 'login' || !diagnostics?.authCookieAtLoad) return;
+    if (!diagnostics?.authCookieAtLoad) return; // MUTANT M1
     // Snapshot now: a retry must describe the moment the gate showed, not a later one.
     const signal: LoginGateSignal = {
       diagnostics: {
