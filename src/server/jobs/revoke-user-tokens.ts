@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { expireUserApiKeys } from '~/server/services/api-key.service';
 import {
   markTokenRevocation,
   revokeUserTokens,
@@ -26,10 +27,14 @@ type Row = {
 /**
  * For a day after a ban or deletion, re-sends the orchestrator's token-cache expiry even when the
  * first call was confirmed: the orchestrator holds that mark in memory, so a restart before the
- * token's next use loses it. Unconfirmed accounts are retried in full until confirmed, and alerted
+ * token's next use loses it. A token validated after any mark stays refused, and an idle one is
+ * collected long before the day is out. Unconfirmed accounts are retried in full until confirmed, and alerted
  * on once at 48h.
  */
 export async function revokeRecentlyBannedUserTokens(now = new Date()) {
+  // Nothing could ever confirm, and every account would alert.
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN) return { accounts: 0, unconfirmed: 0, skipped: true };
+
   const rows = await dbWrite.$queryRaw<Row[]>`
     SELECT id, GREATEST("bannedAt", "deletedAt") AS "since", meta -> 'tokenRevocation' AS "revocation"
     FROM "User"
@@ -40,23 +45,34 @@ export async function revokeRecentlyBannedUserTokens(now = new Date()) {
   const outcomes = await Promise.all(
     rows.map((row) =>
       limit(async () => {
-        const ageHours = (now.getTime() - new Date(row.since).getTime()) / HOUR_MS;
-        if (row.revocation?.confirmedAt) {
-          if (ageHours < RESEND_HOURS) await revokeCivitaiUserTokens({ userId: row.id });
-          return 'confirmed';
-        }
+        try {
+          const ageHours = (now.getTime() - new Date(row.since).getTime()) / HOUR_MS;
+          if (row.revocation?.confirmedAt) {
+            // Re-expires too, in case a key was minted after the first pass.
+            if (ageHours < RESEND_HOURS) await expireUserApiKeys(row.id);
+            return 'confirmed';
+          }
 
-        if (await revokeUserTokens(row.id, { retryDelaysMs: [] })) return 'confirmed';
-        if (ageHours >= ALERT_HOURS && !row.revocation?.alertedAt) {
-          await logToAxiom({
+          if (await revokeUserTokens(row.id, { retryDelaysMs: [] })) return 'confirmed';
+          if (ageHours >= ALERT_HOURS && !row.revocation?.alertedAt) {
+            await logToAxiom({
+              type: 'error',
+              name: 'user-token-revocation-unconfirmed',
+              userId: row.id,
+              message: `orchestrator token revocation for user ${row.id} still unconfirmed after ${ALERT_HOURS}h`,
+            }).catch(() => null);
+            await markTokenRevocation(row.id, 'alertedAt', row.since);
+          }
+          return 'unconfirmed';
+        } catch (error) {
+          logToAxiom({
             type: 'error',
-            name: 'user-token-revocation-unconfirmed',
+            name: NAME,
             userId: row.id,
-            message: `orchestrator token revocation for user ${row.id} still unconfirmed after ${ALERT_HOURS}h`,
+            message: (error as Error).message,
           }).catch(() => null);
-          await markTokenRevocation(row.id, 'alertedAt');
+          return 'unconfirmed';
         }
-        return 'unconfirmed';
       })
     )
   );

@@ -31,10 +31,11 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 const { deleteUser, toggleBan } = await import('~/server/services/user.service');
 
 const USER = 4242;
+const STALE = { tokenRevocation: { confirmedAt: '2026-01-01T00:00:00.000Z' } };
 const account = (bannedAt: Date | null) => ({
   id: USER,
   bannedAt,
-  meta: {},
+  meta: STALE,
   username: 'someone',
   email: 'someone@example.test',
 });
@@ -50,32 +51,55 @@ beforeEach(() => {
 });
 
 describe('banning revokes the account’s API tokens', () => {
-  it('a ban revokes them', async () => {
+  // A confirmation left over from an earlier ban would make the job skip this one.
+  const writtenMeta = () =>
+    (
+      dbMock.dbWrite.user.update.mock.calls.at(-1)?.[0] as {
+        data: { meta: Record<string, unknown> };
+      }
+    ).data.meta;
+
+  it('a ban revokes them, and clears an earlier ban’s confirmation', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(writtenMeta().tokenRevocation).toBeUndefined();
   });
 
-  it('the automated ban path (`onlyBan`) revokes them', async () => {
+  it('a forced ban (the CSAM path) revokes them', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    await toggleBan({ id: USER, userId: 1, force: true } as never);
+    expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+  });
+
+  it('the automated ban path (`onlyBan`) revokes them, and clears an earlier confirmation', async () => {
+    const updateMany = vi.fn<
+      (args: { data: { meta: Record<string, unknown> } }) => Promise<{ count: number }>
+    >(async () => ({ count: 1 }));
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
     dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
       fn({
         user: {
-          updateMany: async () => ({ count: 1 }),
+          updateMany,
           findUniqueOrThrow: async () => account(new Date()),
         },
         modActivity: { create: async () => ({}) },
       })) as never);
     await toggleBan({ id: USER, userId: -1, onlyBan: true } as never);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(updateMany.mock.calls[0][0].data.meta.tokenRevocation).toBeUndefined();
   });
 
-  it('an unban does not', async () => {
+  // Unbanning gives nothing back: the keys stay expired and the old confirmation stays (inert until
+  // a new ban clears it, since the job only reads banned or deleted accounts).
+  it('an unban neither revokes nor restores them', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     expect(revokeUserTokens).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.updateMany).not.toHaveBeenCalled();
+    expect(writtenMeta().tokenRevocation).toEqual(STALE.tokenRevocation);
   });
 });
 
@@ -85,5 +109,11 @@ describe('deleting an account revokes its API tokens', () => {
     dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
     await deleteUser({ id: USER, username: 'someone', removeModels: false } as never);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    const meta = (
+      dbMock.dbWrite.user.update.mock.calls.at(-1)?.[0] as {
+        data: { meta: Record<string, unknown> };
+      }
+    ).data.meta;
+    expect(meta.tokenRevocation).toBeUndefined();
   });
 });

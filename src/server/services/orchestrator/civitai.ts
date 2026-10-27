@@ -2,6 +2,8 @@ import { env } from '~/env/server';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
+const DELETE_TIMEOUT_MS = 5_000;
+
 /** True only when the orchestrator answered 2xx. */
 async function deleteOrchestratorUserCache(userId: number | string, url: string) {
   if (!env.ORCHESTRATOR_ACCESS_TOKEN) {
@@ -10,9 +12,12 @@ async function deleteOrchestratorUserCache(userId: number | string, url: string)
 
   try {
     const client = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN!);
-    // The client resolves, not throws, on an error status.
-    const { response } = await client.delete({ url });
-    if (!response.ok) throw new Error(`orchestrator answered ${response.status}`);
+    // Without throwOnError the client resolves on an error status.
+    await client.delete({
+      url,
+      throwOnError: true,
+      signal: AbortSignal.timeout(DELETE_TIMEOUT_MS),
+    });
     return true;
   } catch (error) {
     // Best-effort: a failure leaves the orchestrator serving a stale cache, so surface it to Axiom
