@@ -230,23 +230,38 @@ describe('createUnratedOutputWatcher', () => {
     expect(verdict).toHaveBeenCalledTimes(1);
   });
 
-  // A tab left open must not poll forever for an output that is never rated.
-  it('gives up after ten minutes without a rating, and later cache changes do not restart it', async () => {
-    const tenMinutes = 10 * 60_000;
-    const { watch, verdict, refetch } = setup(async () => {
+  // A tab left open must not poll forever for an output that is never rated, but an outage can
+  // outlast one watch, and only a blob read makes the orchestrator rescan a failed scan.
+  it('gives up after ten minutes, watches once more after a ten-minute cooldown, then stops for good', async () => {
+    const { watch, verdict } = setup(async () => {
       throw new Error('503');
     });
+    const start = Date.now();
+    const at = (seconds: number) =>
+      vi.advanceTimersByTimeAsync(start + seconds * 1000 - Date.now());
+
+    // Reads at 0, 2, 6, 14, 30, 62s, then once a minute; the 602s read is the last.
     watch();
-    await vi.advanceTimersByTimeAsync(tenMinutes + UNRATED_RETRY_MAX_MS);
-    const reads = verdict.mock.calls.length;
-    const refetches = refetch.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(tenMinutes);
-    expect(verdict).toHaveBeenCalledTimes(reads);
+    await at(660);
+    expect(verdict).toHaveBeenCalledTimes(15);
 
+    // Cache changes inside the cooldown (which ends at 602 + 600 = 1202s) start nothing.
     await watchAfterCacheChanges(watch, 5);
+    await at(1190);
+    await watchAfterCacheChanges(watch, 5);
+    expect(verdict).toHaveBeenCalledTimes(15);
 
-    expect(verdict).toHaveBeenCalledTimes(reads);
-    expect(refetch).toHaveBeenCalledTimes(refetches);
+    // After it, one new watch reads the blob again, and gives up ten minutes later.
+    await at(1210);
+    watch();
+    expect(verdict).toHaveBeenCalledTimes(16);
+    await at(1900);
+    expect(verdict).toHaveBeenCalledTimes(30);
+
+    // After the second give-up, no cache change ever restarts it.
+    await at(1900 + 3600);
+    await watchAfterCacheChanges(watch, 5);
+    expect(verdict).toHaveBeenCalledTimes(30);
   });
 
   it('watches a rated output again if the cache later shows it unrated', async () => {
