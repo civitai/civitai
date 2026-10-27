@@ -2336,6 +2336,44 @@ describe('retractions per run', () => {
     expect(await retryRows()).toEqual([]);
   });
 
+  const purgeOnlyRow = (id: number, url: string) =>
+    sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+        VALUES (${id}, 'Image', 'ImageCdnPersistRetry',
+                ${JSON.stringify({
+                  url,
+                  retract: false,
+                  purgeEdge: true,
+                  purgeOnly: true,
+                })}::jsonb)`;
+
+  it('a new persist failure on a purge-only row owes the persist again', async () => {
+    const { queueTakedownPersistRetry } = await import('~/server/services/cdn-access.service');
+    await retracted([1]);
+    await purgeOnlyRow(1, u(1));
+    const before = persistsFor(u(1)).length;
+
+    await queueTakedownPersistRetry({ imageId: 1, url: u(1), retract: false, purgeEdge: true });
+    await retryTakedownPersists();
+    expect(persistsFor(u(1)).slice(before).map(kind)).toEqual(['deny']);
+    expect(purged).toHaveLength(1);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('a reservation over a purge-only row resends the retraction', async () => {
+    const { reserveTakedownRetractions } = await import('~/server/services/cdn-access.service');
+    combinedOk.add(GONE);
+    await purgeOnlyRow(7, GONE);
+
+    // The delete's run dies before it settles; once the lease is up the retry sends what it owes.
+    await reserveTakedownRetractions([{ id: 7, url: GONE }]);
+    await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
+    await retryTakedownPersists();
+    expect(calls.map((c) => c.path)).toEqual([
+      `/admin/invalidate?imageKey=${GONE}&retractPublicBlobs=true&persist=true`,
+    ]);
+    expect(await retryRows()).toEqual([]);
+  });
+
   it('a busy CDN purge on a persist retry spends no attempt and is retried', async () => {
     const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
     const busy = async () => {
