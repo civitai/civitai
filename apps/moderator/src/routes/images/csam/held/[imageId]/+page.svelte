@@ -10,7 +10,10 @@
   const recordOpened = () => {
     const id = data.item.id;
     void fetch(`/api/held-media/${id}/opened`, { method: 'POST', keepalive: true })
-      .then((res) => (refusedId = res.ok ? null : id))
+      .then((res) => {
+        if (!res.ok) refusedId = id;
+        else if (refusedId === id) refusedId = null;
+      })
       .catch(() => (refusedId = id));
   };
 </script>

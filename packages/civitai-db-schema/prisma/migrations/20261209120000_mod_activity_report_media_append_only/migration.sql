@@ -16,6 +16,9 @@
 --   DROP FUNCTION IF EXISTS mod_activity_stamp_db_time();
 --   DROP FUNCTION IF EXISTS mod_activity_guard_report_media();
 --   DROP FUNCTION IF EXISTS mod_activity_refuse_truncate();
+-- and, where an earlier draft of this file was applied:
+--   DROP TRIGGER IF EXISTS "ModActivity_stamp_report_media" ON "ModActivity";
+--   DROP FUNCTION IF EXISTS mod_activity_stamp_report_media();
 
 BEGIN;
 SET LOCAL lock_timeout = '3s';

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SERVED_ACTIVITY } from '@civitai/shared/held-media';
 
 /**
  * The `reportMedia:*` rows of ModActivity cannot be changed or removed, nor can any row become one;
@@ -107,8 +108,9 @@ describe('reportMedia rows', () => {
   it('are stamped like the rows recording a serve', async () => {
     const { rows } = await pg.query<{ stamped: boolean }>(
       `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-       VALUES (12, 'image', 'heldMedia:view', 503, '2020-01-01')
-       RETURNING "createdAt" = (now() AT TIME ZONE 'UTC')::timestamp(3) AS stamped`
+       VALUES (12, 'image', $1, 503, '2020-01-01')
+       RETURNING "createdAt" = (now() AT TIME ZONE 'UTC')::timestamp(3) AS stamped`,
+      [SERVED_ACTIVITY]
     );
     expect(rows).toEqual([{ stamped: true }]);
   });
