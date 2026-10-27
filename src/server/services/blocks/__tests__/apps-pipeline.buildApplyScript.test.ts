@@ -29,7 +29,7 @@ import {
 
 describe('buildApplyScript', () => {
   const NS = 'civitai-apps';
-  // The rollback shape, which has every step (route check aside). The production shape (no
+  // The rollback shape, which has every step. The production shape (no
   // per-app objects) and what each one DOES are in apps-pipeline.applyScript.exec.test.ts.
   const script = buildApplyScript(NS, { perAppObjects: true });
   const noPerApp = buildApplyScript(NS, { perAppObjects: false });

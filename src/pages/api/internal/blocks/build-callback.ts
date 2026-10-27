@@ -213,12 +213,15 @@ export function expectedImageRef(slug: string, sha: string): string {
 // allows a callback with no `ts`).
 const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 8m apply)
 
-// How long the watcher waits for the apply Job. The Job's slowest normal path is the smoke test
-// (~85s) plus a required publish, which may take up to its own 240s deadline plus 15s of polling:
-// ~5m40s, too close to the old 6m for a slow publish not to read as a timeout. A timeout tells the
-// author the deploy failed while the Job may still finish and serve it. With the per-app rollback
-// flag on, the per-app rollout adds up to 180s, so only a publish that uses most of its deadline
-// can still time out there. Must stay below APPLY_DEDUP_TTL_SECONDS minus the trigger time.
+// How long the watcher waits for the apply Job. ONE attempt's slowest normal path is the smoke
+// test (~85s) plus a required publish, which may take up to its own 240s deadline plus 15s of
+// polling: ~5m40s, too close to the old 6m for a slow publish not to read as a timeout. A timeout
+// tells the author the deploy failed while the Job may still finish and serve it.
+// This budget covers one attempt, not the Job's retries: the Job retries a failed attempt
+// (backoffLimit 2), so a slow first attempt followed by a successful second one can still end
+// past it and be reported as timed out while its publish serves the new version. With the
+// per-app rollback flag on, the per-app rollout adds up to 180s to an attempt as well.
+// Must stay below APPLY_DEDUP_TTL_SECONDS minus the trigger time.
 const APPLY_WATCH_TIMEOUT_MS = 8 * 60 * 1000;
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
@@ -484,8 +487,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // actually succeeds. The Job succeeds only once the smoke test passed and
   // the build is published to the shared static server (its current pointer
   // flipped), which is what serves the app, so `live` below means served.
-  // The previous shape wrote it the moment the Job was created — which meant a failed apply (smoke step / network
-  // policy / image perms) left the column saying "deployed at <now>"
+  // The previous shape wrote it the moment the Job was created — which
+  // meant a failed apply (smoke step / network policy / image perms) left
+  // the column saying "deployed at <now>"
   // while the live Deployment was still on the previous image. Now the
   // column reflects "what's actually serving" rather than "what built."
   //
