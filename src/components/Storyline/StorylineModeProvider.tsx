@@ -243,13 +243,22 @@ export function StorylineModeProvider({
     });
     if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
-    if (next.kind === 'end') return setEndOpenFor(pendingChapterId);
+    if (next.kind === 'end') {
+      // The path shows a first image the walk lacks: ending here would strand the reader.
+      const at = path?.chapters.findIndex((stop) => stop.chapterId === pendingChapterId) ?? -1;
+      const stop = at >= 0 ? path?.chapters[at] : undefined;
+      if (stop?.firstImage) {
+        const link = storylineChapterLink(stop, routeVia(path?.chapters.slice(0, at + 1) ?? []));
+        if (link) return void Router.push(link.href);
+      }
+      return setEndOpenFor(pendingChapterId);
+    }
     setEndOpenFor(undefined);
     // The router updates synchronously and re-runs this before the cleared state lands; only
     // navigate once, or the two chase each other.
     if (routeImageId !== next.imageId)
       go({ imageId: next.imageId, chapterId: pendingChapterId, via });
-  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via]);
+  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via, path]);
 
   // The URL's chapter is trusted only for an image on its own path (not the previous chapter's,
   // still shown while this one loads), or for the image a reader was on when they took the

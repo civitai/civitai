@@ -45,11 +45,16 @@ Object.assign(paths, {
   36: [...main, b5, b6],
   37: [...main, b5, b6, chapter(37, 6, 3700)],
 });
+// Chapter 5 with a community chapter 6 after it and no canon child: 21 -> 22 -> 23 -> 24 -> 45 -> 46.
+const c5 = chapter(45, 4, 4500);
+const c6 = chapter(46, 5, 4600);
+Object.assign(paths, { 45: [...main, c5], 46: [...main, c5, c6] });
 const child = (c: Chapter) => ({ ...c, rank: 'community', firstImage: null });
 const childrenOf: Record<number, unknown[]> = {
   7: [child(chapter(8, 5, 800))],
   24: [{ ...child(chapter(25, 4, 2500)), rank: 'canon' }, child(b5)],
   35: [child(b6)],
+  45: [child(c6)],
   36: [child(chapter(37, 6, 3700)), child(chapter(38, 6, 3800))],
 };
 const childrenByChapterId = (ids: number[]) =>
@@ -368,5 +373,27 @@ describe('the map clicked before a swipe back has settled', () => {
     await swipeBackThenClick('ch37');
     await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
     await expect.element(page.getByTestId('image')).toHaveTextContent('370');
+  });
+});
+
+// The path says the reader may see chapter 6's first image; the walk's image read lacks it.
+describe('a branch chapter whose first image is not in the walk', () => {
+  afterEach(() => {
+    mocks.unwalkedPostIds.clear();
+    vi.mocked(Router.push).mockClear();
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  test('taking it opens its own link instead of leaving the reader on chapter 5', async () => {
+    mocks.unwalkedPostIds.add(4600);
+    await openReader(45, 1200, 450);
+    await page.getByText('ch46').click();
+    await vi.waitFor(() =>
+      expect(Router.push).toHaveBeenCalledWith('/images/460?storylineChapter=46')
+    );
+    expect(Router.push).toHaveBeenCalledTimes(1);
   });
 });
