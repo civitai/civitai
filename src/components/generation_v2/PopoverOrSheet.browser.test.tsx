@@ -73,6 +73,16 @@ describe('PopoverOrSheet', () => {
     await expect.element(page.getByRole('dialog', { name: 'Pick one' })).toBeInTheDocument();
   });
 
+  test('Back closes the sheet in the mobile generator', async () => {
+    layout = 'mobile';
+    // An entry of the test page's own under the layer: without the layer, Back fails the test here
+    // instead of leaving the page.
+    history.pushState(history.state, '');
+    await openPicker();
+    history.back();
+    await expect.element(page.getByText(/^Shown in a/)).not.toBeInTheDocument();
+  });
+
   test('keeps the legacy surface on a narrow screen without the mobile generator', async () => {
     layout = 'narrow';
     await openPicker('fullscreen');

@@ -102,6 +102,7 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 import { hasTipEligibleSelection } from './creator-tip';
 import { FOOTER_RESET } from './footer-reset';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
 import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
@@ -1075,6 +1076,8 @@ export function FormFooter({
       }
 
       onSubmitSuccess?.();
+      if (useMobileGeneratorStore.getState().showing)
+        useMobileGeneratorStore.setState({ submittedAt: Date.now() });
     };
 
     conditionalPerformTransaction(totalCost + boostFee, performTransaction);

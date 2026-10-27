@@ -16,6 +16,13 @@ import { trpc } from '~/utils/trpc';
 /** Yellow nudge color — reads as "new feature, check this out". */
 const GLOW_COLOR_RGB = '250, 204, 21';
 
+export const openPresetPicker = () =>
+  dialogStore.trigger({ id: 'preset-picker', component: PresetPickerModal });
+export const openSavePreset = () =>
+  dialogStore.trigger({ id: 'save-preset', component: SavePresetModal });
+export const openManagePresets = () =>
+  dialogStore.trigger({ id: 'manage-presets', component: ManagePresetsModal });
+
 /**
  * Icon-only trigger in the generation tabs header. Opens a dropdown menu with:
  * - View presets → opens the picker modal
@@ -38,13 +45,6 @@ export function PresetHeaderButton() {
   const showGlow = presetsQuery.isSuccess && presetsQuery.data.length === 0;
 
   if (!currentUser) return null;
-
-  const openPicker = () =>
-    dialogStore.trigger({ id: 'preset-picker', component: PresetPickerModal });
-  const openSave = () =>
-    dialogStore.trigger({ id: 'save-preset', component: SavePresetModal });
-  const openManage = () =>
-    dialogStore.trigger({ id: 'manage-presets', component: ManagePresetsModal });
 
   return (
     <Menu
@@ -79,17 +79,17 @@ export function PresetHeaderButton() {
         </Menu.Target>
       </Tooltip>
       <Menu.Dropdown>
-        <Menu.Item leftSection={<IconEye size={14} />} onClick={openPicker}>
+        <Menu.Item leftSection={<IconEye size={14} />} onClick={openPresetPicker}>
           View presets
         </Menu.Item>
         <Menu.Item
           leftSection={<IconDeviceFloppy size={14} />}
-          onClick={openSave}
+          onClick={openSavePreset}
           disabled={!canSave}
         >
           Save current values
         </Menu.Item>
-        <Menu.Item leftSection={<IconList size={14} />} onClick={openManage}>
+        <Menu.Item leftSection={<IconList size={14} />} onClick={openManagePresets}>
           Manage presets
         </Menu.Item>
       </Menu.Dropdown>

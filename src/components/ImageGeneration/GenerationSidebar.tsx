@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import {
   GENERATION_SIDEBAR_DEFAULT_WIDTH,
@@ -30,10 +31,18 @@ export function useGenerationSidebarState() {
 export function GenerationSidebar() {
   const router = useRouter();
   const { opened, fullScreen } = useGenerationSidebarState();
+  const mobileGenerator = useMobileGenerator();
 
-  useRefreshResidencyOnOpen(opened);
+  // On a phone the generator is its own page, so opening it is a history entry Back can leave.
+  // Read the store, not the render: leaving /generate closes the panel in the same commit.
+  useEffect(() => {
+    if (mobileGenerator && opened && useGenerationPanelStore.getState().opened)
+      router.push('/generate');
+  }, [mobileGenerator, opened]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!opened) return null;
+  useRefreshResidencyOnOpen(opened && !mobileGenerator);
+
+  if (!opened || mobileGenerator) return null;
 
   return (
     <GenerationColumn className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}>

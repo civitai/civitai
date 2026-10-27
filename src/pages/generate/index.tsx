@@ -26,6 +26,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { countHistoryLayers } from '~/utils/history-layers';
 import type { GenerationResultsView } from '~/store/generation-panel.store';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 
@@ -40,7 +42,8 @@ function useLeaveGenerate({ closeGenerator }: { closeGenerator: boolean }) {
   return () => {
     // Full-screen, the panel left open would cover the page the user is going back to.
     if (closeGenerator) generationGraphPanel.close();
-    if (hasHistory) history.go(-1);
+    // Go back past the layers open over the page (the form sheet, a picker) too.
+    if (hasHistory) history.go(-(1 + countHistoryLayers()));
     else router.push('/');
   };
 }
@@ -56,6 +59,7 @@ function GenerateLayout({ children }: { children: ReactElement }) {
   const currentUser = useCurrentUser();
   const leave = useLeaveGenerate({ closeGenerator: false });
   const fullScreen = useGenerationPanelFullScreen();
+  const mobileGenerator = useMobileGenerator();
   const muted = !!currentUser?.muted;
 
   // Leaving /generate keeps the generator open in the sidebar.
@@ -70,7 +74,9 @@ function GenerateLayout({ children }: { children: ReactElement }) {
         <GenerationMutedNotice />
       </AppLayout>
     );
+  // Undefined until mounted, so the server and the first client render agree.
   if (fullScreen === undefined) return null;
+  if (mobileGenerator) return <FullScreenGenerator closeOnLeave />;
   if (fullScreen) return <FullScreenGenerator />;
 
   return (
@@ -87,9 +93,13 @@ function GenerateLayout({ children }: { children: ReactElement }) {
   );
 }
 
-function FullScreenGenerator() {
+function FullScreenGenerator({ closeOnLeave }: { closeOnLeave?: boolean }) {
   useAppLayoutPrompts();
   const leave = useLeaveGenerate({ closeGenerator: true });
+  // On a phone the generator is this page: leaving it any way, Back included, closes it.
+  useEffect(() => {
+    if (closeOnLeave) return () => generationGraphPanel.close();
+  }, [closeOnLeave]);
   return (
     <GenerationSurface>
       <Meta title="Generate" deIndex />

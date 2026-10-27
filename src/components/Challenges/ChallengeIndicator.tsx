@@ -7,15 +7,17 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEffect } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
+export function openChallengeInvitation(challengeIds: number[]) {
+  dialogStore.trigger({
+    component: ChallengeInvitation,
+    props: { onClose: () => dismissChallenges(challengeIds) },
+  });
+}
+
 export function ChallengeIndicator() {
   const { challenges, loading } = useGetActiveChallenges();
 
-  const handleOpen = () => {
-    dialogStore.trigger({
-      component: ChallengeInvitation,
-      props: { onClose: () => dismissChallenges(challenges.map((x) => x.challengeId)) },
-    });
-  };
+  const handleOpen = () => openChallengeInvitation(challenges.map((x) => x.challengeId));
 
   // remove old local storage keys
   useEffect(() => {

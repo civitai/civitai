@@ -1,7 +1,7 @@
 # Mobile generator
 
-> **Status: phase 1 committed and phase 2 built on `feat/mobile-generator`, checked on an emulated Pixel 5;
-> real-device check pending. Phases 3–4 not started.**
+> **Status: phases 1–2 committed and phase 3 built on `feat/mobile-generator`, checked on an emulated
+> Pixel 5; real-device check pending. Phase 4 not started.**
 >
 > **Closes when** the `mobileGenerator` flag is on for everyone, the generator on a phone opens on
 > the queue with the form as a bottom sheet, the `feat/mobile-generator` PR is merged to `main`, and every phase's
@@ -202,8 +202,9 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
 ### 3. The mobile container
 
 - Queue as the screen, the header and its menu, the Batches/Grid toggle (the grid is today's Feed).
-- The form sheet: closed and open states, handle-only drag, summary bar, title row with Reset and
-  collapse.
+- The form sheet: closed and open states, handle-only drag, summary bar, title row with the
+  workflow name and collapse. Reset moves into the title row with the footer rebuild (phase 4); until
+  then it stays in the footer, where its clean-up of the footer's own warnings lives.
 - Generate closes the sheet and scrolls the queue to the new batch. Remix and "Generate with this
   resource" open it pre-filled.
 - The footer docks to the visual viewport so the iOS keyboard does not cover it.
@@ -242,6 +243,26 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
 - **Form and queue stay mounted together.** Today switching tabs remounts the whole form, which
   dominated mobile INP (the `genTabDeferView` experiment). The sheet removes that remount but keeps
   both trees mounted, so measure INP and memory on a low-end Android phone before and after.
+
+Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
+
+- The panel's `view` drives the sheet: `generate` is the open sheet, `queue` and `feed` are the
+  Batches and Grid densities under it. So every entry that opens the form (`generationGraphPanel.open`,
+  `setView('generate')`) opens the sheet, with no change at the call sites.
+- On a phone `GenerationSidebar` sends the open generator to `/generate`, and leaving that page in
+  any way closes it.
+- Back: `src/utils/history-layers.ts` gives each open layer a same-URL history entry marked with its
+  id in `history.state`. `useHistoryLayer` attaches it to the form sheet, to picker sheets in the
+  mobile generator (`PopoverOrSheet`), and to every `dialogStore` dialog while the mobile
+  generator is showing. Next sees those pops through `RoutedDialogProvider`'s `beforePopState`,
+  which returns false for them.
+- The open sheet stops under the header, which stays visible but dimmed, so it reads as a layer that
+  goes away; tapping the dimmed strip closes it, as do the chevron, a drag down and Back.
+- Generate closes the sheet (`useMobileGeneratorStore.submittedAt`) and scrolls the results to the top.
+- The header menu holds daily challenges and presets; the tour does not start, and moderator tools
+  and Maximize are not shown.
+- Not yet checked: generating while signed in, the lightbox and image editors over the sheet, the iOS
+  keyboard, and the INP and memory measurement. The end-to-end test below is still to write.
 
 **Done when** a phone can open the generator, change every field, generate, watch the batch run and
 remix it without leaving the screen, with the keyboard open and closed, on iOS Safari and Android

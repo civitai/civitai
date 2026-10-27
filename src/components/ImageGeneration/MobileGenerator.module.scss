@@ -1,0 +1,151 @@
+// The generator on a phone. Sized to the visual viewport (set by MobileGenerator), so the open
+// form's footer sits above the iOS keyboard instead of under it.
+.root {
+  --sheet-peek: calc(72px + var(--safe-area-inset-bottom, 0px));
+
+  position: fixed;
+  inset-inline: 0;
+  top: var(--generator-top, 0px);
+  height: var(--generator-height, 100dvh);
+  z-index: 210;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mantine-color-body);
+}
+
+// Header and results are their own stacking contexts, so nothing in them (Mantine's Indicator
+// sits at z-index 200) shows through the sheet.
+.header {
+  position: relative;
+  z-index: 0;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  padding-inline: 8px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+// The closed sheet covers the bottom of the results, so they end above it.
+.results {
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--sheet-peek);
+}
+
+// The open sheet stops short of the top: the dimmed screen above it shows it is a layer that
+// goes away, and tapping that strip closes it.
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  background: rgb(0 0 0 / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s;
+
+  &[data-visible] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.sheet {
+  position: absolute;
+  inset-inline: 0;
+  top: 40px;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.35);
+  transform: translateY(calc(100% - var(--sheet-peek) + var(--sheet-drag, 0px)));
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+
+  &[data-expanded] {
+    transform: translateY(var(--sheet-drag, 0px));
+  }
+
+  &[data-dragging] {
+    transition: none;
+  }
+
+  &:not([data-expanded]) .head {
+    padding-bottom: var(--safe-area-inset-bottom, 0px);
+  }
+}
+
+// Only the handle and title row drag the sheet; the form body scrolls.
+.head {
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.grab {
+  width: 48px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--mantine-color-gray-5);
+}
+
+// The closed bar's handle sits above its summary line.
+.grabAbove {
+  margin: 10px auto 2px;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hint {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  translate: -50% -8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--mantine-color-white);
+  background: var(--mantine-color-blue-filled);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
+}
+
+.nudge {
+  animation: nudge 0.9s ease-in-out 0.4s;
+}
+
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    transition: none;
+  }
+
+  .nudge {
+    animation: none;
+  }
+}
