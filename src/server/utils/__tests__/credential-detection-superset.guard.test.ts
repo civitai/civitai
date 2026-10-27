@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import type { NextApiRequest } from 'next';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -80,7 +80,7 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
 /** Workspace packages the entry point imports. Not scanned, so declared. */
 const NON_CREDENTIAL_PACKAGES: Record<string, string> = {
   '@civitai/auth':
-    'owns the cookie-NAME vocabulary and the legacy cookie decode; no `req` crosses this boundary — the session path reads req.cookies itself and passes only a string',
+    'owns the cookie-NAME vocabulary, the legacy cookie decode and the slot readers. The only `req` field that crosses this boundary is `req.cookies`, into a reader listed in COOKIE_HELPERS; any other call taking a bag fails closed',
 };
 
 const NON_CREDENTIAL_HEADERS: Record<string, string> = {
@@ -88,8 +88,8 @@ const NON_CREDENTIAL_HEADERS: Record<string, string> = {
 };
 const NON_CREDENTIAL_QUERY: Record<string, string> = {};
 const NON_CREDENTIAL_COOKIES: Record<string, string> = {
-  deviceCookieName:
-    'a device identifier used for rolling/upgrade bookkeeping; authenticates nobody on its own',
+  readDeviceId:
+    'a device identifier (either slot) used for rolling/upgrade bookkeeping; authenticates nobody on its own',
 };
 
 const UNRESOLVABLE = '<unresolvable>';
@@ -236,6 +236,18 @@ function extractReadsFrom(sf: ts.SourceFile, bag: Bag, applyExemptions = true): 
       // `const h = req.headers` — the bag ESCAPES; later reads are invisible.
       names.add(`${UNRESOLVABLE}:aliased-${bag}`);
     };
+
+    // readSessionToken(req.cookies) — the bag is handed to a helper. A known cookie reader is named by its
+    // helper; anything else hides every read it makes, so it fails closed.
+    if (ts.isCallExpression(node) && node.arguments.some((a) => isBag(a, bag))) {
+      const callee = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+      const known =
+        bag === 'cookies' &&
+        callee !== undefined &&
+        (Object.prototype.hasOwnProperty.call(COOKIE_HELPERS, callee) ||
+          Object.prototype.hasOwnProperty.call(NON_CREDENTIAL_COOKIES, callee));
+      names.add(known ? callee : `${UNRESOLVABLE}:passed-${bag}`);
+    }
 
     if (ts.isVariableDeclaration(node) && node.initializer) bound(node.name, node.initializer);
     if (
@@ -395,9 +407,11 @@ function reqWithCookie(name: string): NextApiRequest {
   } as unknown as NextApiRequest;
 }
 
-const COOKIE_HELPERS: Record<string, (secure?: boolean) => string> = {
+const COOKIE_HELPERS: Record<string, (secure: boolean) => string | string[]> = {
   sessionCookieName,
   legacySessionCookieName,
+  // Reads the session from either slot, whatever the app's cookie mode.
+  readSessionToken: (secure) => [hostSessionCookieName(secure), sessionCookieName(secure)],
 };
 
 describe('credential detection is a superset of the session layer', () => {
@@ -417,7 +431,7 @@ describe('credential detection is a superset of the session layer', () => {
     expect(extractReads('headers')).toContain('authorization');
     expect(extractReads('query')).toContain('token');
     expect(extractReads('cookies').sort()).toEqual(
-      ['legacySessionCookieName', 'sessionCookieName'].sort()
+      ['legacySessionCookieName', 'readSessionToken'].sort()
     );
   });
 
@@ -607,7 +621,7 @@ describe('credential detection is a superset of the session layer', () => {
     expect(unresolved, `cookie names not determinable: [${unresolved.join(', ')}]`).toEqual([]);
     for (const name of used) {
       const cookies = Object.prototype.hasOwnProperty.call(COOKIE_HELPERS, name)
-        ? [COOKIE_HELPERS[name](true), COOKIE_HELPERS[name](false)]
+        ? [COOKIE_HELPERS[name](true), COOKIE_HELPERS[name](false)].flat()
         : [name];
       for (const cookie of cookies)
         expect(

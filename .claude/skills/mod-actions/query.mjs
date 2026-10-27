@@ -11,13 +11,15 @@
  *   remove-content <id|username>    Remove all user content
  *   dm <id|username>                Send a DM to a user
  *   creator-program-ban <id|username> <set|clear>  Ban from / unban from the Creator Program
+ *   end-buzz-membership <id|username>  End a Buzz-purchased membership now
  *
  * Options:
  *   --json                Output raw JSON
  *   --dry-run             Preview without making changes
  *   --reason <code>       Ban reason code
  *   --message <text>      External message for user / DM content
- *   --internal <text>     Internal notes (the required audit reason for creator-program-ban)
+ *   --internal <text>     Internal notes (the required audit reason for creator-program-ban
+ *                         and end-buzz-membership)
  *   --gate <ref>          Approval this acts on, e.g. a hub card id (creator-program-ban)
  */
 
@@ -82,6 +84,9 @@ Commands:
   creator-program-ban <id|username> <set|clear>
                                   Ban from / unban from the Creator Program
                                   (needs the user.creatorProgram.ban permission)
+  end-buzz-membership <id|username>
+                                  End a Buzz-purchased membership now; moves no Buzz
+                                  (needs the user.membership.code permission)
 
 Options:
   --json                Output raw JSON
@@ -89,6 +94,7 @@ Options:
   --reason <code>       Ban reason code
   --message <text>      External message for user / DM content
   --internal <text>     Internal notes; the required reason for creator-program-ban
+                        and end-buzz-membership
   --gate <ref>          Approval this acts on (creator-program-ban), e.g. a hub card id
 
 Ban Reason Codes:
@@ -103,6 +109,7 @@ Examples:
   node query.mjs remove-content 3879899 --dry-run
   node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
   node query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
+  node query.mjs end-buzz-membership 12345 --internal "Buzz refunded by support" --dry-run
 
 Configuration:
   Set CIVITAI_API_KEY and CIVITAI_API_URL in .claude/skills/mod-actions/.env
@@ -468,6 +475,50 @@ async function main() {
         console.log(`User: ${user.username} (${user.id})`);
         console.log(`Onboarding: ${result.before} -> ${result.after}`);
         console.log(`Changed: ${result.changed ? 'Yes' : 'No (already in that state; still audited)'}`);
+      }
+      break;
+    }
+
+    case 'end-buzz-membership': {
+      if (!targetInput || !internalNotes) {
+        console.error('Usage: node query.mjs end-buzz-membership <id|username> --internal "<reason>" [--dry-run]');
+        process.exit(1);
+      }
+
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+
+      const body = { userId: user.id, reason: internalNotes };
+      if (dryRun) {
+        console.log(`[DRY RUN] Would POST ${API_URL}/api/mod/user/buzz-membership-end`);
+        console.log(JSON.stringify(body, null, 2));
+        break;
+      }
+
+      const response = await fetch(`${API_URL}/api/mod/user/buzz-membership-end`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`end-buzz-membership failed: ${response.status} ${text.slice(0, 500)}`);
+        process.exit(1);
+      }
+
+      const result = JSON.parse(text);
+      if (jsonOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Action: END BUZZ MEMBERSHIP`);
+        console.log(`User: ${user.username} (${user.id})`);
+        console.log(`Subscription: ${result.subscriptionId} (${result.productId})`);
+        console.log(`Was: ${result.previousStatus}, paid through ${result.currentPeriodEnd}`);
+        console.log(`Ended: ${result.endedAt}`);
+        if (!result.freshdeskSynced) console.log('Freshdesk contact NOT updated; its tier is stale.');
       }
       break;
     }

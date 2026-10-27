@@ -57,6 +57,18 @@ export {
   deviceCookieName,
   legacySessionCookieName,
   allCookieNames,
+  sessionCookieMode,
+  legacyCookieReadEnabled,
+  hostSessionCookieName,
+  hostDeviceCookieName,
+  sessionCookieNameForSlot,
+  deviceCookieNameForSlot,
+  readSessionToken,
+  readDeviceId,
+  rollSlot,
+  type CookieSlot,
+  type CookieRead,
+  type CookieReadOptions,
 } from './cookies';
 export {
   readReturnUrl,
