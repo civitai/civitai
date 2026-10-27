@@ -201,6 +201,20 @@ describe('deleteVersionById on a database error', () => {
 
 const STRAGGLER = 'https://files.example.invalid/straggler';
 
+describe('deleteVersionById on a version deleted by someone else', () => {
+  it('reports it not found, not held, when it is gone by its delete', async () => {
+    const id = stubVersion(CLEAN);
+    routeToDb(db, async (sql) => {
+      if (sql.includes('DELETE FROM "ModelVersion"'))
+        await db.query(`DELETE FROM "ModelVersion" WHERE id = $1`, [id]);
+    });
+
+    await expect(deleteVersionById({ id, isModerator: true })).rejects.toThrow(
+      `No model version with id ${id}`
+    );
+  });
+});
+
 /** Stubs the model read `mergeVersions` validates against, for `owner`'s three versions. */
 function stubModel(owner: number) {
   const ids = [1, 2, 3].map((n) => versionOf(owner, n));
@@ -250,6 +264,31 @@ describe('mergeVersions', () => {
 
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+
+  // Another writer deletes one source while the merge runs: before its lock, or between the lock
+  // and the delete. Either way the merge is not found rather than held, and nothing it did commits.
+  it.each([
+    ['before the lock', 'FOR UPDATE', 'One or more versions to merge no longer exist.'],
+    [
+      'before the delete',
+      'DELETE FROM "ModelVersion"',
+      'One or more source versions no longer exist.',
+    ],
+  ])('reports a source deleted %s as not found', async (_, at, message) => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    const [gone, kept] = sourceVersionIds;
+    let deleted = false;
+    routeToDb(db, async (sql) => {
+      if (deleted || !sql.includes(at)) return;
+      deleted = true;
+      await db.query(`DELETE FROM "ModelVersion" WHERE id = $1`, [gone]);
+    });
+
+    await expect(merge(CLEAN)).rejects.toThrow(message);
+    expect(deleted).toBe(true);
+    if (at === 'FOR UPDATE') expect(await versionIds(db)).toContain(kept);
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
   });
 

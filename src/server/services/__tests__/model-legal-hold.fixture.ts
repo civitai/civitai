@@ -161,9 +161,9 @@ const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     : (first as Prisma.Sql);
 
 /**
- * Sends `dbWrite`'s raw statements, and the Prisma deletes the same paths made before the hold check,
- * to `db`. `before` runs ahead of each statement sent there, with its text, so a case can change the
- * database between two of them. The transaction runs on `dbWrite` itself (the db mock's default),
+ * Sends `dbWrite`'s raw statements to `db`, and the Prisma deletes these paths made before they were
+ * guarded, so the same cases can be run against main's services to see them fail. `before` runs ahead
+ * of each raw statement sent there, with its text, so a case can change the database between two. The transaction runs on `dbWrite` itself (the db mock's default),
  * unless `realTransactions` makes it a real one.
  */
 export function routeToDb(db: PGlite, before?: (sql: string) => Promise<unknown>) {
