@@ -330,3 +330,42 @@ describe('page-data keeps the shell route cookie in step with shell-images', () 
     expect(routeCookies(res)).toEqual([CLEAR]);
   });
 });
+
+describe('page-data: a session cookie the lookup did not resolve is unknown, not signed out', () => {
+  // The session store knows no viewer for this cookie, as when the lookup fails soft to null.
+  const deadCookie = () => ({ [sessionCookieName()]: 'unresolved-session-token' });
+  const anonymous: Fixture = { ...ownerFixture, user: null };
+
+  it('says so on the body, with `session: null`', async () => {
+    const { res, body } = await fetchPageData(anonymous, { cookies: deadCookie() });
+    expect(res.statusCode).toBe(200);
+    expect(body?.session).toBeNull();
+    expect(body?.sessionUnknown).toBe(true);
+    expect(res.getHeader('cache-control')).toBe('private, no-store');
+  });
+
+  it('control: with no session cookie, `session: null` is signed out and nothing else is said', async () => {
+    const { res, body } = await fetchPageData(anonymous);
+    expect(res.statusCode).toBe(200);
+    expect(body?.session).toBeNull();
+    expect(body).not.toHaveProperty('sessionUnknown');
+  });
+
+  it('control: a resolved session is not unknown', async () => {
+    const { body } = await fetchPageData(ownerFixture);
+    expect(body?.session).not.toBeNull();
+    expect(body).not.toHaveProperty('sessionUnknown');
+  });
+
+  it('leaves the shell route cookie alone, so one failed lookup does not drop the viewer from the shell', async () => {
+    const { res } = await fetchPageData(anonymous, {
+      cookies: { ...deadCookie(), 'civ-shell-images': '1' },
+    });
+    expect(res.statusCode).toBe(200);
+    const routeCookies = ([] as unknown[])
+      .concat(res.getHeader('set-cookie') ?? [])
+      .map(String)
+      .filter((c) => c.startsWith('civ-shell-images='));
+    expect(routeCookies).toEqual([]);
+  });
+});

@@ -405,6 +405,8 @@ const Wrapped = trpc.withTRPC(ShellApp as never) as unknown as ComponentType<{
 /** Every request the run made: path + query. */
 const requests: string[] = [];
 let pageDataAnswer: () => Promise<Response>;
+/** `/api/auth/session`'s answer: signed out unless a test says otherwise. */
+let authSessionAnswer: () => Promise<Response>;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -418,7 +420,7 @@ function stubFetch() {
       const url = new URL(raw, 'http://localhost');
       requests.push(`${url.pathname}${url.search}`);
       if (url.pathname.startsWith('/api/page-data')) return pageDataAnswer();
-      if (url.pathname === '/api/auth/session') return json({});
+      if (url.pathname === '/api/auth/session') return authSessionAnswer();
       return json({ error: 'unexpected request in test' }, 500);
     })
   );
@@ -507,6 +509,7 @@ beforeEach(() => {
   delete window.__civShell;
   window.history.replaceState(null, '', '/images/101');
   pageDataAnswer = async () => json(payload());
+  authSessionAnswer = async () => json({});
   stubFetch();
   navigate = vi.spyOn(shellNavigation, 'replace').mockImplementation(() => undefined);
   pauseRum.mockClear();
@@ -666,6 +669,53 @@ describe('a shell boot adopts the page data into the state a full render would h
       flagsReady: true,
     });
     expect(requests).toEqual([]);
+  });
+});
+
+describe('a page-data answer whose session is unknown (a session cookie the lookup did not resolve)', () => {
+  const unknownSession = () =>
+    payload({
+      session: null,
+      sessionUnknown: true,
+      settings: undefined,
+      following: undefined,
+      chatSettings: undefined,
+      userFeatureFlags: undefined,
+    });
+
+  it('stays loading, fetches /api/auth/session itself, and ends signed in when it answers a session', async () => {
+    authSessionAnswer = async () => json(SESSION);
+    window.__civShell = Promise.resolve(json(unknownSession()));
+    await render(shellPageProps());
+
+    expect(requests.filter((r) => r === '/api/auth/session')).toHaveLength(1);
+    expect(last()).toMatchObject({
+      session: SESSION,
+      sessionStatus: 'authenticated',
+      shellReady: true,
+    });
+    expect(commits.map((c) => c.sessionStatus)).not.toContain('unauthenticated');
+  });
+
+  it('is loading, not signed out, while that fetch is outstanding', async () => {
+    authSessionAnswer = () => new Promise<Response>(() => undefined);
+    window.__civShell = Promise.resolve(json(unknownSession()));
+    await render(shellPageProps());
+
+    expect(last()).toMatchObject({
+      session: undefined,
+      sessionStatus: 'loading',
+      shellReady: true,
+    });
+    expect(requests.filter((r) => r === '/api/auth/session')).toHaveLength(1);
+  });
+
+  it('control: when the fetch answers signed out, the viewer is signed out', async () => {
+    window.__civShell = Promise.resolve(json(unknownSession()));
+    await render(shellPageProps());
+
+    expect(requests.filter((r) => r === '/api/auth/session')).toHaveLength(1);
+    expect(last()).toMatchObject({ session: null, sessionStatus: 'unauthenticated' });
   });
 });
 
