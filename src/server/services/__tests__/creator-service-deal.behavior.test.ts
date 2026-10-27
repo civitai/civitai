@@ -90,6 +90,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
   holder.db.transaction((tx) => fn(bridge(tx)))) as never);
 
 const deals = await import('~/server/services/creator-service-deal.service');
+const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
@@ -116,6 +117,16 @@ const TAKEDOWN_MIGRATION = join(
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
+);
+
+// Columns the dispute evidence reads, and the review table itself.
+const LATER_MIGRATIONS = [
+  '20261028160000_creator_service_deal_file_entries',
+  '20261029140000_creator_service_deal_file_delivery',
+  '20261128150000_creator_service_final_malware_scan',
+  '20261208120000_creator_service_dispute_review',
+].map((name) =>
+  join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
 
 const SELLER = 1;
@@ -259,6 +270,7 @@ beforeAll(async () => {
   await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(TAKEDOWN_MIGRATION, 'utf8'));
+  for (const migration of LATER_MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -292,7 +304,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
+    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -2756,5 +2768,132 @@ describe('site notifications', () => {
     notifications.createNotification.mockRejectedValueOnce(new Error('down'));
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     expect((await deal(id)).status).toBe('Accepted');
+  });
+});
+
+describe('dispute reviews', () => {
+  const disputed = async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
+    return id;
+  };
+  const review = (dealId: number, proposal: 'Refund' | 'Release' | null, reviewerId = STRANGER) =>
+    reviews.createServiceDisputeReview({
+      dealId,
+      reviewerId,
+      class: 'B1',
+      proposal,
+      confidence: proposal ? 0.8 : null,
+      rationale: 'why',
+      evidence: { files: 1 },
+      agentVersion: 'test-1',
+      mode: 'shadow',
+    });
+  const rows = (dealId: number) =>
+    q<{
+      proposal: string | null;
+      humanRuling: string | null;
+      humanId: number | null;
+      agreed: boolean | null;
+    }>(
+      `SELECT proposal::text, "humanRuling"::text, "humanId", agreed FROM "ServiceDisputeReview"
+       WHERE "dealId" = $1 ORDER BY id`,
+      [dealId]
+    );
+
+  it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
+    const { id } = await request();
+    await expect(review(id, 'Refund')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rows(id)).toEqual([]);
+  });
+
+  it('refuses a reviewer who is a party to the deal', async () => {
+    const id = await disputed();
+    await expect(review(id, 'Release', SELLER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await rows(id)).toEqual([]);
+  });
+
+  it('shows the latest review on the dispute queue', async () => {
+    const id = await disputed();
+    await review(id, null);
+    await review(id, 'Refund');
+    const { items } = await deals.listDisputedServiceDeals({});
+    expect(items.find((item) => item.id === id)?.latestReview).toMatchObject({
+      proposal: 'Refund',
+      class: 'B1',
+      mode: 'shadow',
+      rationale: 'why',
+    });
+  });
+
+  it.each([
+    ['agrees', 'Refund', true],
+    ['disagrees', 'Release', false],
+    ['escalated', null, null],
+  ] as const)(
+    'fills the latest review with the human ruling when it %s',
+    async (_, proposal, agreed) => {
+      const id = await disputed();
+      await review(id, 'Release');
+      await review(id, proposal);
+      await deals.resolveServiceDealDispute({
+        dealId: id,
+        moderatorId: STRANGER,
+        resolution: 'Refund',
+      });
+      expect(await rows(id)).toEqual([
+        { proposal: 'Release', humanRuling: null, humanId: null, agreed: null },
+        { proposal, humanRuling: 'Refund', humanId: STRANGER, agreed },
+      ]);
+    }
+  );
+
+  it('refuses a review once the deal is resolved', async () => {
+    const id = await disputed();
+    await deals.resolveServiceDealDispute({
+      dealId: id,
+      moderatorId: STRANGER,
+      resolution: 'Refund',
+    });
+    await expect(review(id, 'Refund')).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it("bundles the deal's evidence, and counts each party's other recent disputes", async () => {
+    const earlier = await disputed();
+    const id = await disputed();
+    const evidence = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
+    expect(evidence.deal).toMatchObject({
+      id,
+      status: 'Disputed',
+      buyerId: BUYER,
+      sellerId: SELLER,
+    });
+    expect(evidence.offering.title).toBe('Cat portraits');
+    expect(evidence.events.map((e) => e.type)).toContain('Disputed');
+    expect(evidence.files).toEqual([
+      expect.objectContaining({ kind: 'Final', scanStatus: 'Passed' }),
+    ]);
+    expect(evidence.priorDisputes).toEqual({ days: 90, buyer: 1, seller: 1 });
+    // ClickHouse is not configured here: the access log reads as unknown, never as empty.
+    expect(evidence.files[0].access).toBeUndefined();
+    expect(evidence.accessRecordedSince).toBeNull();
+
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '91 days' WHERE id = $1`,
+      [earlier]
+    );
+    expect(
+      (await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER })).priorDisputes
+    ).toEqual({ days: 90, buyer: 0, seller: 0 });
+  });
+
+  it('refuses evidence to a moderator who is a party', async () => {
+    const id = await disputed();
+    await expect(
+      reviews.getServiceDisputeEvidence({ dealId: id, viewerId: BUYER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

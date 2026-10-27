@@ -181,6 +181,27 @@
     {/if}
   </details>
 
+  {#if row.latestReview}
+    {@const review = row.latestReview}
+    <div class="mt-3 rounded-md border border-dark-4 bg-dark-7 p-2 text-sm">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="font-medium">Agent review</span>
+        <Badge variant="outline">{review.class}</Badge>
+        <span>
+          {review.proposal ? `Proposes ${review.proposal.toLowerCase()}` : 'Escalated to a human'}
+        </span>
+        {#if review.confidence !== null}
+          <span class="text-xs text-dark-2">{Math.round(review.confidence * 100)}% confident</span>
+        {/if}
+        {#if review.mode === 'shadow'}<Badge variant="secondary">shadow</Badge>{/if}
+      </div>
+      <p class="mt-1 whitespace-pre-wrap text-dark-0">{review.rationale}</p>
+      <p class="mt-1 text-xs text-dark-2">
+        {review.agentVersion} · {dateTime(review.createdAt)}
+      </p>
+    </div>
+  {/if}
+
   {#if outcome?.error}
     <ErrorAlert class="mt-3" message={outcome.error} />
   {/if}

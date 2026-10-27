@@ -10704,6 +10704,7 @@ model ServiceDeal {
   events                    ServiceDealEvent[]
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
+  disputeReviews            ServiceDisputeReview[]
 
   /// Target of the receipt's composite FK that pins each leg to the deal's Buzz type.
   @@unique([id, buzzType])
@@ -10721,6 +10722,31 @@ model ServiceDeal {
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
+/// One review of a Disputed deal by the dispute agent. `proposal` null means it escalated to a human.
+/// The human* columns are filled on the latest row when a moderator resolves the deal.
+model ServiceDisputeReview {
+  id           Int                       @id @default(autoincrement())
+  dealId       Int
+  deal         ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  /// A1..A3, B1..B3 or C.
+  class        String
+  proposal     ServiceDisputeResolution?
+  confidence   Float?
+  /// Shown to moderators.
+  rationale    String
+  /// What the agent read: file facts, scores, access counts.
+  evidence     Json
+  agentVersion String
+  /// shadow | propose | settle
+  mode         String
+  humanRuling  ServiceDisputeResolution?
+  humanId      Int?
+  agreed       Boolean?
+  createdAt    DateTime                  @default(now())
+
+  @@index([dealId])
+}
+
 model ServiceDealEvent {
   id        Int                  @id @default(autoincrement())
   dealId    Int
