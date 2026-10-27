@@ -147,9 +147,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // First-party-ness is the resolved client's IDENTITY (a hub-synthesized client with no OauthClient row),
   // NOT the redirect origin — so a registered third-party client can't skip consent by claiming an owned
   // redirect host (it has a DB row → isFirstParty=false). See resolveClientLite.
+  // A registered app staff marked `skipConsent` (one Civitai runs; set on /admin/access) skips it the same way.
   const isFirstParty = client.isFirstParty;
+  const skipsConsent = client.skipConsent;
   const isApproval = method === 'POST' && params.approved === 'true';
-  const existingConsent = isFirstParty
+  const existingConsent = skipsConsent
     ? undefined
     : await db
         .selectFrom('OauthConsent')
@@ -158,7 +160,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
         .where('clientId', '=', clientId)
         .executeTakeFirst();
 
-  if (isFirstParty) {
+  if (skipsConsent) {
     // Trusted: no consent record, no consent screen — fall straight through to code issuance.
   } else if (isApproval) {
     // Buzz spend-limit at consent (AIServicesWrite) is a fast-follow (§E) — not parsed in this first

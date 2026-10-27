@@ -10,11 +10,21 @@
   const wordmarkSvg = buildWordmarkSvg({ base: '#e8eaed' });
 
   let showSwitcher = $state(false);
+  // Which decision is on its way. Both forms are native submits, so the page gives no sign of the round
+  // trip through the client's callback on its own; this shows it and blocks a second click.
+  let submitting = $state<'approve' | 'deny' | null>(null);
   // User images are sometimes bare CDN keys, not URLs — only render an <img> for an absolute URL, else
   // fall back to an initial avatar so the picker never shows a broken image.
   const isUrl = (s: string | undefined) => !!s && /^https?:\/\//.test(s);
   const initial = (username: string | undefined) => (username ?? '?').charAt(0).toUpperCase();
 </script>
+
+<!-- Coming back to this page from the browser's cache: the decision never went through, so allow it again. -->
+<svelte:window
+  onpageshow={(e) => {
+    if (e.persisted) submitting = null;
+  }}
+/>
 
 <main>
   <div class="card">
@@ -95,7 +105,15 @@
 
       <!-- Approve posts straight to the §D protocol endpoint, which issues the code and redirects to
            the client. A native (non-enhanced) submit so SvelteKit follows the cross-route 303. -->
-      <form method="POST" action="/api/auth/oauth/authorize" class="approve-form">
+      <form
+        method="POST"
+        action="/api/auth/oauth/authorize"
+        class="approve-form"
+        onsubmit={(e) => {
+          if (submitting) e.preventDefault();
+          else submitting = 'approve';
+        }}
+      >
         {#each Object.entries(data.params) as [name, value] (name)}
           <input type="hidden" {name} {value} />
         {/each}
@@ -107,15 +125,27 @@
         </label>
 
         <div class="actions">
-          <button type="submit" class="btn primary">Authorize</button>
+          <button type="submit" class="btn primary" disabled={!!submitting}>
+            {submitting === 'approve' ? 'Authorizing…' : 'Authorize'}
+          </button>
         </div>
       </form>
 
-      <form method="POST" action="?/deny" class="deny-form">
+      <form
+        method="POST"
+        action="?/deny"
+        class="deny-form"
+        onsubmit={(e) => {
+          if (submitting) e.preventDefault();
+          else submitting = 'deny';
+        }}
+      >
         <input type="hidden" name="client_id" value={data.params.client_id} />
         <input type="hidden" name="redirect_uri" value={data.params.redirect_uri} />
         <input type="hidden" name="state" value={data.params.state ?? ''} />
-        <button type="submit" class="btn ghost">Deny</button>
+        <button type="submit" class="btn ghost" disabled={!!submitting}>
+          {submitting === 'deny' ? 'Denying…' : 'Deny'}
+        </button>
       </form>
     {/if}
   </div>
@@ -339,8 +369,12 @@
     background: #4285f4;
     color: #fff;
   }
-  .btn.primary:hover {
+  .btn.primary:hover:not(:disabled) {
     background: color-mix(in srgb, #4285f4, white 8%);
+  }
+  .btn:disabled {
+    cursor: progress;
+    opacity: 0.7;
   }
   .deny-form {
     margin: 0.6rem 0 0;
@@ -350,7 +384,7 @@
     color: #9aa0a6;
     border: 1px solid #2a2d34;
   }
-  .btn.ghost:hover {
+  .btn.ghost:hover:not(:disabled) {
     background: #1b1e24;
     color: #e8eaed;
   }

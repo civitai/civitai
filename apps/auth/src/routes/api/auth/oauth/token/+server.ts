@@ -3,7 +3,11 @@ import { maybeCreateSessionSigner } from '@civitai/auth';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkClientTokenRateLimit,
+  checkOAuthRateLimit,
+  tokenOverflowExhausted,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { logAxiomError } from '$lib/server/axiom';
 import { OriginNotAllowedError } from '$lib/server/oauth/errors';
@@ -24,6 +28,7 @@ import {
   setPublicClientCors,
 } from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
+import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, and the
 // worker token-exchange grant (lib/server/oauth/worker-grant.ts).
@@ -47,6 +52,33 @@ function basicAuthClientId(header: string | null): string | undefined {
   return /^([^:]*):(.*)$/.exec(Buffer.from(match[1], 'base64').toString())?.[1];
 }
 
+/**
+ * Whether a request over the per-IP `token` limit may go on under its client's own limit. Staff set one
+ * (`OauthClient.tokenRateLimit`) for apps Civitai runs, whose pods send every user's code exchange and
+ * refresh from one egress IP, so the per-IP limit alone would cap that app's whole user base. Only ever
+ * adds headroom on top of `token`: failed secret checks are bounded per IP by `token-overflow` (an IP that
+ * used them up is refused before checking), and the client is charged only once its secret checks out. A
+ * client with no limit set gets the per-IP limit only.
+ */
+async function tokenOverflowAllowed(
+  request: Request,
+  body: Record<string, unknown>,
+  clientIp: string | null
+): Promise<boolean> {
+  const namesSecret =
+    basicAuthClientId(request.headers.get('authorization')) !== undefined ||
+    typeof body.client_secret === 'string';
+  if (!namesSecret) return false;
+  if (await tokenOverflowExhausted(clientIp)) return false;
+  const client = await authenticatedConfidentialClient(request, body);
+  if (!client) {
+    await checkOAuthRateLimit('token-overflow', clientIp); // count the failed check
+    return false;
+  }
+  if (!client.tokenRateLimit) return false;
+  return checkClientTokenRateLimit(client.id, client.tokenRateLimit);
+}
+
 export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const clientId =
@@ -60,8 +92,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
   // fresh bucket each request. The worker exchange has its own, larger bucket: a pool of workers can
-  // share one egress IP.
-  if (!(await checkOAuthRateLimit(isWorkerExchange ? 'worker-token' : 'token', clientIp))) {
+  // share one egress IP. Past the IP limit, a confidential client with a staff-set limit that
+  // authenticates goes on under that limit instead (see tokenOverflowAllowed).
+  if (
+    !(await checkOAuthRateLimit(isWorkerExchange ? 'worker-token' : 'token', clientIp)) &&
+    (isWorkerExchange || !(await tokenOverflowAllowed(request, body, clientIp)))
+  ) {
     const headers = new Headers();
     setWildcardCors(headers);
     return json(
