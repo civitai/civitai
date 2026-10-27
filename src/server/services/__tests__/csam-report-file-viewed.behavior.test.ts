@@ -109,7 +109,7 @@ const queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
 const view = (
   entityId: number,
   {
-    activity = 'heldMedia:view',
+    activity = 'reportMedia:select:original',
     entityType = 'image',
     createdAt = undefined as string | undefined,
   } = {}
@@ -245,16 +245,63 @@ describe('image report: fileViewedByEsp per file', () => {
     expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
   });
 
-  it('stores what was sent for each file on the report', async () => {
-    await view(501);
+  it.each([
+    'reportMedia:open:original',
+    'reportMedia:open:cdn-450',
+    'reportMedia:select:original',
+    'reportMedia:select:cdn-450',
+  ])('counts a %s row', async (activity) => {
+    await view(501, { activity });
 
     await processCsamReport(imageReport([501, 502]));
 
-    const images = sentImages() as { id: number; viewedByEsp?: boolean }[];
-    expect(images.map(({ id, viewedByEsp }) => ({ id, viewedByEsp }))).toEqual([
-      { id: 501, viewedByEsp: true },
-      { id: 502, viewedByEsp: false },
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+
+  it('stores what was sent for each file, and the rendition of its earliest record', async () => {
+    await view(501, {
+      activity: 'reportMedia:select:cdn-450',
+      createdAt: `CURRENT_TIMESTAMP - interval '2 minutes'`,
+    });
+    await view(501, {
+      activity: 'reportMedia:open:original',
+      createdAt: `CURRENT_TIMESTAMP - interval '1 minute'`,
+    });
+    await view(502, { activity: 'reportMedia:open:original' });
+    await view(503, { activity: 'heldMedia:view' });
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502), imageRow(503)]);
+
+    await processCsamReport(imageReport([501, 502, 503]));
+
+    const images = sentImages() as { id: number; viewedByEsp?: boolean; viewRendition?: string }[];
+    expect(
+      images.map(({ id, viewedByEsp, viewRendition }) => ({ id, viewedByEsp, viewRendition }))
+    ).toEqual([
+      { id: 501, viewedByEsp: true, viewRendition: 'cdn-450' },
+      { id: 502, viewedByEsp: true, viewRendition: 'original' },
+      { id: 503, viewedByEsp: false, viewRendition: undefined },
     ]);
+  });
+
+  it('is false for a file whose only record is that it was served', async () => {
+    await view(501, { activity: 'heldMedia:view' });
+    await view(501, {
+      activity: 'heldMedia:view',
+      createdAt: `CURRENT_TIMESTAMP - interval '1 day'`,
+    });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
+  });
+
+  it('counts no record that only resembles one', async () => {
+    await view(501, { activity: 'reportMedia:hover:original' });
+    await view(502, { activity: 'reportMedia:select:cdn-1080' });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
   });
 
   it('is false for a view recorded after the CyberTip is opened', async () => {

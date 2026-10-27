@@ -56,6 +56,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { ShownRendition } from '@civitai/shared/held-media';
+import { SHOWN_ACTIONS, SHOWN_RENDITIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -93,6 +95,8 @@ type CsamReportImage = {
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
   /** The `fileViewedByEsp` sent for this file. */
   viewedByEsp?: boolean;
+  /** Which copy the record behind a true `viewedByEsp` says was on screen. */
+  viewRendition?: ShownRendition;
 } & CsamReportUploadProps &
   Partial<EvidenceFileRecord>;
 
@@ -1113,7 +1117,7 @@ async function reportImages(claim: SendClaim) {
     );
 
   // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
-  let viewed: Set<number>;
+  let viewed: Map<number, ShownRendition>;
   try {
     viewed = await getViewedImageIds(images.map((image) => image.id));
   } catch (e) {
@@ -1204,7 +1208,8 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
-      const viewedByEsp = viewed.has(image.id);
+      const viewRendition = viewed.get(image.id);
+      const viewedByEsp = !!viewRendition;
       await cybertipClient.submitFileDetails({
         reportId: ncmecReportId,
         fileId,
@@ -1221,6 +1226,7 @@ async function reportImages(claim: SendClaim) {
         fileId,
         hash,
         viewedByEsp,
+        viewRendition,
         source: original.source,
         sha256: original.sha256,
         bytes: original.data.length,
@@ -1275,20 +1281,29 @@ async function reportImages(claim: SendClaim) {
     );
 }
 
-/** The images with a `heldMedia:view` row stamped before now, by the database's own clock.
- *  `createdAt` is zoneless, stamped by its column default in the server's time zone (UTC), so it
- *  is compared in UTC whatever the reading session's time zone. */
+/** The rows that count as a moderator having seen an image: opened or selected once on screen. */
+const SHOWN_ACTIVITIES = SHOWN_ACTIONS.flatMap((action) =>
+  SHOWN_RENDITIONS.map((rendition) => shownActivity(action, rendition))
+);
+
+/** Each image's earliest counted row stamped before now, by the database's own clock, as the
+ *  rendition it records. `createdAt` is zoneless, stamped by its column default in the server's time
+ *  zone (UTC), so it is compared in UTC whatever the reading session's time zone. */
 async function getViewedImageIds(imageIds: number[]) {
-  if (!imageIds.length) return new Set<number>();
+  const viewed = new Map<number, ShownRendition>();
+  if (!imageIds.length) return viewed;
   // The primary: a replica may not have a view recorded just before the send.
-  const rows = await dbWrite.$queryRaw<{ entityId: number }[]>`
-    SELECT DISTINCT "entityId" FROM "ModActivity"
-    WHERE activity = 'heldMedia:view'
+  const rows = await dbWrite.$queryRaw<{ entityId: number; activity: string }[]>`
+    SELECT DISTINCT ON ("entityId") "entityId", activity FROM "ModActivity"
+    WHERE activity = ANY(${SHOWN_ACTIVITIES}::text[])
       AND "entityType" = 'image'
       AND "entityId" = ANY(${imageIds}::int[])
       AND "createdAt" < (now() AT TIME ZONE 'UTC')
+    ORDER BY "entityId", "createdAt", id
   `;
-  return new Set(rows.map((row) => row.entityId));
+  for (const { entityId, activity } of rows)
+    viewed.set(entityId, activity.slice(activity.lastIndexOf(':') + 1) as ShownRendition);
+  return viewed;
 }
 
 async function reportGenerationData(claim: SendClaim) {
