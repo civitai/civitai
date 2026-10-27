@@ -2,7 +2,15 @@
 // WORKTREE_DEV_FS_CACHE=false opts out, and an explicit NEXT_DEV_FS_CACHE in the session's .env chain
 // wins over the default. The env is built by the real loadEnvChain over real .env files, so a
 // worktree override is tested where it lives. The second half covers the cross-worktree cache sweep.
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from 'fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+  utimesSync,
+  statSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { applyDevFsCacheDefault, loadEnvChain } from './daemon.mjs';
@@ -87,6 +95,7 @@ try {
     mkdirSync(cache, { recursive: true });
     writeFileSync(join(cache, 'data'), Buffer.alloc(mbBytes * MB));
     const t = new Date(now - ageHours * HOUR);
+    utimesSync(join(cache, 'data'), t, t);
     utimesSync(cache, t, t);
     return { path, cache };
   };
@@ -126,6 +135,26 @@ try {
     'has a running session|written in the last few minutes'
   );
   check('budget 0 turns the sweep off', run(() => false, 0).removed.length, 0);
+
+  // A top-level dir mtime that is old must not hide a server writing deeper down.
+  const deep = make('deep', 3, 30);
+  const nested = join(deep.cache, 'turbopack', 'segment');
+  mkdirSync(nested, { recursive: true });
+  const old = new Date(now - 30 * HOUR);
+  utimesSync(deep.cache, old, old);
+  utimesSync(join(deep.cache, 'turbopack'), old, old);
+  writeFileSync(join(nested, 'fresh.sst'), 'x'); // mtime: now
+  utimesSync(deep.cache, old, old); // creating the subdirs moved it; put it back
+  trees.push({ path: deep.path });
+  const topMtime = statSync(deep.cache).mtimeMs;
+  run(() => false, 1);
+  check(
+    'a fresh file deep in the cache keeps it despite an old top-dir mtime',
+    existsSync(deep.cache),
+    true
+  );
+  // Control: the same layout judged by the directory mtime alone would be evicted.
+  check('CONTROL: top-dir mtime alone says idle', now - topMtime > 10 * 60 * 1000, true);
 
   // Positive control: with the running-session guard broken the same sweep deletes the live tree,
   // so the "survives" checks above could have failed.

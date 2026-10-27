@@ -13,8 +13,16 @@ import { samePath } from './paths.mjs';
 /** A cache written this recently may belong to a server the daemon does not know about. */
 export const DEFAULT_MIN_IDLE_MS = 10 * 60 * 1000;
 
-export function dirSize(dir) {
-  let total = 0;
+/**
+ * Size and the newest mtime of anything under `dir`. A directory's own mtime only moves when entries
+ * are added or removed directly in it, so a live server writing deeper down would look idle.
+ */
+export function dirStats(dir) {
+  let size = 0;
+  let newest = 0;
+  try {
+    newest = statSync(dir).mtimeMs;
+  } catch (e) {}
   const stack = [dir];
   while (stack.length) {
     let entries;
@@ -26,15 +34,17 @@ export function dirSize(dir) {
     for (const entry of entries) {
       const full = resolve(entry.parentPath ?? entry.path, entry.name);
       if (entry.isDirectory()) stack.push(full);
-      else {
-        try {
-          total += statSync(full).size;
-        } catch (e) {}
-      }
+      try {
+        const st = statSync(full);
+        if (!entry.isDirectory()) size += st.size;
+        if (st.mtimeMs > newest) newest = st.mtimeMs;
+      } catch (e) {}
     }
   }
-  return total;
+  return { size, newest };
 }
+
+export const dirSize = (dir) => dirStats(dir).size;
 
 /** `.next/dev/cache`, plus `.next/branches/<slug>/dev/cache` when PER_BRANCH_DIST_DIR has been on. */
 export function cacheDirsOf(worktree) {
@@ -63,8 +73,7 @@ export function sweepWorktreeCaches({
   minIdleMs = DEFAULT_MIN_IDLE_MS,
   now = Date.now(),
   log,
-  sizeOf = dirSize,
-  mtimeOf = (d) => statSync(d).mtimeMs,
+  statsOf = dirStats,
   remove = (d) => rmSync(d, { recursive: true, force: true }),
 }) {
   const report = { total: 0, remaining: 0, removed: [], kept: [] };
@@ -74,7 +83,8 @@ export function sweepWorktreeCaches({
   for (const tree of trees) {
     if (samePath(tree.path, primary)) continue;
     for (const dir of cacheDirsOf(tree.path)) {
-      entries.push({ tree: tree.path, dir, size: sizeOf(dir), mtime: mtimeOf(dir) });
+      const { size, newest } = statsOf(dir);
+      entries.push({ tree: tree.path, dir, size, mtime: newest });
     }
   }
 
