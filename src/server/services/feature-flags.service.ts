@@ -1074,13 +1074,14 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
 }
 
 /**
- * Whether `hasFeature` may consult Flipt for `key` — the ONE predicate that splits the registry
- * into the per-user portion (Flipt evaluates with the user id as entity) and the Flipt-free
- * portion (decided by static inputs only). `hasFeature` and the cohort cache below both branch on
- * this, so they cannot disagree about which flags read per-user state.
+ * The Flipt key `hasFeature` consults for `key`, or undefined when it never consults Flipt (no
+ * `fliptKey`, or an env override applied). The ONE predicate that splits the registry into the
+ * per-user portion (Flipt evaluates with the user id as entity) and the Flipt-free portion
+ * (decided by static inputs only): `hasFeature` and the cohort cache below both branch on it, so
+ * they cannot disagree about which flags read per-user state.
  */
-function readsFlipt(key: FeatureFlagKey): boolean {
-  return !!featureFlags[key].fliptKey && !envOverriddenFlags.has(key);
+function consultedFliptKey(key: FeatureFlagKey): string | undefined {
+  return envOverriddenFlags.has(key) ? undefined : featureFlags[key].fliptKey || undefined;
 }
 
 const hasFeature = (
@@ -1124,9 +1125,10 @@ const hasFeature = (
 
   // Flipt overrides role checks (both enable AND disable) — but not ENV, region, or domain.
   // When Flipt is unavailable, fall through to static evaluation.
-  if (readsFlipt(key) && _fliptModule) {
+  const fliptKey = consultedFliptKey(key);
+  if (fliptKey && _fliptModule) {
     const fliptResult = _fliptModule.isFliptSync(
-      feature.fliptKey,
+      fliptKey,
       user ? String(user.id) : 'anonymous',
       fliptContext
     );
@@ -1134,7 +1136,7 @@ const hasFeature = (
       // Opt-in: this fires once per Flipt-backed flag per evaluation, which is
       // hundreds of lines per page load and buries everything else in the dev log.
       if (isDev && process.env.FLIPT_DEBUG === 'true') {
-        console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
+        console.log(`[Flipt] ${key} (${fliptKey}) => ${fliptResult}`);
       }
       return fliptResult;
     }
@@ -1222,10 +1224,10 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // Cohort cache (behind the `feature-flags-cohort-cache` Flipt flag)
 // --------------------------
 // The whole-result cache below is keyed by user id, so every distinct signed-in user misses it
-// and pays for every flag. But the flags `readsFlipt` rejects are decided by static inputs alone,
-// and those inputs are shared by many users. With the flag ON, that Flipt-free portion is computed
-// once per COHORT and reused; only the Flipt-read flags are evaluated per user (through the Flipt
-// client's own per-entity eval cache, as before).
+// and pays for every flag. But a flag with no `consultedFliptKey` is decided by static inputs
+// alone, and those inputs are shared by many users. With the flag ON, that Flipt-free portion is
+// computed once per COHORT and reused; only the Flipt-read flags are evaluated per user (through
+// the Flipt client's own per-entity eval cache, as before).
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT, as for the whole-result key. For a flag that does
 // not read Flipt, `isFeatureFlagKeyPresent` → `hasFeature` reads exactly:
@@ -1241,7 +1243,7 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // would share an entry. The equivalence test (flag ON deep-equals flag OFF over a context matrix)
 // is the guard.
 const STATIC_FLAG_KEYS = (Object.keys(featureFlags) as FeatureFlagKey[]).filter(
-  (key) => !readsFlipt(key)
+  (key) => !consultedFliptKey(key)
 );
 // The same staleness bound as the whole-result cache's FEATURE_ACCESS_TTL_MS (declared below).
 const COHORT_TTL_MS = 10_000;
@@ -1315,7 +1317,7 @@ function computeFeatureFlagsByCohort(ctx: FeatureAccessContext): FeatureAccess {
   const fliptContext = buildFliptContext(ctx.user);
   const acc = {} as FeatureAccess;
   for (const key of Object.keys(featureFlags) as FeatureFlagKey[]) {
-    const present = readsFlipt(key)
+    const present = consultedFliptKey(key)
       ? isFeatureFlagKeyPresent(key, ctx, fliptContext)
       : staticPresent.has(key);
     if (present) acc[key] = true;
