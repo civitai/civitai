@@ -283,7 +283,7 @@ export const imageQueueActions = {
     return { success: true, imageId };
   },
 
-  // `dismissFlag` for every one of one user's removed images, from the by-user view of the same queue.
+  // Clears the flag from every one of one user's removed images, from the by-user view of the same queue.
   dismissUserFlags: async ({ request, locals, params }) => {
     if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
     const input = parseForm(

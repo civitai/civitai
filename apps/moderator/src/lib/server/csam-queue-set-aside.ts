@@ -18,7 +18,7 @@ export async function setAsideState(db: Kysely<DB>): Promise<SetAsideState> {
 
 /**
  * The image (`image` is the table or alias it is read as) has a set-aside row that counts: any
- * dismissal, or a row set aside after a report while its owner is in the marker view. False when
+ * dismissal, or a row set aside after a report while its owner's row is in the view. False when
  * `state` has no table.
  */
 export function setAsideCounts(image: string, state: SetAsideState) {

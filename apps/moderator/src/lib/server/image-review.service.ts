@@ -129,7 +129,7 @@ export async function getImageReviewQueue({
       )
     )
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
-    .$if(!!setAside?.table, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
+    .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -224,9 +224,7 @@ function coveredBySentCsamReport(image: string) {
 
 /** Out of the CSAM queue's pending count: covered by a sent report, or set aside. */
 function outOfPending(image: string, setAside: SetAsideState) {
-  return setAside.table
-    ? sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image, setAside)})`
-    : coveredBySentCsamReport(image);
+  return sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image, setAside)})`;
 }
 
 /** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says

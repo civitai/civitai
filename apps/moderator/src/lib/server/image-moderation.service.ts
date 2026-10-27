@@ -319,7 +319,18 @@ export async function dismissFromCsamQueue({
         moderatorId: userId,
         createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
       })
-      .onConflict((oc) => oc.column('imageId').doNothing())
+      // A dismissal is final. A row set aside after a report becomes one, so an image that came back
+      // to the queue can still be dismissed.
+      .onConflict((oc) =>
+        oc
+          .column('imageId')
+          .doUpdateSet({
+            outcome: 'Dismissed',
+            moderatorId: userId,
+            createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
+          })
+          .where('CsamQueueSetAside.outcome', '=', 'AfterReport')
+      )
       .executeTakeFirst();
     if (!Number(numInsertedOrUpdatedRows)) return false;
 
