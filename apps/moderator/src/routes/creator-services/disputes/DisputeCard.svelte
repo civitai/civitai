@@ -117,7 +117,7 @@
         yes, {dateTime(buyerDownloads.lastAt)}, {plural(buyerDownloads.count, 'time')}
         <span class="text-xs text-dark-2">· {firstTaken}</span>
       {:else if buyerDownloads.state === 'never'}
-        never
+        No download recorded
       {:else if buyerDownloads.reason === 'before-recording'}
         <span class="text-dark-2">unknown (the deal completed before downloads were recorded)</span>
       {:else}
