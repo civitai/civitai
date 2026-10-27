@@ -25,7 +25,7 @@ import {
  * `keywords` and no `searchAccountSections` equivalent. That search box exists because
  * eight account sections hide hundreds of individual settings, so a label-only match
  * finds nothing you did not already know the name of. `/apps` has at most SIX
- * destinations, all of which fit on screen at once; a search box over seven visible links
+ * destinations, all of which fit on screen at once; a search box over six visible links
  * is chrome that answers a question nobody has.
  */
 
@@ -342,9 +342,7 @@ export const appsSections: AppsSection[] = [
    *
    * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
    * is `resolveAppsBuildPageMode` verbatim (the build states or the App Assistant).
-   * The App Assistant had its own row pointing at `/apps/assistant`; that route now 301s
-   * here and the page renders the workspace itself, so the row went with it. `hasSubmissions` / `hasEditableApps` are
-   * deliberately ABSENT from this predicate even though they decide what the page
+   * `hasSubmissions` / `hasEditableApps` are deliberately ABSENT from this predicate even though they decide what the page
    * RENDERS: they come from the client-only `getNavSummary`, and an entry that appeared
    * after mount for an author with apps is the hydration mismatch this surface already
    * survived once. The page's own state machine reads them; the nav does not.

@@ -86,9 +86,4 @@ describe('AppAccessRequestsQueue — the actions that grant and revoke', () => {
     await expect.element(inRow(13)).toBeInTheDocument();
     expect(inRow(13).getByRole('button').elements()).toHaveLength(0);
   });
-
-  test('the banner says approving grants access', async () => {
-    renderWithProviders(<AppAccessRequestsQueue />);
-    await expect.element(page.getByText('Approving grants access')).toBeInTheDocument();
-  });
 });

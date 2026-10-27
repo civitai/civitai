@@ -58,12 +58,12 @@
   import {
     sidebarCounts,
     sidebarLastActioned,
+    sidebarQueueOldest,
     refreshSidebarCounts,
   } from '$lib/sidebar-counts.svelte';
   import {
-    LAST_ACTIONED_WINDOW_DAYS,
     URGENT_SEVERITY_RANK,
-    lastActionedBadge,
+    queueWaitBadge,
     severityClassForRank,
   } from '$lib/queue-thresholds';
   import ShortAge from '$lib/components/ShortAge.svelte';
@@ -108,13 +108,20 @@
   const PARTIAL_TITLE = 'Some counts are unavailable';
 
   const lastActioned = sidebarLastActioned();
+  const queueOldest = sidebarQueueOldest();
   const clock = minuteClock();
   const now = $derived(clock.now);
-  // Nothing until the lookup lands: a missing timestamp reads as "no action in a week", and painting
-  // that before the answer arrives would flash every waiting queue red.
+  // Nothing until both lookups land: with one missing, the badge would time from the wrong event and
+  // jump when the other arrives.
   const actionedFor = (link: NavLink, count: number | null) =>
-    link.countKey && lastActioned.value
-      ? lastActionedBadge(link.countKey, lastActioned.value[link.countKey]?.at, count, now)
+    link.countKey && lastActioned.value && queueOldest.value
+      ? queueWaitBadge(
+          link.countKey,
+          lastActioned.value[link.countKey]?.at,
+          queueOldest.value[link.countKey],
+          count,
+          now
+        )
       : null;
 
   // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
@@ -244,18 +251,12 @@
                                     <!-- Beside the label, not the count: the counts stay one right-aligned column. -->
                                     {#if actioned}
                                       {@const badgeClass = `shrink-0 rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
-                                      {#if actioned.at}
-                                        <ShortAge
-                                          at={actioned.at}
-                                          {now}
-                                          title={actioned.title}
-                                          class={badgeClass}
-                                        />
-                                      {:else}
-                                        <span class={badgeClass} title={actioned.title}>
-                                          &gt;{LAST_ACTIONED_WINDOW_DAYS}d
-                                        </span>
-                                      {/if}
+                                      <ShortAge
+                                        at={actioned.at}
+                                        {now}
+                                        title={actioned.title}
+                                        class={badgeClass}
+                                      />
                                     {/if}
                                     {#if cnt !== null}
                                       <span

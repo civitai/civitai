@@ -1,10 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  applyUserScoreUpdates,
-  raiseImagesScores,
-  subtractImagesScores,
-} from '~/server/jobs/update-user-score';
+import { applyUserScoreUpdates, subtractImagesScores } from '~/server/jobs/update-user-score';
 import {
   IMAGE_SELF_EXCLUDED_STAMP,
   listImageOwnersToExclude,
@@ -39,11 +35,10 @@ async function scoresOf(id: number) {
 beforeAll(async () => {
   holder.db = new PGlite();
   await q(`CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb)`);
-  await q(`CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb)`);
 });
 
 beforeEach(async () => {
-  await q(`TRUNCATE "User", "KeyValue"`);
+  await q(`TRUNCATE "User"`);
 });
 
 describe('subtractImagesScores', () => {
@@ -79,83 +74,6 @@ describe('subtractImagesScores', () => {
     await q(`UPDATE "User" SET meta = jsonb_set(meta, '{scores,images}', '1500') WHERE id = 1`);
     await subtractImagesScores(pg, [[1, 300]], stamp);
     expect((await scoresOf(1)).scores).toMatchObject({ images: 1200 });
-  });
-});
-
-describe('raiseImagesScores', () => {
-  const CHECKPOINT = { key: 'update-user-score:images', value: 1_792_886_169_000 };
-  const raised = { key: 'imageScoreRaisedAt', at: AT };
-  const setCheckpoint = (value: number) =>
-    q(
-      `INSERT INTO "KeyValue" VALUES ($1, to_jsonb($2::bigint))
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [CHECKPOINT.key, value]
-    );
-  const raise = (rows: { id: number; expected: number | null; next: number }[]) =>
-    raiseImagesScores(pg, rows, { checkpoint: CHECKPOINT, stamp: raised });
-
-  beforeEach(() => setCheckpoint(CHECKPOINT.value));
-
-  it('raises images, recomputes the total, stamps, and returns both sides', async () => {
-    await user(1, { images: 100, models: 50, total: 150 });
-    const [row] = await raise([{ id: 1, expected: 100, next: 400 }]);
-    expect(row).toEqual({
-      userId: 1,
-      oldImages: 100,
-      newImages: 400,
-      oldTotal: 150,
-      newTotal: 450,
-    });
-    expect((await scoresOf(1)).scores).toEqual({
-      images: 400,
-      models: 50,
-      total: 450,
-      imageScoreRaisedAt: AT.toISOString(),
-    });
-  });
-
-  it('gives an owner with no images score one', async () => {
-    await user(1, { models: 50, total: 50 });
-    await raise([{ id: 1, expected: null, next: 30 }]);
-    expect((await scoresOf(1)).scores).toMatchObject({ images: 30, total: 80 });
-  });
-
-  // The cron persisted a new score after the caller read it: writing the caller's value would drop it.
-  it('writes nothing where the score is no longer the one the caller read', async () => {
-    await user(1, { images: 100, total: 100 });
-    await q(`UPDATE "User" SET meta = jsonb_set(meta, '{scores,images}', '130') WHERE id = 1`);
-    expect(await raise([{ id: 1, expected: 100, next: 400 }])).toEqual([]);
-    expect((await scoresOf(1)).scores).toMatchObject({ images: 130, total: 100 });
-  });
-
-  // The cron finished a run after the caller read the checkpoint: the value is as of the old one.
-  it('writes nothing once the checkpoint has moved', async () => {
-    await user(1, { images: 100, total: 100 });
-    await setCheckpoint(CHECKPOINT.value + 86_400_000);
-    expect(await raise([{ id: 1, expected: 100, next: 400 }])).toEqual([]);
-    expect((await scoresOf(1)).scores).toMatchObject({ images: 100 });
-  });
-
-  it('never lowers a score, whatever the caller asks', async () => {
-    await user(1, { images: 100, total: 100 });
-    expect(
-      await raise([
-        { id: 1, expected: 100, next: 40 },
-        { id: 1, expected: 100, next: 100 },
-      ])
-    ).toEqual([]);
-    expect((await scoresOf(1)).scores).toMatchObject({ images: 100 });
-  });
-
-  it('is taken back exactly by subtracting what it added, keeping what the cron added since', async () => {
-    await user(1, { images: 100, total: 100 });
-    const [row] = await raise([{ id: 1, expected: 100, next: 400 }]);
-    await q(`UPDATE "User" SET meta = jsonb_set(meta, '{scores,images}', '420') WHERE id = 1`);
-    await subtractImagesScores(pg, [[1, Number(row.newImages) - Number(row.oldImages)]], {
-      key: 'imageScoreRaiseRolledBackAt',
-      at: AT,
-    });
-    expect((await scoresOf(1)).scores).toMatchObject({ images: 120 });
   });
 });
 

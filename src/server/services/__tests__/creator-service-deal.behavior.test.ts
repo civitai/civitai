@@ -270,6 +270,7 @@ beforeAll(async () => {
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
@@ -2982,6 +2983,23 @@ describe('dispute reviews', () => {
     expect(
       (await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER })).priorDisputes
     ).toEqual({ days: 90, buyer: 0, seller: 0 });
+  });
+
+  it.each([
+    ['missing', undefined, 'off'],
+    ['shadow', 'shadow', 'shadow'],
+    ['unknown', 'yes', 'off'],
+  ])('reads the agent kill switch when it is %s', async (_, stored, expected) => {
+    await q(`DELETE FROM "KeyValue" WHERE key = $1`, [reviews.DISPUTE_AGENT_MODE_KEY]);
+    if (stored !== undefined)
+      await q(`INSERT INTO "KeyValue" (key, value) VALUES ($1, $2::jsonb)`, [
+        reviews.DISPUTE_AGENT_MODE_KEY,
+        JSON.stringify(stored),
+      ]);
+    const id = await disputed();
+    expect(
+      (await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER })).agentMode
+    ).toBe(expected);
   });
 
   it("puts each file's own accesses on it", async () => {
