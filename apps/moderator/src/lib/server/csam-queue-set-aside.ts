@@ -5,34 +5,37 @@ import { HOLD_MARKER_VIEW } from './csam-flag-clear';
 
 const SET_ASIDE_TABLE = 'CsamQueueSetAside';
 
-/**
- * Whether set-aside rows can be read: the table and the marker view must both exist. When either is
- * missing no row counts, so the queue shows every image rather than hiding one it cannot account for.
- */
-export async function setAsideReadable(db: Kysely<DB>): Promise<boolean> {
-  const { rows } = await sql<{ readable: unknown }>`
-    SELECT to_regclass(${`"${SET_ASIDE_TABLE}"`}) IS NOT NULL
-       AND to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS readable`.execute(db);
-  return rows[0]?.readable === true;
+/** Which set-aside rows can be read: none without the table, and `AfterReport` rows only with the
+ *  marker view too. A row that cannot be read never counts, so the queue shows the image. */
+export type SetAsideState = { table: boolean; markerView: boolean };
+
+export async function setAsideState(db: Kysely<DB>): Promise<SetAsideState> {
+  const { rows } = await sql<{ table: unknown; view: unknown }>`
+    SELECT to_regclass(${`"${SET_ASIDE_TABLE}"`}) IS NOT NULL AS table,
+           to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS view`.execute(db);
+  return { table: rows[0]?.table === true, markerView: rows[0]?.view === true };
 }
 
 /**
- * The image (`image` is the table or alias it is read as) has a set-aside row that still counts: its
- * owner is in the marker view, or it is a dismissal made within the last year. Only valid where
- * `setAsideReadable` returned true.
+ * The image (`image` is the table or alias it is read as) has a set-aside row that counts: any
+ * dismissal, or a row set aside after a report while its owner is in the marker view. False when
+ * `state` has no table.
  */
-export function setAsideCounts(image: string) {
+export function setAsideCounts(image: string, state: SetAsideState) {
+  if (!state.table) return sql<boolean>`false`;
   const col = (name: string) => sql.ref(`${image}.${name}`);
+  const afterReport = state.markerView
+    ? sql<boolean>`(
+        s.outcome = 'AfterReport'
+        and exists (select 1 from ${sql.table(HOLD_MARKER_VIEW)} h where h."userId" = ${col(
+        'userId'
+      )})
+      )`
+    : sql<boolean>`false`;
   return sql<boolean>`exists (
     select 1
     from "CsamQueueSetAside" s
     where s."imageId" = ${col('id')}
-      and (
-        exists (select 1 from ${sql.table(HOLD_MARKER_VIEW)} h where h."userId" = ${col('userId')})
-        or (
-          s.outcome = 'Dismissed'
-          and s."createdAt" > (now() AT TIME ZONE 'UTC') - interval '1 year'
-        )
-      )
+      and (s.outcome = 'Dismissed' or ${afterReport})
   )`;
 }

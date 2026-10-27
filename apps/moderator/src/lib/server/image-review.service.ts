@@ -3,7 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
-import { setAsideCounts, setAsideReadable } from './csam-queue-set-aside';
+import { setAsideCounts, setAsideState, type SetAsideState } from './csam-queue-set-aside';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -61,7 +61,7 @@ export async function getImageReviewQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
-  const setAside = needsReview === FLAG_KEPT_THROUGH_BLOCK && (await setAsideReadable(dbRead));
+  const setAside = needsReview === FLAG_KEPT_THROUGH_BLOCK ? await setAsideState(dbRead) : null;
   const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
@@ -129,7 +129,7 @@ export async function getImageReviewQueue({
       )
     )
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
-    .$if(setAside, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i')}`))
+    .$if(!!setAside?.table, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -222,11 +222,10 @@ function coveredBySentCsamReport(image: string) {
   )`;
 }
 
-/** Out of the CSAM queue's pending count: covered by a sent report, or set aside. `setAside` is what
- *  `setAsideReadable` returned. */
-function outOfPending(image: string, setAside: boolean) {
-  return setAside
-    ? sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image)})`
+/** Out of the CSAM queue's pending count: covered by a sent report, or set aside. */
+function outOfPending(image: string, setAside: SetAsideState) {
+  return setAside.table
+    ? sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image, setAside)})`
     : coveredBySentCsamReport(image);
 }
 
@@ -258,7 +257,7 @@ export async function getCsamQueueByUser({
 }: {
   browsingLevel: number;
 }): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
-  const setAside = await setAsideReadable(dbRead);
+  const setAside = await setAsideState(dbRead);
   const groups = await dbRead
     .selectFrom('Image as i')
     .select([
@@ -327,7 +326,7 @@ export async function getCsamQueueByUser({
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
-  const covered = outOfPending('Image', await setAsideReadable(dbRead));
+  const covered = outOfPending('Image', await setAsideState(dbRead));
   const rows = await dbRead
     .selectFrom('Image')
     .select('needsReview')

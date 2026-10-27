@@ -291,9 +291,8 @@ describe('the CSAM queue filtered to one user', () => {
 });
 
 describe('images set aside from the CSAM queue', () => {
-  // 301: dismissed 364 days ago (61), dismissed 366 days ago (62), set aside after a report with no
-  // hold (63), and one with no row (64). 302 is under a hold: dismissed 366 days ago (65) and set
-  // aside after a report (66).
+  // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
+  // held: dismissed 400 days ago (65), set aside after a report (66).
   beforeAll(async () => {
     await db.exec(`
       CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
@@ -307,13 +306,12 @@ describe('images set aside from the CSAM queue', () => {
       INSERT INTO "EvidenceHold" ("userId") VALUES (302);
       INSERT INTO "User" ("id", "username") VALUES (301, 's'), (302, 't');
       INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
-        (61, 301, 'csam', 'Blocked'), (62, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'),
-        (64, 301, 'csam', 'Blocked'), (65, 302, 'csam', 'Blocked'), (66, 302, 'csam', 'Blocked');
+        (61, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'), (64, 301, 'csam', 'Blocked'),
+        (65, 302, 'csam', 'Blocked'), (66, 302, 'csam', 'Blocked');
       INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt") VALUES
-        (61, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '364 days'),
-        (62, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '366 days'),
+        (61, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '400 days'),
         (63, 301, 'AfterReport', 1, now() AT TIME ZONE 'UTC'),
-        (65, 302, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '366 days'),
+        (65, 302, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '400 days'),
         (66, 302, 'AfterReport', 1, now() AT TIME ZONE 'UTC');
     `);
   });
@@ -321,7 +319,7 @@ describe('images set aside from the CSAM queue', () => {
   afterAll(async () => {
     await db.exec(`
       DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
-      DROP TABLE "CsamQueueSetAside"; DROP TYPE "CsamQueueSetAsideOutcome";
+      DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
       DELETE FROM "Image" WHERE "userId" IN (301, 302); DELETE FROM "User" WHERE id IN (301, 302);
     `);
   });
@@ -339,12 +337,9 @@ describe('images set aside from the CSAM queue', () => {
       })
     ).items.map((i) => i.id);
 
-  it('counts a dismissal for a year when no hold dates the owner, and nothing else without one', async () => {
-    expect(await pendingOf(301)).toBe(3);
-    expect(await listed(301)).toEqual([64, 63, 62]);
-  });
-
-  it('counts every set-aside image while the owner is held, past a dismissal’s year', async () => {
+  it('keeps a dismissal out for good, and a row set aside after a report only while held', async () => {
+    expect(await pendingOf(301)).toBe(2);
+    expect(await listed(301)).toEqual([64, 63]);
     expect(await pendingOf(302)).toBe(0);
     expect(await listed(302)).toEqual([]);
   });
@@ -355,16 +350,28 @@ describe('images set aside from the CSAM queue', () => {
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 
-  it('counts no set-aside row at all while the marker view is missing', async () => {
+  it('shows rows set aside after a report while the marker view is missing', async () => {
     await db.exec(`DROP VIEW "EvidenceHeldUser"`);
     try {
-      expect(await pendingOf(301)).toBe(4);
-      expect(await pendingOf(302)).toBe(2);
-      expect(await listed(302)).toEqual([66, 65]);
+      expect(await pendingOf(301)).toBe(2);
+      expect(await pendingOf(302)).toBe(1);
+      expect(await listed(302)).toEqual([66]);
     } finally {
       await db.exec(
         `CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId"`
       );
+    }
+  });
+
+  it('shows every image while the table is missing', async () => {
+    await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
+    try {
+      expect(await pendingOf(301)).toBe(3);
+      expect(await pendingOf(302)).toBe(2);
+      expect(await listed(301)).toEqual([64, 63, 61]);
+      expect(Number((await getImageReviewCounts()).csam)).toBeGreaterThan(0);
+    } finally {
+      await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
     }
   });
 });
