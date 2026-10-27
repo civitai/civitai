@@ -48,7 +48,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import { env as clientEnv } from '~/env/client';
-import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   deleteObject,
