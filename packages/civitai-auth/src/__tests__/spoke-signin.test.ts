@@ -17,9 +17,12 @@ const HOST = '__Host-civ-token';
 const ORIGINAL_ENV = { ...process.env };
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
-const TOKEN = `${b64({ alg: 'ES256' })}.${b64({ exp: Math.floor(Date.now() / 1000) + 3600 })}.sig`;
+// The cookie's Max-Age is exp minus now, so the clock is pinned: a second ticking during the run would change it.
+const NOW = Date.UTC(2026, 0, 1);
+const TOKEN = `${b64({ alg: 'ES256' })}.${b64({ exp: NOW / 1000 + 3600 })}.sig`;
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'], now: NOW });
   process.env.AUTH_JWT_ISSUER = HUB;
   h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: HUB });
   vi.stubGlobal(
@@ -34,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 /** A browser cookie jar for one host: applies Set-Cookie, optionally dropping one name (a cookie that never lands). */
