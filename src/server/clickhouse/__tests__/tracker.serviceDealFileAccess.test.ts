@@ -38,6 +38,18 @@ describe('Tracker.serviceDealFileAccess', () => {
       userId: 2,
       role: 'Buyer',
       kind: 'Download',
+      time: expect.any(String),
     });
+  });
+
+  it('rejects when the row could not be delivered, if asked to wait', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, text: async () => 'nats timeout' });
+    const tracker = new Tracker(undefined, undefined, null);
+    await expect(
+      tracker.serviceDealFileAccess(
+        { dealId: 7, fileId: 70, userId: 2, role: 'Buyer', kind: 'Download' },
+        { awaitDelivery: true }
+      )
+    ).rejects.toThrow();
   });
 });

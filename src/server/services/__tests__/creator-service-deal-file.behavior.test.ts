@@ -1458,6 +1458,10 @@ describe('recording who took a file', () => {
     expect(tracked()).toEqual([
       { dealId, fileId: finalId, userId: BUYER, role: 'Buyer', kind: 'Download' },
     ]);
+    // Waits for delivery off the request path, so a lost row reaches the failure log.
+    expect(tracker.serviceDealFileAccess).toHaveBeenCalledWith(expect.anything(), {
+      awaitDelivery: true,
+    });
   });
 
   it('tracks a moderator who is the buyer, fetching through the dispute tool, as the buyer', async () => {
@@ -1508,6 +1512,26 @@ describe('recording who took a file', () => {
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
       )
+    );
+  });
+
+  it('logs a download the tracker did not write because it is switched off', async () => {
+    const { finalId } = await completedDeal();
+    tracker.serviceDealFileAccess.mockResolvedValue(false);
+    await take(await download(finalId, BUYER));
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
+      )
+    );
+  });
+
+  it('logs nothing when the row is delivered', async () => {
+    const { finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-service-file-access' })
     );
   });
 

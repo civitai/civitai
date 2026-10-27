@@ -1001,14 +1001,22 @@ export class Tracker {
   }
 
   // `userId` is the caller's: a moderator-app request carries no site session to stamp it from.
-  public serviceDealFileAccess(values: {
-    dealId: number;
-    fileId: number;
-    userId: number;
-    role: ServiceDealAccessRole;
-    kind: ServiceDealAccessKind;
-  }) {
-    return this.track('serviceDealFileAccess', values, { skipActorMeta: true });
+  // `time` is stamped here: a row buffered in the tracker must not land after the dispute it predates.
+  public serviceDealFileAccess(
+    values: {
+      dealId: number;
+      fileId: number;
+      userId: number;
+      role: ServiceDealAccessRole;
+      kind: ServiceDealAccessKind;
+    },
+    options?: TrackDelivery
+  ) {
+    return this.track(
+      'serviceDealFileAccess',
+      { ...values, time: new Date() },
+      { skipActorMeta: true, ...options }
+    );
   }
 
   public search(values: { query: string; index: string; filters?: any }) {

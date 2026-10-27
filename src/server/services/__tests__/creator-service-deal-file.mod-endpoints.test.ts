@@ -14,6 +14,7 @@ const service = vi.hoisted(() => ({
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
+vi.mock('~/server/services/creator-service-deal-file-access', () => service);
 vi.mock('~/server/utils/moderator-endpoint', () => ({
   defineModeratorEndpoint: (_name: string, def: unknown) => def,
 }));
@@ -85,7 +86,7 @@ describe('deal-files', () => {
   });
 
   it('still lists the files when the access log cannot be read, with no access on them', async () => {
-    service.listServiceDealFileAccess.mockRejectedValue(new Error('relation does not exist'));
+    service.listServiceDealFileAccess.mockRejectedValue(new Error('ClickHouse query failed'));
     const result = await files.handler({ dealId: 4 }, actor);
     expect(result).toEqual({
       items: [{ dealId: 4, id: 40, kind: 'Final' }],

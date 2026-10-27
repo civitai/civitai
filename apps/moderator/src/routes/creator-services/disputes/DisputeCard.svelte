@@ -121,7 +121,7 @@
       {:else if buyerDownloads.reason === 'before-recording'}
         <span class="text-dark-2">unknown (the deal completed before downloads were recorded)</span>
       {:else}
-        <span class="text-dark-2">unknown (not reported yet)</span>
+        <span class="text-dark-2">unknown (the download log could not be read)</span>
       {/if}
     </p>
     <p class="mt-1 text-xs text-dark-2">
