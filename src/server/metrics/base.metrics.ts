@@ -145,9 +145,7 @@ export function createMetricProcessor({
 
 const RANK_SYNC_TIMEOUT = 5 * 60 * 1000;
 
-// Syncs the rank table from its `_Live` view in place, in one transaction. Dropping and
-// recreating it made a new table owned by whichever role ran the job, which lost every grant
-// on it. Only ROW EXCLUSIVE is taken, so readers keep the old rows until commit.
+// In place, never drop + recreate: a recreated table is owned by the job's role and loses its grants.
 async function syncRankTable(rankTable: string, primaryKey: string) {
   const stage = `${rankTable}_Stage`;
   const pk = `"${primaryKey}"`;
@@ -175,7 +173,6 @@ async function syncRankTable(rankTable: string, primaryKey: string) {
           `DELETE FROM "${rankTable}" r
           WHERE NOT EXISTS (SELECT 1 FROM "${stage}" s WHERE s.${pk} = r.${pk})`
         );
-        // Rows whose ranks did not move are left alone, so each run churns only what changed.
         await tx.$executeRawUnsafe(
           `INSERT INTO "${rankTable}" (${cols})
           SELECT ${cols} FROM "${stage}"

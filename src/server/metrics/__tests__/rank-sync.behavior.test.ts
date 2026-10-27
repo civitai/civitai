@@ -3,12 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-// A rank refresh used to drop the rank table and rename a fresh copy into place. The copy was a
-// new table owned by the role running the job, so every grant on the old one (the app's read
-// role's SELECT among them) was gone after each run. This drives a real refresh through
-// createMetricProcessor against Postgres, as a writer role that is a member of the owner (as in
-// production, where it could drop the table), and checks the table the readers were granted is
-// the one still there.
+// The job runs as a role that is a member of the table's owner, so the old drop + recreate could
+// run and hand the new table to the job's role; app_read's SELECT is the grant that must survive.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
