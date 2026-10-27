@@ -4,6 +4,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
+import { OPEN_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -985,7 +986,7 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const stuckDeposits = deposits.filter(
     (d) =>
-      ['waiting', 'confirming', 'partially_paid'].includes(d.status) &&
+      [...OPEN_DEPOSIT_STATUSES, 'partially_paid'].includes(d.status) &&
       new Date(d.createdAt) > sevenDaysAgo
   );
 

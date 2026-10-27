@@ -15,10 +15,19 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
  * in the assistant view whose app list had no switch would have no route to it at all.
  */
 
-const mocks = vi.hoisted(() => ({
-  user: null as null | { id: number; isModerator: boolean },
-  flags: {} as Record<string, boolean>,
-}));
+const mocks = vi.hoisted(() => {
+  let releaseWorkspace: (() => void) | undefined;
+  const workspaceImport = new Promise<void>((resolve) => {
+    releaseWorkspace = resolve;
+  });
+  return {
+    user: null as null | { id: number; isModerator: boolean },
+    flags: {} as Record<string, boolean>,
+    /** The workspace module's import is held until this is called, like a chunk still loading. */
+    releaseWorkspace: () => releaseWorkspace?.(),
+    workspaceImport,
+  };
+});
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -34,15 +43,18 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 vi.mock('~/components/AppLayout/AppLayout', () => ({
   AppLayout: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', () => ({
-  AppAssistantWorkspace: (props: { sandboxUrl: string | null; remoteRunner?: boolean }) => (
-    <div
-      data-testid="workspace"
-      data-sandbox={props.sandboxUrl ?? ''}
-      data-remote={String(!!props.remoteRunner)}
-    />
-  ),
-}));
+vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', async () => {
+  await mocks.workspaceImport;
+  return {
+    AppAssistantWorkspace: (props: { sandboxUrl: string | null; remoteRunner?: boolean }) => (
+      <div
+        data-testid="workspace"
+        data-sandbox={props.sandboxUrl ?? ''}
+        data-remote={String(!!props.remoteRunner)}
+      />
+    ),
+  };
+});
 vi.mock('~/components/Apps/AppsBuildBody', () => ({
   AppsBuildBody: () => <div data-testid="build-body" />,
 }));
@@ -80,7 +92,39 @@ beforeEach(() => {
   (Router as unknown as { query: Record<string, string> }).query = {};
 });
 
+/**
+ * Runs FIRST, while the workspace import is still held: a client-side navigation into the
+ * assistant view waits on the workspace chunk, and the page must show its skeleton meanwhile, not
+ * a blank body.
+ */
+describe('/apps/build — while the workspace chunk loads', () => {
+  test('the assistant view shows the workspace skeleton, then the workspace', async () => {
+    await renderPage(ASSISTANT);
+    await expect.element(page.getByTestId('app-assistant-workspace-skeleton')).toBeInTheDocument();
+    expect(seen('workspace')).toBe(0);
+    mocks.releaseWorkspace();
+    await expect.element(page.getByTestId('workspace')).toBeInTheDocument();
+    expect(seen('app-assistant-workspace-skeleton')).toBe(0);
+  });
+});
+
 describe('/apps/build — which view the page mounts', () => {
+  /**
+   * The page loads the workspace through `next/dynamic`, whose FIRST mount shows the skeleton
+   * until the import resolves, so a view that wrongly mounted it could still pass a "no workspace"
+   * check made straight after render. Loading it once first makes every later mount resolve in the
+   * same commit, so the absence checks below can see it.
+   */
+  let workspaceLoaded = false;
+  beforeEach(async () => {
+    if (workspaceLoaded) return;
+    mocks.releaseWorkspace();
+    const warm = await renderWithProviders(<AppsBuildPage {...ASSISTANT} />);
+    await expect.element(page.getByTestId('workspace')).toBeInTheDocument();
+    await warm.unmount();
+    workspaceLoaded = true;
+  });
+
   test('the build view mounts the build body and never the workspace', async () => {
     await renderPage({ mode: 'build' });
     expect(seen('build-body')).toBe(1);

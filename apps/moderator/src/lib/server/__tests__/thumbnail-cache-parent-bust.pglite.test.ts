@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -62,10 +63,15 @@ vi.mock('../storage', () => ({
 const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { deleteImagesByIds } = await import('../image-deletion');
+const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const deleteImages = async (ids: number[]) =>
+  finishImageDeletes(
+    await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
+  );
 const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,
@@ -214,8 +220,8 @@ describe('moderator writes that change a custom thumbnail', () => {
     expect(reindexed()).toEqual([VIDEO_ID]);
   });
 
-  it('deleteImagesByIds evicts the parent video entry after the row is gone', async () => {
-    await deleteImagesByIds([THUMBNAIL_ID, OTHER_THUMBNAIL_ID]);
+  it('an image delete evicts the parent video entry after the row is gone', async () => {
+    await deleteImages([THUMBNAIL_ID, OTHER_THUMBNAIL_ID]);
 
     expect(bustedKeys()).toEqual(expect.arrayContaining([key(VIDEO_ID), key(OTHER_VIDEO_ID)]));
     expect(reindexed().sort()).toEqual([VIDEO_ID, OTHER_VIDEO_ID]);
@@ -224,7 +230,7 @@ describe('moderator writes that change a custom thumbnail', () => {
 
 // A held owner's image is kept by the hold's delete trigger (the real migration, installed here),
 // blocked and taken out of its post: that post's gallery caches are as stale as for a delete.
-describe('deleteImagesByIds on an image a hold marker keeps', () => {
+describe('an image delete on an image a hold marker keeps', () => {
   const HOLD_MIGRATION = readFileSync(
     join(
       dirname(fileURLToPath(import.meta.url)),
@@ -259,7 +265,7 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
   });
 
   it('busts the post the image was taken out of, and the image leaves search', async () => {
-    await deleteImagesByIds([PLAIN_IMAGE_ID]);
+    await deleteImages([PLAIN_IMAGE_ID]);
 
     const row = await db.query(
       `SELECT "postId", "ingestion" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`

@@ -645,16 +645,16 @@ export const removeBlockedImages = createJob(
       ).map((x) => x.id);
 
       // The held images that are past retention, i.e. the ones this run would otherwise delete.
+      // One array parameter, not Prisma's `in`: that binds a variable per id, and the held set
+      // outgrows Postgres's 32767-variable cap.
       const wouldSkip = heldActive.length
-        ? await dbRead.jobQueue.findMany({
-            where: {
-              type: JobQueueType.BlockedImageDelete,
-              entityType: EntityType.Image,
-              entityId: { in: heldActive },
-              createdAt: { lte: cutoff },
-            },
-            select: { entityId: true },
-          })
+        ? await dbRead.$queryRaw<{ entityId: number }[]>`
+            SELECT "entityId" FROM "JobQueue"
+            WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+              AND "entityType" = ${EntityType.Image}::"EntityType"
+              AND "entityId" = ANY(${heldActive}::int[])
+              AND "createdAt" <= ${cutoff}
+          `
         : [];
       if (wouldSkip.length) {
         logToAxiom({
@@ -744,15 +744,15 @@ export const removeBlockedImages = createJob(
         ...accountHeld,
       ]),
     ];
-    const jobQueue = await dbRead.jobQueue.findMany({
-      where: {
-        type: JobQueueType.BlockedImageDelete,
-        entityType: EntityType.Image,
-        ...(held.length ? { entityId: { notIn: held } } : {}),
-      },
-      take: 15000,
-      orderBy: { createdAt: 'asc' },
-    });
+    // One array parameter for the same reason as the would-skip lookup. No held ids, no filter.
+    const jobQueue = await dbRead.$queryRaw<{ entityId: number; createdAt: Date }[]>`
+      SELECT "entityId", "createdAt" FROM "JobQueue"
+      WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+        AND "entityType" = ${EntityType.Image}::"EntityType"
+        ${held.length ? Prisma.sql`AND "entityId" <> ALL(${held}::int[])` : Prisma.empty}
+      ORDER BY "createdAt" ASC
+      LIMIT 15000
+    `;
 
     if (!jobQueue.length) {
       console.log('No blocked images in queue', {
