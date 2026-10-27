@@ -30,5 +30,5 @@ export const lockReviewQueueLabel = (locks: string[]) =>
     .map((key) => (isRequestableLock(key) ? requestableLockLabels[key] : key))
     .join(', ')}`;
 
-/** An owner's repeat requests keep only their most recent reasons. */
+/** An owner's repeat requests keep the reasons from only their most recent asks. */
 export const LOCK_REVIEW_MAX_COMMENTS = 3;

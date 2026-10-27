@@ -112,17 +112,20 @@ export function mergeOwnLockReview(existing: unknown, incoming: MixedObject): Mi
     ...asLocks(incoming.lockedProperties),
   ]);
   const lockedProperties = REQUESTABLE_LOCKS.filter((key) => named.has(key));
-  const earlier = typeof current.comment === 'string' ? current.comment.split('\n\n') : [];
-  const comments = [...earlier, incoming.comment]
-    .filter(
-      (text, index, all): text is string =>
-        typeof text === 'string' && !!text.trim() && all.lastIndexOf(text) === index
-    )
+  const comments = [...lockReviewComments(current), ...lockReviewComments(incoming)]
+    .filter((text, index, all) => all.lastIndexOf(text) === index)
     .slice(-LOCK_REVIEW_MAX_COMMENTS);
   return {
     ...current,
     lockedProperties,
     violation: lockReviewQueueLabel(lockedProperties),
+    comments,
     ...(comments.length ? { comment: comments.join('\n\n') } : {}),
   };
+}
+
+/** One entry per ask. Requests filed before `comments` existed carry only `comment`, read as one ask. */
+export function lockReviewComments(details: MixedObject): string[] {
+  const entries = Array.isArray(details.comments) ? details.comments : [details.comment];
+  return entries.filter((text): text is string => typeof text === 'string' && !!text.trim());
 }

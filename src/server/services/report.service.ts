@@ -74,7 +74,11 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import { assertLockReviewAllowed, mergeOwnLockReview } from '~/server/services/lock-review.service';
+import {
+  assertLockReviewAllowed,
+  lockReviewComments,
+  mergeOwnLockReview,
+} from '~/server/services/lock-review.service';
 import {
   LOCK_REVIEW_REPORT_REASON,
   lockReviewQueueLabel,
@@ -299,7 +303,14 @@ const validateReportCreation = async ({
       where: { id, status: ReportStatus.Pending },
       data: { details: merged },
     });
-    return count ? { ...existingReport, details: merged } : null;
+    if (count) return { ...existingReport, details: merged };
+    // Closed in between: the new request it falls through to is held to the cooldown that close began.
+    await assertLockReviewAllowed({
+      modelId: entityReportId,
+      userId,
+      lockedProperties: details?.lockedProperties,
+    });
+    return null;
   }
 
   // if alsoReportedBy includes the userId, then do nothing
@@ -502,6 +513,7 @@ export const createReport = async ({
     const lockedProperties = (data.details as MixedObject).lockedProperties;
     await assertLockReviewAllowed({ modelId: id, userId, isModerator, lockedProperties });
     (data.details as MixedObject).violation = lockReviewQueueLabel(lockedProperties as string[]);
+    (data.details as MixedObject).comments = lockReviewComments(data.details as MixedObject);
   }
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });

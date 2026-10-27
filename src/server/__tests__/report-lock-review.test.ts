@@ -227,12 +227,70 @@ describe('a request to review a locked setting', () => {
     });
   });
 
-  it('keeps only the most recent reasons when the owner asks again and again', async () => {
-    ownOpenRequest({ lockedProperties: ['sfwOnly'], comment: 'One.\n\nTwo.\n\nThree.' });
+  it('keeps a reason with several paragraphs whole across asks', async () => {
+    ownOpenRequest({
+      lockedProperties: ['sfwOnly'],
+      comments: ['A\n\nB\n\nC\n\nD'],
+      comment: 'A\n\nB\n\nC\n\nD',
+    });
 
-    await askAgain(['sfwOnly'], 'Four.');
+    await askAgain(['sfwOnly'], 'X\n\nThanks.');
 
-    expect(mergeWrite().details.comment).toBe('Two.\n\nThree.\n\nFour.');
+    expect(mergeWrite().details).toMatchObject({
+      comments: ['A\n\nB\n\nC\n\nD', 'X\n\nThanks.'],
+      comment: 'A\n\nB\n\nC\n\nD\n\nX\n\nThanks.',
+    });
+  });
+
+  it('drops the oldest whole ask once there are more than three', async () => {
+    ownOpenRequest({
+      lockedProperties: ['sfwOnly'],
+      comments: ['One\n\nmore.', 'Two\n\nmore.', 'Three\n\nmore.'],
+    });
+
+    await askAgain(['sfwOnly'], 'Four\n\nmore.');
+
+    expect(mergeWrite().details.comments).toEqual([
+      'Two\n\nmore.',
+      'Three\n\nmore.',
+      'Four\n\nmore.',
+    ]);
+  });
+
+  it('moves a repeated reason to its latest position instead of keeping it twice', async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comments: ['Same reason.', 'Other reason.'] });
+
+    await askAgain(['sfwOnly'], 'Same reason.');
+
+    expect(mergeWrite().details.comments).toEqual(['Other reason.', 'Same reason.']);
+  });
+
+  it('reads a request filed with only a comment as one ask', async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comment: 'Legacy\n\nreason.' });
+
+    await askAgain(['sfwOnly'], 'New reason.');
+
+    expect(mergeWrite().details.comments).toEqual(['Legacy\n\nreason.', 'New reason.']);
+  });
+
+  it('records the reason of a first ask as its own entry', async () => {
+    await createReport(lockReview(OWNER));
+
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.details).toMatchObject({
+      comments: ['None of the showcase images are mature.'],
+    });
+  });
+
+  it('holds the request it falls through to to the cooldown the close began', async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comments: ['First reason.'] });
+    reportUpdateMany.mockResolvedValue({ count: 0 });
+    // Open when the request is first checked; closed, with its setting still locked, by the merge.
+    openRequest.mockResolvedValueOnce({ id: EXISTING_REPORT }).mockResolvedValue(null);
+    closedRequestsAre([{ daysAgo: 0, lockedProperties: ['sfwOnly'] }]);
+
+    await expect(askAgain(['nsfw'], 'Second reason.')).rejects.toThrow(/ask again/);
+    expect(reportCreate).not.toHaveBeenCalled();
   });
 
   it('never carries a setting that cannot be requested into the merged request', async () => {
