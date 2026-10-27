@@ -292,7 +292,7 @@
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
     "next": "16.4.3",
-    "nodemailer": "^6.8.0",
+    "nodemailer": "^7.0.11",
     "obscenity": "^0.4.5",
     "openai": "^4.73.0",
     "p-limit": "^6.2.0",

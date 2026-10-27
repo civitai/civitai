@@ -223,12 +223,12 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
-    spreads: ['storedObjectEtagMetadata(measured.etag)'],
+    spreads: ['storedObjectEtagMetadata(measured.etag)', 'blurhashMetadata(blur)'],
     serverColumns: [],
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
     calls: 1,
-    spreads: [],
+    spreads: ['blurhashMetadata(blur)'],
     serverColumns: [],
   },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
