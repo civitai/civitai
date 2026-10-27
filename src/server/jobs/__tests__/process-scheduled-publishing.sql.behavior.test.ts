@@ -54,6 +54,8 @@ const PAST = new Date(Date.now() - 60 * 60_000);
 // Runs inside the job's transaction before its first statement: a write landing between the
 // job's selects and its UPDATEs.
 let beforeTx: (() => Promise<unknown>) | undefined;
+// Every statement the job ran inside its transaction, with the rows it returned.
+const txLog: { sql: string; rows: Record<string, unknown>[] }[] = [];
 
 beforeAll(async () => {
   pg.db = new PGlite();
@@ -88,7 +90,20 @@ beforeAll(async () => {
     await pg.db.exec('BEGIN');
     try {
       await beforeTx?.();
-      const result = await fn({ $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw });
+      const logged =
+        (run: (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown>) =>
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const result = await run(strings, ...values);
+          txLog.push({
+            sql: strings.join('?'),
+            rows: Array.isArray(result) ? (result as Record<string, unknown>[]) : [],
+          });
+          return result;
+        };
+      const result = await fn({
+        $queryRaw: logged(raw.queryRaw),
+        $executeRaw: logged(raw.executeRaw),
+      });
       await pg.db.exec('COMMIT');
       return result;
     } catch (e) {
@@ -106,6 +121,7 @@ afterAll(async () => {
 beforeEach(async () => {
   mockProcessEngagement.mockReset();
   beforeTx = undefined;
+  txLog.length = 0;
   await pg.db.exec(`TRUNCATE "Model", "ModelVersion", "ModelFile", "Post"`);
 });
 
@@ -206,5 +222,67 @@ describe('processScheduledPublishing :: engagements', () => {
     });
     expect(engaged('model')).toEqual([]);
     expect(engaged('modelVersion')).toEqual([]);
+  });
+});
+
+describe('processScheduledPublishing :: a takedown after the selects', () => {
+  // The model alone: its version stays Scheduled. A Published sibling would satisfy the model's own
+  // has-a-Published-version check, so only the status re-check keeps it down.
+  it('publishes nothing under a model taken down after the selects', async () => {
+    await scheduled({ withFile: true });
+    await pg.db.query(`INSERT INTO "ModelVersion" VALUES (11, 1, 'Published', $1, 'Public')`, [
+      PAST,
+    ]);
+    beforeTx = () => pg.db.exec(`UPDATE "Model" SET status = 'UnpublishedViolation' WHERE id = 1`);
+    await runJob();
+    expect(await state()).toEqual({
+      model: 'UnpublishedViolation',
+      version: 'Scheduled',
+      postLive: false,
+    });
+    expect(mockProcessEngagement).not.toHaveBeenCalled();
+  });
+});
+
+describe('processScheduledPublishing :: one version publishes, another waits', () => {
+  it("keeps the waiting version's post back, and publishes it with its version later", async () => {
+    await scheduled({ withFile: false });
+    await pg.db.query(`INSERT INTO "ModelVersion" VALUES (12, 1, 'Scheduled', $1, 'Private')`, [
+      PAST,
+    ]);
+    await pg.db.query(`INSERT INTO "ModelFile" ("modelVersionId") VALUES (12)`);
+    await runJob();
+    expect(await state()).toEqual({ model: 'Published', version: 'Scheduled', postLive: false });
+    await addFile();
+    await runJob();
+    expect(await state()).toEqual({ model: 'Published', version: 'Published', postLive: true });
+  });
+});
+
+describe('processScheduledPublishing :: lock order', () => {
+  // The order the model takedown and publish paths take rows in: a model, then its versions. Rows
+  // are inserted in descending id order so an unordered lock would come back unsorted.
+  it('locks every model, then every version, each in ascending id, before any other write', async () => {
+    for (const modelId of [3, 2]) {
+      await pg.db.query(`INSERT INTO "Model" VALUES ($1, $2, 'Scheduled', $3, NULL, NULL)`, [
+        modelId,
+        OWNER,
+        PAST,
+      ]);
+      await pg.db.query(`INSERT INTO "ModelVersion" VALUES ($1, $2, 'Scheduled', $3, 'Private')`, [
+        modelId * 10,
+        modelId,
+        PAST,
+      ]);
+      await pg.db.query(`INSERT INTO "ModelFile" ("modelVersionId") VALUES ($1)`, [modelId * 10]);
+    }
+    await runJob();
+
+    const locking = txLog.filter(({ sql }) => /FOR NO KEY UPDATE|UPDATE "/.test(sql));
+    const ids = (i: number) => locking[i]?.rows.map(({ id }) => id);
+    expect(locking[0]?.sql).toMatch(/FROM "Model"[\s\S]*FOR NO KEY UPDATE/);
+    expect(ids(0)).toEqual([2, 3]);
+    expect(locking[1]?.sql).toMatch(/FROM "ModelVersion"[\s\S]*FOR NO KEY UPDATE/);
+    expect(ids(1)).toEqual([20, 30]);
   });
 });

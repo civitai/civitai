@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
@@ -274,6 +274,7 @@ export const processScheduledPublishing = createJob(
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
             AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+            AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
           RETURNING p.id, p."userId";
         `;
           // Images are reindexed post-commit via queueImageSearchIndexUpdate
@@ -296,6 +297,7 @@ export const processScheduledPublishing = createJob(
               AND mv.status = 'Scheduled'
               AND mv."publishedAt" <= ${now}
               AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+              AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
             RETURNING mv.id;
           `;
           // Only what that statement published: it re-checks the status, so a version a moderator
