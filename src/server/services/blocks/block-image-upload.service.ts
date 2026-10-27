@@ -67,12 +67,19 @@ export async function persistBlockUploadImage(opts: {
     const { readEmbeddedImageMeta } = await import('~/server/services/blocks/embedded-image-meta');
     meta = await readEmbeddedImageMeta(bytes);
   }
+  // The blurhash placeholder an on-site upload gets from the browser preprocessor. Computed from
+  // the same measured bytes; a failure only loses the placeholder, never the upload.
+  const { tryComputeImageBlurhash, blurhashMetadata } = await import(
+    '~/server/utils/image-blurhash'
+  );
+  const blur = await tryComputeImageBlurhash(bytes, { source: 'block-upload' });
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
     meta,
+    hash: blur?.hash,
     width: measured.width,
     height: measured.height,
     mimeType: measured.mimeType,
@@ -80,7 +87,11 @@ export async function persistBlockUploadImage(opts: {
     // entity tag records which stored object they were measured from — a row from
     // here is attachable as listing media, so it must carry the same evidence the
     // listing attach gate re-checks.
-    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
+    metadata: {
+      size: measured.sizeBytes,
+      ...storedObjectEtagMetadata(measured.etag),
+      ...blurhashMetadata(blur),
+    },
     // A server-owned provenance key: `createImage` drops any copy in `metadata`, so this
     // argument is the only way the stamp reaches the row.
     blockProvenance: uploadedByAppId
@@ -301,18 +312,28 @@ export async function persistBlockWorkflowOutputImage(opts: {
   // scanner can read them; `key` is a fresh uuid (satisfies `imageSchema.url`).
   const { key } = await uploadImageBufferToStore(bytes, { contentType });
 
+  // The blurhash placeholder + real pixel dimensions an on-site upload gets from the browser
+  // preprocessor; without them `MediaHash` draws nothing while the image loads. A failure only
+  // loses the placeholder, never the publish.
+  const { tryComputeImageBlurhash, blurhashMetadata } = await import(
+    '~/server/utils/image-blurhash'
+  );
+  const blur = await tryComputeImageBlurhash(bytes, { source: 'block-workflow-output' });
+  // The orchestrator's own workflow projection (never a caller claim) when it supplied the
+  // pair; it may be null when the orchestrator hasn't populated it, and then the pair is
+  // measured from the bytes. Ingestion writes scan state only and never re-derives geometry,
+  // so this is the only place a missing pair can be filled (issue #3770).
+  const useOrchestratorDims = width != null && height != null;
+
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: key,
     type: 'image',
     mimeType: contentType,
-    // Server-side values from the orchestrator's own workflow projection, never a
-    // caller claim — they may be null when the orchestrator hasn't populated them.
-    // Nothing downstream re-derives them: ingestion writes scan state only, so an
-    // absent pair stays absent (issue #3770).
-    width: width ?? undefined,
-    height: height ?? undefined,
-    metadata: { size: bytes.byteLength },
+    hash: blur?.hash,
+    width: useOrchestratorDims ? width : blur?.width,
+    height: useOrchestratorDims ? height : blur?.height,
+    metadata: { size: bytes.byteLength, ...blurhashMetadata(blur) },
     blockProvenance: { key: BLOCK_PUBLISHED_APP_ID_META_KEY, appId },
     userId,
     // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned Image row.

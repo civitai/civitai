@@ -189,6 +189,7 @@ const componentAlias = [
 // EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
 const sharpExecutingTestFiles = [
   'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
+  'src/server/services/blocks/__tests__/block-image-upload.service.test.ts',
   'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',
   'src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts',
   'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
@@ -196,6 +197,7 @@ const sharpExecutingTestFiles = [
   'src/server/utils/__tests__/stored-image-probe.test.ts',
   'src/server/utils/__tests__/service-deal-preview.test.ts',
   'src/server/utils/__tests__/og-image-helpers.test.ts',
+  'src/server/utils/__tests__/image-blurhash.test.ts',
   'src/tests/api/og.milestone.test.ts',
 ];
 
