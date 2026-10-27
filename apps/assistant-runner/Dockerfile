@@ -35,7 +35,9 @@ RUN pnpm --filter @civitai/assistant-runner-app build
 # so the image ran a chat package its tests never saw. Non-legacy resolves only this package's
 # closure, at the versions its own package.json and the lockfile name. pnpm 10 gates it behind
 # `inject-workspace-packages`; `@civitai/app-assistant` (bundled by tsup, no dependencies of its
-# own) is the only workspace package it injects.
+# own) is the only workspace package it injects. The closure no longer carries what only the root
+# brought: DBOS loads its OpenTelemetry packages (and winston) only when OTLP/tracing is enabled
+# and does not declare them, so enabling that needs them added to this package first.
 FROM deps AS prod-deps
 WORKDIR /app
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
