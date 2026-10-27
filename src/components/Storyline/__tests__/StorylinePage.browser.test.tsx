@@ -76,6 +76,7 @@ const mocks = vi.hoisted(() => ({
   discussion: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
+  openFirstChapter: vi.fn(),
   openDialog: vi.fn(),
   shares: {} as Record<number, unknown>,
   graph: undefined as Record<string, unknown> | undefined,
@@ -111,6 +112,9 @@ vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
 }));
 vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
   openStorylineManageModal: mocks.openManage,
+}));
+vi.mock('~/components/Storyline/openStorylineFirstChapterModal', () => ({
+  openStorylineFirstChapterModal: mocks.openFirstChapter,
 }));
 vi.mock('~/components/Storyline/StorylineCover', () => ({
   StorylineHero: ({
@@ -452,6 +456,39 @@ describe('StorylinePage', () => {
       .element(page.getByRole('link', { name: 'Write chapter 1' }))
       .toHaveAttribute('href', '/posts/create?storyline=2');
     expect(page.getByRole('link', { name: 'Start reading' }).elements()).toHaveLength(0);
+  });
+
+  test('an owner whose storyline has no chapter 1 yet can use a post already published', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: 'owner',
+      chapterCount: 0,
+      contributorCount: 0,
+      rootPostId: null,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await page.getByRole('button', { name: "Use a post you've published" }).click();
+    expect(mocks.openFirstChapter).toHaveBeenCalledWith({ storylineId: 2 });
+  });
+
+  test.each([
+    ['a stranger, on an empty storyline', { viewerRole: null, chapterCount: 0, mainPath: [] }],
+    [
+      'a collaborator, on an empty storyline',
+      { viewerRole: 'collaborator', chapterCount: 0, mainPath: [] },
+    ],
+    ['the owner, once chapter 1 exists', { viewerRole: 'owner' }],
+  ])('%s is not offered a published post as chapter 1', async (_, overrides) => {
+    mocks.storyline = { ...STORYLINE, contributors: [], ...overrides };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(
+      page.getByRole('button', { name: "Use a post you've published" }).elements()
+    ).toHaveLength(0);
   });
 
   test('no one else is offered "Write chapter 1"', async () => {

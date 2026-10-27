@@ -13,7 +13,7 @@ export function StartStorylineButton(props: ButtonProps) {
       color="violet"
       radius="xl"
       leftSection={<IconPlus size={16} />}
-      onClick={openStartStorylineModal}
+      onClick={() => openStartStorylineModal()}
       {...props}
     >
       Start a storyline

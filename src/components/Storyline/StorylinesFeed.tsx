@@ -1,4 +1,14 @@
-import { ActionIcon, Alert, Button, Center, Group, Loader, Skeleton, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Skeleton,
+  Text,
+} from '@mantine/core';
 import { IconBook2, IconSettings, IconUsers } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -8,6 +18,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
+import { openStorylineFirstChapterModal } from '~/components/Storyline/openStorylineFirstChapterModal';
 import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
@@ -169,6 +180,14 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
               <IconSettings size={16} />
             </ActionIcon>
           </Group>
+          <Anchor
+            component="button"
+            type="button"
+            size="xs"
+            onClick={() => openStorylineFirstChapterModal({ storylineId: storyline.id })}
+          >
+            Use a post you&apos;ve published
+          </Anchor>
         </div>
       </div>
     );
