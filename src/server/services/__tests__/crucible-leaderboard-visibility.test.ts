@@ -683,6 +683,31 @@ describe('crucible.getMinVotesToPlace', () => {
     });
   });
 
+  it.each([
+    ['a plain', false],
+    ['a time-adjusted', true],
+  ])('leaves contest-banned entrants out of the count for %s crucible', async (_, timeAdjusted) => {
+    const startAt = new Date(Date.now() - 3_600_000);
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: timeAdjusted,
+      startAt,
+      endAt: new Date(startAt.getTime() + 7_200_000),
+    });
+    queryRaw.mockResolvedValueOnce([{ userId: 7 }]);
+    aggregate.mockResolvedValue({ _sum: { voteCount: 0 }, _count: { _all: 0 } });
+    findEntries.mockResolvedValue([]);
+
+    await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
+
+    const banQuery = queryRaw.mock.calls.at(-1)!;
+    expect((banQuery[0] as TemplateStringsArray).join('')).toContain('contestBanDetails');
+    expect(banQuery[1]).toBe(CRUCIBLE_ID);
+    const where = (timeAdjusted ? findEntries : aggregate).mock.calls.at(-1)![0].where;
+    expect(where.userId).toEqual({ notIn: [7] });
+  });
+
   it('projects the vote rate over the time left for a time-adjusted crucible', async () => {
     const HOUR = 3_600_000;
     const startAt = new Date(Date.now() - 50 * HOUR);

@@ -1238,6 +1238,16 @@ describe('CrucibleJudgingUI — reactions', () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
+  test('clicking the card itself votes for that side (control for the report test below)', async () => {
+    const { onVote } = await renderPair();
+
+    document
+      .querySelector<HTMLElement>('[data-testid="judge-report"][data-side="right"]')!
+      .parentElement!.click();
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+  });
+
   test('reporting opens the report modal for that side and does not vote or skip', async () => {
     const { onVote, onSkip } = await renderPair();
     const reportButton = (side: string) =>

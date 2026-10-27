@@ -1629,6 +1629,9 @@ describe('submitEntry — who and what may enter', () => {
     });
 
     await expect(submit()).rejects.toThrow('You are banned from participating in contests');
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
+    );
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });
@@ -1720,6 +1723,9 @@ describe('checkCrucibleEntryEligibility', () => {
       { imageId: 1, eligible: false, reasons: ['contest-banned'] },
       { imageId: 2, eligible: false, reasons: ['contest-banned', 'created-before-start'] },
     ]);
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
+    );
   });
 
   it('marks an image it could not find as ineligible rather than eligible', async () => {

@@ -3443,12 +3443,21 @@ export type FinalizeCrucibleResult = {
   totalPrizesDistributed: number;
 };
 
-const getContestBannedUserIds = async () =>
+// Scoped to the crucible's entrants: a scan of all users is seconds on production, and this runs
+// on a request path.
+const getContestBannedEntrantIds = async (
+  db: Pick<typeof dbRead, '$queryRaw'>,
+  crucibleId: number
+) =>
   (
-    await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT u.id FROM "User" u WHERE u.meta ->> 'contestBanDetails' IS NOT NULL
+    await db.$queryRaw<{ userId: number }[]>`
+      SELECT DISTINCT ce."userId"
+      FROM "CrucibleEntry" ce
+      JOIN "User" u ON u.id = ce."userId"
+      WHERE ce."crucibleId" = ${crucibleId}
+        AND u.meta ->> 'contestBanDetails' IS NOT NULL
     `
-  ).map((u) => u.id);
+  ).map((u) => u.userId);
 
 /**
  * An entry by a site-banned or contest-banned entrant, or whose image was blocked, held for review, flagged, unpublished,
@@ -3456,15 +3465,16 @@ const getContestBannedUserIds = async () =>
  * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
  * is finalized holds the prize instead (see `prize.service`).
  */
-const rankableEntryWhere = async (
+const rankableEntryWhere = (
   crucibleId: number,
-  nsfwLevel: number
-): Promise<Prisma.CrucibleEntryWhereInput> => ({
+  nsfwLevel: number,
+  contestBannedIds: number[]
+): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
   user: { bannedAt: null },
   // Ids rather than a Prisma JSON filter: `meta` can be NULL or lack the key, and a negated JSON
   // path filter drops those rows.
-  userId: { notIn: await getContestBannedUserIds() },
+  userId: { notIn: contestBannedIds },
   image: {
     ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
@@ -3541,9 +3551,10 @@ export const getCrucibleMinVotesToPlace = async ({
   )
     throw throwNotFoundError('Crucible not found');
 
+  const contestBannedIds = await getContestBannedEntrantIds(dbRead, crucibleId);
   if (crucible.timeAdjustedPlacement && crucible.endAt) {
     const entries = await dbRead.crucibleEntry.findMany({
-      where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel, contestBannedIds),
       select: { voteCount: true, createdAt: true },
     });
     return {
@@ -3557,7 +3568,7 @@ export const getCrucibleMinVotesToPlace = async ({
   }
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
-    where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+    where: rankableEntryWhere(crucibleId, crucible.nsfwLevel, contestBannedIds),
     _sum: { voteCount: true },
     _count: { _all: true },
   });
@@ -3717,10 +3728,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     createdAt: Date;
   }> = [];
 
+  // Once, on the primary: a ban landing mid-loop must not change who is ranked.
+  const contestBannedIds = await getContestBannedEntrantIds(dbWrite, crucibleId);
   let cursor: number | undefined;
   while (true) {
     const batch = await dbWrite.crucibleEntry.findMany({
-      where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel, contestBannedIds),
       select: {
         id: true,
         userId: true,
