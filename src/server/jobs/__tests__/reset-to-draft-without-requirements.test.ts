@@ -228,12 +228,9 @@ describe('resetToDraftWithoutRequirements', () => {
   });
 
   describe('the no-posts SELECT', () => {
-    // 🔴 THE FIX. Official models (Model."isOfficial") are created by Civitai, not
-    // by a community author, and have no owner showcase Post by design. On
-    // 2026-10-27 this sweep unpublished all 14 official upscaler copies, including
-    // DEFAULT_UPSCALER, and every non-moderator upscale failed until they were
-    // republished by hand. The exemption is the explicit flag, ANDed into the
-    // top-level WHERE, so it narrows the sweep and cannot widen it.
+    // Official models are created by Civitai and have no owner showcase Post by
+    // design. The exemption is ANDed into the top-level WHERE, so it can only
+    // narrow the sweep.
     it('excludes official models, so an official version with no owner Post stays Published', async () => {
       await runJob();
 
