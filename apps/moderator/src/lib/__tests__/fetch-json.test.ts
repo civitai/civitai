@@ -31,6 +31,11 @@ describe('fetchJson', () => {
     await expect(fetchJson('/x')).rejects.toThrow(/^HTTP 200: Sign in$/);
   });
 
+  it('names the status alone when a 2xx body is empty', async () => {
+    respond('', 200);
+    await expect(fetchJson('/x')).rejects.toThrow(/^HTTP 200$/);
+  });
+
   it('falls back to the start of the text when there is no title, capped', async () => {
     respond(`upstream   timed\nout ${'x'.repeat(300)}`, 504, 'text/plain');
     const err = await fetchJson('/x').catch((e: Error) => e);

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getUserGeneratedWorkflows = vi.fn();
 vi.mock('$lib/server/user-workflows.service', () => ({
+  ORCHESTRATOR_TIMEOUT_MS: 30_000,
   getUserGeneratedWorkflows,
   isWorkflowSource: (s: unknown) => s === 'onsite' || s === 'comfy',
 }));
@@ -27,8 +28,7 @@ describe('/api/user-workflows when the orchestrator fails', () => {
   it('answers with a status Cloudflare passes through, carrying the JSON error', async () => {
     getUserGeneratedWorkflows.mockRejectedValue(new Error('socket hang up'));
     const res = await call();
-    expect([502, 504]).not.toContain(res.status);
-    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'Could not reach the orchestrator.' });
   });
 
@@ -37,7 +37,7 @@ describe('/api/user-workflows when the orchestrator fails', () => {
       new DOMException('The operation was aborted due to timeout', 'TimeoutError')
     );
     const res = await call();
-    expect([502, 504]).not.toContain(res.status);
+    expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
       error: 'The orchestrator did not answer within 30 seconds.',
     });

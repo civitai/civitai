@@ -2,7 +2,11 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { RESTRICTION_PAGES } from '$lib/restriction-types';
 import { requireIdParam, requirePermission } from '$lib/server/api-guard';
-import { getUserGeneratedWorkflows, isWorkflowSource } from '$lib/server/user-workflows.service';
+import {
+  ORCHESTRATOR_TIMEOUT_MS,
+  getUserGeneratedWorkflows,
+  isWorkflowSource,
+} from '$lib/server/user-workflows.service';
 
 // The pages that mount the panel. This read is wider than any page's own content — an account's full
 // off-site generation history, prompts and signed media included, for work never published to the site
@@ -39,7 +43,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
     return json(
       {
         error: timedOut
-          ? 'The orchestrator did not answer within 30 seconds.'
+          ? `The orchestrator did not answer within ${ORCHESTRATOR_TIMEOUT_MS / 1000} seconds.`
           : 'Could not reach the orchestrator.',
       },
       { status: 503 }
