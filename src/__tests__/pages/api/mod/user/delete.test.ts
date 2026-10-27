@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
