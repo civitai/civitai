@@ -120,14 +120,33 @@ export async function blockLinkReview(id: number, moderatorId: number): Promise<
 
 export async function clearLinkReview(id: number, moderatorId: number): Promise<ReviewOutcome> {
   return dbWrite.transaction().execute(async (tx) => {
+    const current = await tx
+      .selectFrom('NewOrderLinkReview')
+      .select(['userIds', 'status'])
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!current || (current.status !== 'Pending' && current.status !== 'Blocked')) {
+      return { ok: false, error: GONE };
+    }
+
+    // Lock the members first so two overlapping reviews cleared at once see each other's outcome.
+    await tx
+      .selectFrom('NewOrderPlayer')
+      .select('userId')
+      .where('userId', 'in', current.userIds)
+      .orderBy('userId')
+      .forUpdate()
+      .execute();
+
     const review = await tx
       .updateTable('NewOrderLinkReview')
       .set({ status: 'Cleared', reviewedBy: moderatorId, reviewedAt: new Date() })
       .where('id', '=', id)
       .where('status', 'in', ['Pending', 'Blocked'])
-      .returning('userIds')
+      .returning(['userIds', 'status'])
       .executeTakeFirst();
     if (!review) return { ok: false, error: GONE };
+    if (current.status !== 'Blocked') return { ok: true };
 
     // Payouts for judgments from the block day onward are paid by the next grant run; the grant job
     // pays each day 3 days late, so the first held day is two days before the block day.
@@ -142,6 +161,13 @@ export async function clearLinkReview(id: number, moderatorId: number): Promise<
       })
       .where('userId', 'in', review.userIds)
       .where('payoutBlockedAt', 'is not', null)
+      .where(
+        sql<boolean>`NOT EXISTS (
+          SELECT 1 FROM "NewOrderLinkReview" other
+          WHERE other."status" = 'Blocked' AND other."id" <> ${id}
+            AND "NewOrderPlayer"."userId" = ANY(other."userIds")
+        )`
+      )
       .execute();
     return { ok: true };
   });
