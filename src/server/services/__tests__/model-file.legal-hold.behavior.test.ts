@@ -9,6 +9,7 @@ import {
   REPORTED,
   createModelHoldDb,
   dropMarkerView,
+  failDeletesFrom,
   fileIds,
   fileOf,
   routeToDb,
@@ -112,6 +113,18 @@ describe('deleteFile', () => {
     expect(await fileIds(db)).toContain(fileOf(versionOf(REPORTED)));
   });
 
+  it('reports a database error, not a hold, and deletes nothing', async () => {
+    stubFile();
+    await failDeletesFrom(db, 'ModelFile');
+
+    for (const isModerator of [false, true]) {
+      const error = await remove(CLEAN, isModerator).catch((e: Error) => e);
+      expect((error as Error).message).toContain('deadlock detected');
+    }
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
   it('deletes nothing when the hold cannot be read', async () => {
     stubFile();
     await dropMarkerView(db);
@@ -180,6 +193,16 @@ describe('a new upload replacing a file', () => {
     stubFile(MARKED);
 
     await expect(replace(MARKED, true)).rejects.toThrow(LEGAL_HOLD_REFUSAL);
+  });
+
+  it('reports a database error, not a hold, and replaces nothing', async () => {
+    stubFile(CLEAN);
+    await failDeletesFrom(db, 'ModelFile');
+
+    const error = await replace(CLEAN).catch((e: Error) => e);
+    expect((error as Error).message).toContain('deadlock detected');
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
   });
 
   it('replaces nothing when the hold cannot be read', async () => {

@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { contentKeptError, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import {
+  contentKeptError,
+  deleteUnlessHeld,
+  ownerHeld,
+  ownerHeldSql,
+} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -1461,6 +1466,13 @@ async function purgeModelVersionByHashCacheById(modelVersionId: number) {
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
 
+/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
+const versionOwnerSql = (ids: number[]) => Prisma.sql`
+  FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ANY(${ids}::int[])
+`;
+
 export const deleteVersionById = async ({
   id,
   isModerator,
@@ -1539,14 +1551,17 @@ export const deleteVersionById = async ({
     // The caller returns the whole row, so it is read here, under the lock taken above.
     const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
     // A held owner's version is refused, and the throw rolls back the access rows removed above.
-    const removed = await tx.$executeRaw`
-      DELETE FROM "ModelVersion" mv
-      USING "Model" m
-      WHERE mv.id = ${id}
-        AND m.id = mv."modelId"
-        AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
-    `.catch(() => 0);
-    if (removed !== 1) throw contentKeptError(isModerator);
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+        DELETE FROM "ModelVersion" mv
+        USING "Model" m
+        WHERE mv.id = ${id}
+          AND m.id = mv."modelId"
+          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+      `,
+      { expected: 1, isModerator, db: tx, ownerFrom: versionOwnerSql([id]) }
+    );
+    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -3560,6 +3575,8 @@ export const mergeVersions = async ({
         ORDER BY id
         FOR UPDATE
       `;
+      if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
+        throw throwNotFoundError('One or more versions to merge no longer exist.');
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -3842,14 +3859,23 @@ export const mergeVersions = async ({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
       // A held owner's merge is refused, and the throw rolls back the whole merge.
-      const removed = await tx.$executeRaw`
-        DELETE FROM "ModelVersion" mv
-        USING "Model" m
-        WHERE mv.id = ANY(${sourceVersionIds}::int[])
-          AND m.id = mv."modelId"
-          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
-      `.catch(() => -1);
-      if (removed !== sourceVersionIds.length) throw contentKeptError(false);
+      const outcome = await deleteUnlessHeld(
+        tx.$executeRaw`
+          DELETE FROM "ModelVersion" mv
+          USING "Model" m
+          WHERE mv.id = ANY(${sourceVersionIds}::int[])
+            AND m.id = mv."modelId"
+            AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+        `,
+        {
+          expected: new Set(sourceVersionIds).size,
+          isModerator: false,
+          db: tx,
+          ownerFrom: versionOwnerSql(sourceVersionIds),
+        }
+      );
+      if (outcome === 'short')
+        throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt
       await updateModelLastVersionAt({ id: modelId, tx });

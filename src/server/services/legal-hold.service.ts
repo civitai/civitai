@@ -149,7 +149,14 @@ export async function ownerHeld(
 ): Promise<boolean> {
   const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${ownerHeldSql(
     Prisma.raw('m."userId"')
-  )} AS held ${from}`.catch(() => null);
+  )} AS held ${from}`.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'content-legal-hold-check-failed',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    return null;
+  });
   if (!rows) return true;
   return rows.some((r) => r.held !== false);
 }
@@ -160,6 +167,40 @@ export function contentKeptError(isModerator: boolean | undefined) {
     code: 'FORBIDDEN',
     message: isModerator ? LEGAL_HOLD_REFUSAL : OWNER_CONTENT_KEPT,
   });
+}
+
+/**
+ * Runs a DELETE guarded by `ownerHeldSql` that should remove `expected` rows. Throws the hold refusal
+ * when it removed fewer and the owner of the row `ownerFrom` selects is held (see `ownerHeld`), or
+ * when it failed on the marker view. Any other error is rethrown. Either way nothing it is part of
+ * commits. Returns 'short' when it removed fewer for another reason: the rows were already gone.
+ */
+export async function deleteUnlessHeld(
+  statement: Promise<number>,
+  {
+    expected,
+    isModerator,
+    db,
+    ownerFrom,
+  }: {
+    expected: number;
+    isModerator: boolean | undefined;
+    db: Pick<Prisma.TransactionClient, '$queryRaw'>;
+    ownerFrom: Prisma.Sql;
+  }
+): Promise<'deleted' | 'short'> {
+  const removed = await statement.catch((e: unknown) => {
+    if (!isLegalHoldAbort(e)) throw e;
+    logToAxiom({
+      type: 'error',
+      name: 'content-legal-hold-check-failed',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    throw contentKeptError(isModerator);
+  });
+  if (removed >= expected) return 'deleted';
+  if (await ownerHeld(db, ownerFrom)) throw contentKeptError(isModerator);
+  return 'short';
 }
 
 /**

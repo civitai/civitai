@@ -57,6 +57,8 @@ export async function seedModelHoldDb(db: PGlite) {
   await db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
+    DROP TRIGGER IF EXISTS fail_delete ON "ModelVersion";
+    DROP TRIGGER IF EXISTS fail_delete ON "ModelFile";
     TRUNCATE "CsamReport", "Image", "Model" CASCADE;
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
@@ -70,6 +72,14 @@ export async function seedModelHoldDb(db: PGlite) {
       SELECT id * 10 + 1, id, 'https://files.example.invalid/' || id FROM "ModelVersion";
   `);
 }
+
+/** Makes every delete from `table` fail as a deadlock would: a database error that is not a hold. */
+export const failDeletesFrom = (db: PGlite, table: 'ModelVersion' | 'ModelFile') =>
+  db.exec(`
+    CREATE OR REPLACE FUNCTION fail_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'deadlock detected' USING ERRCODE = '40P01'; END $$;
+    CREATE TRIGGER fail_delete BEFORE DELETE ON "${table}" FOR EACH ROW EXECUTE FUNCTION fail_delete();
+  `);
 
 /** Whether the hold lookup can be read: without the marker view, the hold predicate errors. */
 export const dropMarkerView = (db: PGlite) => db.exec(`DROP VIEW "EvidenceHeldUser"`);

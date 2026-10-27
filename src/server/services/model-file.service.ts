@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { contentKeptError, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { deleteUnlessHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -339,7 +339,8 @@ async function replaceFileContent({
     assertVersionAcceptsNewUpload(version, file.type);
 
     // A held owner's file is not replaced: the replace deletes the old row and its bytes.
-    const removed = await tx.$executeRaw`
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
       DELETE FROM "ModelFile" mf
       USING "ModelVersion" mv, "Model" m
       WHERE mf.id = ${file.id}
@@ -348,15 +349,16 @@ async function replaceFileContent({
         AND m.id = mv."modelId"
         ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
         AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
-    `.catch(() => null);
-    if (
-      removed === null ||
-      (removed === 0 &&
-        (await ownerHeld(tx, fileOwnerSql(file.id, isModerator ? undefined : userId))))
-    )
-      throw contentKeptError(isModerator);
+    `,
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
+      }
+    );
     // Another writer replaced or removed the file since we read it.
-    if (removed === 0)
+    if (outcome === 'short')
       throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
 
     const row = await tx.modelFile.create({
@@ -511,7 +513,11 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number; url: string }[]>`
+  let rows: { modelVersionId: number; modelId: number; url: string }[] = [];
+  // A held owner's file is refused. Scoped to the caller's own files, so a stranger cannot tell a
+  // held file from a missing one.
+  await deleteUnlessHeld(
+    dbWrite.$queryRaw<typeof rows>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
@@ -532,16 +538,16 @@ export async function deleteFile({
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `.catch(() => null);
+  `.then((deleted) => (rows = deleted).length),
+    {
+      expected: 1,
+      isModerator,
+      db: dbWrite,
+      ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
+    }
+  );
 
-  const row = rows?.[0];
-  // A held owner's file is refused. The ownership condition keeps a stranger from telling a held
-  // file from a missing one.
-  if (
-    !row &&
-    (!rows || (await ownerHeld(dbWrite, fileOwnerSql(id, isModerator ? undefined : userId))))
-  )
-    throw contentKeptError(isModerator);
+  const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
 
   // Clean up S3 object after DB delete succeeds (best-effort).

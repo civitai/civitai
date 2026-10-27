@@ -7,6 +7,7 @@ import {
   REPORTED,
   createModelHoldDb,
   dropMarkerView,
+  failDeletesFrom,
   fileIds,
   fileOf,
   modelOf,
@@ -158,6 +159,20 @@ describe('deleteVersionById', () => {
   });
 });
 
+describe('deleteVersionById on a database error', () => {
+  it('reports the error, not a hold, and deletes nothing', async () => {
+    const id = stubVersion(CLEAN);
+    await failDeletesFrom(db, 'ModelVersion');
+
+    for (const isModerator of [false, true]) {
+      const error = await deleteVersionById({ id, isModerator }).catch((e: Error) => e);
+      expect((error as Error).message).toContain('deadlock detected');
+    }
+    expect(await versionIds(db)).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+});
+
 /** Stubs the model read `mergeVersions` validates against, for `owner`'s three versions. */
 function stubModel(owner: number) {
   const ids = [1, 2, 3].map((n) => versionOf(owner, n));
@@ -205,6 +220,31 @@ describe('mergeVersions', () => {
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+
+  it('merges a source listed twice, as once', async () => {
+    const { sourceVersionIds, ...rest } = stubModel(CLEAN);
+    const twice = [sourceVersionIds[0], sourceVersionIds[0]];
+
+    await mergeVersions({
+      ...rest,
+      sourceVersionIds: twice,
+      fileTypeMappings: [],
+      appendDescriptions: false,
+      userId: CLEAN,
+    });
+
+    expect(await versionIds(db)).not.toContain(sourceVersionIds[0]);
+  });
+
+  it('reports a database error, not a hold, and deletes nothing', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    await failDeletesFrom(db, 'ModelVersion');
+
+    const error = await merge(CLEAN).catch((e: Error) => e);
+    expect((error as Error).message).toContain('deadlock detected');
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).toContain(id);
   });
 
   it('deletes nothing when the hold cannot be read', async () => {
