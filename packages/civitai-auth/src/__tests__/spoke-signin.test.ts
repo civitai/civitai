@@ -8,6 +8,7 @@ import {
   spokeAuthorize,
   spokeCallback,
   spokeReauthResponse,
+  spokeSessionCookies,
   withSetCookies,
 } from '../spoke-signin';
 
@@ -217,5 +218,21 @@ describe('spokeReauthResponse / withSetCookies', () => {
     const out = withSetCookies(immutable, ['a=1']);
     expect(out).not.toBe(immutable);
     expect(out.headers.getSetCookie()).toEqual(['a=1']);
+  });
+});
+
+describe('spokeSessionCookies', () => {
+  it('a shared-slot write is scoped to the registrable domain, so every app reads it', () => {
+    const set = spokeSessionCookies(TOKEN, {
+      slot: 'shared',
+      hostname: 'creators.civitai.com',
+      deviceId: 'D1',
+    });
+    expect(set).toContain(
+      `__Secure-civ-token=${TOKEN}; Path=/; HttpOnly; SameSite=Lax; Secure; Domain=civitai.com; Max-Age=3600`
+    );
+    expect(set).toContain(
+      '__Secure-civ-device=D1; Path=/; HttpOnly; SameSite=Lax; Secure; Domain=civitai.com; Max-Age=2592000'
+    );
   });
 });
