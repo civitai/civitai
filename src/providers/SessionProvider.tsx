@@ -1,4 +1,5 @@
 import type { Session } from '~/types/session';
+import type { SessionCookieKind } from '~/shared/utils/session-cookie';
 import {
   createContext,
   useCallback,
@@ -44,6 +45,12 @@ export type SessionDiagnostics = {
   /** Whether the hard load's request carried a session cookie, as the server saw it (`_app`'s
    *  `sessionCookie` page prop); `undefined` when not told (a shell render reads no viewer cookie). */
   sessionCookie: boolean | undefined;
+  /** Which session cookie families it carried, by name; `unknown` when not told. */
+  sessionCookieKind: SessionCookieKind | 'unknown';
+  /** Whether a lost session (signed in, then an authoritative signed-out answer) reloaded the page
+   *  on this load, and whether the reload's cooldown suppressed it. */
+  reloadTriggered: boolean;
+  reloadSuppressed: boolean;
   /** True when the hard load was made with a session cookie: told so, a server-rendered session,
    *  an unknown session (`_app` passes that only with a cookie), or a shell (served only with one). */
   authCookieAtLoad: boolean;
@@ -96,16 +103,18 @@ async function fetchSession(): Promise<{
 const LOST_SESSION_RELOAD_KEY = 'civitai:lost-session-reload';
 const LOST_SESSION_RELOAD_COOLDOWN_MS = 5 * 60 * 1000;
 
-/** Reloads the page once so it re-syncs with the server after the signed-in session ended elsewhere. */
-function reloadForLostSession() {
+/** Reloads the page once so it re-syncs with the server after the signed-in session ended elsewhere.
+ *  Returns whether it reloaded (`false` = suppressed by the cooldown). */
+function reloadForLostSession(): boolean {
   try {
     const last = Number(window.sessionStorage.getItem(LOST_SESSION_RELOAD_KEY));
-    if (last && Date.now() - last < LOST_SESSION_RELOAD_COOLDOWN_MS) return;
+    if (last && Date.now() - last < LOST_SESSION_RELOAD_COOLDOWN_MS) return false;
     window.sessionStorage.setItem(LOST_SESSION_RELOAD_KEY, String(Date.now()));
   } catch {
     // Storage unavailable: the per-page guard in SessionProvider still limits this to one reload.
   }
   window.location.reload();
+  return true;
 }
 
 /** A session that arrives after mount (a shell page's page data), adopted once. */
@@ -129,9 +138,9 @@ export function SessionProvider({
   refetchOnWindowFocus?: boolean;
   refetchWhenOffline?: boolean;
   refetchInterval?: number;
-  /** Diagnostics only (`SessionDiagnostics.sessionCookie`): whether the hard load's request carried
-   *  a session cookie. Read once, at mount. */
-  sessionCookie?: boolean;
+  /** Diagnostics only (`SessionDiagnostics.sessionCookieKind`): which session cookie families the
+   *  hard load's request carried. Read once, at mount. */
+  sessionCookie?: SessionCookieKind;
 }) {
   // `data` IS the loading state: `undefined` = not yet resolved (loading), `null` = resolved signed-out,
   // `Session` = signed-in. So there's no separate loading flag — and a background refetch (focus / interval /
@@ -159,8 +168,12 @@ export function SessionProvider({
         : 'ssr-null';
     diagnostics.current = {
       boot,
-      sessionCookie,
-      authCookieAtLoad: sessionCookie === true || boot !== 'ssr-null',
+      sessionCookie: sessionCookie === undefined ? undefined : sessionCookie !== 'none',
+      sessionCookieKind: sessionCookie ?? 'unknown',
+      authCookieAtLoad:
+        (sessionCookie !== undefined && sessionCookie !== 'none') || boot !== 'ssr-null',
+      reloadTriggered: false,
+      reloadSuppressed: false,
       history: [],
       source: 'ssr',
       fetchCount: 0,
@@ -208,7 +221,11 @@ export function SessionProvider({
     }
     if (next === null && hadSession.current && !reloadedForLostSession.current) {
       reloadedForLostSession.current = true;
-      reloadForLostSession();
+      const reloaded = reloadForLostSession();
+      if (diag) {
+        diag.reloadTriggered = reloaded;
+        diag.reloadSuppressed = !reloaded;
+      }
     }
     if (next === undefined && (seedPending.current || inflight.current > 0)) {
       // Couldn't determine, and a seed or another fetch is still on its way: that one decides.

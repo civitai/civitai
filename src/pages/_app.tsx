@@ -90,7 +90,11 @@ import {
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
-import { hasSessionCookie } from '~/shared/utils/session-cookie';
+import {
+  hasSessionCookie,
+  sessionCookieKind,
+  type SessionCookieKind,
+} from '~/shared/utils/session-cookie';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -158,9 +162,10 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
-  /** Full render only, diagnostics only: the request carried a session cookie, whatever the session
-   *  lookup made of it (`hasAuthCookie` is narrower). Read by SessionProvider at mount. */
-  sessionCookie?: boolean;
+  /** Full render only, diagnostics only: which session cookie families the request carried (names,
+   *  never values), whatever the session lookup made of them (`hasAuthCookie` is narrower). Read by
+   *  SessionProvider at mount. */
+  sessionCookie?: SessionCookieKind;
   region?: RegionInfo;
   domain: ColorDomain;
   host: string;
@@ -504,7 +509,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
   let hasAuthCookie = hasSessionCookie(cookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = hasAuthCookie;
+  const sessionCookie = sessionCookieKind(cookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =

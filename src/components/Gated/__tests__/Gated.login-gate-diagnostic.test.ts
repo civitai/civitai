@@ -21,6 +21,7 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as AppProviderModule from '~/providers/AppProvider';
 import type * as AdsProviderModule from '~/components/Ads/AdsProvider';
 import type { Session } from '~/types/session';
+import type { SessionCookieKind } from '~/shared/utils/session-cookie';
 
 const h = vi.hoisted(() => ({
   pushEvent: vi.fn<(name: string, attributes: Record<string, string>) => void>(),
@@ -118,7 +119,7 @@ afterEach(async () => {
 type Mount = {
   session?: Session | null;
   seed?: SessionSeed | null;
-  sessionCookie?: boolean;
+  sessionCookie?: SessionCookieKind;
   level?: number;
   /** Two gates on one page: still one event. */
   twice?: boolean;
@@ -176,8 +177,8 @@ const attributesOf = (i = 0) => {
 describe('Gated: login gate shown to a viewer whose hard load carried a session cookie', () => {
   it('a full render that resolved signed out with a cookie on the request — one event', async () => {
     // As `_app` passes it: `hasAuthCookie` cleared by the lookup ⇒ `session: null`.
-    await render({ session: null, sessionCookie: true, twice: true });
-    await render({ session: null, sessionCookie: true, twice: true });
+    await render({ session: null, sessionCookie: 'civ-token', twice: true });
+    await render({ session: null, sessionCookie: 'civ-token', twice: true });
 
     expect(showsLoginCard()).toBe(true);
     expect(events()).toHaveLength(1);
@@ -186,6 +187,7 @@ describe('Gated: login gate shown to a viewer whose hard load carried a session 
       render_mode: 'ssr',
       session_boot: 'ssr-null',
       session_cookie: 'true',
+      session_cookie_kind: 'civ-token',
       session_history: 'unauthenticated',
       session_source: 'ssr',
       shell_seed_session: 'none',
@@ -194,6 +196,8 @@ describe('Gated: login gate shown to a viewer whose hard load carried a session 
       last_fetch_status: 'none',
       last_fetch_trigger: 'none',
       fetch_count: '0',
+      reload_triggered: 'false',
+      reload_suppressed: 'false',
       content_nsfw_level: '4',
       sampleRate: '1',
     });
@@ -209,6 +213,7 @@ describe('Gated: login gate shown to a viewer whose hard load carried a session 
       render_mode: 'shell',
       session_boot: 'shell',
       session_cookie: 'unknown',
+      session_cookie_kind: 'unknown',
       session_history: 'loading>unauthenticated',
       session_source: 'shell-seed',
       shell_seed_session: 'null',
@@ -269,6 +274,8 @@ describe('Gated: login gate shown to a viewer whose hard load carried a session 
       last_fetch: 'ok-null',
       last_fetch_trigger: 'refresh-signal',
       fetch_count: '1',
+      reload_triggered: 'true',
+      reload_suppressed: 'false',
     });
     const serialized = JSON.stringify(events()[0]);
     for (const leak of ['4141', 'gate-fixture-user', 'gate-fixture@example.test', 'expires'])
@@ -297,20 +304,20 @@ describe('Gated: login gate shown to a viewer whose hard load carried a session 
 
 describe('Gated: no event', () => {
   it('for a genuinely anonymous viewer (no session cookie)', async () => {
-    await render({ session: null, sessionCookie: false });
+    await render({ session: null, sessionCookie: 'none' });
     // Positive control: the login card IS showing; only the cookie signal differs.
     expect(showsLoginCard()).toBe(true);
     expect(events()).toHaveLength(0);
   });
 
   it('for the `page` state: a signed-in viewer', async () => {
-    await render({ session: SIGNED_IN, sessionCookie: true });
+    await render({ session: SIGNED_IN, sessionCookie: 'civ-token' });
     expect(showsContent()).toBe(true);
     expect(events()).toHaveLength(0);
   });
 
   it('for the `page` state: PG content shown to a signed-out viewer with a cookie', async () => {
-    await render({ session: null, sessionCookie: true, level: PG });
+    await render({ session: null, sessionCookie: 'civ-token', level: PG });
     expect(showsContent()).toBe(true);
     expect(events()).toHaveLength(0);
   });

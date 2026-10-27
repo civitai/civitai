@@ -16,10 +16,13 @@ const EXPECTED_KEYS = [
   'last_fetch_status',
   'last_fetch_trigger',
   'ms_since_nav_start',
+  'reload_suppressed',
+  'reload_triggered',
   'render_mode',
   'sampleRate',
   'session_boot',
   'session_cookie',
+  'session_cookie_kind',
   'session_history',
   'session_source',
   'shell_page_data',
@@ -29,7 +32,10 @@ const EXPECTED_KEYS = [
 const ssrNull: SessionDiagnostics = {
   boot: 'ssr-null',
   sessionCookie: true,
+  sessionCookieKind: 'civ-token',
   authCookieAtLoad: true,
+  reloadTriggered: false,
+  reloadSuppressed: false,
   history: ['unauthenticated'],
   source: 'ssr',
   fetchCount: 0,
@@ -38,7 +44,10 @@ const ssrNull: SessionDiagnostics = {
 const shellAfterFetch: SessionDiagnostics = {
   boot: 'shell',
   sessionCookie: undefined,
+  sessionCookieKind: 'unknown',
   authCookieAtLoad: true,
+  reloadTriggered: false,
+  reloadSuppressed: true,
   history: ['loading', 'authenticated', 'unauthenticated'],
   source: 'fetch:refresh-signal',
   seedSession: 'present',
@@ -61,6 +70,7 @@ describe('buildLoginGateAttributes', () => {
       render_mode: 'ssr',
       session_boot: 'ssr-null',
       session_cookie: 'true',
+      session_cookie_kind: 'civ-token',
       session_history: 'unauthenticated',
       session_source: 'ssr',
       shell_seed_session: 'none',
@@ -69,6 +79,8 @@ describe('buildLoginGateAttributes', () => {
       last_fetch_status: 'none',
       last_fetch_trigger: 'none',
       fetch_count: '0',
+      reload_triggered: 'false',
+      reload_suppressed: 'false',
       content_nsfw_level: '4',
       ms_since_nav_start: '1234',
       sampleRate: '1',
@@ -87,6 +99,7 @@ describe('buildLoginGateAttributes', () => {
       render_mode: 'shell',
       session_boot: 'shell',
       session_cookie: 'unknown',
+      session_cookie_kind: 'unknown',
       session_history: 'loading>authenticated>unauthenticated',
       session_source: 'fetch:refresh-signal',
       shell_seed_session: 'present',
@@ -95,10 +108,28 @@ describe('buildLoginGateAttributes', () => {
       last_fetch_status: '200',
       last_fetch_trigger: 'refresh-signal',
       fetch_count: '3',
+      reload_triggered: 'false',
+      reload_suppressed: 'true',
       content_nsfw_level: '8',
       ms_since_nav_start: '98766',
       sampleRate: '1',
     });
+  });
+
+  it.each([
+    ['civ-token', 'true'],
+    ['legacy', 'true'],
+    ['both', 'true'],
+    ['none', 'false'],
+  ] as const)('cookie kind %s → session_cookie_kind=%s, session_cookie=%s', (kind, cookie) => {
+    expect(
+      buildLoginGateAttributes({
+        diagnostics: { ...ssrNull, sessionCookieKind: kind, sessionCookie: cookie === 'true' },
+        contentNsfwLevel: 4,
+        shellPageDataStatus: undefined,
+        msSinceNavStart: 1,
+      })
+    ).toMatchObject({ session_cookie_kind: kind, session_cookie: cookie });
   });
 
   it('a shell whose page data is not read yet says `pending`', () => {
@@ -155,7 +186,12 @@ describe('reportLoginGateWithAuthCookie', () => {
 
   it('sends nothing for a viewer whose hard load had no session cookie', () => {
     const pushEvent = vi.fn();
-    const anon: SessionDiagnostics = { ...ssrNull, sessionCookie: false, authCookieAtLoad: false };
+    const anon: SessionDiagnostics = {
+      ...ssrNull,
+      sessionCookie: false,
+      sessionCookieKind: 'none',
+      authCookieAtLoad: false,
+    };
     expect(reportLoginGateWithAuthCookie(signal(anon), { pushEvent })).toBe('skipped');
     expect(pushEvent).not.toHaveBeenCalled();
   });

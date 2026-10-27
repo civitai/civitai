@@ -275,8 +275,20 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
   // `hasAuthCookie` is cleared by the lookup's answer: the login-gate diagnostic needs exactly the
   // case the two disagree on.
   it.each([
-    ['a cookie the lookup answered signed out', { [AUTH_COOKIE]: 'token-value' }, true, false],
-    ['no cookie', {}, false, false],
+    [
+      'a cookie the lookup answered signed out',
+      { [AUTH_COOKIE]: 'token-value' },
+      'civ-token',
+      false,
+    ],
+    ['a legacy cookie', { '__Secure-civitai-token': 'legacy-token-value' }, 'legacy', false],
+    [
+      'both families',
+      { [AUTH_COOKIE]: 'token-value', '__Secure-civitai-token': 'legacy-token-value' },
+      'both',
+      false,
+    ],
+    ['no cookie', {}, 'none', false],
   ])('sessionCookie reports %s as read', async (_, jar, sessionCookie, hasAuthCookie) => {
     h.jar = jar;
     answer({ session: null, settings: { features: {} } });
@@ -284,6 +296,8 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     const { pageProps } = await getInitialProps(makeCtx());
 
     expect(pageProps.sessionCookie).toBe(sessionCookie);
+    // Names only: no cookie value reaches the page prop.
+    expect(JSON.stringify(pageProps.sessionCookie)).not.toContain('token-value');
     expect(pageProps.hasAuthCookie).toBe(hasAuthCookie);
   });
 

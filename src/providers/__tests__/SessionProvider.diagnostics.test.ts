@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionProvider, useSession, useSessionDiagnostics } from '~/providers/SessionProvider';
 import type { SessionDiagnostics, SessionSeed } from '~/providers/SessionProvider';
 import type { Session } from '~/types/session';
+import type { SessionCookieKind } from '~/shared/utils/session-cookie';
 
 const act = (React as unknown as { act: typeof actType }).act;
 
@@ -65,7 +66,7 @@ afterEach(async () => {
 async function render(props: {
   session?: Session | null;
   seed?: SessionSeed | null;
-  sessionCookie?: boolean;
+  sessionCookie?: SessionCookieKind;
 }) {
   const tree = React.createElement(SessionProvider, props as never, React.createElement(Probe));
   if (!root) root = createRoot(document.createElement('div'));
@@ -90,11 +91,14 @@ async function focus() {
 
 describe('SessionDiagnostics', () => {
   it('a server-rendered session: boot, cookie signal, one status, no fetch', async () => {
-    await render({ session: SIGNED_IN, sessionCookie: true });
+    await render({ session: SIGNED_IN, sessionCookie: 'civ-token' });
     expect(diagnostics).toEqual({
       boot: 'ssr-session',
       sessionCookie: true,
+      sessionCookieKind: 'civ-token',
       authCookieAtLoad: true,
+      reloadTriggered: false,
+      reloadSuppressed: false,
       history: ['authenticated'],
       source: 'ssr',
       fetchCount: 0,
@@ -102,17 +106,23 @@ describe('SessionDiagnostics', () => {
   });
 
   it('server-rendered signed out with no cookie is the only boot without the cookie signal', async () => {
-    await render({ session: null, sessionCookie: false });
+    await render({ session: null, sessionCookie: 'none' });
     expect(diagnostics).toMatchObject({
       boot: 'ssr-null',
       sessionCookie: false,
+      sessionCookieKind: 'none',
       authCookieAtLoad: false,
     });
   });
 
   it('server-rendered signed out WITH a cookie keeps the cookie signal', async () => {
-    await render({ session: null, sessionCookie: true });
-    expect(diagnostics).toMatchObject({ boot: 'ssr-null', authCookieAtLoad: true });
+    await render({ session: null, sessionCookie: 'legacy' });
+    expect(diagnostics).toMatchObject({
+      boot: 'ssr-null',
+      sessionCookie: true,
+      sessionCookieKind: 'legacy',
+      authCookieAtLoad: true,
+    });
   });
 
   it('records each distinct transition and what produced it: mount fetch, then a focus fetch', async () => {
@@ -144,9 +154,20 @@ describe('SessionDiagnostics', () => {
       source: 'fetch:focus',
       fetchCount: 3,
       lastFetch: { trigger: 'focus', outcome: 'ok-null', httpStatus: 200 },
+      reloadTriggered: true,
+      reloadSuppressed: false,
     });
     // Unchanged contract: the statuses consumers saw are the same three.
     expect([...new Set(statuses)]).toEqual(['loading', 'authenticated', 'unauthenticated']);
+  });
+
+  it('a lost session inside the reload cooldown is recorded as suppressed', async () => {
+    window.sessionStorage.setItem('civitai:lost-session-reload', String(Date.now()));
+    await render({ session: SIGNED_IN, sessionCookie: 'civ-token' });
+    await focus();
+    await answer(0, new Response('{}', { status: 200 }));
+    expect(window.location.reload).not.toHaveBeenCalled();
+    expect(diagnostics).toMatchObject({ reloadTriggered: false, reloadSuppressed: true });
   });
 
   it('a network error is `undetermined` with status 0 and marks the resolution', async () => {

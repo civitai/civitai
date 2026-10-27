@@ -12,6 +12,8 @@ import { buildRumPageAttributes } from '~/utils/faro/pageAttributes';
  *                        `ssr-unknown` | `shell`
  *   session_cookie       the server saw a session cookie on the hard load: `true` | `false` |
  *                        `unknown` (a shell render reads no viewer cookie)
+ *   session_cookie_kind  which session cookie families, by NAME: `civ-token` | `legacy` |
+ *                        `both` | `none` | `unknown` (shell)
  *   session_history      distinct statuses since mount, e.g. `loading>unauthenticated`
  *   session_source       what produced the current value: `ssr` | `shell-seed` |
  *                        `fetch:<trigger>` | `fetch:<trigger>:undetermined`
@@ -22,6 +24,8 @@ import { buildRumPageAttributes } from '~/utils/faro/pageAttributes';
  *   last_fetch_status    its HTTP status (`0` = network error) or `none`
  *   last_fetch_trigger   `mount` | `focus` | `interval` | `update` | `refresh-signal` | `none`
  *   fetch_count          session fetches completed since mount
+ *   reload_triggered     the lost-session reload fired on this load: `true` | `false`
+ *   reload_suppressed    it was due but its cooldown suppressed it: `true` | `false`
  *   content_nsfw_level   the gated content's level (a number)
  *   ms_since_nav_start   `performance.now()` at the gate, rounded
  *   sampleRate           `1` (every occurrence is sent; see `tour.ts`)
@@ -56,6 +60,7 @@ export function buildLoginGateAttributes({
     render_mode: buildRumPageAttributes({ shell, signedIn: true }).render_mode,
     session_boot: d.boot,
     session_cookie: d.sessionCookie === undefined ? 'unknown' : String(d.sessionCookie),
+    session_cookie_kind: d.sessionCookieKind,
     session_history: d.history.join('>'),
     session_source: d.source,
     shell_seed_session: d.seedSession ?? 'none',
@@ -68,6 +73,8 @@ export function buildLoginGateAttributes({
     last_fetch_status: d.lastFetch ? String(d.lastFetch.httpStatus) : 'none',
     last_fetch_trigger: d.lastFetch?.trigger ?? 'none',
     fetch_count: String(d.fetchCount),
+    reload_triggered: String(d.reloadTriggered),
+    reload_suppressed: String(d.reloadSuppressed),
     content_nsfw_level: String(contentNsfwLevel),
     ms_since_nav_start: String(Math.round(msSinceNavStart)),
     sampleRate: '1',
