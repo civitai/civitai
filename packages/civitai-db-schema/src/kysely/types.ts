@@ -5841,6 +5841,7 @@ export type User = {
   rewardsEligibility: Generated<RewardsEligibility>;
   eligibilityChangedAt: Timestamp | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profilePictureId: number | null;
   settings: Generated<unknown | null>;

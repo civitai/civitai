@@ -1068,8 +1068,8 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   const result = await dbWrite
     .$transaction([
       // A hold that landed after the check above fails this statement, and with it the whole
-      // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
-      // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
+      // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
+      // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
       dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
       dbWrite.account.deleteMany({ where: { userId: user.id } }),
