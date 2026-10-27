@@ -119,6 +119,8 @@ describe('lint-targets', () => {
     '.prettierignore',
     'tailwind.config.js',
     '.github/workflows/lint.yml',
+    '.github/problem-matchers/eslint-unix.json',
+    'scripts/ci/lint-targets.mjs',
   ])('lints every tracked file when the PR changes %s', (trigger) => {
     put(trigger, `changed ${trigger}\n`);
     put('src/brand-new.ts');
@@ -148,6 +150,7 @@ describe('lint-targets', () => {
     'packages/pkg/src/package.json.ts',
     'src/eslint-helper.js',
     'docs/.prettierrc-notes.md',
+    'scripts/ci/other-script.mjs',
   ])('does not treat %s as lint config', (path) => {
     put(path, 'x\n');
     commit('pr');

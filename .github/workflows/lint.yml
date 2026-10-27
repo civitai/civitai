@@ -214,9 +214,9 @@ jobs:
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
     if: github.event_name == 'pull_request'
-    # 15, not 10: a full run (see the header) lints ~10,600 files with ESLint and
-    # ~12,500 with Prettier. The first one on ubuntu-latest (PR #7038) took 4m50s
-    # for the whole job: ESLint 95s, Prettier 104s, setup and install about 90s.
+    # 15, not 10: sized for the full run (see the header), which lints every
+    # tracked file. A normal PR finishes far inside it. If full runs approach the
+    # limit, raise it rather than letting a config PR time out with no verdict.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -233,11 +233,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Writes added.txt / added-lint.txt (blocking steps) and report.txt / report-lint.txt
-      # (report-only steps). The report-only lists are the files the PR modified, or EVERY
-      # tracked file when the PR changes lint config, package.json or the lockfile, since
-      # those can change the verdict for files the PR never touched. The trigger list is in
-      # the script.
+      # Writes the file lists the steps below read; see the script's header.
       - name: Collect changed files
         id: changed
         env:

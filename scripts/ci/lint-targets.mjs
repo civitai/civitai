@@ -43,17 +43,17 @@ const FULL_RUN_TRIGGERS = [
   // packages/.eslintrc.cjs checks import/no-extraneous-dependencies against each package's
   // own package.json.
   /^packages\/[^/]+\/package\.json$/,
-  /(^|\/)\.eslintrc(\.[cm]?js|\.json|\.ya?ml)?$/, // root and nested ESLint configs
+  /(^|\/)\.eslintrc(\.[cm]?js|\.json|\.ya?ml)?$/,
   /^eslint\.config\.[cm]?[jt]s$/, // flat config; ESLint 8.57 picks it up when present
   /^\.eslintignore$/,
   /^eslint-[^/]+\.c?js$/, // custom rules loaded by .eslintrc.js
-  /(^|\/)\.prettierrc(\.[^/]+)?$/, // root and nested Prettier configs
+  /(^|\/)\.prettierrc(\.[^/]+)?$/,
   /(^|\/)prettier\.config\.[cm]?[jt]s$/,
   /^\.prettierignore$/,
   /^tailwind\.config\.[cm]?[jt]s$/, // read by eslint-plugin-tailwindcss
-  /^\.github\/workflows\/lint\.yml$/, // the job itself
+  /^\.github\/workflows\/lint\.yml$/,
   /^\.github\/problem-matchers\//,
-  /^scripts\/ci\/lint-targets\.mjs$/, // this file
+  /^scripts\/ci\/lint-targets\.mjs$/,
 ];
 
 const [baseRef, outDir = '.'] = process.argv.slice(2);
