@@ -81,4 +81,29 @@ describe('EdgeVideo — only the frontmost layer plays', () => {
     await vi.waitFor(() => expect(pause).toHaveBeenCalled());
     pause.mockRestore();
   });
+
+  test('a video in a dialog plays again once the dialog over it closes', async () => {
+    function Detail() {
+      return <EdgeVideo src={SRC} autoPlay />;
+    }
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({ id: 'imageDetail_1', component: Detail, type: 'routed-dialog' });
+    await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    dialogStore.trigger({ id: 'imageDetail_2', component: () => null, type: 'routed-dialog' });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(2));
+
+    dialogStore.closeById('imageDetail_2');
+
+    await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+  });
+
+  test('a player on the page plays while no dialog is open, and again after one closes', async () => {
+    renderWithProviders(<EdgeVideo src={SRC} autoPlay />);
+    await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+
+    dialogStore.trigger({ id: 'imageDetail_1', component: () => null, type: 'routed-dialog' });
+    dialogStore.closeById('imageDetail_1');
+
+    await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+  });
 });
