@@ -414,19 +414,19 @@ describe('images set aside from the CSAM queue', () => {
   });
 
   it('leaves the other queues alone', async () => {
-    // A row on an image in another queue: the trigger keeps this from happening, the reads do not
-    // rely on it.
+    // A row that would count, on an image in another queue: the trigger keeps this from happening,
+    // the reads do not rely on it.
     await db.exec(`
-      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (69, 303, 'minor', 'Scanned');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (69, 302, 'minor', 'Scanned');
       INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
-        (69, 303, 'Dismissed', 1);
+        (69, 302, 'AfterReport', 1);
     `);
     const minorListed = async () =>
       (
         await getImageReviewQueue({
           needsReview: 'minor',
           browsingLevel: ALL_LEVELS,
-          userId: 303,
+          userId: 302,
           limit: 50,
         })
       ).items.map((i) => i.id);
