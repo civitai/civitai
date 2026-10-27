@@ -6,7 +6,9 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
+  recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -1071,6 +1073,18 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
       // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
       // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      // Before the move, while the models still name their owner.
+      ...(removeModels
+        ? []
+        : [
+            dbWrite.$executeRaw(
+              recordModelOwnershipSql({
+                where: Prisma.sql`m."userId" = ${user.id}`,
+                userId: PLACEHOLDER_OWNER_ID,
+                reason: 'account-delete',
+              })
+            ),
+          ]),
       dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
       dbWrite.account.deleteMany({ where: { userId: user.id } }),
       dbWrite.session.deleteMany({ where: { userId: user.id } }),
@@ -1211,7 +1225,8 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // Look up the audited model ownership up front (ClickHouse lives outside Postgres).
   let auditIds: number[] = [];
   if (restoreModels) {
-    // `modelEvents.userId` is the actor of each event; for a model that's the original owner.
+    // `modelEvents.userId` is the actor of each event; for a model that's the original owner. A
+    // Transfer's actor is the moderator who moved it, never an owner.
     // The deletion path (removeModels:false) sets Model.userId = -1 without touching
     // status/deletedAt, so we reclaim only those orphans. Models deleted via removeModels:true
     // keep their userId and get status='Deleted' instead — they are intentionally NOT restored
@@ -1220,7 +1235,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       (await clickhouse?.$query<{ modelId: number }>(`
         SELECT DISTINCT modelId
         FROM modelEvents
-        WHERE userId = ${id}
+        WHERE userId = ${id} AND type != 'Transfer'
       `)) ?? [];
     auditIds = auditRows.map((r) => r.modelId);
   }
@@ -1243,10 +1258,19 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     restoredModelIds = orphans.map((m) => m.id);
 
     if (restoredModelIds.length > 0) {
-      const updated = await dbWrite.model.updateMany({
-        where: { id: { in: restoredModelIds }, userId: -1 },
-        data: { userId: id },
-      });
+      const [updated] = await dbWrite.$transaction([
+        dbWrite.model.updateMany({
+          where: { id: { in: restoredModelIds }, userId: -1 },
+          data: { userId: id },
+        }),
+        dbWrite.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
+            userId: id,
+            reason: 'restore',
+          })
+        ),
+      ]);
       modelsRestored = updated.count;
     }
   }

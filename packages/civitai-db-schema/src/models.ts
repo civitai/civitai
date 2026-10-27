@@ -1030,6 +1030,15 @@ export interface Model {
   permissionSnapshots?: ModelPermissionSnapshot[];
 }
 
+export interface ModelOwnership {
+  id: number;
+  modelId: number;
+  userId: number;
+  reason: string;
+  actorId: number | null;
+  createdAt: Date;
+}
+
 export interface ModelPermissionSnapshot {
   id: number;
   modelId: number;

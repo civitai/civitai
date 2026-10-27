@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 /**
  * What `delete-old-training-data` does with each row it selects.
@@ -36,6 +37,11 @@ const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget, mockGetQuaran
     mockGetQuarantineBucket: vi.fn(() => 'civitai-quarantine'),
   }));
 
+// The hold's optional objects exist; the statements that read them are what is under test here.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  getModelHoldContext: async () => ({ markerView: true, ownershipHistory: true }),
+}));
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
   resolveModelFileDeleteTarget: mockResolveTarget,

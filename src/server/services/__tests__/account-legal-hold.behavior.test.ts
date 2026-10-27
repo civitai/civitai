@@ -1,5 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -24,6 +26,7 @@ import { deleteUser } from '~/server/services/user.service';
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 const CLEAN = 1;
+const CLEAN_MODEL = 100;
 const PENDING_REPORT = 2;
 const RECENTLY_SENT = 3;
 const SENT_OVER_A_YEAR_AGO = 4;
@@ -86,7 +89,18 @@ beforeAll(async () => {
       "profilePictureId" int,
       "subscriptionId" text
     );
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN});
   `);
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+      ),
+      'utf8'
+    )
+  );
 });
 
 const userRow = async (id: number) =>
@@ -120,9 +134,13 @@ beforeEach(async () => {
   answer = null;
   beforeScrub = null;
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (sql: Prisma.Sql) => {
-    if (beforeScrub) await beforeScrub();
+    // The scrub is the transaction's first statement.
+    const hook = beforeScrub;
+    beforeScrub = null;
+    if (hook) await hook();
     // A DO block takes no parameters; the guarded scrub is built to carry none.
-    await holder.db.exec(sql.text);
+    if (sql.values.length) await holder.db.query(sql.text, sql.values);
+    else await holder.db.exec(sql.text);
     return 1;
   }) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
@@ -341,6 +359,33 @@ describe('deleteUser under a legal hold', () => {
     failQueries = true;
     await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('records the placeholder as the next owner of the models it takes', async () => {
+    const accountDeletes = async () =>
+      (
+        await holder.db.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM "ModelOwnership"
+           WHERE "modelId" = $1 AND "userId" = -1 AND reason = 'account-delete'`,
+          [CLEAN_MODEL]
+        )
+      ).rows[0].n;
+    const before = await accountDeletes();
+
+    await run(CLEAN);
+
+    expect(await accountDeletes()).toBe(before + 1);
+  });
+
+  it('records no new owner when the models are deleted rather than kept', async () => {
+    const rows = async () =>
+      (await holder.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM "ModelOwnership"`))
+        .rows[0].n;
+    const before = await rows();
+
+    await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+
+    expect(await rows()).toBe(before);
   });
 
   it('deletes an account no hold covers, end to end', async () => {

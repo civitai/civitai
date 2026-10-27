@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  PLACEHOLDER_OWNER_ID,
   reportHolds,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
@@ -143,6 +144,67 @@ export async function holdMarkerTableExists(): Promise<boolean> {
     SELECT to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS present
   `;
   return row?.present === true;
+}
+
+export type ModelOwnershipReason = 'create' | 'transfer' | 'account-delete' | 'restore';
+
+/**
+ * Records `userId` as an owner of every model `where` matches (over `"Model" m`). Run it in the same
+ * transaction as the owner write, so the hold reads every owner a model has had.
+ */
+export function recordModelOwnershipSql({
+  where,
+  userId,
+  reason,
+  actorId = null,
+}: {
+  where: Prisma.Sql;
+  userId: number;
+  reason: ModelOwnershipReason;
+  actorId?: number | null;
+}): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason", "actorId")
+    SELECT m.id, ${userId}::int, ${reason}, ${actorId}::int FROM "Model" m WHERE ${where}
+  `;
+}
+
+/** What a statement over models' data needs to know before it names the hold's optional objects. */
+export type ModelHoldContext = { markerView: boolean; ownershipHistory: boolean };
+
+export async function getModelHoldContext(): Promise<ModelHoldContext> {
+  const [row] = await dbWrite.$queryRaw<{ markerView: unknown; ownershipHistory: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS "markerView",
+           to_regclass('"ModelOwnership"') IS NOT NULL AS "ownershipHistory"
+  `;
+  return { markerView: row?.markerView === true, ownershipHistory: row?.ownershipHistory === true };
+}
+
+/**
+ * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
+ * owner it had before. `modelId` is an int SQL expression.
+ */
+export function modelDataHeldSql(modelId: Prisma.Sql, ctx: ModelHoldContext): Prisma.Sql {
+  const current = Prisma.sql`EXISTS (
+    SELECT 1 FROM "Model" hm
+    WHERE hm.id = ${modelId}
+      AND (hm."userId" = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
+        OR ${accountHoldSql(Prisma.raw('hm."userId"'), ctx.markerView)})
+  )`;
+  // Without the table there is no history yet, and a statement naming it would fail to parse.
+  if (!ctx.ownershipHistory) return Prisma.sql`(${current})`;
+  return Prisma.sql`(${current} OR EXISTS (
+    SELECT 1 FROM "ModelOwnership" ho
+    WHERE ho."modelId" = ${modelId} AND ${accountHoldSql(Prisma.raw('ho."userId"'), ctx.markerView)}
+  ))`;
+}
+
+/** `modelDataHeldSql` for the model of a version. */
+export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql, ctx: ModelHoldContext) {
+  return modelDataHeldSql(
+    Prisma.sql`(SELECT hmv."modelId" FROM "ModelVersion" hmv WHERE hmv.id = ${modelVersionId})`,
+    ctx
+  );
 }
 
 /**

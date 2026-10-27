@@ -473,6 +473,18 @@ describe('availability', () => {
 
     expect(createData().availability).toBe(Availability.Public);
   });
+
+  it('records the creator as the first owner, in the create transaction', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    await upsert({ userId: OWNER_ID, availability: Availability.Public });
+
+    const ownership = mockDbWrite.$executeRaw.mock.calls
+      .map(([sql]) => sql as { sql?: string; values?: unknown[] })
+      .find((sql) => sql.sql?.includes('"ModelOwnership"'));
+    expect(ownership, 'no ownership row for the new model').toBeDefined();
+    expect(ownership!.values!.slice(0, 3)).toEqual([OWNER_ID, 'create', OWNER_ID]);
+  });
 });
 
 describe('flag appeals settled by a moderator save', () => {

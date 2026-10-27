@@ -28,21 +28,30 @@ const HOLD_MIGRATION = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
 );
 
+const OWNERSHIP_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+);
+
 // One owner per way of being held, and one who is not.
 const MARKED_OWNER = 1; // a hold marker
 const REPORTED_OWNER = 3; // named on a report not yet sent: no marker row exists for them
 const REVIEW_OWNER = 4; // an image awaiting CSAM review: the account hold's image leg
 const FREE_OWNER = 2;
+const GIVEN_BY_MARKED_OWNER = 5; // unheld; owns a model MARKED_OWNER had before
+const GIVEN_BY_FREE_OWNER = 6; // unheld; owns a model FREE_OWNER had before
 const MODELS = [
   { id: 10, userId: MARKED_OWNER, versionId: 100 },
   { id: 30, userId: REPORTED_OWNER, versionId: 300 },
   { id: 40, userId: PLACEHOLDER_OWNER_ID, versionId: 400 },
   { id: 50, userId: REVIEW_OWNER, versionId: 500 },
   { id: 20, userId: FREE_OWNER, versionId: 200 },
+  { id: 60, userId: GIVEN_BY_MARKED_OWNER, versionId: 600 },
+  { id: 70, userId: GIVEN_BY_FREE_OWNER, versionId: 700 },
 ];
-const FREE_MODEL = 20;
-const FREE_VERSION = 200;
-const KEPT_MODELS = [10, 30, 40, 50];
+const FREE_MODELS = [20, 70];
+const FREE_VERSIONS = [200, 700];
+const KEPT_MODELS = [10, 30, 40, 50, 60];
 
 let db: PGlite;
 
@@ -76,7 +85,11 @@ beforeAll(async () => {
     );
   `);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
   await db.exec(`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+      (60, ${MARKED_OWNER}, 'create'), (60, ${GIVEN_BY_MARKED_OWNER}, 'transfer'),
+      (70, ${FREE_OWNER}, 'create'), (70, ${GIVEN_BY_FREE_OWNER}, 'transfer');
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
     INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEW_OWNER}, 'csam');
@@ -115,14 +128,14 @@ const axiomEvents = (message: string) =>
     .filter((arg) => arg.message === message);
 
 describe('remove-old-drafts under a legal hold', () => {
-  it("keeps every held owner's model and its file registrations, and deletes the rest", async () => {
+  it("keeps every held owner's model, and every model a held owner once had, with its file registrations, and deletes the rest", async () => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
 
     expect(await remainingModels()).toEqual(KEPT_MODELS);
     // Deregistering a kept model's versions would drop its files out of the quarantine allowlist.
-    expect(mockDeregisterBatch.mock.calls).toEqual([[[FREE_VERSION]]]);
+    expect(mockDeregisterBatch.mock.calls.map(([ids]) => [...ids].sort())).toEqual([FREE_VERSIONS]);
     expect(axiomEvents('Removed old draft models')).toEqual([
-      expect.objectContaining({ modelIds: [FREE_MODEL] }),
+      expect.objectContaining({ modelIds: FREE_MODELS }),
     ]);
     expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
       expect.objectContaining({ modelIds: KEPT_MODELS }),

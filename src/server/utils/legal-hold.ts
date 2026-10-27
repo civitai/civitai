@@ -49,20 +49,6 @@ export function userUnderLegalHoldSql(userId: Prisma.Sql): Prisma.Sql {
   )`;
 }
 
-/**
- * Whether the owner of a model version is under a legal hold. A model whose owner deleted their
- * account and kept it public belongs to the placeholder owner, so its files are held too.
- */
-export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
-  return Prisma.sql`EXISTS (
-    SELECT 1
-    FROM "ModelVersion" hmv
-    JOIN "Model" hm ON hm.id = hmv."modelId"
-    WHERE hmv.id = ${modelVersionId}
-      AND ${userUnderLegalHoldSql(Prisma.raw('hm."userId"'))}
-  )`;
-}
-
 export type LegalHoldSkipReason = 'legal-hold' | 'legal-hold-unknown';
 
 /** Fails closed: only an explicit `false` lets a row through to a delete. */

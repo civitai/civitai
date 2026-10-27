@@ -5,7 +5,8 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Both training-data purge jobs leave alone every file whose model owner is under a legal hold.
+ * Both training-data purge jobs leave alone every file whose model owner, or any owner it had before,
+ * is under a legal hold.
  * The jobs' own queries run against a Postgres stand-in, so the hold predicate is exercised as SQL;
  * only the storage delete is mocked.
  */
@@ -52,6 +53,11 @@ const MODEL_KEPT_AFTER_ACCOUNT_DELETION = 12; // the model now belongs to the pl
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_ON_REPORT
 const MARKER_HELD = 13; // no report; a hold marker set by a person
 const MARKER_RELEASED = 14; // no report; a hold marker that was released
+const IMAGE_REVIEW_HELD = 15; // no report; an image of theirs awaits review
+const TRANSFERRED_FROM_HELD = 16; // unheld; given the model of PENDING_REPORT
+const TRANSFERRED_FROM_UNHELD = 17; // unheld; given the model of UNHELD
+const REPORTED_IMAGE_HELD = 18; // named on no report; an image of theirs is listed on one
+const REPORTED_IMAGE_SUBJECT = 19; // owns nothing; the subject of that report
 const OWNERS = [
   UNHELD,
   PENDING_REPORT,
@@ -65,9 +71,24 @@ const OWNERS = [
   MODEL_KEPT_AFTER_ACCOUNT_DELETION,
   MARKER_HELD,
   MARKER_RELEASED,
+  IMAGE_REVIEW_HELD,
+  TRANSFERRED_FROM_HELD,
+  TRANSFERRED_FROM_UNHELD,
+  REPORTED_IMAGE_HELD,
 ];
-const ELIGIBLE = [UNHELD, SENT_OVER_A_YEAR_AGO, SENT_JUST_OVER_A_YEAR_AGO, MARKER_RELEASED];
+const ELIGIBLE = [
+  UNHELD,
+  SENT_OVER_A_YEAR_AGO,
+  SENT_JUST_OVER_A_YEAR_AGO,
+  MARKER_RELEASED,
+  TRANSFERRED_FROM_UNHELD,
+];
 const HELD = OWNERS.filter((owner) => !ELIGIBLE.includes(owner));
+
+const ownershipMigration = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+);
 
 const trainingFileUrl = (owner: number) => `https://example.invalid/training-${owner}`;
 const replacedFileUrl = (owner: number) => `https://example.invalid/replaced-${owner}`;
@@ -97,10 +118,15 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb
     );
-    -- Only what the hold migration's triggers attach to.
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY,
+      "userId" int NOT NULL,
+      "needsReview" text,
+      "blockedFor" text
+    );
     CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
   `);
   await holder.db.exec(
@@ -112,6 +138,18 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  await holder.db.exec(readFileSync(ownershipMigration, 'utf8'));
+  // Each transferred model's owners, from its first to its current one. Append-only, so set once.
+  await holder.db.exec(`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+      (${TRANSFERRED_FROM_HELD * 10}, ${PENDING_REPORT}, 'create'),
+      (${TRANSFERRED_FROM_HELD * 10}, ${TRANSFERRED_FROM_HELD}, 'transfer'),
+      (${TRANSFERRED_FROM_UNHELD * 10}, ${UNHELD}, 'create'),
+      (${TRANSFERRED_FROM_UNHELD * 10}, ${TRANSFERRED_FROM_UNHELD}, 'transfer');
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES
+      (1, ${IMAGE_REVIEW_HELD}, 'csam'),
+      (2, ${REPORTED_IMAGE_HELD}, NULL);
+  `);
   // The report legs are pinned by the reports below on their own; the marker legs by these rows.
   await holder.db.exec(`
     ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
@@ -165,6 +203,7 @@ beforeEach(async () => {
       (${OLD_REPORT_NOT_ARCHIVED}, now() - interval '400 days', NULL, '{}'),
       (${OLD_AND_PENDING_REPORTS}, now() - interval '400 days', now(), '{}'),
       (${OLD_AND_PENDING_REPORTS}, NULL, NULL, '{}');
+    INSERT INTO "CsamReport" ("userId", images) VALUES (${REPORTED_IMAGE_SUBJECT}, '[{"id": 2}]');
   `);
 });
 
@@ -231,5 +270,37 @@ describe('purge-replaced-files under a legal hold', () => {
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
     expect(result).toEqual({ purged: 0, failed: 0, skipped: 1 });
     expect(skipReasons()).toEqual({ 77: 'legal-hold-unknown' });
+  });
+});
+
+describe('model ownership history', () => {
+  it('keeps a model transferred away from a held owner held', async () => {
+    await purgeReplacedFilesJob.run({}).result;
+    await deleteOldTrainingData.run({}).result;
+
+    expect(deletedUrls()).not.toContain(replacedFileUrl(TRANSFERRED_FROM_HELD));
+    expect(deletedUrls()).not.toContain(trainingFileUrl(TRANSFERRED_FROM_HELD));
+    expect(deletedUrls()).toContain(replacedFileUrl(TRANSFERRED_FROM_UNHELD));
+    expect(deletedUrls()).toContain(trainingFileUrl(TRANSFERRED_FROM_UNHELD));
+  });
+
+  it('still runs, on current owners only, before the history table exists', async () => {
+    await holder.db.exec(`ALTER TABLE "ModelOwnership" RENAME TO "ModelOwnershipAside"`);
+    try {
+      await purgeReplacedFilesJob.run({}).result;
+    } finally {
+      await holder.db.exec(`ALTER TABLE "ModelOwnershipAside" RENAME TO "ModelOwnership"`);
+    }
+
+    expect(deletedUrls()).toContain(replacedFileUrl(TRANSFERRED_FROM_HELD));
+    expect(deletedUrls()).not.toContain(replacedFileUrl(PENDING_REPORT));
+  });
+
+  it('refuses to change or remove a recorded owner', async () => {
+    await expect(holder.db.exec(`UPDATE "ModelOwnership" SET "userId" = 1`)).rejects.toThrow(
+      'append-only'
+    );
+    await expect(holder.db.exec(`DELETE FROM "ModelOwnership"`)).rejects.toThrow('append-only');
+    await expect(holder.db.exec(`TRUNCATE "ModelOwnership"`)).rejects.toThrow('append-only');
   });
 });

@@ -9,6 +9,11 @@ const { mockDeregisterBatch, calls } = vi.hoisted(() => ({
   calls: [] as string[],
 }));
 
+// The hold's optional objects exist; the statements that read them are what is under test here.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  getModelHoldContext: async () => ({ markerView: true, ownershipHistory: true }),
+}));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: mockDeregisterBatch }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
@@ -20,6 +25,7 @@ import {
 } from '~/server/jobs/remove-old-drafts';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 const mockLogToAxiom = loggingMock.logToAxiom;

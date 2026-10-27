@@ -4058,6 +4058,17 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelOwnership = {
+  id: Generated<number>;
+  modelId: number;
+  userId: number;
+  /**
+   * 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+   */
+  reason: string;
+  actorId: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ModelPermissionSnapshot = {
   id: Generated<number>;
   modelId: number;
@@ -6490,6 +6501,7 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelOwnership: ModelOwnership;
   ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;

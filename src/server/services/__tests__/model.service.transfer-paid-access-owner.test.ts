@@ -214,10 +214,15 @@ beforeEach(() => {
   // A tagged-template stand-in for Prisma's $executeRaw. The marker it returns is what lands in the
   // $transaction array, so a statement can be identified there by its own SQL. Interpolated values are
   // kept SEPARATE from the SQL: joining the template strings drops every one of them.
+  // A statement built elsewhere arrives as one Prisma.Sql rather than a template.
   dbMock.dbWrite.$executeRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => ({
-      __raw: { sql: strings.join(PARAM), values },
-    })
+    (
+      strings: TemplateStringsArray | { strings: string[]; values: unknown[] },
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings)
+        ? { __raw: { sql: strings.join(PARAM), values } }
+        : { __raw: { sql: strings.strings.join(PARAM), values: strings.values } }
   );
   dbMock.dbWrite.$transaction.mockImplementation(async (ops: unknown[]) => {
     transactionOps = ops;
@@ -408,6 +413,21 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       // and every other assertion here still passes.
       expectScopedToTransfer(statement);
     }
+  });
+
+  it('records the target as an owner of the moved models, in the same transaction', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const [statement] = statementsFor('ModelOwnership');
+    expect(
+      statement,
+      'no ownership row: a hold on the previous owner no longer reaches the model'
+    ).toBeDefined();
+    expect(statement.values).toEqual([TARGET_USER_ID, 'transfer', MOD_USER_ID, MODEL_IDS]);
   });
 
   it('does not fail a COMMITTED transfer when an invalidation throws', async () => {

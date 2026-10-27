@@ -18,6 +18,7 @@ import {
   HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
+  recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
@@ -3476,6 +3477,15 @@ export const upsertModel = async (
           },
         });
 
+        await tx.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ${created.id}`,
+            userId,
+            reason: 'create',
+            actorId: userId,
+          })
+        );
+
         if (descriptionSupplied && expansion.evaluated)
           await reconcileBlurbReferences({
             entityType: 'Model',
@@ -5699,6 +5709,13 @@ export async function migrateResourceToCollection({
           },
           select: { id: true },
         });
+        await tx.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ${newModel.id}`,
+            userId: modelData.userId,
+            reason: 'create',
+          })
+        );
 
         modelIds.push(newModel.id);
 
@@ -6718,11 +6735,19 @@ export async function transferModelOwnership({
         AND ps."entityId" = mv.id
         AND mv."modelId" = ANY(${modelIds}::int[])
     `,
+    dbWrite.$executeRaw(
+      recordModelOwnershipSql({
+        where: Prisma.sql`m.id = ANY(${modelIds}::int[])`,
+        userId: targetUserId,
+        reason: 'transfer',
+        actorId: modUserId,
+      })
+    ),
   ]);
 
   const tracker = new Tracker();
   for (const m of models) {
-    await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
+    await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw, userId: modUserId });
   }
 
   const affectedVersionIds = (

@@ -3,8 +3,7 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
-import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { getModelHoldContext, modelDataHeldSql } from '~/server/services/legal-hold.service';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
@@ -198,6 +197,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
+  // The marker view is assumed present, so a database without it fails each DELETE: held, not reaped.
+  const holdContext = { ...(await getModelHoldContext()), markerView: true };
   const batches = chunk(modelIds, BATCH_SIZE);
   for (const batch of batches) {
     try {
@@ -234,14 +235,13 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
       if (deletable.length === 0) continue;
 
-      // A held owner's model is kept, the account hold included: a held-for-image owner's model files
-      // can be evidence too. The hold is checked in the DELETE itself, so one placed after the replica
-      // SELECT still stops it.
-      const owner = Prisma.raw('m."userId"');
+      // A held model is kept: its owner, or any owner it had before, is held, the account hold
+      // included, since a held-for-image owner's model files can be evidence too. The hold is checked
+      // in the DELETE itself, so one placed after the replica SELECT still stops it.
       const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
         DELETE FROM "Model" m
         WHERE m.id = ANY(${deletable})
-          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), holdContext)}
         RETURNING m.id
       `;
       const deletedSet = new Set(deletedRows.map((r) => r.id));

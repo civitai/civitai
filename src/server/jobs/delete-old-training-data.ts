@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { legalHoldSkipReason, ownerUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { getModelHoldContext, ownerUnderLegalHoldSql } from '~/server/services/legal-hold.service';
+import { legalHoldSkipReason } from '~/server/utils/legal-hold';
 import {
   deleteModelFileObject,
   getQuarantineBucket,
@@ -247,11 +248,12 @@ export const deleteOldTrainingData = createJob(
         AND mf.visibility != 'Public'
     `;
 
+    const holdContext = await getModelHoldContext();
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
              mf.url,
-             ${ownerUnderLegalHoldSql(Prisma.raw('mf."modelVersionId"'))} as held
+             ${ownerUnderLegalHoldSql(Prisma.raw('mf."modelVersionId"'), holdContext)} as held
       FROM "ModelVersion" mv
              JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE mv."uploadType" = 'Trained'

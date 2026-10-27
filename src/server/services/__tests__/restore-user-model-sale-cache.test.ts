@@ -85,3 +85,31 @@ describe('restoreUser -> model sale badge cache', () => {
     );
   });
 });
+
+describe('restoreUser -> model ownership history', () => {
+  it('records the user as an owner of each model it gives back, with the reclaim', async () => {
+    dbMock.dbWrite.$executeRaw.mockImplementation(((sql: { sql: string; values: unknown[] }) => ({
+      sql: sql.sql,
+      values: sql.values,
+    })) as never);
+    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown) =>
+      Array.isArray(ops) ? ops : undefined) as never);
+
+    await restore();
+
+    const reclaim = dbMock.dbWrite.$transaction.mock.calls
+      .map(([ops]) => ops)
+      .find((ops) => Array.isArray(ops) && ops.length === 2) as
+      | [unknown, { sql: string; values: unknown[] }]
+      | undefined;
+    expect(reclaim, 'the reclaim and its ownership rows must commit together').toBeDefined();
+    expect(reclaim![1].sql).toContain('"ModelOwnership"');
+    expect(reclaim![1].values).toEqual([USER_ID, 'restore', null, ORPHANED, USER_ID]);
+  });
+
+  it("does not reclaim a model whose only event by the user is a moderator's transfer", async () => {
+    await restore();
+
+    expect(auditRows.mock.calls[0][0]).toContain("type != 'Transfer'");
+  });
+});
