@@ -111,6 +111,8 @@ const rows: Row[] = [
   row(13, { userId: BLOCKER, hidden: true, pinnedAt: PIN }),
   row(14, { userId: HIDDEN_AUTHOR }),
   row(15, { userId: HIDDEN_AUTHOR, hidden: true }),
+  // One more hidden row, so the two views' counts differ for every viewer and a swap shows.
+  row(16, { hidden: true }),
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,8 +142,8 @@ beforeEach(() => {
 
 describe('getVisibleCommentCounts equals the two single counts (Prisma path, fixture rows)', () => {
   it.each([
-    ['a viewer with no exclusions', {}, false, undefined, { visible: 5, hidden: 5 }],
-    ['a moderator', {}, true, undefined, { visible: 6, hidden: 6 }],
+    ['a viewer with no exclusions', {}, false, undefined, { visible: 5, hidden: 6 }],
+    ['a moderator', {}, true, undefined, { visible: 6, hidden: 7 }],
     [
       'a viewer hiding an author',
       { hiddenIds: [HIDDEN_AUTHOR] },
@@ -149,7 +151,7 @@ describe('getVisibleCommentCounts equals the two single counts (Prisma path, fix
       undefined,
       {
         visible: 4,
-        hidden: 4,
+        hidden: 5,
       },
     ],
     [
@@ -159,7 +161,7 @@ describe('getVisibleCommentCounts equals the two single counts (Prisma path, fix
       undefined,
       {
         visible: 3,
-        hidden: 3,
+        hidden: 4,
       },
     ],
     // The owner sees the blocker's unpinned comments, never their pinned ones.
@@ -170,7 +172,7 @@ describe('getVisibleCommentCounts equals the two single counts (Prisma path, fix
       VIEWER,
       {
         visible: 4,
-        hidden: 4,
+        hidden: 5,
       },
     ],
   ] as const)('%s', async (_label, lists, isMod, ownerId, expected) => {
@@ -218,7 +220,7 @@ describe('getVisibleCommentCounts routing', () => {
   it('includeVisible false: the hidden count only, visible null, no by-hidden statement', async () => {
     await expect(
       getVisibleCommentCounts({ input: { modelId: MODEL, includeVisible: false }, user: viewer() })
-    ).resolves.toStrictEqual({ visible: null, hidden: 5 });
+    ).resolves.toStrictEqual({ visible: null, hidden: 6 });
     const wheres = dbMock.dbRead.comment.count.mock.calls.map(([arg]) => arg.where);
     expect(wheres).toHaveLength(1);
     expect(wheres[0].hidden).toBe(true);
