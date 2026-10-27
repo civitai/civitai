@@ -967,17 +967,14 @@ export type ApplyScriptOptions = {
  * build-callback.ts records the deploy as failed without stamping current_version_deployed_at.
  *
  * Steps:
- *   1. per-app objects OFF only: the app must be one the shared static server routes. The routed
- *      set is `/templates/publish-required-slugs` (the platform keeps it equal to its routes). An
- *      unrouted app would publish fine and still 404, so the deploy fails up front instead of
- *      reporting a live app nobody can load.
- *   2. Smoke test: run the candidate image as a Pod, probe it directly, and reject a redirect whose
+ *   1. Smoke test: run the candidate image as a Pod, probe it directly, and reject a redirect whose
  *      Location embeds the in-pod port (2026-05-29 gen-from-model incident: a Vite `base` + nginx
  *      redirect leaked :8080 through Traefik and mixed-content-blocked the iframe).
- *   3. Publish: `/templates/publish.sh` with PUBLISH_REQUIRED=1, so every publish failure fails
+ *   2. Publish: `/templates/publish.sh` with PUBLISH_REQUIRED=1, so every publish failure fails
  *      the deploy. A templates ConfigMap without the script fails the deploy too: nothing would
- *      serve the build.
- *   4. per-app objects ON only: render and `kubectl apply` the per-app manifest and wait for the
+ *      serve the build. The shared static server serves every app host (a new app through its
+ *      catch-all route), so a successful publish is what makes the app live.
+ *   3. per-app objects ON only: render and `kubectl apply` the per-app manifest and wait for the
  *      rollout. With it OFF no Deployment, Service, IngressRoute or Middleware is created.
  *
  * The review sandbox script (buildApplyReviewScript) never publishes: a pending build is never
@@ -986,18 +983,6 @@ export type ApplyScriptOptions = {
  * Exported for the tests, which run it under bash with kubectl and curl stubbed.
  */
 export function buildApplyScript(ns: string, opts: ApplyScriptOptions): string {
-  const routeCheck = opts.perAppObjects
-    ? ''
-    : `
-# ---- The shared static server must route this app --------------------------
-ROUTED_SLUGS=/templates/publish-required-slugs
-if [ ! -f "\${ROUTED_SLUGS}" ] || ! grep -qxF -- "\${SLUG}" < <(tr -d ' \\t\\r' < "\${ROUTED_SLUGS}"); then
-  echo "deploy: \${SLUG} has no route on the shared static server, so a publish would not serve it." >&2
-  echo "  Add its route and list it in \${ROUTED_SLUGS} first." >&2
-  exit 1
-fi
-`;
-
   const render = opts.perAppObjects
     ? `
 # ---- Render the per-app manifest from /templates/app.yaml.tmpl --------------
@@ -1025,7 +1010,7 @@ kubectl -n ${ns} rollout status deploy/\${SLUG} --timeout=180s
 
   return `#!/usr/bin/env bash
 set -euo pipefail
-${routeCheck}${render}
+${render}
 # ---- Pre-flight smoke test against the candidate image ---------------------
 # 8-char short SHA keeps the pod name under the 63-char DNS label limit.
 SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"
