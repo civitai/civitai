@@ -490,6 +490,14 @@ export const serverSchema = z
     // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
     // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
     ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),
+    // Task Router requester adapter (`kind:'task'` App Blocks bodies). Unset URL = the kind is off.
+    TASK_ROUTER_URL: z.url().optional(),
+    TASK_ROUTER_PARTY_KEY: z.string().optional(),
+    TASK_ROUTER_PARTY_ID: z.string().default('civitai-app-blocks'),
+    // The origin the router's ticket callbacks must point at; it can differ from TASK_ROUTER_URL,
+    // which may be an in-cluster address the orchestrator cannot reach.
+    TASK_ROUTER_CALLBACK_ORIGIN: z.url().optional(),
+    TASK_ROUTER_APP_ALLOWLIST: commaDelimitedStringArray().default([]),
     // Optional. Without it only public, ungated Hugging Face repos can be imported; with it, repos
     // this token's account has accepted the terms for.
     HUGGING_FACE_TOKEN: z.string().optional(),

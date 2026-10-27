@@ -366,9 +366,11 @@ describe('every submit gate is routed through one helper', () => {
     //
     // `kind:'workflow'` adds one fee-pricing site, its submit gate. Its estimate
     // reads no budget: with no quote it shows no price.
+    //
+    // `kind:'task'` adds one fee-free site: the budget clamp before the router match.
     expect(pricing).toHaveLength(3);
-    expect(feeFree).toHaveLength(4);
-    expect(sites).toHaveLength(7);
+    expect(feeFree).toHaveLength(5);
+    expect(sites).toHaveLength(8);
   });
 
   it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
@@ -518,6 +520,7 @@ describe('every submit gate is routed through one helper', () => {
       'quotedGrantTokenGate',
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitTaskWorkflow',
     ]);
   });
 

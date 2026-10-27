@@ -1168,6 +1168,17 @@ export async function isAppBlocksConfirmedStepEnabled(opts: {
 }
 
 /**
+ * Fail-closed flag for the experimental `kind:'task'` body (absent = false), evaluated with
+ * the token subject's hydrated `SessionUser`, like `app-blocks-confirmed-step`.
+ */
+export const APP_BLOCKS_TASK_KIND_FLAG = 'app-blocks-task-kind';
+
+export async function isAppBlocksTaskKindEnabled(opts: { user: SessionUser }): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_TASK_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL

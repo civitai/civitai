@@ -10,6 +10,7 @@ import type {
   WorkflowQuoteErrorCode,
 } from '~/server/services/blocks/pass-through-quote-failure';
 import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import { BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import type { InlineComfyRefusedCode } from '~/server/services/blocks/inline-comfy.service';
 import { detectGraphFormat } from '~/components/AppBlocks/resourceFileParse';
@@ -822,6 +823,107 @@ export const blockMultiStepWorkflowBodySchema = z
 
 export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
 
+// ── App Blocks TASK kind (`kind:'task'`, experimental) ────────────────────────
+//
+// A goal (`image.edit@1`), a chain of goals, or only a `description`, plus a budget. Goals are
+// a menu, not a form: `input` is lenient here and checked by the Task Router, which passes
+// unknown fields on and lists them back.
+
+/** `domain.verb@major`, e.g. `image.removeBackground@1`. */
+export const TASK_GOAL_ID_REGEX = /^[a-z][a-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+@[0-9]{1,4}$/;
+const TASK_GOAL_ID_MAX_CHARS = 64;
+const TASK_PIN_ID_MAX_CHARS = 128;
+const TASK_DESCRIPTION_MAX_CHARS = 2000;
+/** The same cap `kind:'workflow'` has, since a chain runs there. */
+export const TASK_MAX_STEPS = 8;
+const TASK_STEP_NAME_REGEX = /^[a-z][a-z0-9_-]{0,31}$/;
+
+const taskGoalId = z.string().max(TASK_GOAL_ID_MAX_CHARS).regex(TASK_GOAL_ID_REGEX);
+const taskDescription = z.string().min(1).max(TASK_DESCRIPTION_MAX_CHARS);
+const taskQuality = z.enum(['draft', 'standard', 'best']);
+const taskPin = z.union([
+  z.object({ ability: z.string().min(1).max(TASK_PIN_ID_MAX_CHARS) }).strict(),
+  z.object({ provider: z.string().min(1).max(TASK_PIN_ID_MAX_CHARS) }).strict(),
+]);
+const taskInput = z.record(z.string(), z.unknown());
+
+const blockTaskStepSchema = z
+  .object({
+    name: z.string().regex(TASK_STEP_NAME_REGEX).optional(),
+    task: taskGoalId.optional(),
+    input: taskInput.optional(),
+    quality: taskQuality.optional(),
+    description: taskDescription.optional(),
+    pin: taskPin.optional(),
+  })
+  .strict()
+  .refine((step) => step.task !== undefined || step.description !== undefined, {
+    message: 'a task step needs a `task` or a `description`',
+  });
+
+/** The top-level input and every step input, which the inline-media and size caps walk. */
+const taskInputFields = (b: {
+  input?: unknown;
+  steps?: { input?: unknown }[];
+}): [InlineMediaPath, unknown][] => [
+  [['input'], b.input],
+  ...(b.steps ?? []).map((step, i): [InlineMediaPath, unknown] => [
+    ['steps', i, 'input'],
+    step.input,
+  ]),
+];
+
+export const blockTaskBodySchema = z
+  .object({
+    kind: z.literal('task'),
+    task: taskGoalId.optional(),
+    input: taskInput.optional(),
+    steps: z.array(blockTaskStepSchema).min(1).max(TASK_MAX_STEPS).optional(),
+    description: taskDescription.optional(),
+    quality: taskQuality.optional(),
+    routing: z.enum(['sticky', 'each-request']).optional(),
+    pin: taskPin.optional(),
+    maxBuzz: z.number().int().min(1).max(BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL),
+  })
+  .strict()
+  .refine((b) => b.steps !== undefined || b.task !== undefined || b.description !== undefined, {
+    message: 'name a `task`, a chain of `steps`, or only a `description`',
+  })
+  .refine((b) => !(b.steps !== undefined && (b.task !== undefined || b.input !== undefined)), {
+    message: '`steps` replaces the top-level `task` and `input`',
+  })
+  .superRefine(
+    refuseInlineMedia(
+      taskInputFields,
+      { path: ['input'], message: `task inputs hold more than ${INLINE_MEDIA_MAX_VISITS} values` },
+      WORKFLOW_INPUT_BYTES_MAX
+    )
+  )
+  .refine((b) => jsonLengthWithin(fieldValues(taskInputFields(b)), WORKFLOW_INPUT_BYTES_MAX), {
+    path: ['input'],
+    message: `task inputs exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
+  });
+
+export type BlockTaskBody = z.infer<typeof blockTaskBodySchema>;
+
+/**
+ * The router's own refusals pass through by name. `not_yet` is a request off the menu,
+ * recorded as demand; `task-unavailable` is the router being unreachable or unconfigured;
+ * `task-ticket-invalid` a ticket this adapter refused to run.
+ */
+export const TASK_ERROR_CODES = [
+  'not_yet',
+  'invalid_input',
+  'tier_unavailable',
+  'over_budget',
+  'unsupported_currency',
+  'pin_unavailable',
+  'no_provider',
+  'task-unavailable',
+  'task-ticket-invalid',
+] as const;
+export type TaskErrorCode = (typeof TASK_ERROR_CODES)[number];
+
 // ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
 //
 // Trains a LoRA with the ai-toolkit engine on consumer blobs the page host uploaded
@@ -1010,6 +1112,7 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockStepMemberSchema,
   blockTrainingBodySchema,
   blockMultiStepWorkflowBodySchema,
+  blockTaskBodySchema,
 ]);
 
 export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
@@ -1134,7 +1237,34 @@ export type BlockWorkflowSnapshot = {
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | InlineComfyRefusedCode
+    | TaskErrorCode
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
+  /** `kind:'task'` submits only: which provider the router chose, and its quote. */
+  task?:
+    | {
+        status: 'matched';
+        taskId: string;
+        /** One entry per step. `assignment.event` is `moved` when sticky routing switched provider. */
+        resolvedAs: Array<{
+          step: string;
+          goal: string;
+          tier: string;
+          ability: string;
+          provider: string;
+          via: string;
+          assignment: { event: string; reason?: string; from?: string };
+        }>;
+        /** True when any step's sticky assignment moved on this request. */
+        moved: boolean;
+        quote: { amount: number; currency: string };
+        /** Per step: input fields the goal does not define, passed on to the provider. */
+        unknownFields?: Record<string, string[]>;
+      }
+    | {
+        status: 'not_yet';
+        demandId: string;
+        closest: Array<{ goal: string; description?: string; score: number }>;
+      };
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
