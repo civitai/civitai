@@ -235,7 +235,11 @@ beforeEach(async () => {
   s3Send.mockClear();
   isFlipt.mockClear();
   vi.stubGlobal('fetch', fetchFake);
-  setEnv({ IMAGE_CACHER_URL: CACHER, IMAGE_CACHER_ADMIN_SECRET: 'secret' });
+  setEnv({
+    IMAGE_CACHER_URL: CACHER,
+    IMAGE_CACHER_ADMIN_SECRET: 'secret',
+    CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 15,
+  });
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) =>
     sql(strings, ...values);
   dbMock.dbWrite.$queryRaw.mockImplementation(
@@ -2122,5 +2126,180 @@ describe('the persist retry, as the job runs it', () => {
     expect(Object.values(totals).every((n) => Number.isInteger(n))).toBe(true);
     expect(calls.slice(before)).toEqual([]);
     expect(await retryRows()).toHaveLength(1);
+  });
+});
+
+describe('retractions per run', () => {
+  const stateCalls = () => calls.filter((c) => !isPersist(c)).map(kind);
+  const count = (call: string) => stateCalls().filter((c) => c === call).length;
+  const blockAll = async (ids: number[]) => {
+    for (const id of ids) {
+      await image(id);
+      await moderatorBlock(id);
+    }
+  };
+
+  it('retracts at most the cap per run, denies the rest, and retracts them on later runs', async () => {
+    const ids = Array.from({ length: 40 }, (_, i) => i + 1);
+    await blockAll(ids);
+
+    await syncCdnAccess();
+    expect(count('retract')).toBe(15);
+    expect(count('deny')).toBe(25);
+    expect(purged).toHaveLength(15);
+    const states = await Promise.all(ids.map((id) => stateOf(u(id))));
+    expect(states.filter((s) => s === 'Retracted')).toHaveLength(15);
+    expect(states.filter((s) => s === 'Denied')).toHaveLength(25);
+    expect((await queued()).n).toBe(25);
+
+    calls.length = 0;
+    await syncCdnAccess();
+    // Already denied: the rest wait for a later run without another deny.
+    expect(stateCalls()).toEqual(Array(15).fill('retract'));
+    expect((await queued()).n).toBe(10);
+
+    calls.length = 0;
+    await syncCdnAccess();
+    expect(stateCalls()).toEqual(Array(10).fill('retract'));
+    expect((await queued()).n).toBe(0);
+    for (const id of ids) expect(await stateOf(u(id))).toBe('Retracted');
+    expect(purged).toHaveLength(40);
+  });
+
+  it('reads the cap from the environment', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 3 });
+    await blockAll([1, 2, 3, 4, 5]);
+
+    expect(await syncCdnAccess()).toMatchObject({ retracts: 3, deferred: 2 });
+    expect(count('retract')).toBe(3);
+    expect(count('deny')).toBe(2);
+    expect(logsOf('info', 'cdn-access-sync-retracts')).toEqual([
+      expect.objectContaining({ retracts: 3, deferred: 2, maxRetracts: 3 }),
+    ]);
+
+    calls.length = 0;
+    await syncCdnAccess();
+    expect(stateCalls()).toEqual(['retract', 'retract']);
+    expect((await queued()).n).toBe(0);
+  });
+
+  it('moves rows waiting on the cap behind newer work', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 2 });
+    await blockAll([1, 2, 3, 4, 5, 6]);
+    await image(7);
+    await scannerBlock(7);
+    await sql`UPDATE "JobQueue" SET "createdAt" = now() - interval '1 minute' * (100 - "entityId")
+              WHERE type = 'CdnAccessSync'`;
+
+    await syncCdnAccess({ limit: 4 });
+    expect(callsFor(u(7))).toEqual([]);
+    await syncCdnAccess({ limit: 4 });
+    expect(callsFor(u(7))).toEqual(['deny']);
+  });
+
+  it('the reconciler leaves an upgrade the drain still has queued to the drain', async () => {
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+    await blockAll([1, 2]);
+    await syncCdnAccess();
+    expect(await stateOf(u(2))).toBe('Denied');
+    calls.length = 0;
+
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 0, leftToSync: 1 });
+    expect(calls).toEqual([]);
+    expect(purged).toHaveLength(1);
+
+    // Control: with no queue row covering it, the reconciler upgrades it itself.
+    await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync'`;
+    expect(await reconcileCdnAccess()).toMatchObject({ upgraded: 1 });
+    expect(callsFor(u(2))).toEqual(['retract']);
+    expect(purged).toHaveLength(2);
+  });
+
+  const retracted = async (ids: number[]) => {
+    await blockAll(ids);
+    await syncCdnAccess();
+    purged.length = 0;
+  };
+  const queuePersistRetry = (id: number, purgeEdge: boolean, minutesAgo: number) =>
+    sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data, "createdAt")
+        VALUES (${id}, 'Image', 'ImageCdnPersistRetry',
+                ${JSON.stringify({ url: u(id), retract: false, purgeEdge })}::jsonb,
+                now() - interval '1 minute' * ${minutesAgo})`;
+
+  it('the persist retry purges at most the cap per run, and still persists rows that do not purge', async () => {
+    await retracted([1, 2, 3, 4, 5]);
+    for (const id of [1, 2, 3, 4]) await queuePersistRetry(id, true, 10 - id);
+    await queuePersistRetry(5, false, 1);
+    setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 2 });
+
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 5, sent: 3, throttled: 2 });
+    expect(purged).toHaveLength(2);
+    expect(persistsFor(u(5))).toHaveLength(2);
+    const left = await retryRows();
+    expect(left).toHaveLength(2);
+    // Left as they were: no attempt, no backoff.
+    for (const row of left) expect(row.data).not.toHaveProperty('backoffs');
+
+    await retryTakedownPersists();
+    expect(purged).toHaveLength(4);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('the persist retry stops purging for the run once the CDN reports busy', async () => {
+    const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
+    const ids = Array.from({ length: 12 }, (_, i) => i + 1);
+    await retracted([...ids, 13]);
+    for (const id of ids) await queuePersistRetry(id, true, 30 - id);
+    await queuePersistRetry(13, false, 1);
+    // The first purge is refused; the rest answer once it has been.
+    let release = () => undefined as void;
+    const refused = new Promise<void>((resolve) => (release = resolve));
+    purgeUrlsOrThrow.mockImplementationOnce(async () => {
+      setTimeout(release, 200);
+      throw new CloudflarePurgeBusyError([Object.assign(new Error('429'), { statusCode: 429 })]);
+    });
+    purgeUrlsOrThrow.mockImplementation(async (urls: string[]) => {
+      await refused;
+      purged.push(urls);
+    });
+
+    await retryTakedownPersists();
+    // Eight were in flight when the CDN refused one; the other four were not sent.
+    expect(purged).toHaveLength(7);
+    expect(persistsFor(u(13))).toHaveLength(2);
+    const left = await retryRows();
+    expect(left).toHaveLength(5);
+    expect(left.filter((r) => r.data.backoffs === 1)).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ attempts: 0 }) }),
+    ]);
+  });
+
+  it('a busy CDN purge on a persist retry spends no attempt and is retried', async () => {
+    const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
+    const busy = async () => {
+      throw new CloudflarePurgeBusyError([Object.assign(new Error('429'), { statusCode: 429 })]);
+    };
+    await image(1);
+    await moderatorBlock(1);
+    purgeUrlsOrThrow.mockImplementationOnce(busy);
+    await syncCdnAccess();
+    expect(await retryRows()).toHaveLength(1);
+
+    purgeUrlsOrThrow.mockImplementationOnce(busy);
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, failed: 0, throttled: 1 });
+    expect(await retryRows()).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          attempts: 0,
+          backoffs: 1,
+          nextAttemptAt: expect.any(String),
+        }),
+      }),
+    ]);
+
+    await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
+    expect(purged).toHaveLength(1);
+    expect(await retryRows()).toEqual([]);
   });
 });

@@ -1056,6 +1056,9 @@ export const serverSchema = z
     // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
+    // Retractions the cdn-access-sync job sends per run; each one also purges the CDN. The rest are
+    // denied for now and retracted on a later run. `.catch`, so a bad value cannot fail boot.
+    CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: z.coerce.number().int().positive().catch(15),
 
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.

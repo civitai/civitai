@@ -20,7 +20,7 @@ const getClient = () => {
 
 const client = getClient();
 const CF_PURGE_RATE_LIMIT = 1000 * 0.9; // 90% to be safe
-const PURGE_BATCH_SIZE = 30;
+const PURGE_BATCH_SIZE = 100; // the most urls one purge request takes
 export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: string[] }) {
   if (!env.CF_ZONE_ID || !client) return;
   // Get urls from tag cache. `edgeCacheIt` records each tag slugged, so read it the same way.
@@ -73,10 +73,29 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
   // is purged again next time. Each set is bounded and expires once nothing new is recorded.
 }
 
+class CloudflarePurgeTimeoutError extends Error {
+  constructor() {
+    super('cloudflare purge timed out');
+    this.name = 'CloudflarePurgeTimeoutError';
+  }
+}
+
+/** Every failed purge batch was rate limited (429) or timed out: Cloudflare is busy, retry later. */
+export class CloudflarePurgeBusyError extends AggregateError {
+  constructor(errors: unknown[]) {
+    super(errors, `cloudflare purge busy: ${errors.length} batch(es) not purged`);
+    this.name = 'CloudflarePurgeBusyError';
+  }
+}
+
+const isRateLimited = (error: unknown) => (error as { statusCode?: unknown })?.statusCode === 429;
+
 /**
  * `purgeCache` for a caller that must know the purge happened. Every batch is attempted, in order,
- * and any failure throws once all have been tried. Not paced, so keep it to one image's urls rather
- * than a bulk list. `CF_ZONE_ID` is the civitai.com zone, which also serves the image host's urls.
+ * and any failure throws once all have been tried; a 429 stops the rest, which would be refused too.
+ * Throws `CloudflarePurgeBusyError` when only 429s and timeouts failed. Not paced, so keep it to one
+ * image's urls rather than a bulk list. `CF_ZONE_ID` is the civitai.com zone, which also serves the
+ * image host's urls.
  */
 export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 5_000 } = {}) {
   if (!env.CF_ZONE_ID || !client) return;
@@ -88,15 +107,18 @@ export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 5_000 } = {
       await Promise.race([
         client.zones.purgeCache(env.CF_ZONE_ID, { files }),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('cloudflare purge timed out')), timeoutMs);
+          timer = setTimeout(() => reject(new CloudflarePurgeTimeoutError()), timeoutMs);
         }),
       ]);
     } catch (error) {
       errors.push(error);
+      if (isRateLimited(error)) break;
     } finally {
       clearTimeout(timer);
     }
   }
-  if (errors.length)
-    throw new AggregateError(errors, `${errors.length} cloudflare purge batch(es) failed`);
+  if (!errors.length) return;
+  if (errors.every((e) => isRateLimited(e) || e instanceof CloudflarePurgeTimeoutError))
+    throw new CloudflarePurgeBusyError(errors);
+  throw new AggregateError(errors, `${errors.length} cloudflare purge batch(es) failed`);
 }
