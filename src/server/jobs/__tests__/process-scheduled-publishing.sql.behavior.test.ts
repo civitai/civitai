@@ -228,20 +228,19 @@ describe('processScheduledPublishing :: engagements', () => {
 describe('processScheduledPublishing :: a takedown after the selects', () => {
   // The model alone: its version stays Scheduled. A Published sibling would satisfy the model's own
   // has-a-Published-version check, so only the status re-check keeps it down.
-  it('publishes nothing under a model taken down after the selects', async () => {
-    await scheduled({ withFile: true });
-    await pg.db.query(`INSERT INTO "ModelVersion" VALUES (11, 1, 'Published', $1, 'Public')`, [
-      PAST,
-    ]);
-    beforeTx = () => pg.db.exec(`UPDATE "Model" SET status = 'UnpublishedViolation' WHERE id = 1`);
-    await runJob();
-    expect(await state()).toEqual({
-      model: 'UnpublishedViolation',
-      version: 'Scheduled',
-      postLive: false,
-    });
-    expect(mockProcessEngagement).not.toHaveBeenCalled();
-  });
+  it.each(['UnpublishedViolation', 'Deleted'])(
+    'publishes nothing under a model made %s after the selects',
+    async (status) => {
+      await scheduled({ withFile: true });
+      await pg.db.query(`INSERT INTO "ModelVersion" VALUES (11, 1, 'Published', $1, 'Public')`, [
+        PAST,
+      ]);
+      beforeTx = () => pg.db.query(`UPDATE "Model" SET status = $1 WHERE id = 1`, [status]);
+      await runJob();
+      expect(await state()).toEqual({ model: status, version: 'Scheduled', postLive: false });
+      expect(mockProcessEngagement).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('processScheduledPublishing :: one version publishes, another waits', () => {
