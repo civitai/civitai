@@ -8,6 +8,7 @@ import { getRegion, isRegionBlocked, isRegionRestricted } from '~/server/utils/r
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isPreview, isProd } from '~/env/other';
 import { SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE } from '~/shared/constants/shell.constants';
+import { isSessionCookieName } from '~/shared/utils/session-cookie';
 import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
 import {
   isCanonicalShellPath,
@@ -66,10 +67,6 @@ type ShellRequest = IncomingMessage & {
   query?: Record<string, string | string[] | undefined>;
   cookies?: Partial<Record<string, string>>;
 };
-
-/** Either session cookie family, as `_app` matches them (`civ-token` does not suffix `civitai-token`). */
-const isSessionCookieName = (name: string) =>
-  name.endsWith('civ-token') || name.endsWith('civitai-token');
 
 function queryParam(url: string, name: string): string | null {
   const queryString = url.split('?')[1];

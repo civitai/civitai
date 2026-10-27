@@ -44,7 +44,7 @@ const PAYWALL_HAS_PART = {
 /**
  * Which view `Gated` will render given the current request.
  *
- *   - `loading`  — session is still resolving for non-safe content; render nothing yet
+ *   - `loading`  — session is still resolving for above-PG content; render nothing yet
  *   - `page`     — full content visible (children render). May be a verified-bot
  *                  bypass of an otherwise-gated page; check `isPaywalled` to know
  *   - `unrated`  — content hasn't been moderation-rated yet (SFW site only)
@@ -84,8 +84,10 @@ export function useGated({
   const { data, status } = useSession();
   const verifiedBot = useAppContext().verifiedBot;
 
-  // Defer the decision while session is loading and we have no cached data.
-  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
+  // Defer the decision while session is loading and we have no cached data — for anything a
+  // signed-out viewer could be gated from, i.e. everything above PG. PG13 included: deciding it
+  // while loading is `login` on either site, shown to a viewer who may well be signed in.
+  if (!hasPublicBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
     return { state: 'loading', isPaywalled: false };
   }
 

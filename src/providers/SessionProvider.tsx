@@ -93,6 +93,9 @@ export function SessionProvider({
   );
   // True once we have an authoritative value (a non-undefined seed, or a completed fetch).
   const resolved = useRef(seed !== null && initial !== undefined);
+  // Read by `update` when its fetch returns, so it sees the seed as it is THEN, not at the call.
+  const seedPending = useRef(seed === null);
+  seedPending.current = seed === null;
 
   // Adopted while rendering, so the providers below see the session in the same render as the
   // rest of the seed (the per-user flag overlay query is enabled by it).
@@ -106,13 +109,23 @@ export function SessionProvider({
   if (data?.user) hadSession.current = true;
   const reloadedForLostSession = useRef(false);
 
+  // Fetches still running, so an undetermined answer can tell whether another one may yet decide.
+  const inflight = useRef(0);
+
   const update = useCallback(async () => {
-    const next = await fetchSession();
+    inflight.current++;
+    const next = await fetchSession().finally(() => inflight.current--);
     if (next === null && hadSession.current && !reloadedForLostSession.current) {
       reloadedForLostSession.current = true;
       reloadForLostSession();
     }
-    // `undefined` = couldn't determine: keep the current session, but resolve a still-loading INITIAL state to
+    if (next === undefined && (seedPending.current || inflight.current > 0)) {
+      // Couldn't determine, and a seed or another fetch is still on its way: that one decides.
+      // Resolving to signed-out here would outrank it — a seed is adopted only into a
+      // still-loading state — and flash gated UI for a viewer who is signed in.
+      return null;
+    }
+    // `undefined` = couldn't determine: keep the current session, but resolve a still-loading state to
     // signed-out so we never hang on 'loading'. `null`/Session are authoritative.
     setData((prev) => (next !== undefined ? next : prev ?? null));
     resolved.current = true;
