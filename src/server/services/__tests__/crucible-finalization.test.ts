@@ -216,6 +216,7 @@ describe('finalizeCrucible — positions', () => {
     expect(where).toEqual({
       crucibleId: 1,
       user: { bannedAt: null },
+      userId: { notIn: [] },
       image: {
         needsReview: null,
         tosViolation: false,
@@ -225,6 +226,14 @@ describe('finalizeCrucible — positions', () => {
       },
     });
     expect(where.image.nsfwLevel.in).not.toContain(2);
+  });
+
+  it("leaves a contest-banned entrant's entries out of the ranking", async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 7 }, { id: 9 }]);
+
+    await finalizeCrucible(1);
+
+    expect(findMany.mock.calls[0][0].where.userId).toEqual({ notIn: [7, 9] });
   });
 
   it('holds the money for review, loudly, when every entry is disqualified', async () => {

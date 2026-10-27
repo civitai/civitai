@@ -149,6 +149,7 @@ import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
 import { createPrizes, voidPrizes } from '~/server/services/prize.service';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
@@ -1776,6 +1777,13 @@ export const createCrucibleEntryPost = async ({
   return { id: post.id };
 };
 
+const CONTEST_BANNED_MESSAGE = 'You are banned from participating in contests';
+
+const isContestBanned = async (userId: number) => {
+  const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
+  return !!(user?.meta as UserMeta | null | undefined)?.contestBanDetails;
+};
+
 const CANNOT_ENTER_OWN_CRUCIBLE = "You can't enter a crucible you created";
 
 export type CrucibleEntryIneligibleReason =
@@ -1784,6 +1792,7 @@ export type CrucibleEntryIneligibleReason =
   | 'missing-required-resource'
   | 'wrong-base-model'
   | 'required-model-level'
+  | 'contest-banned'
   | 'not-found';
 
 const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
@@ -1796,6 +1805,7 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
   'required-model-level':
     'A model this crucible requires can only be used for PG and PG-13 content, so this entry can only be PG or PG-13.',
+  'contest-banned': CONTEST_BANNED_MESSAGE,
   'not-found': 'Image not found',
 };
 
@@ -1815,8 +1825,10 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,
-  images: { id: number; createdAt: Date; nsfwLevel: number }[]
+  images: { id: number; createdAt: Date; nsfwLevel: number }[],
+  userId: number
 ) => {
+  const contestBanned = images.length > 0 && (await isContestBanned(userId));
   const startedAt = crucible.startAt ?? crucible.createdAt;
   const allowedResources = getAllowedResources(crucible);
   const { allowedBaseModels } = crucible;
@@ -1835,6 +1847,7 @@ const getEntryIneligibleReasons = async (
   return new Map(
     images.map((image) => {
       const reasons: CrucibleEntryIneligibleReason[] = [];
+      if (contestBanned) reasons.push('contest-banned');
       if (image.createdAt < startedAt) reasons.push('created-before-start');
 
       if (restricted) {
@@ -1892,7 +1905,7 @@ export const checkCrucibleEntryEligibility = async ({
     where: { id: { in: imageIds }, userId },
     select: { id: true, createdAt: true, nsfwLevel: true },
   });
-  const reasonsByImage = await getEntryIneligibleReasons(crucible, images);
+  const reasonsByImage = await getEntryIneligibleReasons(crucible, images, userId);
 
   return imageIds.map((imageId) => {
     const reasons = reasonsByImage.get(imageId) ?? ['not-found' as const];
@@ -2166,7 +2179,7 @@ export const submitEntry = async ({
     }
 
     const [ineligibleReason] =
-      (await getEntryIneligibleReasons(crucible, [image])).get(image.id) ?? [];
+      (await getEntryIneligibleReasons(crucible, [image], userId)).get(image.id) ?? [];
     if (ineligibleReason) {
       return throwBadRequestError(entryIneligibleMessages[ineligibleReason]);
     }
@@ -3430,18 +3443,28 @@ export type FinalizeCrucibleResult = {
   totalPrizesDistributed: number;
 };
 
+const getContestBannedUserIds = async () =>
+  (
+    await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT u.id FROM "User" u WHERE u.meta ->> 'contestBanDetails' IS NOT NULL
+    `
+  ).map((u) => u.id);
+
 /**
- * An entry by a banned entrant, or whose image was blocked, held for review, flagged, unpublished,
+ * An entry by a site-banned or contest-banned entrant, or whose image was blocked, held for review, flagged, unpublished,
  * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
  * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
  * is finalized holds the prize instead (see `prize.service`).
  */
-const rankableEntryWhere = (
+const rankableEntryWhere = async (
   crucibleId: number,
   nsfwLevel: number
-): Prisma.CrucibleEntryWhereInput => ({
+): Promise<Prisma.CrucibleEntryWhereInput> => ({
   crucibleId,
   user: { bannedAt: null },
+  // Ids rather than a Prisma JSON filter: `meta` can be NULL or lack the key, and a negated JSON
+  // path filter drops those rows.
+  userId: { notIn: await getContestBannedUserIds() },
   image: {
     ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
@@ -3520,7 +3543,7 @@ export const getCrucibleMinVotesToPlace = async ({
 
   if (crucible.timeAdjustedPlacement && crucible.endAt) {
     const entries = await dbRead.crucibleEntry.findMany({
-      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
       select: { voteCount: true, createdAt: true },
     });
     return {
@@ -3534,7 +3557,7 @@ export const getCrucibleMinVotesToPlace = async ({
   }
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
-    where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+    where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
     _sum: { voteCount: true },
     _count: { _all: true },
   });
@@ -3697,7 +3720,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   let cursor: number | undefined;
   while (true) {
     const batch = await dbWrite.crucibleEntry.findMany({
-      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      where: await rankableEntryWhere(crucibleId, crucible.nsfwLevel),
       select: {
         id: true,
         userId: true,
