@@ -18,6 +18,13 @@ describe('validateLink.url', () => {
     expect(validateLink.url('https://civitai.red/user/someone')).toBe(true);
   });
 
+  it('accepts education.civitai.com URLs so guide links get linkified in chat', () => {
+    expect(
+      validateLink.url('https://education.civitai.com/civitais-guide-to-resource-types/#Loras')
+    ).toBe(true);
+    expect(validateLink.url('education.civitai.com')).toBe(true);
+  });
+
   it('still accepts existing allowlist domains and civitai.com/AIR', () => {
     expect(validateLink.url('https://github.com/civitai/civitai')).toBe(true);
     expect(validateLink.url('https://civitai.com/models/123')).toBe(true);
@@ -29,6 +36,7 @@ describe('validateLink.url', () => {
     // fetched by unfurl() as if it were the trusted .red domain.
     expect(validateLink.url('https://civitai.red.evil.com/x')).toBe(false);
     expect(validateLink.url('https://example.com/x')).toBe(false);
+    expect(validateLink.url('https://education.civitai.com.evil.com/x')).toBe(false);
   });
 });
 
