@@ -8,7 +8,13 @@ import {
   __resetEngagedMembershipBatcher,
   requestEngagedMembership,
 } from '~/hooks/useEngagedModelMembership';
-import { queryClient, setTrpcBatchingEnabled, trpc, trpcVanilla } from '~/utils/trpc';
+import {
+  batchWindowLink,
+  queryClient,
+  setTrpcBatchingEnabled,
+  trpc,
+  trpcVanilla,
+} from '~/utils/trpc';
 import {
   __resetTrpcBatchWindow,
   setTrpcUnifiedBatchWindowEnabled,
@@ -186,5 +192,39 @@ describe('the engaged batcher keeps its own window', () => {
     expect(requests.map(procedures)).toEqual([
       'system.getBrowsingSettingAddons,user.getEngagedModelsByIds',
     ]);
+  });
+});
+
+describe('a held query whose transport throws synchronously', () => {
+  it('rejects with that error when the window releases it, instead of never settling', async () => {
+    setTrpcUnifiedBatchWindowEnabled(true);
+    const next = vi.fn(() => ({
+      subscribe: () => {
+        throw new Error('sync transport failure');
+      },
+    }));
+    const op = {
+      id: 1,
+      type: 'query' as const,
+      path: 'user.getSettings',
+      input: undefined,
+      context: {},
+      signal: null,
+    };
+    const result$ = batchWindowLink({} as never)({ op, next } as never);
+    let settled: unknown = 'pending';
+    result$.subscribe({
+      next: () => (settled = 'value'),
+      error: (error: unknown) => (settled = (error as Error).message),
+    });
+
+    // Held: nothing reached the transport before the window closed.
+    await vi.advanceTimersByTimeAsync(15);
+    expect(next).not.toHaveBeenCalled();
+    expect(settled).toBe('pending');
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(settled).toBe('sync transport failure');
   });
 });

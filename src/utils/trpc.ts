@@ -11,6 +11,7 @@ import type { CreateTRPCClient, OperationLink, TRPCLink } from '@trpc/client';
 import { observable, type Unsubscribable } from '@trpc/server/observable';
 import {
   createTRPCClient,
+  TRPCClientError,
   httpBatchStreamLink,
   httpLink,
   loggerLink,
@@ -393,7 +394,14 @@ export const batchWindowLink: TRPCLink<AppRouter> = () => {
       let subscription: Unsubscribable | undefined;
       let unsubscribed = false;
       deferToBatchWindow(() => {
-        if (!unsubscribed) subscription = next(op).subscribe(observer);
+        if (unsubscribed) return;
+        // A synchronous throw here would otherwise be caught by the window's own guard and the
+        // query would never settle; hand it to the caller as this operation's error instead.
+        try {
+          subscription = next(op).subscribe(observer);
+        } catch (error) {
+          observer.error(TRPCClientError.from(error as Error));
+        }
       });
       return () => {
         unsubscribed = true;
