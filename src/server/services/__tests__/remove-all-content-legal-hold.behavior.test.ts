@@ -588,11 +588,13 @@ describe('removeAllContent', () => {
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", "postId") VALUES (${CLEAN * 100 + 2}, ${CLEAN}, 1);
       INSERT INTO "Article" (id, "userId") VALUES (${ARTICLE + 60}, ${CLEAN});
+      INSERT INTO "Collection" (id, "userId") VALUES (${COLLECTION + 60}, ${CLEAN});
     `);
-    notYetOnReplica = [CLEAN * 100 + 2, ARTICLE + 60];
+    notYetOnReplica = [CLEAN * 100 + 2, ARTICLE + 60, COLLECTION + 60];
     await removeAllContent({ id: CLEAN });
     expect(vi.mocked(deleteImages).mock.calls[0][0]).toContain(CLEAN * 100 + 2);
     expect(dropped().articles).toContain(ARTICLE + 60);
+    expect(dropped().collections).toContain(COLLECTION + 60);
   });
 
   it('refunds the bids on a model the replica does not have yet', async () => {

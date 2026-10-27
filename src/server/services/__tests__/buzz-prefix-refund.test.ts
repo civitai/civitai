@@ -152,12 +152,12 @@ describe('refundAllLegsByPrefix', () => {
       if (transactionId === 'tx-a') throw mapped(409);
       return { transactionId };
     });
-    // The listing reads the ledger once per leg; the lookup after tx-a's 409 is the fourth read.
-    getTransactionByExternalId
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-      .mockRejectedValueOnce(new Error('ledger down'));
+    // No leg is refunded yet; the read of tx-a's refund after its 409 is the one that fails.
+    let txaReads = 0;
+    getTransactionByExternalId.mockImplementation(async (externalId: string) => {
+      if (externalId === 'refund-tx-a' && ++txaReads > 1) throw new Error('ledger down');
+      return null;
+    });
 
     await expect(refundAllLegsByPrefix(input)).rejects.toThrow(
       /left 1 of 3 transactions unreversed \(tx-a: ledger, and its refund lookup failed: ledger down\)/

@@ -159,7 +159,7 @@ describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
     expect(markedDeleted()).toBe(false);
   });
 
-  it('refunds nothing twice when two deletes of one bid race', async () => {
+  it('refunds no leg again when a second delete finds the first one refunded it', async () => {
     refundMultiAccountTransaction
       .mockResolvedValueOnce({ refundedTransactions: [{ amount: 50 }, { amount: 50 }] })
       .mockRejectedValueOnce(conflict());
@@ -194,7 +194,7 @@ describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
     );
     refundTransaction.mockRejectedValue(new BuzzApiError(500, 'Internal Server Error'));
 
-    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow();
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/500/);
     expect(markedDeleted()).toBe(false);
 
     refundTransaction.mockReset().mockResolvedValue({ transactionId: TX });
