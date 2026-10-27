@@ -45,6 +45,7 @@
     MAX_SAMPLE_PROMPTS,
     PARAM_HELP,
     PARAM_LABELS,
+    optimizerLrParams,
     paramDeviations,
     paramDisplay,
     promptHasTrigger,
@@ -321,6 +322,7 @@
       return;
     }
     (p as unknown as Record<string, NumericInput | boolean>)[field] = value;
+    if (field === 'optimizer') Object.assign(p, optimizerLrParams(selection.runs[i]!, p));
     // Shuffling with nothing kept would move the trigger word away from the front of every
     // caption — keep one, as the main trainer does when a trigger is set.
     if (field === 'shuffleTokens' && value === true && trigger.trim() && Number(p.keepTokens) === 0)
