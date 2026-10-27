@@ -235,6 +235,68 @@ async function getCutoverSnapshot(userId: number, now: Date) {
   return snapshot;
 }
 
+/** Above any real per-job tip: `orchestration.jobs` holds corrupt rows with garbage tips. */
+const MAX_JOB_CREATORS_TIP = 1_000_000;
+/** How far a generation charge can sit from its job: the charge lands seconds after the job. */
+const CHARGE_TO_JOB_SLACK = 'INTERVAL 1 HOUR';
+
+/**
+ * Generation tips `userId` paid in a window, one row per UTC day (`amount`). The ledger cannot tell
+ * a tip from the price (one `generation` charge to account 0), so this reads the orchestrator's
+ * per-job `creatorsTip`, which carries no currency. A day is netted only when every generation
+ * charge within an hour of it was Yellow and none was refunded: Blue tips are not bankable for the
+ * owner, and netting a tip of unknown currency would lower bankable for Buzz that never became
+ * bankable. Under-netting is the safe failure here.
+ */
+export function generationTipsPaidSql(userId: number, { from, to }: { from: Date; to?: Date }) {
+  const jobsTo = to ? ` AND createdAt < ${clickhouseDateTime(to)}` : '';
+  const ledgerFrom = `${clickhouseDateTime(
+    dayjs.utc(from).startOf('day').toDate()
+  )} - ${CHARGE_TO_JOB_SLACK}`;
+  const ledgerTo = to
+    ? ` AND date < ${clickhouseDateTime(
+        dayjs
+          .utc(to.getTime() - 1)
+          .startOf('day')
+          .add(1, 'day')
+          .toDate()
+      )} + ${CHARGE_TO_JOB_SLACK}`
+    : '';
+  const yellowSql = sqlString(BuzzType.yellow);
+  const daysNear = `arrayDistinct([toDate(date - ${CHARGE_TO_JOB_SLACK}), toDate(date), toDate(date + ${CHARGE_TO_JOB_SLACK})])`;
+  // Charges and refunds are two scans: one OR across them defeats the pruning of each.
+  return `
+    SELECT toInt64(floor(tips)) AS amount
+    FROM (
+      SELECT toDate(createdAt) AS day, sum(creatorsTip) AS tips
+      FROM (
+        SELECT jobId, createdAt, creatorsTip FROM orchestration.jobs
+        WHERE userId = ${userId}
+          AND createdAt >= ${clickhouseDateTime(from)}${jobsTo} AND createdAt <= now()
+          AND creatorsTip > 0 AND creatorsTip < ${MAX_JOB_CREATORS_TIP}
+        LIMIT 1 BY jobId
+      )
+      GROUP BY day
+    ) AS tipped
+    INNER JOIN (
+      SELECT day FROM (
+        SELECT arrayJoin(${daysNear}) AS day, fromAccountType = ${yellowSql} AS yellow, 0 AS refunded
+        FROM buzzTransactions
+        WHERE type = 'generation' AND fromAccountId = ${userId}
+          AND date >= ${ledgerFrom}${ledgerTo}
+        UNION ALL
+        SELECT arrayJoin(${daysNear}) AS day, 0 AS yellow, 1 AS refunded
+        FROM buzzTransactions
+        WHERE type = 'refund' AND toAccountId = ${userId}
+          AND JSONExtractString(details, 'workflowId') != ''
+          AND date >= ${ledgerFrom}${ledgerTo}
+      )
+      GROUP BY day
+      HAVING min(yellow) = 1 AND max(refunded) = 0
+    ) AS yellowOnly USING (day)
+  `;
+}
+
 /**
  * What `userId` paid other users in a window, counted where it became bankable for them:
  * paid from their own account, a platform-paid sale or service they bought, and their part of a
@@ -270,6 +332,8 @@ export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: 
       SELECT intDiv(amount * arraySum(arrayMap(${ownCharges}, ids, amts, ats)), arraySum(amts)) AS amount
       FROM (${bountyAwardsSql(paidTo, dedupe)})
       WHERE has(ids, ${userId})
+      UNION ALL
+      SELECT amount FROM (${generationTipsPaidSql(userId, { from, to })})
     )
   `;
 }
@@ -277,14 +341,19 @@ export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: 
 /** A day past what is stored: a row landing later than that would be left out of it for good. */
 const SPENT_SETTLE_MS = 24 * 60 * 60 * 1000;
 
-type SpentThrough = { through: string; spent: number };
+/** Bump when `paidToUsersSql` counts more: older stored totals are then rescanned from the cutover. */
+const SPENT_VERSION = 2;
+
+type SpentThrough = { through: string; spent: number; v?: number };
 
 function readSpentThrough(raw: string | null | undefined): SpentThrough | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<SpentThrough>;
     const through = new Date(value?.through ?? NaN);
-    return Number.isFinite(through.getTime()) && Number.isFinite(value?.spent)
+    return value?.v === SPENT_VERSION &&
+      Number.isFinite(through.getTime()) &&
+      Number.isFinite(value?.spent)
       ? { through: through.toISOString(), spent: Number(value.spent) }
       : null;
   } catch {
@@ -333,7 +402,11 @@ async function getSpent(userId: number, now: Date) {
     await sysRedis.hSet(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
       String(userId),
-      JSON.stringify({ through: through.toISOString(), spent: closed.spent + added })
+      JSON.stringify({
+        through: through.toISOString(),
+        spent: closed.spent + added,
+        v: SPENT_VERSION,
+      })
     );
 
   return closed.spent + added + live;
