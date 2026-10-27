@@ -16,7 +16,9 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { getCsamQueueByUser, getImageReviewQueue } = await import('../image-review.service');
+const { getCsamQueueByUser, getImageReviewCounts, getImageReviewQueue } = await import(
+  '../image-review.service'
+);
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
@@ -39,6 +41,7 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
+  "scannedAt" TIMESTAMP(3),
   "postId" INTEGER,
   "userId" INTEGER NOT NULL
 );
@@ -142,6 +145,77 @@ describe('the CSAM queue by user', () => {
       { userId: 101, flagged: 2 },
       { userId: 102, flagged: 1 },
     ]);
+  });
+});
+
+describe('what a sent CSAM report takes out of the pending count', () => {
+  // Every send is 2026-03-01. 201: both images predate it, one scanned before it.
+  // 202: one image before, one created after. 203: created before, scanned again after.
+  // 204: listed on a report never sent. 205: no report. 206: created after, but listed on the sent
+  // report. 207: created after, listed only on a sent report about someone else.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id", "username") VALUES
+        (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt", "scannedAt") VALUES
+        (21, 201, 'csam', '2026-01-01', NULL),
+        (22, 201, 'csam', '2026-01-01', '2026-01-02'),
+        (23, 202, 'csam', '2026-01-01', NULL),
+        (24, 202, 'csam', '2026-04-01', NULL),
+        (25, 203, 'csam', '2026-01-01', '2026-04-01'),
+        (26, 204, 'csam', '2026-01-01', NULL),
+        (27, 205, 'csam', '2026-01-01', NULL),
+        (28, 206, 'csam', '2026-04-01', '2026-04-01'),
+        (29, 207, 'csam', '2026-04-01', NULL);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
+        (201, '2026-03-01', '[]'), (202, '2026-03-01', '[]'), (203, '2026-03-01', '[]'),
+        (204, NULL, '[{"id": 26}]'), (206, '2026-03-01', '[{"id": 28}]'),
+        (208, '2026-03-01', '[{"id": 29}]');
+    `);
+  });
+
+  afterAll(async () => {
+    await db.exec(`
+      DELETE FROM "CsamReport" WHERE "userId" BETWEEN 201 AND 208;
+      DELETE FROM "Image" WHERE "userId" BETWEEN 201 AND 207;
+      DELETE FROM "User" WHERE id BETWEEN 201 AND 207;
+    `);
+  });
+
+  const pendingOf = async () =>
+    Object.fromEntries(
+      (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.map((u) => [
+        u.userId,
+        u.pending,
+      ])
+    );
+
+  it('leaves pending only what no sent report on its owner covers', async () => {
+    expect(await pendingOf()).toEqual({
+      // 101's sends predate its images, but one of them lists image 2.
+      101: 2,
+      102: 1,
+      103: 1,
+      106: 1,
+      201: 0,
+      202: 1,
+      203: 1,
+      204: 1,
+      205: 1,
+      206: 0,
+      207: 1,
+    });
+  });
+
+  it('lists users with something pending first', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    expect(users.slice(-2).map((u) => u.userId)).toEqual([201, 206]);
+  });
+
+  it('badges exactly what the by-user page shows as pending', async () => {
+    const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
+    expect(pending).toBe(10);
+    expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 });
 

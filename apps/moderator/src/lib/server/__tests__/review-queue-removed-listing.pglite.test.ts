@@ -49,12 +49,14 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
+  "scannedAt" TIMESTAMP(3),
   "postId" INTEGER,
   "userId" INTEGER NOT NULL DEFAULT 7
 );
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
+CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "images" JSONB NOT NULL DEFAULT '[]');
 `;
 
 // Every level, Blocked included, so the browsing-level filter is not what decides a row.
