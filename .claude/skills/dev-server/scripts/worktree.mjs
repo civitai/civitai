@@ -13,6 +13,7 @@
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
+import { cacheDirsOf, dirSize } from './dev-cache-sweep.mjs';
 import { syncSkillEnv } from './skill-env.mjs';
 import { syncAppEnv } from './app-env.mjs';
 import { resolve, sep } from 'path';
@@ -319,6 +320,7 @@ export async function inspect(primary, daemonRequest) {
       dirty: dirtyCount(t.path),
       unpushed: t.branch ? unpushedCount(t.branch, primary) : null,
       lastCommit: lastCommit(t.path),
+      cacheBytes: cacheDirsOf(t.path).reduce((n, d) => n + dirSize(d), 0),
       sessions: sessions.map((s) => ({ id: s.id, port: s.port, status: s.status })),
       daemon: daemonHeldFrom(daemonRoot, t.path),
     });
@@ -357,6 +359,11 @@ export function keepReasons(r, daemonUnasked) {
   return why;
 }
 
+// Only worth a word once it is a real amount of disk.
+function cacheNote(r) {
+  return r.cacheBytes > 100 * 1024 ** 2 ? `  dev cache ${(r.cacheBytes / 1024 ** 3).toFixed(1)} GB` : '';
+}
+
 export async function cmdStale(primary, daemonRequest) {
   const { rows, daemon } = await inspect(primary, daemonRequest);
   const { removable, blocked, daemonUnasked } = partitionStale(rows, daemon);
@@ -379,13 +386,17 @@ export async function cmdStale(primary, daemonRequest) {
       ? `  [!] ${r.unpushed} commit(s) on no remote - branch will be KEPT`
       : '';
     console.log(`  ${r.path}`);
-    console.log(`      ${r.branch || '(detached)'}  PR #${r.mergedPr}  last commit ${age}${warn}`);
+    console.log(
+      `      ${r.branch || '(detached)'}  PR #${r.mergedPr}  last commit ${age}${cacheNote(r)}${warn}`
+    );
   }
 
   console.log(`\nKEEP (${blocked.length})\n`);
   for (const r of blocked) {
     console.log(`  ${r.path}`);
-    console.log(`      ${r.branch || '(detached)'}  ${keepReasons(r, daemonUnasked).join('; ')}`);
+    console.log(
+      `      ${r.branch || '(detached)'}  ${keepReasons(r, daemonUnasked).join('; ')}${cacheNote(r)}`
+    );
   }
   console.log('\nRemove one with:  node .claude/skills/dev-server/cli.mjs wt rm <path>\n');
 }

@@ -336,10 +336,15 @@ describe('sync transitions', () => {
 });
 
 describe('embed inputs', () => {
-  test('an image is sent as a 512px edge variant; an absolute URL is not sent', () => {
+  test("an image is sent as the image cards' stored 800px variant; an absolute URL is not sent", () => {
     const opts = { imageLocation: 'https://cdn.example', embedVideo: false };
     expect(buildEmbedInput(imageRow(1, { url: 'abc-123' }), opts)).toEqual({
-      input: { id: '1', imageUrl: 'https://cdn.example/abc-123/width=512/abc-123.jpeg' },
+      // The cacher keys a stored variant by these parameters: any other set renders a new one
+      // from the original, which is the download this exists to avoid.
+      input: {
+        id: '1',
+        imageUrl: 'https://cdn.example/abc-123/anim=false,width=800,optimized=true/abc-123.jpeg',
+      },
     });
     expect(buildEmbedInput(imageRow(1, { url: 'https://elsewhere.example/a.png' }), opts)).toEqual({
       skip: 'external-url',
