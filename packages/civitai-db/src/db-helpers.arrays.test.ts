@@ -72,7 +72,7 @@ describe('cancellableQuery with a Prisma.Sql array param', () => {
 // joining arrays.
 describe('templateHandler', () => {
   it('inlines an array as a comma list', async () => {
-    const sql = templateHandler((text) => text)`SELECT id FROM t WHERE id IN (${[1, 3]})`;
+    const sql = await templateHandler((text) => text)`SELECT id FROM t WHERE id IN (${[1, 3]})`;
     expect(sql).toBe('SELECT id FROM t WHERE id IN (1,3)');
     expect((await h.db.query<{ id: number }>(sql)).rows.map((r) => r.id)).toEqual([1, 3]);
   });
