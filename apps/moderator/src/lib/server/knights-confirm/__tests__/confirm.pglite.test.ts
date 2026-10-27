@@ -215,6 +215,27 @@ describe('answerConfirm', () => {
     expect((await row(10)).status).toBe('agreed');
   });
 
+  it('refuses an answer once the lease expired, even before anyone else claims the item', async () => {
+    await seed(10, R, 7);
+    const card = (await claimNext(8, NOW))!;
+    expect(
+      await answerConfirm({ token: card.token, userId: 8, level: R }, later(CONFIRM_LEASE_MS + 1))
+    ).toEqual({ ok: false, reason: 'expired' });
+    expect((await row(10)).status).toBe('open');
+  });
+
+  it('refuses the first moderator once a second moderator holds the item', async () => {
+    await seed(10, R, 7);
+    const stale = (await claimNext(8, NOW))!;
+    const after = later(CONFIRM_LEASE_MS + 1);
+    expect(await claimNext(9, after)).not.toBeNull();
+    expect(await answerConfirm({ token: stale.token, userId: 8, level: R }, after)).toEqual({
+      ok: false,
+      reason: 'expired',
+    });
+    expect((await row(10)).status).toBe('open');
+  });
+
   it('refuses a level a moderator cannot rate', async () => {
     await seed(10, R, 7);
     const card = (await claimNext(8, NOW))!;
@@ -227,7 +248,13 @@ describe('answerConfirm', () => {
   it('resolves the item from the token for the moderator it was minted for only', async () => {
     await seed(10, R, 7);
     const card = (await claimNext(8, NOW))!;
-    expect(await itemForToken(card.token, 8)).toBe(card.itemId);
-    expect(await itemForToken(card.token, 9)).toBeNull();
+    expect(await itemForToken(card.token, 8, NOW)).toBe(card.itemId);
+    expect(await itemForToken(card.token, 9, NOW)).toBeNull();
+  });
+
+  it('does not resolve a token whose lease expired', async () => {
+    await seed(10, R, 7);
+    const card = (await claimNext(8, NOW))!;
+    expect(await itemForToken(card.token, 8, later(CONFIRM_LEASE_MS + 1))).toBeNull();
   });
 });

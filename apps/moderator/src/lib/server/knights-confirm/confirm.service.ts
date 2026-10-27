@@ -21,7 +21,7 @@ export type ConfirmCard = {
 
 export type AnswerResult =
   | { ok: true; outcome: 'agreed' | 'disagreed' }
-  | { ok: false; reason: 'not-yours' | 'not-open' | 'own-rating' | 'invalid-level' };
+  | { ok: false; reason: 'not-yours' | 'expired' | 'not-open' | 'own-rating' | 'invalid-level' };
 
 /** Levels a moderator can rate an image at here; blocking an image is not a rating. */
 export const isConfirmLevel = (level: number) => validNsfwLevels.has(level);
@@ -171,12 +171,17 @@ export async function claimNext(userId: number, now: Date = new Date()): Promise
 }
 
 /** The item a card's token stands for, for the moderator it was minted for; null for anyone else. */
-export async function itemForToken(token: string, userId: number): Promise<number | null> {
+export async function itemForToken(
+  token: string,
+  userId: number,
+  now: Date = new Date()
+): Promise<number | null> {
   const claim = await dbWrite
     .selectFrom('KnightsConfirmClaim')
     .select('itemId')
     .where('token', '=', token)
     .where('userId', '=', userId)
+    .where('expiresAt', '>', now)
     .executeTakeFirst();
   return claim?.itemId ?? null;
 }
@@ -193,11 +198,12 @@ export async function answerConfirm(
   return dbWrite.transaction().execute(async (trx): Promise<AnswerResult> => {
     const claim = await trx
       .selectFrom('KnightsConfirmClaim')
-      .select('itemId')
+      .select(['itemId', 'expiresAt'])
       .where('token', '=', token)
       .where('userId', '=', userId)
       .executeTakeFirst();
     if (!claim) return { ok: false, reason: 'not-yours' };
+    if (claim.expiresAt <= now) return { ok: false, reason: 'expired' };
 
     const item = await trx
       .selectFrom('KnightsConfirmItem')

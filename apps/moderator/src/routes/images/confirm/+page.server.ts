@@ -17,6 +17,7 @@ const answerSchema = z.object({
 
 const REFUSAL = {
   'not-yours': 'This card is not held by you. Here is the next.',
+  expired: 'This item timed out. Here is the next.',
   'not-open': 'Someone else finished this one. Here is the next.',
   'own-rating': 'You set this rating yourself. Here is the next.',
   'invalid-level': 'Pick one of the rating levels.',
