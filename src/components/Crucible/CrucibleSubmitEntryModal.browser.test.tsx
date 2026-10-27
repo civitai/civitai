@@ -316,6 +316,20 @@ describe('CrucibleSubmitEntryModal — entries closed near the end', () => {
   });
 });
 
+describe('CrucibleSubmitEntryModal — contest ban', () => {
+  test('explains the ban once and will not submit', async () => {
+    mocks.reasonsById = { 1: ['contest-banned'], 2: ['contest-banned'] };
+    renderModal();
+    await select(1);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('You are banned from participating in contests')
+    );
+    expect(document.body.textContent?.split('banned from participating').length).toBe(2);
+    expect(plainSubmit()?.disabled).toBe(true);
+  });
+});
+
 describe('CrucibleSubmitEntryModal — base model requirement', () => {
   test('selects only the image the server says used an allowed base model', async () => {
     mocks.reasonsById = { 1: ['wrong-base-model'] };
