@@ -1,10 +1,10 @@
 import { Button } from '@mantine/core';
 import { IconLayoutList, IconSparkles } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
-import { AppAssistantWorkspace } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppsBuildBody } from '~/components/Apps/AppsBuildBody';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
@@ -14,6 +14,17 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { APPS_BUILD_APPS_VIEW, MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
+
+/**
+ * Split out of the page chunk: only the assistant view renders it, so a visitor in the build view
+ * never downloads it. SSR stays on (the default), so the assistant view's server render still
+ * includes the workspace.
+ */
+const AppAssistantWorkspace = dynamic(() =>
+  import('~/components/Apps/AppAssistant/AppAssistantWorkspace').then(
+    (m) => m.AppAssistantWorkspace
+  )
+);
 
 type AssistantProps = {
   mode: 'assistant';
@@ -168,7 +179,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
 }
 
 /**
- * No footer in the assistant view: the workspace fills the viewport, as it did at `/apps/assistant`.
+ * No footer in the assistant view: the workspace fills the viewport.
  * Decided from the SSR props, so the server render and the first client paint agree. The default
  * export stays a plain function declaration so the `/apps` layout guards can parse it.
  */

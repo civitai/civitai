@@ -81,6 +81,21 @@ beforeEach(() => {
 });
 
 describe('/apps/build — which view the page mounts', () => {
+  /**
+   * The page loads the workspace through `next/dynamic`, whose FIRST mount renders nothing until
+   * the import resolves, so a view that wrongly mounted it could still pass a "no workspace" check
+   * made straight after render. Loading it once first makes every later mount resolve in the same
+   * commit, so the absence checks below can see it.
+   */
+  let workspaceLoaded = false;
+  beforeEach(async () => {
+    if (workspaceLoaded) return;
+    const warm = await renderWithProviders(<AppsBuildPage {...ASSISTANT} />);
+    await expect.element(page.getByTestId('workspace')).toBeInTheDocument();
+    await warm.unmount();
+    workspaceLoaded = true;
+  });
+
   test('the build view mounts the build body and never the workspace', async () => {
     await renderPage({ mode: 'build' });
     expect(seen('build-body')).toBe(1);
