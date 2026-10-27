@@ -11,12 +11,7 @@
  */
 
 // --- Ecosystem links ---
-// There is no request-access LINK here any more, and that is deliberate. The `/apps/build`
-// pitch's "Request access" button opens an in-page form (`AppAccessRequestPanel`) that writes an
-// `AppAccessRequest` row; moderators review the queue at `/moderator/app-access-requests`, and the
-// viewer sees their request's status on the pitch. Approving records the decision only — access
-// itself is still a feature-flag change made by hand. This used to be `APPS_REQUEST_ACCESS_HREF =
-// '/discord'`, a stand-in for a mechanism that did not exist yet.
+// No request-access link: the /apps/build pitch opens an in-page form (AppAccessRequestPanel).
 
 export const CIVITAI_CLI_GITHUB_URL = 'https://github.com/civitai/cli';
 export const BLOCKS_REACT_NPM_URL = 'https://www.npmjs.com/package/@civitai/blocks-react';

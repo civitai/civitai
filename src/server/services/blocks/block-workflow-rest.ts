@@ -152,14 +152,16 @@ type BlocksCaller = ReturnType<typeof blocksRouter.createCaller>;
  * ever gates a block-reachable path, widen this — do not assume it is already covered.
  *
  * `appBuilderApproved` IS supplied: it gates the App Blocks builder flags (the
- * `app-builder-approved` segment), and it costs no extra round trip — it rides the same
- * `User` read as a relation select over the approved `AppAccessRequest` rows, the same
- * predicate the auth hub's session producer applies.
+ * `app-builder-approved` segment) through a relation select over the approved
+ * `AppAccessRequest` rows on the same `getUserById` call, the same predicate the auth hub's
+ * session producer applies. That select is NOT free: the schema enables no `relationJoins`
+ * preview feature, so Prisma runs the nested select as a separate query (one indexed
+ * `take: 1` lookup) after the `User` read.
  *
- * Cost: one `getUserById` per request. The two spend procedures hydrate the same user
- * again internally, so on submit/estimate this is a second read of a row that is already
- * being fetched; accepted rather than plumbed through, because the alternative couples
- * this seam to the procedures' internals.
+ * Cost: one `getUserById` per request, which is two queries with the relation select. The
+ * two spend procedures hydrate the same user again internally, so on submit/estimate this
+ * is a second read of a row that is already being fetched; accepted rather than plumbed
+ * through, because the alternative couples this seam to the procedures' internals.
  */
 async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefined> {
   const claims = (req as { blockClaims?: { sub?: string } }).blockClaims;

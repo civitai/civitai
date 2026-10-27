@@ -42,8 +42,8 @@ export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
  * is the point of the consolidation, not an implementation detail: the routes this replaced each
  * wrote their page gate and their tab gate separately, and they disagreed — a store-visible
  * non-author was offered tabs into two 404s (PR #4668, #3899). Do not add a second flag check to
- * this file. See `resolveBuildPageAccess` for the one login redirect and why the build states
- * have none.
+ * this file. See `resolveBuildPageAccess` for why a refusal is a hard `notFound`, never a login
+ * redirect; its only redirect sends a banned account in the assistant mode to `/`.
  */
 export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
   useSession: true,
