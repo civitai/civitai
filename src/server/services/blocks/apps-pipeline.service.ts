@@ -1110,7 +1110,7 @@ if [ ! -f /templates/publish.sh ]; then
   echo "publish: /templates/publish.sh is missing, so nothing would serve this build" >&2
   exit 1
 fi
-PUBLISH_REQUIRED=1 bash /templates/publish.sh
+bash /templates/publish.sh
 ${apply}`;
 }
 
