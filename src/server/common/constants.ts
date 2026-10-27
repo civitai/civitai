@@ -28,6 +28,20 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
  * because they share the layout.
  */
+/** civitai.com and the deployment's own host, each with its `image.` subdomain. */
+function chatCivHosts() {
+  let baseHost = 'civitai.com';
+  const base = env.NEXT_PUBLIC_BASE_URL;
+  if (base) {
+    try {
+      baseHost = new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`).hostname;
+    } catch {
+      // unparseable: civitai.com only
+    }
+  }
+  return [...new Set([baseHost, 'civitai.com'])].flatMap((host) => [host, `image.${host}`]);
+}
+
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
 function getCommentMaxDepth(entityType: string) {
@@ -500,14 +514,17 @@ export const constants = {
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
-    // TODO disable just "image.civitai.com" with nothing else
-    civRegex: new RegExp(
-      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
-        .replace(/^https?:\/\//, '')
-        .replace(/\./g, '\\.')}|civitai\\.com)`
-    ),
-    externalRegex:
-      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|(?:civitai\.red|education\.civitai\.com)(?=[/:?#]|$))/,
+    // Hosts a chat link may point at, matched exactly against the parsed hostname
+    // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
+    civHosts: chatCivHosts(),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
+    externalHosts: [
+      'github.com',
+      'twitter.com',
+      'x.com',
+      'civitai.red',
+      'education.civitai.com',
+    ].flatMap((host) => [host, `www.${host}`]),
   },
   entityCollaborators: {
     maxCollaborators: 15,
