@@ -620,7 +620,10 @@ type PersistRetryRow = TakedownPersistRetry & {
   reservation?: string;
   /** What a row reserved over owed before (its own `retract` and schedule), handed back on settle. */
   reservedOver?: { retract?: boolean; purgeEdge?: boolean; nextAttemptAt?: string };
-  /** The persist landed and only the CDN purge is still owed; cleared by any new failure or reservation. */
+  /**
+   * The persist landed and only the CDN purge is still owed: set when the purge is rate limited, and
+   * kept through later failures. A newly queued failure or a reservation for a delete clears it.
+   */
   purgeOnly?: boolean;
 };
 type UrlImage = { id: number | null; name: string | null; type: MediaType | null };

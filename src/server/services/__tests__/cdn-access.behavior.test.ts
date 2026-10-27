@@ -2251,11 +2251,15 @@ describe('retractions per run', () => {
     await retracted([...ids, 13]);
     for (const id of ids) await queuePersistRetry(id, true, 30 - id);
     await queuePersistRetry(13, false, 1);
-    // The first purge is refused; the rest answer once it has been.
+    // The first purge is refused; the rest answer once the retry has logged that refusal, which it
+    // does after marking the run busy.
     let release = () => undefined as void;
     const refused = new Promise<void>((resolve) => (release = resolve));
+    const logToAxiom = loggingMock.logToAxiom.getMockImplementation();
+    loggingMock.logToAxiom.mockImplementation(async (data: { name?: string }) => {
+      if (data.name === 'takedown-persist-retry-failed') release();
+    });
     purgeUrlsOrThrow.mockImplementationOnce(async () => {
-      setTimeout(release, 200);
       throw new CloudflarePurgeBusyError([Object.assign(new Error('429'), { statusCode: 429 })]);
     });
     purgeUrlsOrThrow.mockImplementation(async (urls: string[]) => {
@@ -2263,7 +2267,11 @@ describe('retractions per run', () => {
       purged.push(urls);
     });
 
-    await retryTakedownPersists();
+    try {
+      await retryTakedownPersists();
+    } finally {
+      loggingMock.logToAxiom.mockImplementation(logToAxiom ?? (async () => undefined));
+    }
     // Eight were in flight when the CDN refused one; the other four were not sent.
     expect(purged).toHaveLength(7);
     expect(persistsFor(u(13))).toHaveLength(2);
