@@ -22,6 +22,7 @@ import { uniqBy } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import * as z from 'zod';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
+import { settleShown } from '~/components/Csam/csam-shown';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
 import { withController } from '~/libs/form/hoc/withController';
@@ -73,7 +74,9 @@ export function CsamDetailsForm({
       children: 'Are you sure you want to report this content as CSAM?',
       labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
       confirmProps: { loading: isLoading },
-      onConfirm: () => {
+      onConfirm: async () => {
+        // The records of what was opened and selected land before the report they describe.
+        await settleShown();
         createReport({
           type,
           imageIds: type === 'Image' ? useCsamImageSelectStore.getState().getSelected(userId) : [],

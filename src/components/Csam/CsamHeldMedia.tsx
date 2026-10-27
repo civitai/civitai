@@ -1,6 +1,7 @@
 import { Center, Text } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
-import { isNotHeldAnswer } from '@civitai/shared/held-media';
+import type { ShownRendition } from '@civitai/shared/held-media';
+import { isNotHeldAnswer, playedFraction, WATCHED_FRACTION } from '@civitai/shared/held-media';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ModerationImageModel } from '~/server/services/image.service';
 
@@ -28,9 +29,12 @@ export function useHeldGridReport(userId: number, count: number) {
 export function CsamHeldMedia({
   image,
   onClick,
+  onShown,
 }: {
   image: ModerationImageModel;
   onClick: () => void;
+  /** Once the file is on screen: an image whose pixels loaded, or a video WATCHED_FRACTION played. */
+  onShown?: (rendition: ShownRendition) => void;
 }) {
   const [state, setState] = useState<'held' | 'cdn' | 'error'>('held');
   const src = `/api/mod/held-media/${image.id}`;
@@ -38,19 +42,26 @@ export function CsamHeldMedia({
     fetch(`${src}?probe=1`)
       .then((res) => setState(isNotHeldAnswer(res) ? 'cdn' : 'error'))
       .catch(() => setState('error'));
+  const shownRef = useShown(
+    image.type === 'video',
+    state === 'cdn' ? 'cdn-450' : 'original',
+    onShown
+  );
 
   if (state === 'cdn')
     return (
-      <EdgeMedia
-        src={image.url}
-        name={image.name ?? image.id.toString()}
-        alt={image.name ?? undefined}
-        type={image.type}
-        width={450}
-        placeholder="empty"
-        style={{ width: '100%' }}
-        onClick={onClick}
-      />
+      <div ref={shownRef}>
+        <EdgeMedia
+          src={image.url}
+          name={image.name ?? image.id.toString()}
+          alt={image.name ?? undefined}
+          type={image.type}
+          width={450}
+          placeholder="empty"
+          style={{ width: '100%' }}
+          onClick={onClick}
+        />
+      </div>
     );
   if (state === 'error')
     return (
@@ -62,26 +73,72 @@ export function CsamHeldMedia({
     );
   if (image.type === 'video')
     return (
-      <video
+      <div ref={shownRef}>
+        <video
+          src={src}
+          muted
+          playsInline
+          controls
+          preload="metadata"
+          style={{ width: '100%' }}
+          onClick={onClick}
+          onError={onError}
+        />
+      </div>
+    );
+  return (
+    <div ref={shownRef}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         src={src}
-        muted
-        playsInline
-        preload="metadata"
+        alt={image.name ?? ''}
+        loading="lazy"
+        decoding="async"
         style={{ width: '100%' }}
         onClick={onClick}
         onError={onError}
       />
-    );
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={image.name ?? ''}
-      loading="lazy"
-      decoding="async"
-      style={{ width: '100%' }}
-      onClick={onClick}
-      onError={onError}
-    />
+    </div>
   );
+}
+
+/**
+ * Calls `onShown` once per rendition, from the media element's own events. Listened for in the
+ * capture phase on a wrapper, since media events do not bubble and the CDN copy's element is
+ * EdgeMedia's.
+ */
+function useShown(
+  isVideo: boolean,
+  rendition: ShownRendition,
+  onShown: ((rendition: ShownRendition) => void) | undefined
+) {
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const reported = useRef<ShownRendition | null>(null);
+  const callback = useRef(onShown);
+  callback.current = onShown;
+
+  useEffect(() => {
+    if (!node) return;
+    const report = () => {
+      if (reported.current === rendition) return;
+      reported.current = rendition;
+      callback.current?.(rendition);
+    };
+    const onLoad = (e: Event) => {
+      if (!isVideo && e.target instanceof HTMLImageElement && e.target.naturalWidth > 0) report();
+    };
+    const onProgress = (e: Event) => {
+      if (isVideo && e.target instanceof HTMLVideoElement)
+        if (playedFraction(e.target) >= WATCHED_FRACTION) report();
+    };
+    const progress = ['timeupdate', 'pause', 'ended'] as const;
+    node.addEventListener('load', onLoad, true);
+    for (const type of progress) node.addEventListener(type, onProgress, true);
+    return () => {
+      node.removeEventListener('load', onLoad, true);
+      for (const type of progress) node.removeEventListener(type, onProgress, true);
+    };
+  }, [node, isVideo, rendition]);
+
+  return setNode;
 }
