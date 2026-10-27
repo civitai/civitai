@@ -3916,9 +3916,6 @@ async function searchImages(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
-  // ImagesFeed reads the feeds index (`metrics_images_v1`) through FEED_IMAGE_HOST.
-  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'feedSearch'))
-    return { nextCursor: undefined, items: [] };
   // The fifth filter builder, and the one with no hub clause. Unreachable today
   // only because the REST zod for /api/v1/images does not declare `hubId` and
   // strips unknown keys — the same accident the hideChallenges comment above
@@ -3928,6 +3925,10 @@ export async function getImagesFromFeedSearch(
     throw throwInternalServerError(
       new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
+
+  // ImagesFeed reads the feeds index (`metrics_images_v1`) through FEED_IMAGE_HOST.
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'feedSearch'))
+    return { nextCursor: undefined, items: [] };
 
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
