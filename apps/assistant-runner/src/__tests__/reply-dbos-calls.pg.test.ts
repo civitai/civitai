@@ -131,7 +131,6 @@ describePg('the DBOS calls a reply makes (golden)', () => {
       userId: user,
       conversationId: body.conversationId,
       idempotencyKey: key,
-      id: `grant-${key}`,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       subagents: false,
       preview: false,
