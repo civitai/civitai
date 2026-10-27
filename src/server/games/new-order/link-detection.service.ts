@@ -96,8 +96,17 @@ async function loadTips(earners: number[], config: LinkDetectionConfig): Promise
     WHERE type = 'tip'
       AND fromAccountId IN (${ints(earners)})
       AND date >= now() - INTERVAL ${Math.trunc(config.lookbackDays)} DAY
+    ORDER BY date DESC, fromAccountId, toAccountId, amount
     LIMIT ${Math.trunc(config.maxTipRows)}
   `);
+  if (rows.length >= Math.trunc(config.maxTipRows)) {
+    await logToAxiom({
+      type: 'warning',
+      name: 'new-order-link-detection-tip-cap',
+      details: { rows: rows.length },
+      message: 'Tip read reached its row cap',
+    }).catch(() => null);
+  }
   return rows.map((r) => ({
     from: Number(r.fromAccountId),
     to: Number(r.toAccountId),
@@ -145,40 +154,50 @@ export async function persistLinkedClusters(clusters: LinkCluster[]) {
       counts.skipped++;
       continue;
     }
-    const existing = await dbWrite.newOrderLinkReview.findUnique({
-      where: { fingerprint },
-      select: { status: true },
-    });
-    if (existing && existing.status !== LINK_REVIEW_STATUS.Pending) {
-      counts.skipped++;
-      continue;
-    }
 
     const autoBlock =
       cluster.decision === 'block' && !cluster.userIds.some((id) => clearedUsers.has(id));
-    const data = {
-      userIds: cluster.userIds,
-      evidence: cluster.evidence,
-      buzzMoved: Math.round(cluster.buzzMoved),
-      autoBlocked: autoBlock,
-      status: autoBlock ? LINK_REVIEW_STATUS.Blocked : LINK_REVIEW_STATUS.Pending,
-    };
+    const status = autoBlock ? LINK_REVIEW_STATUS.Blocked : LINK_REVIEW_STATUS.Pending;
 
-    if (autoBlock) {
-      await dbWrite.newOrderPlayer.updateMany({
-        where: { userId: { in: cluster.userIds }, payoutBlockedAt: null },
-        data: {
-          payoutBlockedAt: new Date(),
-          payoutBlockReason: AUTO_BLOCK_REASON,
-          payoutBlockedBy: constants.system.user.id,
-        },
-      });
-    }
-    await dbWrite.newOrderLinkReview.upsert({
-      where: { fingerprint },
-      create: { fingerprint, ...data },
-      update: data,
+    const written = await dbWrite.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: number }[]>`
+        INSERT INTO "NewOrderLinkReview"
+          ("fingerprint", "userIds", "evidence", "buzzMoved", "autoBlocked", "status")
+        VALUES (
+          ${fingerprint},
+          ${cluster.userIds}::int[],
+          ${JSON.stringify(cluster.evidence)}::jsonb,
+          ${Math.round(cluster.buzzMoved)},
+          ${autoBlock},
+          ${status}
+        )
+        ON CONFLICT ("fingerprint") DO UPDATE SET
+          "userIds" = EXCLUDED."userIds",
+          "evidence" = EXCLUDED."evidence",
+          "buzzMoved" = EXCLUDED."buzzMoved",
+          "autoBlocked" = EXCLUDED."autoBlocked",
+          "status" = EXCLUDED."status",
+          "updatedAt" = now()
+        WHERE "NewOrderLinkReview"."status" = ${LINK_REVIEW_STATUS.Pending}
+        RETURNING "id"
+      `;
+      if (!rows.length) return false;
+      if (autoBlock) {
+        await tx.newOrderPlayer.updateMany({
+          where: { userId: { in: cluster.userIds }, payoutBlockedAt: null },
+          data: {
+            payoutBlockedAt: new Date(),
+            payoutBlockReason: AUTO_BLOCK_REASON,
+            payoutBlockedBy: constants.system.user.id,
+          },
+        });
+      }
+      return true;
     });
+    if (!written) {
+      counts.skipped++;
+      continue;
+    }
 
     if (autoBlock) {
       counts.blocked++;
