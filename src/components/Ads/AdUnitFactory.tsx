@@ -1,11 +1,11 @@
 import { SupportUs } from '~/components/Ads/SupportUs';
 import { Text } from '@mantine/core';
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdPageNsfwLevel, useAdsContext } from '~/components/Ads/AdsProvider';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
@@ -372,7 +372,10 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number 
   const { nodeRef } = useContainerContext();
   const containerWidth = useContainerWidth();
   const node = useScrollAreaRef();
-  const browsingLevel = useBrowsingLevelDebounced();
+  // Two facts for the ad server, which combines them: what the viewer allows (domain cap
+  // included) and the rating of the content on the page, when the page has one
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const pageNsfwLevel = useAdPageNsfwLevel();
   const fetchingRef = React.useRef(false);
   const impressionRef = React.useRef(false);
   const [data, setData] = useState<{
@@ -402,6 +405,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number 
     const searchParams = new URLSearchParams(
       `placement=${id}&name=${type}&container=${containerWidthRef.current}&browsingLevel=${browsingLevel}`
     );
+    if (pageNsfwLevel) searchParams.append('nsfwLevel', String(pageNsfwLevel));
     if (props.maxHeight) searchParams.append('maxHeight', String(props.maxHeight));
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
@@ -422,7 +426,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number 
         fetchingRef.current = false;
         impressionRef.current = false;
       });
-  }, [browsingLevel, props.adUnit, props.id, props.maxHeight]);
+  }, [browsingLevel, pageNsfwLevel, props.adUnit, props.id, props.maxHeight]);
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
 
