@@ -303,6 +303,8 @@ const featureFlags = createFeatureFlags({
   flux3KleinTraining: { availability: ['mod'], fliptKey: 'flux3-klein-training' },
   // Training Studio only.
   mossImageTraining: { availability: ['mod'], fliptKey: 'moss-image-training' },
+  // Training Studio only — edit LoRAs (before/after pairs).
+  flux2KleinEditTraining: { availability: ['mod'], fliptKey: 'flux2-klein-edit-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },

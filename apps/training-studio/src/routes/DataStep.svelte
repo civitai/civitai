@@ -46,6 +46,7 @@
     captionTriggerHit,
     compareFileNames,
     defaultStepsForRun,
+    imgBytes,
     selectionFromTotal,
     isFailed,
     isTrainable,
@@ -64,6 +65,7 @@
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import { fileDrop } from './fileDrop';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
@@ -488,18 +490,6 @@
     }
   }
 
-  // Uploads keep their File; blob-backed items (generations, a reused dataset) only have URLs, and a
-  // reused item's previewUrl is the local object URL its hydration already fetched.
-  async function imgBytes(img: Img): Promise<Blob> {
-    if (img.file) return img.file;
-    for (const url of [img.previewUrl, img.blobUrl]) {
-      if (!url) continue;
-      const res = await fetch(url).catch(() => null);
-      if (res?.ok) return res.blob();
-    }
-    throw new Error(`${img.name} unavailable`);
-  }
-
   // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
   // persists, and the run page's Download only exists after Start.
   let exporting = $state(false);
@@ -662,36 +652,17 @@
   const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
   const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
   // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
-  // dataset area (dropping used to work only before the first upload). `dragDepth` is the standard
-  // enter/leave counter — leave fires for every child crossed, so a plain boolean flickers.
-  let dragDepth = 0;
-  // File drags only: the populated area contains draggable content (preview <img>s, selectable
-  // caption text) whose in-page drags would otherwise summon the drop overlay.
-  const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
-  function onDragEnter(e: DragEvent) {
-    if (!hasFiles(e)) return;
-    e.preventDefault();
-    dragDepth += 1;
-    dragging = true;
-  }
-  function onDragOver(e: DragEvent) {
-    if (hasFiles(e)) e.preventDefault();
-  }
-  function onDragLeave() {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) dragging = false;
-  }
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    dragDepth = 0;
-    dragging = false;
-    const files = [...(e.dataTransfer?.files ?? [])];
-    // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
-    // before. One zip per drop: `find` imports the first and the filter below discards the rest.
-    const zip = files.find(isZip);
-    if (zip) void importZip(zip);
-    void addFiles(files.filter((f) => !isZip(f)));
-  }
+  // dataset area (dropping used to work only before the first upload).
+  const drop = fileDrop(
+    (v) => (dragging = v),
+    (files) => {
+      // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
+      // before. One zip per drop: `find` imports the first and the filter below discards the rest.
+      const zip = files.find(isZip);
+      if (zip) void importZip(zip);
+      void addFiles(files.filter((f) => !isZip(f)));
+    }
+  );
   function onPick(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     void addFiles(input.files);
@@ -1053,10 +1024,7 @@
     <button
       type="button"
       onclick={() => fileInput.click()}
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      {...drop}
       class="rounded-xl border-2 border-dashed p-9 text-center transition
         {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
     >
@@ -1088,10 +1056,7 @@
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
     >
       {#if dragging}

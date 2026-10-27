@@ -4,6 +4,8 @@
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type {
   AutoLabelResult,
+  EditGenerationItem,
+  EditImageOption,
   StudioBackend,
   SubmittedBatch,
   TrainingRunPayload,
@@ -22,6 +24,22 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
     // non-JSON body
   }
   return fallback;
+}
+
+async function quoteFrom(path: string): Promise<number | null> {
+  const res = await fetch(path);
+  if (!res.ok) return null;
+  return ((await res.json()) as { cost: number | null }).cost;
+}
+
+async function postFor(path: string, body: unknown, fallback: string) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await messageOf(res, fallback));
+  return (await res.json()) as { workflowId: string };
 }
 
 export const shellBackend: StudioBackend = {
@@ -99,6 +117,36 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
     const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
     return { workflowIds, failure };
+  },
+
+  listEditGenerations: async () => {
+    const res = await fetch('/api/generations?media=image&kind=edit');
+    if (!res.ok) throw new Error(await messageOf(res, `Failed to load your edits (${res.status})`));
+    return ((await res.json()) as { items: EditGenerationItem[] }).items;
+  },
+
+  editImageQuote: () => quoteFrom('/api/edit-image'),
+
+  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
+
+  editImagePoll: async (workflowId, signal) => {
+    const res = await fetch(`/api/edit-image/${encodeURIComponent(workflowId)}`, { signal });
+    if (!res.ok)
+      throw new Error(await messageOf(res, `Image progress unavailable (${res.status})`));
+    return (await res.json()) as { done: boolean; options: EditImageOption[] };
+  },
+
+  suggestQuote: () => quoteFrom('/api/suggest-instruction'),
+
+  suggestSubmit: (req) =>
+    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
+
+  suggestPoll: async (workflowId, signal) => {
+    const res = await fetch(`/api/suggest-instruction/${encodeURIComponent(workflowId)}`, {
+      signal,
+    });
+    if (!res.ok) throw new Error(await messageOf(res, `Suggestion unavailable (${res.status})`));
+    return (await res.json()) as { done: boolean; text?: string };
   },
 
   rename: async (workflowId, name) => {

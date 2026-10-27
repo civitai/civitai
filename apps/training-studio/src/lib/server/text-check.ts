@@ -52,3 +52,9 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
     throw new TrainingTextCheckError(reason(), status);
   };
 }
+
+/** The check for one request: the main app's, sent with the caller's cookie — or none in the
+ *  dev-login preview (`cookie` null), which has no session to send it with. */
+export function requestTextCheck(cookie: string | null, userId: number): TrainingTextCheck {
+  return cookie === null ? async () => undefined : mainAppTextCheck(cookie, userId);
+}

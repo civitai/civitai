@@ -27,6 +27,21 @@ import type { Media } from '$lib/data/trainingModels';
 
 export type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
 
+// The Buzz accounts a Studio workflow may draw from — a caller's `currencies` is filtered to this set
+// so a tampered/garbage body can't send an arbitrary account to the orchestrator.
+const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
+
+/** `input` filtered to the allowed accounts, in its order; `fallback` when nothing valid is left. */
+export function resolveCurrencies(
+  input: string[] | undefined,
+  fallback: BuzzClientAccount[]
+): BuzzClientAccount[] {
+  const picked = (input ?? []).filter((c): c is BuzzClientAccount =>
+    ALLOWED_CURRENCIES.includes(c as BuzzClientAccount)
+  );
+  return picked.length ? picked : fallback;
+}
+
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
 
@@ -243,6 +258,8 @@ export interface TrainingWhatIfInput {
   engine?: string;
   /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
   version?: string;
+  /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
+  editTraining?: boolean;
   /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
@@ -289,6 +306,7 @@ export async function trainingWhatIf(
           ...(input.model ? { model: input.model } : {}),
           ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
           ...(input.version ? { version: input.version } : {}),
+          ...(input.editTraining ? { isEditTraining: true } : {}),
           trainingData: { type: 'zip', sourceUrl: 'https://fake', count },
           samples: { prompts: WHATIF_SAMPLE_PROMPTS },
           ...(input.steps ? { steps: input.steps } : {}),

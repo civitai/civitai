@@ -163,7 +163,12 @@ type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
   samples?: { prompts?: string[]; sourceImages?: string[] };
   /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
-  trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
+  trainingData?: {
+    type?: string;
+    items?: Array<{ air?: string; caption?: string; path?: string }>;
+  };
+  /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
+  isEditTraining?: boolean;
 };
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
@@ -250,7 +255,17 @@ function resolveWorkflow(w: Workflow) {
   // the step's ecosystem. cardType must beat the ecosystem fallback: several cards share an
   // ecosystem (Illustrious/Pony/a custom checkpoint are all `sdxl`), so ecosystem-first showed
   // every one of them as "SDXL" instead of the base the run actually trained on.
-  const byAir = input.model ? findByAir(input.model) : undefined;
+  // A card that shares a checkpoint with another (Flux.2 Klein Edit) is only told apart by the card
+  // the run recorded, so a recorded card that lists this AIR wins over the first catalog match.
+  const metaCard = meta.cardType ? cardByType(meta.cardType) : undefined;
+  const metaVersion = input.model
+    ? metaCard?.versions.find((v) => v.air === input.model)
+    : undefined;
+  const byAir = metaVersion
+    ? { card: metaCard!, version: metaVersion }
+    : input.model
+    ? findByAir(input.model)
+    : undefined;
   const card =
     byAir?.card ??
     (meta.cardType ? cardByType(meta.cardType) : undefined) ??
@@ -554,7 +569,9 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     );
   const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
-  const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
+  // An edit run's items are pairs, not a dataset of labeled images: offered as one, its starting images
+  // would be retrained as plain images. Reusing pairs is not supported yet.
+  const dataset: DatasetItem[] = (input.isEditTraining ? [] : input.trainingData?.items ?? [])
     .filter(
       (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
     )

@@ -23,6 +23,7 @@ import {
   blobIdFromAir,
   describeSubmitError,
   isFlux2,
+  resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
 import type { ExtraParamField } from '$lib/data/trainingModels';
@@ -41,6 +42,7 @@ import {
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
   ecosystemTakesSampleImages,
+  ecosystemTrainsPairs,
   isRetiredBaseAir,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
@@ -51,6 +53,9 @@ import type { TrainingTextCheck } from '$lib/training-text';
 export interface TrainingItem {
   air: string;
   caption: string;
+  /** Edit training only: where the blob sits in the dataset AI-Toolkit reads — `control_1/<name>` for a
+   *  pair's starting image, `main/<name>` (same name, captioned with the instruction) for its result. */
+  path?: string;
 }
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
@@ -87,6 +92,9 @@ export interface TrainingRunInput {
   flipAugmentation?: boolean;
   trigger: string;
   items: TrainingItem[];
+  /** An edit LoRA: `items` are before/after pairs placed by `path`, sent with `isEditTraining`. Only
+   *  for `ecosystemTrainsPairs`. */
+  editTraining?: boolean;
   prompts: string[];
   /** Input images the samples are rendered from (edit LoRAs), index-aligned to `prompts`. Only for
    *  `ecosystemTakesSampleImages`; omit for text-only samples. */
@@ -108,19 +116,10 @@ export interface SubmitOptions {
   traceMode?: string;
 }
 
-// Real-spend wallets (Buzz), same set the whatif quotes against. Also the default when the client sends
+// Real-spend wallets (Buzz), same set the whatif quotes against. The default when the client sends
 // nothing valid.
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
-// The Buzz accounts a training run may draw from — the caller's `currencies` is filtered to this set so a
-// tampered/garbage body can't send an arbitrary account to the orchestrator.
-const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
-
-function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
-  const picked = (input ?? []).filter((c): c is BuzzClientAccount =>
-    ALLOWED_CURRENCIES.includes(c as BuzzClientAccount)
-  );
-  return picked.length ? picked : CURRENCIES;
-}
+const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
 export function trainingBlobKey(air: string): string {
@@ -142,10 +141,11 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
  *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
  *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
-  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice.
+  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
+  // edit dataset places items by path instead, where one starting image may serve several pairs.
   const seen = new Set<string>();
   const items = run.items.filter((item) => {
-    const key = trainingBlobKey(item.air);
+    const key = item.path ?? trainingBlobKey(item.air);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -181,6 +181,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           ...(run.customModel || run.model ? { model: run.customModel || run.model } : {}),
           ...(run.modelVariant ? { modelVariant: run.modelVariant } : {}),
           ...(run.version ? { version: run.version } : {}),
+          ...(run.editTraining ? { isEditTraining: true } : {}),
           steps: run.steps,
           epochs: run.epochs,
           batchSize: run.batchSize,
@@ -230,7 +231,7 @@ export async function submitTraining(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run, traceMode)],
-      currencies: resolveCurrencies(run.currencies),
+      currencies: runCurrencies(run.currencies),
       ...(callbacks ? { callbacks } : {}),
     },
     query: { wait: 0 },
@@ -327,6 +328,11 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
+  if (run.editTraining !== undefined && typeof run.editTraining !== 'boolean')
+    fail(`${field}.editTraining`, 'must be a boolean.');
+  if (run.editTraining) validatePairs(run, field);
+  else if (run.items.some((item) => typeof item === 'object' && item !== null && 'path' in item))
+    fail(`${field}.items`, 'carry a path only for edit training.');
   run.items.forEach((item, i) => {
     if (!item || typeof item !== 'object') fail(`${field}.items[${i}]`, 'must be an object.');
     if (!isNonEmptyString(item.air))
@@ -369,6 +375,30 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     fail(`${field}.model`, 'is no longer offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
+}
+
+// `control_1/pair_0001.png`, `main/pair_0001.jpg`: a folder AI-Toolkit reads, then a plain file name.
+const PAIR_PATH = /^(control_1|main)\/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$/;
+
+/** An edit dataset is pairs: every `main/` result has a `control_1/` starting image of the same name and
+ *  an instruction, and every starting image has its result — an unmatched half would train as nothing. */
+function validatePairs(run: TrainingRunInput, field: string): void {
+  if (isFlux2(run.engine) || !ecosystemTrainsPairs(run.ecosystem))
+    fail(`${field}.editTraining`, 'is not supported for this model.');
+  const sides = { control_1: new Set<string>(), main: new Set<string>() };
+  run.items.forEach((item, i) => {
+    const match = typeof item?.path === 'string' ? PAIR_PATH.exec(item.path) : null;
+    if (!match) fail(`${field}.items[${i}].path`, 'must be control_1/<name> or main/<name>.');
+    const side = sides[match[1] as keyof typeof sides];
+    if (side.has(match[2]!)) fail(`${field}.items[${i}].path`, 'names a pair twice.');
+    side.add(match[2]!);
+    if (match[1] === 'main' && !(typeof item.caption === 'string' && item.caption.trim()))
+      fail(`${field}.items[${i}].caption`, 'must hold the instruction.');
+  });
+  const unmatched =
+    [...sides.main].find((n) => !sides.control_1.has(n)) ??
+    [...sides.control_1].find((n) => !sides.main.has(n));
+  if (unmatched !== undefined) fail(`${field}.items`, `pair ${unmatched} is missing an image.`);
 }
 
 /** Refuse a custom base model whose weights aren't SafeTensor — the rule the main app's
@@ -541,6 +571,8 @@ async function buildContinuation(
     ...(input.model ? { model: input.model } : {}),
     ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
     ...(input.version ? { version: input.version } : {}),
+    // Without it the pair dataset would continue as a plain LoRA dataset.
+    ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
     ...(steps ? { steps } : {}),
     epochs: addEpochs,
     batchSize: input.batchSize,
@@ -572,7 +604,7 @@ async function buildContinuation(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
-      currencies: resolveCurrencies(opts.currencies),
+      currencies: runCurrencies(opts.currencies),
       ...(callbacks ? { callbacks } : {}),
     },
     steps,

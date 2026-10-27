@@ -52,6 +52,7 @@
     runExtraCapabilities,
     runParamsKey,
     runTakesSampleImages,
+    runTrainsPairs,
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
@@ -76,6 +77,7 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
+    trainsPairs = false,
     matureCount,
     onStart,
     onBack,
@@ -92,6 +94,8 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
+    /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
+    trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
     onStart: (
@@ -104,6 +108,12 @@
     /** Back to the Data step, filtered to the mature images. */
     onShowMature: () => void;
   } = $props();
+
+  const datasetCount = $derived(
+    trainsPairs
+      ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : mediaCount(imageCount, selection.media)
+  );
 
   let starting = $state(false);
   let startError = $state('');
@@ -165,6 +175,7 @@
       steps: p.steps,
       epochs: p.epochs > 0 ? p.epochs : undefined,
       imageCount: imageCount > 0 ? imageCount : undefined,
+      editTraining: runTrainsPairs(run) || undefined,
     };
   };
   // An out-of-range Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
@@ -611,7 +622,8 @@
 
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
-      <div class="flex items-center gap-1.5">
+      <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
+      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -687,6 +699,11 @@
             </span>
           </div>
 
+          {#if trainsPairs}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              each pair seen ~{seen(i)}×
+            </div>
+          {:else}
           <div class="flex items-center gap-1 bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
             {#if low(i)}<IconAlertTriangle size={13} stroke={2} class="shrink-0" />{:else}<IconCheck
                 size={13}
@@ -696,6 +713,7 @@
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
           </div>
+          {/if}
 
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
@@ -833,7 +851,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Dataset</dt>
         <dd class="m-0 font-semibold text-dark-0">
-          {mediaCount(imageCount, selection.media)} · {labelMode === 'tag' ? 'tags' : 'captions'}
+          {datasetCount} · {trainsPairs ? 'instructions' : labelMode === 'tag' ? 'tags' : 'captions'}
         </dd>
       </div>
       <div class="flex justify-between gap-2.5">
@@ -912,7 +930,7 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {datasetCount}
     </div>
 
     {#if blueExcluded}

@@ -19,6 +19,7 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
+import type { TrainingItem } from '$lib/train-core';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -212,6 +213,11 @@ export interface Img {
    *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
    *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */
   sourceLabel?: string;
+  /** SHA-256 of the file's bytes, when the item came from a local file — edit pairs group by it. */
+  hash?: string;
+  /** The workflow that produced a blob-backed item whose URL needs an authenticated fetch (a
+   *  generation's edit source), so `backend().datasetBlob` can read its bytes. */
+  sourceWorkflowId?: string;
   tags: string[];
   caption: string;
 }
@@ -242,6 +248,24 @@ export function isFailed(img: Img): boolean {
  *  extension must survive for the media-type check; the signature isn't needed server-side). */
 export function blobAirFromUrl(url: string): string {
   return url.split('?')[0];
+}
+
+/** A dataset item's bytes, for a zip: an upload's own File, else its URLs — a reused or hydrated item's
+ *  `previewUrl` is the local object URL already fetched — and, once those have expired, `readBlob`
+ *  (the authenticated read) for an item that names the workflow it came from. */
+export async function imgBytes(
+  img: Img,
+  readBlob?: (air: string, workflowId: string) => Promise<Blob>
+): Promise<Blob> {
+  if (img.file) return img.file;
+  for (const url of [img.previewUrl, img.blobUrl]) {
+    if (!url) continue;
+    const res = await fetch(url).catch(() => null);
+    if (res?.ok) return res.blob();
+  }
+  const air = img.blobId ?? img.blobUrl;
+  if (readBlob && air && img.sourceWorkflowId) return readBlob(air, img.sourceWorkflowId);
+  throw new Error(`${img.name} unavailable`);
 }
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
@@ -494,6 +518,16 @@ export function submittedPrompts(texts: string[]): string[] {
   return filled.length ? filled : texts;
 }
 
+/** Whether a run trains an edit LoRA from before/after pairs. Every run in a selection agrees — the
+ *  Select step won't mix them, since the two datasets don't share a shape. */
+export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
+
+/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
+ *  its label format and on whether it is pairs. */
+export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
+  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+}
+
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
  *  its card's primary version, so it follows that ecosystem like every other run-level check. */
 export const runTakesSampleImages = (run: Run): boolean =>
@@ -596,7 +630,8 @@ function num(value: NumericInput, fallback: number): number {
 
 /** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
  *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
- *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. */
+ *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
+ *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],
@@ -605,12 +640,15 @@ export function buildTrainingRuns(
   launched: LaunchedRun[],
   prompts: SamplePrompt[],
   currencies: string[],
-  labelMode: LabelType
+  labelMode: LabelType,
+  edit?: { items: TrainingItem[]; pairs: number }
 ): TrainingRunPayload[] {
   const mode = labelMode;
-  const items = images
-    .filter((i) => i.status === 'uploaded' && !!i.blobId)
-    .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+  const items = edit
+    ? edit.items
+    : images
+        .filter((i) => i.status === 'uploaded' && !!i.blobId)
+        .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
@@ -644,6 +682,7 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
+      ...(edit ? { editTraining: true } : {}),
       prompts: submittedPrompts(prompts.map((p) => p.text)),
       sourceImages: submittedSampleImages(run, prompts),
       currencies,
@@ -653,7 +692,7 @@ export function buildTrainingRuns(
         loraType: selection.loraType,
         cardType: run.cardType,
         versionKey: run.versionKey,
-        imageCount: items.length,
+        imageCount: edit?.pairs ?? items.length,
         trigger: t,
       },
     };
