@@ -66,7 +66,7 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userId }),
       });
-      // On success the hub's Set-Cookie has swapped the session — full reload so every load re-resolves as the
+      // On success this app's Set-Cookie has swapped the session — full reload so every load re-resolves as the
       // new user (and clears this component's stale roster).
       if (res.ok) return location.reload();
     } catch {

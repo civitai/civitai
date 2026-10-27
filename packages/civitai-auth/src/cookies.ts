@@ -77,6 +77,24 @@ export function readCookie(header: string, name: string): string | undefined {
   return undefined;
 }
 
+/** Every cookie in a `Cookie` header string, by name (the first occurrence of a repeated name wins, as in readCookie). */
+export function parseCookieHeader(header: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const name = part.slice(0, idx).trim();
+    if (!name || name in out) continue;
+    const raw = part.slice(idx + 1).trim();
+    try {
+      out[name] = decodeURIComponent(raw);
+    } catch {
+      out[name] = raw;
+    }
+  }
+  return out;
+}
+
 // ── Host-only session cookie ──────────────────────────────────────────────────────────────────────────────
 // Each app moves from the shared slot (`__Secure-civ-token`, Domain=<registrable>) to a host-only slot
 // (`__Host-civ-token`) when its AUTH_SESSION_COOKIE_MODE flips to `host`. Until every app has moved, readers accept

@@ -1,6 +1,11 @@
 import type { Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
-import type { SessionUser } from '@civitai/auth';
+import {
+  isNavigationRequest,
+  spokeReauthResponse,
+  withSetCookies,
+  type SessionUser,
+} from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { isTrainingStudioAllowed } from '$lib/server/flipt';
 
@@ -18,8 +23,13 @@ const DEV_USER = { id: 0, username: 'dev-preview' } as unknown as SessionUser;
 //   ok        → authenticated user → populate locals.user and continue
 //
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build, where
-// there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg', '/logout']);
+// there is no cookie) and the sign-in routes. Everything else is gated.
+const PUBLIC_PATHS = new Set([
+  '/favicon.svg',
+  '/logout',
+  '/api/auth/authorize',
+  '/api/auth/callback',
+]);
 
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 
@@ -61,11 +71,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     return resolve(event);
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
+  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
+    navigation: isNavigationRequest(event.request),
+  });
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }
+  if (result.status === 'reauth') return spokeReauthResponse(result.authorize);
   if (result.status === 'forbidden') {
     return new Response(null, { status: 303, headers: { location: FORBIDDEN_REDIRECT } });
   }
@@ -73,9 +86,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Closed-beta gate (Flipt): a signed-in user outside the segment can't use the app. Moderators always
   // pass (the fallback when the flag is absent), so the beta ships dark until the segment is configured.
   if (!(await isTrainingStudioAllowed(result.user))) {
-    return closedBetaPage();
+    return withSetCookies(closedBetaPage(), result.setCookies);
   }
 
   event.locals.user = result.user;
-  return resolve(event);
+  return withSetCookies(await resolve(event), result.setCookies);
 };

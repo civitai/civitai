@@ -1,7 +1,10 @@
 import {
   deviceCookieNameForSlot,
+  hostDeviceCookieName,
   hostSessionCookieName,
   isSecureCookie,
+  LOGIN_RETRY_COOKIE,
+  POST_LOGIN_MARKER,
   sessionCookieMode,
   sessionCookieName,
   sessionCookieNameForSlot,
@@ -161,12 +164,18 @@ export function clearLegacyCookies(host?: string): string[] {
  * Does NOT clear legacy cookies — the transitions that need that (login callback, upgrade-on-read) call
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
  * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
- * never carries a Domain (`__Host-` forbids it).
+ * never carries a Domain (`__Host-` forbids it). Pass `requestCookies` so the write also expires, host-only, the
+ * other slot's session and device names the request carries.
  */
 export function setSessionCookie(
   res: CookieWritable,
   token: string,
-  opts?: { deviceCookie?: string; host?: string; slot?: CookieSlot }
+  opts?: {
+    deviceCookie?: string;
+    host?: string;
+    slot?: CookieSlot;
+    requestCookies?: Partial<Record<string, string | undefined>>;
+  }
 ): void {
   const secure = isSecureCookie();
   const slot = opts?.slot ?? sessionCookieMode();
@@ -185,6 +194,15 @@ export function setSessionCookie(
     const deviceName = deviceCookieNameForSlot(slot, secure);
     all.push(buildCookie(deviceName, opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
+  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
+  for (const [mine, theirs] of [
+    [sessionCookieNameForSlot(slot, secure), sessionCookieNameForSlot(other, secure)],
+    [deviceCookieNameForSlot(slot, secure), deviceCookieNameForSlot(other, secure)],
+  ]) {
+    // On http dev both slots share the bare name; expiring "the other" would delete what was just written.
+    if (theirs !== mine && opts?.requestCookies?.[theirs])
+      all.push(buildCookie(theirs, '', secure, undefined, 0));
+  }
   res.setHeader('Set-Cookie', all);
 }
 
@@ -193,7 +211,7 @@ export function setSessionCookie(
 // session cookie that DIDN'T stick (a cross-domain Domain/Secure misconfig — the redirect-loop case) from a
 // normal login. Deliberately host-only and NOT Secure: it must stick regardless of the session cookie's fate,
 // which is the whole point of using it as the "did the real cookie land?" probe.
-export const POST_LOGIN_MARKER = 'civ_postlogin';
+export { POST_LOGIN_MARKER };
 
 /** Set-Cookie for the one-shot post-login marker (60s; host-only; non-secure so it always lands). */
 export function postLoginMarkerCookie(): string {
@@ -211,7 +229,7 @@ export function clearPostLoginMarker(): string {
 // the login once (consume the marker, re-enter the flow) so a transient miss self-heals; only on a SECOND
 // consecutive miss do we show the terminal "couldn't sign you in" page — that's a genuine redirect loop.
 // Host-only + non-secure like the marker so it always lands; short TTL (the whole login chain is a few hops).
-export const LOGIN_RETRY_COOKIE = 'civ_login_retry';
+export { LOGIN_RETRY_COOKIE };
 const LOGIN_RETRY_TTL_S = 120;
 
 /** Set-Cookie recording the current login-retry count (host-only; always lands, like the marker). */
@@ -268,6 +286,7 @@ export function clearAllSessionCookies(host?: string): string[] {
     }
   }
   out.push(`${hostSessionCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
+  out.push(`${hostDeviceCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
   out.push(clearPostLoginMarker(), clearLoginRetryCookie(), clearPostLoginRetryCookie());
   return out;
 }
