@@ -1258,13 +1258,14 @@ export function getFeatureFlagsCohortCacheStats() {
 
 function cohortKey({ user, req, host = req?.headers.host }: FeatureAccessContext): string {
   const region = isDev || !req ? null : getRegion(req);
+  void region;
   return JSON.stringify([
     user ? 1 : 0,
     user?.isModerator ? 1 : 0,
     user?.tier ?? null,
     user ? (user.permissions ?? []).slice().sort() : null,
     host ?? null,
-    region,
+    // MUTANT: region dropped from the cohort key (red-proof only, do not merge)
   ]);
 }
 
