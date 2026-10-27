@@ -16,6 +16,7 @@ describe('getPromptScans', () => {
     await getPromptScans(42, { days: 30, limit: 100 });
     const { query: sql, query_params } = query.mock.calls[0][0];
     expect(query_params).toEqual({ userId: 42, days: 30, limit: 100 });
+    expect(sql).toMatch(/xguardPromptResults FINAL/);
     expect(sql).not.toContain('42');
     expect(sql).toMatch(/userId = \{userId:Int32\}/);
   });
@@ -23,6 +24,7 @@ describe('getPromptScans', () => {
   it('reads prompts and scores, an empty negative prompt as none', async () => {
     rows([
       {
+        promptHash: '-123',
         createdAt: '2026-10-27 05:00:00',
         positivePrompt: 'p',
         negativePrompt: '',
@@ -31,7 +33,9 @@ describe('getPromptScans', () => {
     ]);
     expect(await getPromptScans(1, { days: 7, limit: 100 })).toEqual([
       {
-        createdAt: '2026-10-27 05:00:00',
+        id: '-123',
+        // ClickHouse sends UTC without a zone marker; unmarked, a browser would read it as local time.
+        createdAt: '2026-10-27T05:00:00Z',
         prompt: 'p',
         negativePrompt: null,
         scores: [
@@ -48,6 +52,10 @@ describe('readScores', () => {
     expect(readScores({ alpha: 0.5, '__marker:01ABC': 1 })).toEqual([
       { label: 'alpha', score: 0.5 },
     ]);
+  });
+
+  it('drops a score that is not a finite number', () => {
+    expect(readScores({ a: Number.NaN, b: 0.3 })).toEqual([{ label: 'b', score: 0.3 }]);
   });
 
   it('reads a missing map as no scores rather than throwing', () => {

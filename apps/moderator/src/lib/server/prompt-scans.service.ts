@@ -1,20 +1,20 @@
 import { getClickhouse } from './clickhouse';
+import { clickhouseDate } from './clickhouse-date';
 import type { PromptScan, PromptScanDays, PromptScanLimit } from '$lib/prompt-scans';
 
 /**
- * The orchestrator's XGuard verdict on each generator prompt an account submitted, read from
- * `orchestration.xguardPromptResults` — the orchestrator's table, written once per prompt scan.
+ * The orchestrator's XGuard verdict on generator prompts an account submitted, read from
+ * `orchestration.xguardPromptResults` (the orchestrator's table). It is not a complete history, so the
+ * panel must never present a missing prompt as one the account did not send.
  *
- * It is a ReplacingMergeTree keyed on the prompt hash ALONE, so a prompt keeps one row whoever sent it:
- * resubmitting it replaces the row, and if another account later submits the same text the row moves to
- * them. Scans that failed or expired are not written at all. Both mean a missing prompt is not evidence
- * the account never submitted it.
+ * Read with FINAL so each row is read once, in its current state.
  *
  * Label names and any thresholds are deliberately absent from this file: the panel renders whatever
  * keys the scan wrote, and the moderator picks the cutoff.
  */
 
 type Row = {
+  promptHash: string;
   createdAt: string;
   positivePrompt: string;
   negativePrompt: string;
@@ -31,12 +31,12 @@ export function readScores(raw: Record<string, number> | null | undefined) {
 
 export async function getPromptScans(
   userId: number,
-  { days, limit }: { days: PromptScanDays; limit: PromptScanLimit }
+  { days, limit, signal }: { days: PromptScanDays; limit: PromptScanLimit; signal?: AbortSignal }
 ): Promise<PromptScan[]> {
   const resp = await getClickhouse().query({
     query: `
-      SELECT createdAt, positivePrompt, negativePrompt, scores
-      FROM orchestration.xguardPromptResults
+      SELECT toString(promptHash) AS promptHash, createdAt, positivePrompt, negativePrompt, scores
+      FROM orchestration.xguardPromptResults FINAL
       WHERE userId = {userId:Int32}
         AND createdAt >= now() - toIntervalDay({days:UInt32})
       ORDER BY createdAt DESC
@@ -44,10 +44,14 @@ export async function getPromptScans(
     `,
     query_params: { userId, days, limit },
     format: 'JSONEachRow',
+    // Every call scans the table; a closed tab or a stuck query must not hold a ClickHouse slot.
+    clickhouse_settings: { max_execution_time: 20 },
+    abort_signal: signal,
   });
   const rows = await resp.json<Row>();
   return rows.map((r) => ({
-    createdAt: r.createdAt,
+    id: r.promptHash,
+    createdAt: clickhouseDate(r.createdAt),
     prompt: r.positivePrompt,
     negativePrompt: r.negativePrompt || null,
     scores: readScores(r.scores),

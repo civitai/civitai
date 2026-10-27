@@ -9,6 +9,7 @@
   import {
     PROMPT_SCAN_DAYS,
     PROMPT_SCAN_LIMITS,
+    visibleScans,
     type PromptScan,
   } from '$lib/prompt-scans';
 
@@ -21,7 +22,9 @@
   let sort = $state<'newest' | 'score'>('newest');
   let minScore = $state('');
   let revealAll = $state(false);
-  const revealed = new SvelteSet<number>();
+  // Keyed on the row's id, never its position: a position survives a re-sort and would open the text of
+  // whichever prompt moved into it.
+  const revealed = new SvelteSet<string>();
 
   const scans = $derived(
     shown && canView
@@ -33,14 +36,6 @@
       : null
   );
 
-  const top = (s: PromptScan) => s.scores[0]?.score ?? 0;
-
-  function visible(items: PromptScan[]) {
-    const floor = Number(minScore);
-    const kept =
-      minScore.trim() && Number.isFinite(floor) ? items.filter((s) => top(s) >= floor) : items;
-    return sort === 'score' ? [...kept].sort((a, b) => top(b) - top(a)) : kept;
-  }
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -56,13 +51,9 @@
   {#if !canView}
     <p class="mt-3 text-sm text-dark-2">{denied('user.generations.view')}</p>
   {:else}
-    <!-- Both gaps are blind spots, not footnotes: a moderator must not read an absent prompt as one the
-         account never sent. -->
     <p class="mt-1 text-xs text-dark-2">
-      The orchestrator's scan of each prompt this account sent to the generator, newest first. Not a
-      complete history: a prompt keeps one row whoever sent it, so a prompt resent later by another
-      account moves to them, and scans that failed or expired are not recorded. A prompt missing here
-      is not evidence it was never submitted.
+      The orchestrator's scan of prompts this account sent to the generator, newest first. This is not a
+      complete history: a prompt missing here is not evidence it was never submitted.
     </p>
   {/if}
 
@@ -100,7 +91,7 @@
     {#await scans}
       <p class="mt-3 text-sm text-dark-2">Loading prompt scans…</p>
     {:then result}
-      {@const rows = visible(result.items)}
+      {@const rows = visibleScans(result.items, { sort, minScore })}
       {@const capped = result.items.length >= limit}
       <p class="mt-3 text-xs text-dark-2">
         {num(rows.length)} of {num(result.items.length)} scanned prompts in the last {days} days{capped
@@ -122,8 +113,8 @@
         {/if}
       </p>
       <ul class="mt-2 space-y-2 text-sm">
-        {#each rows as scan, i (`${scan.createdAt}:${i}`)}
-          {@const open = revealAll || revealed.has(i)}
+        {#each rows as scan (scan.id)}
+          {@const open = revealAll || revealed.has(scan.id)}
           <li class="rounded border border-dark-4 p-2">
             <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span class="text-xs text-dark-2">{dateTime(scan.createdAt)}</span>
@@ -134,7 +125,7 @@
                 <button
                   type="button"
                   class="text-xs {LINK_CLASS}"
-                  onclick={() => (open ? revealed.delete(i) : revealed.add(i))}
+                  onclick={() => (open ? revealed.delete(scan.id) : revealed.add(scan.id))}
                 >
                   {open ? 'Hide prompt' : 'Show prompt'}
                 </button>

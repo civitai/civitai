@@ -4,7 +4,8 @@ const getPromptScans = vi.fn();
 vi.mock('$lib/server/prompt-scans.service', () => ({ getPromptScans }));
 const logToAxiom = vi.fn(async (_data: Record<string, unknown>) => undefined);
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
-vi.mock('$lib/server/access', () => ({ canAccess: () => true }));
+const canAccess = vi.fn((_user: unknown, _path: string) => true);
+vi.mock('$lib/server/access', () => ({ canAccess }));
 
 const { GET } = await import('../+server');
 
@@ -17,13 +18,15 @@ const call = (
     params: { userId },
     url: new URL(`http://x/api/user-prompt-scans/${userId}${search}`),
     locals: { user: { id: 1 }, grants },
+    request: new Request('http://x'),
   } as never) as Promise<Response>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  canAccess.mockImplementation(() => true);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   getPromptScans.mockResolvedValue([
-    { createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] },
+    { id: 'h', createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] },
   ]);
 });
 
@@ -33,14 +36,26 @@ describe('/api/user-prompt-scans', () => {
     expect(getPromptScans).not.toHaveBeenCalled();
   });
 
+  it('refuses a moderator who cannot open User Lookup, before any query', async () => {
+    canAccess.mockImplementation(() => false);
+    await expect(call()).rejects.toMatchObject({ status: 403 });
+    expect(canAccess).toHaveBeenCalledWith(expect.anything(), '/retool/user-lookup');
+    expect(getPromptScans).not.toHaveBeenCalled();
+  });
+
   it('refuses an id that is not a positive integer', async () => {
     await expect(call('', undefined, '5 OR 1=1')).rejects.toMatchObject({ status: 400 });
     expect(getPromptScans).not.toHaveBeenCalled();
   });
 
   it('records who read whose prompts, over what window, and how many rows', async () => {
-    await call('?days=90&limit=250');
-    expect(getPromptScans).toHaveBeenCalledWith(5, { days: 90, limit: 250 });
+    const res = await call('?days=90&limit=250');
+    expect(await res.json()).toMatchObject({ items: [{ id: 'h' }], days: 90, limit: 250 });
+    expect(getPromptScans).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ days: 90, limit: 250 })
+    );
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'user-prompt-scans-view',
@@ -55,7 +70,16 @@ describe('/api/user-prompt-scans', () => {
 
   it('falls back to the default window and cap for values it does not offer', async () => {
     await call('?days=36500&limit=1000000');
-    expect(getPromptScans).toHaveBeenCalledWith(5, { days: 7, limit: 100 });
+    expect(getPromptScans).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ days: 7, limit: 100 })
+    );
+  });
+
+  it('still serves the read when the audit log write fails', async () => {
+    logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+    const res = await call();
+    expect(res.status).toBe(200);
   });
 
   it('answers a ClickHouse failure with a status Cloudflare passes through, and logs no view', async () => {
