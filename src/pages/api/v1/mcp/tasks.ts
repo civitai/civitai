@@ -11,9 +11,8 @@ import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
 
 /**
- * Task Router MCP server (experimental), streamable-HTTP transport, stateless: tools
- * `find_tasks` and `run_task`. Bearer only (a personal API key or an OAuth token with the
- * AI-services write scope), never a cookie, because `run_task` spends the caller's Buzz.
+ * Experimental Task Router MCP endpoint. Bearer only (a personal API key or an OAuth token
+ * with the AI-services write scope), never a cookie, because `run_task` spends the caller's Buzz.
  */
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') {

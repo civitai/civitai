@@ -6,11 +6,7 @@ import type * as TaskRouterModule from '~/server/services/blocks/task-router.ser
 import type * as WorkflowsModule from '~/server/services/orchestrator/workflows';
 import type * as OwnerModule from '~/server/services/orchestrator/assert-workflow-owner';
 
-/**
- * The MCP requester end to end, minus HTTP: the router's match is stubbed to hand back the
- * router repo's vector tickets, which are verified for real; the orchestrator is stubbed; the
- * per-user daily cap runs over an in-memory Redis.
- */
+/** The router's match is stubbed with the router repo's vector tickets, which are verified for real. */
 
 const h = vi.hoisted(() => ({
   matchTask: vi.fn(),

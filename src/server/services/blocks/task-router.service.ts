@@ -184,7 +184,7 @@ const findReplySchema = z.object({
 });
 export type TaskMenuItem = z.infer<typeof findReplySchema>['items'][number];
 
-/** Menu items matching free text, for MCP `find_tasks`. `null` when the router is unavailable. */
+/** Menu items matching free text. `null` when the router is unavailable. */
 export async function findTasks(
   config: TaskRouterConfig,
   query: string,

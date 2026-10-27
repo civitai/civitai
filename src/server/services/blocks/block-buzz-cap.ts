@@ -1,8 +1,6 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 
-// The per-user daily App Blocks Buzz cap, shared by every block submit path and by the
-// Task Router MCP requester, so all of a user's app and agent spend draws on one ceiling.
 // 25h TTL: comfortably covers a UTC-day window plus clock skew; the key is
 // re-derived per day so a stale counter never bleeds into the next window.
 export const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
@@ -16,7 +14,7 @@ export function buzzCapRedisKey(
   userId: number
 ): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
   // PER-USER aggregate: appBlockId is intentionally NOT part of the key so all
-  // of a user's installed blocks share ONE daily ceiling (see comment above).
+  // of a user's installed blocks share ONE daily ceiling.
   return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
 }
 
@@ -36,13 +34,8 @@ export function buzzCapRedisKey(
  * until some later submit's `ttl < 0` branch re-arms it and extends the burn another
  * ~25h.
  *
- * MEASURED on this branch (adversarial audit round 1) against the CONSENT leg: with
- * `sysRedis.expire` made to reject for consent keys, the platform counter came back to
- * its pre-attempt value and the consent counter stayed charged 25 for a submit that
- * never happened — the two diverging is precisely what `refundBlockBuzzReservation`
- * exists to prevent. The platform and run-for-real legs
- * had the identical shape, so all three are fixed here rather than at one call site:
- * open-coding this three times is what let the same defect sit in three places.
+ * All three legs (platform, run-for-real, consent) share this function so the unwind
+ * cannot be missed at one call site.
  *
  * Still fails CLOSED — the error is rethrown after the unwind, so the submit aborts.
  * The unwind is best-effort (`refundBlockBuzzSpend` never throws); a lost unwind
@@ -73,7 +66,7 @@ export async function reserveCumulativeBuzzKey(
  * Atomically reserves `cost` against this user's cumulative UTC-day counter and
  * returns the new running total. INCRBY is atomic, so concurrent submits
  * accumulate correctly with no read→check→record TOCTOU. A Redis error throws and
- * fails the submit CLOSED, identical to the old read path — see
+ * fails the submit CLOSED — see
  * `reserveCumulativeBuzzKey` for the TTL arming and the self-unwind.
  */
 export async function reserveBlockBuzzSpend(

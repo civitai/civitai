@@ -35,7 +35,7 @@ const MCP_WORKFLOW_TAG = 'task-router-mcp';
 const RUN_WAIT_SECONDS = 25;
 const FIND_LIMIT_MAX = 20;
 
-/** Who is calling: the bearer's user, its own token (the orchestrator spends and limits on it). */
+/** `token` is the caller's own bearer, passed through so the orchestrator spends and limits on it. */
 export type McpCaller = {
   userId: number;
   token: string;
@@ -136,7 +136,6 @@ function runSummary(workflow: WorkflowLike) {
 }
 
 async function runStatusTool(caller: McpCaller, workflowId: string): Promise<ToolResult> {
-  // The orchestrator answers a consumer read only for the token's own workflows.
   const workflow = await getWorkflow({ token: caller.token, path: { workflowId } }).catch(
     () => null
   );
@@ -229,7 +228,7 @@ async function runTaskTool(
     throw e;
   }
 
-  // Agents loop, so MCP spend draws on the same per-user daily ceiling as App Blocks.
+  // Agents loop, so they share the per-user daily cap rather than getting their own.
   const reserved = Math.max(1, ticket.quote.amount);
   const { total, key } = await reserveBlockBuzzSpend(caller.userId, reserved);
   if (total > BLOCK_BUZZ_CAP_PER_DAY) {
