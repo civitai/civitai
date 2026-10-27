@@ -1,15 +1,18 @@
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { LOCK_REVIEW_REPORT_KEY, requestableLocks } from '~/shared/constants/lock-review.constants';
+import {
+  LOCK_REVIEW_REPORT_KEY,
+  requestableLocks,
+  type LockReviewModelFlags,
+} from '~/shared/constants/lock-review.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { trpc } from '~/utils/trpc';
 
-type LockReviewModel = {
+type LockReviewModel = LockReviewModelFlags & {
   id: number;
   user?: { id: number } | null;
   userId?: number;
-  lockedProperties?: (string | null)[] | null;
 };
 
 /** Whether, and how, the owner of `model` is offered "Request moderator review". */
@@ -21,7 +24,7 @@ export function useLockReviewAction(model: LockReviewModel | undefined) {
     !!currentUser &&
     !currentUser.isModerator &&
     currentUser.id === ownerId &&
-    requestableLocks(model.lockedProperties).length > 0;
+    requestableLocks(model).length > 0;
 
   const { data } = trpc.report.getLockReviewState.useQuery(
     { id: model?.id ?? 0 },

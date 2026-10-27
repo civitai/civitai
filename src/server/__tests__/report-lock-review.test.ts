@@ -38,6 +38,10 @@ const { POI_LOCKED_PROPERTIES } = await import(
 const { MINOR_LOCKED_PROPERTIES } = await import('~/server/services/model.service');
 
 const DAY = 24 * 60 * 60 * 1000;
+/** The model row as the service would read it: only the columns it selects come back. */
+const modelRowIs = (row: MixedObject) =>
+  modelFindUnique.mockImplementation((async (args: { select: Record<string, boolean> }) =>
+    Object.fromEntries(Object.keys(args.select).map((key) => [key, row[key]]))) as never);
 /** Closed requests, filtered by the cutoff the service asks for so the window itself is exercised. */
 const closedRequestsAre = (rows: { daysAgo: number; lockedProperties: string[] }[]) =>
   closedRequests.mockImplementation((async (args: { where: { statusSetAt: { gt: Date } } }) =>
@@ -121,6 +125,24 @@ describe('a request to review a locked setting', () => {
         /can't be reviewed this way/
       );
       await expect(createReport(lockReview(OWNER, ['sfwOnly']))).rejects.toThrow(
+        /can't be reviewed this way/
+      );
+      expect(reportCreate).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([['minor'], ['poi']])(
+    'is refused on a model its owner marked %s, though the lock itself is a moderator nsfw lock',
+    async (flag) => {
+      modelRowIs({
+        userId: OWNER,
+        lockedProperties: ['nsfw'],
+        poi: false,
+        minor: false,
+        [flag]: true,
+      });
+
+      await expect(createReport(lockReview(OWNER, ['nsfw']))).rejects.toThrow(
         /can't be reviewed this way/
       );
       expect(reportCreate).not.toHaveBeenCalled();
@@ -391,6 +413,22 @@ describe('what the owner is offered', () => {
       modelFindUnique.mockResolvedValue({
         userId: OWNER,
         lockedProperties: [...locks(), 'category'],
+      });
+      expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
+        requestable: [],
+      });
+    }
+  );
+
+  it.each([['minor'], ['poi']])(
+    'nothing, for a model whose owner marked it %s, with a moderator lock on nsfw',
+    async (flag) => {
+      modelRowIs({
+        userId: OWNER,
+        lockedProperties: ['nsfw'],
+        poi: false,
+        minor: false,
+        [flag]: true,
       });
       expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
         requestable: [],

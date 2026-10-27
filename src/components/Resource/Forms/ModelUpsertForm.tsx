@@ -378,7 +378,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
   function isLockedDescription(key: string, defaultDescription?: string) {
     if (!model?.lockedProperties?.includes(key)) return defaultDescription;
-    if (!model.id || !requestableLocks(model.lockedProperties).some((lock) => lock === key))
+    if (!model.id || !requestableLocks(model).some((lock) => lock === key))
       return 'Locked by moderator';
     return (
       <>

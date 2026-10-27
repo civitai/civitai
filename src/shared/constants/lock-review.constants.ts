@@ -23,11 +23,22 @@ export const isRequestableLock = (value: unknown): value is RequestableLock =>
 /** While either of these is locked, none of the model's locks can be requested. */
 const NON_REQUESTABLE_LOCKS = ['poi', 'minor'];
 
-/** The model's locked settings an owner may ask a moderator to review, in display order. */
-export const requestableLocks = (lockedProperties?: (string | null)[] | null): RequestableLock[] =>
-  lockedProperties?.some((key) => !!key && NON_REQUESTABLE_LOCKS.includes(key))
-    ? []
-    : REQUESTABLE_LOCKS.filter((key) => lockedProperties?.includes(key));
+export type LockReviewModelFlags = {
+  lockedProperties?: (string | null)[] | null;
+  poi?: boolean | null;
+  minor?: boolean | null;
+};
+
+/**
+ * The model's locked settings an owner may ask a moderator to review, in display order. None while
+ * the model is marked as a real person or a minor, whether that mark is locked or the owner's own.
+ */
+export const requestableLocks = (model?: LockReviewModelFlags | null): RequestableLock[] => {
+  const locked = model?.lockedProperties ?? [];
+  if (model?.poi || model?.minor) return [];
+  if (locked.some((key) => !!key && NON_REQUESTABLE_LOCKS.includes(key))) return [];
+  return REQUESTABLE_LOCKS.filter((key) => locked.includes(key));
+};
 
 /** What the moderator queue shows as the report's reason: the sub-reason and the settings named. */
 export const lockReviewQueueLabel = (locks: string[]) =>

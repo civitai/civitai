@@ -74,6 +74,22 @@ describe('Request review, beside a locked setting', () => {
     expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
   });
 
+  test.each([['poi'], ['minor']])(
+    'is not shown on a model its owner marked %s, though only nsfw is locked',
+    async (flag) => {
+      renderWithProviders(
+        <>
+          <span>rendered</span>
+          <RequestLockReviewLink model={{ ...model(['nsfw']), [flag]: true }} />
+        </>
+      );
+      await expect.element(page.getByText('rendered')).toBeVisible();
+
+      expect(page.getByRole('button').elements()).toHaveLength(0);
+      expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
+    }
+  );
+
   test('is shown for any requestable lock', async () => {
     renderWithProviders(<RequestLockReviewLink model={model(['category'])} />);
 

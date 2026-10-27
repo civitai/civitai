@@ -42,12 +42,12 @@ export async function getLockReviewState({
   if (isModerator) return null;
   const model = await db.model.findUnique({
     where: { id: modelId },
-    select: { userId: true, lockedProperties: true },
+    select: { userId: true, lockedProperties: true, poi: true, minor: true },
   });
   if (!model || model.userId !== userId) return null;
 
   const locked = model.lockedProperties ?? [];
-  const requestable = requestableLocks(locked);
+  const requestable = requestableLocks(model);
   if (!requestable.length) return { requestable, pending: false, reopensAt: null };
 
   const [pending, recentlyClosed] = await Promise.all([
