@@ -2,9 +2,16 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { refundTransaction, getTransactionByExternalId } = vi.hoisted(() => ({
+const {
+  refundTransaction,
+  getTransactionByExternalId,
+  refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+} = vi.hoisted(() => ({
   refundTransaction: vi.fn(),
   getTransactionByExternalId: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: vi.fn(),
 }));
 
 // image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
@@ -20,8 +27,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId,
   createBuzzTransaction: vi.fn(),
   createMultiAccountBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
-  getMultiAccountTransactionsByPrefix: vi.fn(),
+  refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
 }));
 
 import { deleteBid } from '~/server/services/auction.service';
@@ -42,6 +49,8 @@ const markedDeleted = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   refundTransaction.mockReset();
+  refundMultiAccountTransaction.mockReset();
+  getMultiAccountTransactionsByPrefix.mockReset().mockResolvedValue([]);
   getTransactionByExternalId.mockReset().mockResolvedValue(null);
   dbMock.dbWrite.bid.findFirst.mockResolvedValue({
     userId: 1,
@@ -88,6 +97,51 @@ describe('deleteBid — a bid whose refund already went through', () => {
     refundTransaction.mockRejectedValue(conflict());
 
     await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow('conflict');
+
+    expect(markedDeleted()).toBe(false);
+  });
+});
+
+describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
+  const PREFIX = 'auction-5-1-77';
+  const legs = ['leg-a', 'leg-b'].map((transactionId) => ({
+    transactionId,
+    externalTransactionId: `${PREFIX}-${transactionId}`,
+    accountType: 'yellow',
+    accountId: 1,
+    amount: 50,
+  }));
+
+  beforeEach(() => {
+    dbMock.dbWrite.bid.findFirst.mockResolvedValue({
+      userId: 1,
+      transactionIds: [PREFIX],
+      auction: {
+        id: 5,
+        startAt: new Date(Date.now() - day),
+        endAt: new Date(Date.now() + day),
+        auctionBase: { slug: 'sd1' },
+      },
+    } as never);
+  });
+
+  it('deletes the bid when a retry finds every leg already refunded', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-') ? { externalTransactionId: id } : null
+    );
+
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(refundTransaction).not.toHaveBeenCalled();
+    expect(markedDeleted()).toBe(true);
+  });
+
+  it('keeps the bid and throws when the prefix lists no transactions', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(404, 'Not Found'));
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/No transactions/);
 
     expect(markedDeleted()).toBe(false);
   });
