@@ -43,6 +43,6 @@ app's `/admin`. Reaching `/messages` also needs its page grant.
 
 - `CIVITAI_MODERATION_USER_ID` on the main app and the moderator app: the shared account's user id. Unset
   turns the feature off.
-- The shared account is a moderator account with DM policy `nobody` and no way to sign in. Sessions and
-  API keys that resolve to it are refused and logged as errors.
+- The shared account is a moderator account with DM policy `nobody`. It cannot sign in or act; an
+  attempt is logged as an error.
 - Migration `20261209000000_mod_thread_claim` (applied by hand).
