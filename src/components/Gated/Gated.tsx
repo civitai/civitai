@@ -30,7 +30,7 @@ import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { ownDomainCanonical } from '~/components/Meta/canonical';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { useAdGate } from '~/components/Ads/AdsProvider';
+import { useAdGate, useSetAdPageNsfwLevel } from '~/components/Ads/AdsProvider';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -206,6 +206,8 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
 
   // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
   useAdGate(!!suppressAds || isAdGatedContent({ contentNsfwLevel, nsfw }));
+  // Ad requests report this page's rating rather than the viewer's browsing level
+  useSetAdPageNsfwLevel(contentNsfwLevel);
 
   // Whether the content is canonically SFW for the purpose of the deindex
   // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean

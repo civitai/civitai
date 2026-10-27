@@ -12,6 +12,7 @@ import {
 import {
   findOrCreateUser,
   linkAccountToUser,
+  SystemAccountSignInError,
   userExistsByEmail,
   isLinkedAccount,
 } from '$lib/server/auth/users';
@@ -128,7 +129,11 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   }
 
   // Standard login / signup — the hub sets the session cookie here.
-  const user = await findOrCreateUser(provider.id, profile, scope);
+  const user = await findOrCreateUser(provider.id, profile, scope).catch((e) => {
+    if (e instanceof SystemAccountSignInError)
+      redirect(302, loginRetry(url.origin, 'SystemAccount', returnUrl));
+    throw e;
+  });
   await establishSession(cookies, user, { returnUrl });
 
   // Count the successful login AFTER the session is established (best-effort; never blocks the redirect).

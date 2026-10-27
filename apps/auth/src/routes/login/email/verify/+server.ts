@@ -4,7 +4,7 @@ import { SYNC_PARAM } from '@civitai/auth';
 import type { RequestHandler } from './$types';
 import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { consumeVerificationToken } from '$lib/server/auth/email-tokens';
-import { findOrCreateUserByEmail } from '$lib/server/auth/users';
+import { findOrCreateUserByEmail, SystemAccountSignInError } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
@@ -25,7 +25,10 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   const valid = await consumeVerificationToken(email, token);
   if (!valid) redirect(302, '/login?error=Verification');
 
-  const user = await findOrCreateUserByEmail(email);
+  const user = await findOrCreateUserByEmail(email).catch((e) => {
+    if (e instanceof SystemAccountSignInError) redirect(302, '/login?error=SystemAccount');
+    throw e;
+  });
   await establishSession(cookies, user, { returnUrl });
 
   // Count the successful email login (best-effort; never blocks the redirect).
