@@ -1100,7 +1100,7 @@ function serveDepositTable(table: () => DepositRow[]) {
 describe('recordUnverifiedDeposit', () => {
   beforeEach(resetDepositMocks);
 
-  it.each(['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'failed'])(
+  it.each(['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'failed', 'expired'])(
     'hands a %s row to the retry sweep when a paid IPN cannot be verified',
     async (status) => {
       let rowStatus = status;
@@ -1117,7 +1117,7 @@ describe('recordUnverifiedDeposit', () => {
     }
   );
 
-  it.each(['finished', 'held', 'unverified'])(
+  it.each(['finished', 'held', 'unverified', 'refunded', 'unverified_exhausted'])(
     'leaves a %s row where it is when a paid IPN cannot be verified',
     async (status) => {
       let rowStatus = status;
