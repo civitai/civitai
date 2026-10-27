@@ -39,6 +39,7 @@ vi.mock('$lib/server/db/db', () => ({
 vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authorize } }));
 vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
+vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => undefined) }));
 vi.mock('$lib/server/auth/device', () => ({
   getOrCreateDeviceId: () => 'dev',
@@ -125,19 +126,29 @@ async function start(): Promise<{ status: number; location?: string }> {
   }
 }
 
+/** The `error` an error redirect back to the client carries (the redirect_uri is verified by then). */
+async function redirectedError(pending: Response | Promise<Response>): Promise<string | null> {
+  const thrown = await Promise.resolve(pending).then(
+    () => null,
+    (e: unknown) => e
+  );
+  const location = (thrown as { location?: string } | null)?.location;
+  return location ? new URL(location).searchParams.get('error') : null;
+}
+
 describe('authorize — client_credentials-only scopes', () => {
   it('refuses AppStoreCatalogWrite before storing any consent or issuing a code', async () => {
-    const res = await approve(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    const error = await redirectedError(
+      approve(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite)
+    );
+    expect(error).toBe('invalid_scope');
     expect(h.inserts).toHaveLength(0);
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
   it('refuses WorkerRegister before storing any consent or issuing a code', async () => {
-    const res = await approve(TokenScope.UserRead | TokenScope.WorkerRegister);
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    const error = await redirectedError(approve(TokenScope.UserRead | TokenScope.WorkerRegister));
+    expect(error).toBe('invalid_scope');
     expect(h.inserts).toHaveLength(0);
     expect(h.authorize).not.toHaveBeenCalled();
   });

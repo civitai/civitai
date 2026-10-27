@@ -9,7 +9,9 @@
   const badgeSvg = buildBadgeSvg({ holiday });
   const wordmarkSvg = buildWordmarkSvg({ base: '#e8eaed' });
 
-  let showSwitcher = $state(false);
+  // The picker starts open when the client asked for it (prompt=select_account); the button flips it.
+  let toggled = $state(false);
+  const showSwitcher = $derived(!data.invalid && data.selectAccount !== toggled);
   // Which decision is on its way. Both forms are native submits, so the page gives no sign of the round
   // trip through the client's callback on its own; this shows it and blocks a second click.
   let submitting = $state<'approve' | 'deny' | null>(null);
@@ -48,7 +50,7 @@
         <p class="desc">{data.client.description}</p>
       {/if}
 
-      {#if data.accounts.length >= 2 && data.accounts.some((a) => a.active)}
+      {#if data.accounts.some((a) => a.active)}
         {@const active = data.accounts.find((a) => a.active)}
         <div class="account">
           <div class="account-current">
@@ -63,7 +65,7 @@
               <span class="account-kicker">Authorizing as</span>
               <span class="account-name">{active?.username ?? `User #${active?.userId}`}</span>
             </div>
-            <button type="button" class="switch-toggle" onclick={() => (showSwitcher = !showSwitcher)}>
+            <button type="button" class="switch-toggle" onclick={() => (toggled = !toggled)}>
               {showSwitcher ? 'Cancel' : 'Switch'}
             </button>
           </div>
@@ -90,6 +92,14 @@
                   </form>
                 </li>
               {/each}
+              {#if data.addAccountUrl}
+                <li>
+                  <a class="account-option add-account" href={data.addAccountUrl}>
+                    <span class="avatar sm">+</span>
+                    <span class="account-name">Use another account</span>
+                  </a>
+                </li>
+              {/if}
             </ul>
           {/if}
         </div>
@@ -286,6 +296,10 @@
   }
   .account-option:hover {
     background: #22262d;
+  }
+  .add-account {
+    text-decoration: none;
+    color: #c8ccd0;
   }
   .avatar {
     display: inline-flex;

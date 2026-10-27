@@ -4,6 +4,8 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 // The limiter itself (fixed-window, fail-open) is the hub's SHARED checkRateLimit — we don't fork a
 // second implementation, we just carry the per-endpoint limits + identifier policy here:
 //   - authorize: per-user   (10/min)
+//   - authorize-anon: per-IP (60/min) — a signed-out `prompt=none` request, the one signed-out case that
+//                looks the client up (to send login_required back to it). Sized like a NAT of real users.
 //   - token:     per-IP     (20/min) — the authorization-code exchange.
 //   - token-overflow: per-IP (120/min) — FAILED client-secret checks on a request past `token`. Charged only
 //                when the secret does not check out, so an app proving its secret is never held to it; once
@@ -52,6 +54,7 @@ const OAUTH_RATE_LIMITS = {
   'device-token': { limit: 20, windowSeconds: 60 },
   'device-token-anon': { limit: 240, windowSeconds: 60 },
   authorize: { limit: 10, windowSeconds: 60 },
+  'authorize-anon': { limit: 60, windowSeconds: 60 },
   revoke: { limit: 20, windowSeconds: 60 },
   session: { limit: 300, windowSeconds: 60 },
   introspect: { limit: 60, windowSeconds: 60 },
