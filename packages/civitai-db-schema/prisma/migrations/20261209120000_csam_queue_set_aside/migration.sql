@@ -2,6 +2,12 @@
 -- BEFORE deploying the code that writes it (reads skip the table while it is missing). Applied
 -- MANUALLY, per environment. The foreign keys keep a row from outliving its image or naming a report
 -- that does not exist; the queue decides when it reads whether a row still counts.
+-- One transaction, so a lock timeout leaves nothing behind and the file can be run again. The
+-- foreign key and the trigger both lock "Image" against writes: better to fail fast than to queue
+-- behind a long transaction and block every write to the table.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
 
 CREATE TABLE "CsamQueueSetAside" (
@@ -27,10 +33,6 @@ BEGIN
 END;
 $$;
 
--- lock_timeout because CREATE TRIGGER locks "Image" against writes: better to fail fast than to queue
--- behind a long transaction and block every write to the table.
-BEGIN;
-SET LOCAL lock_timeout = '5s';
 CREATE TRIGGER "Image_csam_queue_set_aside_end"
   AFTER UPDATE OF "needsReview" ON "Image"
   FOR EACH ROW

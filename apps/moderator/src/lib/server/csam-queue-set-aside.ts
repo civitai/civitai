@@ -17,9 +17,9 @@ export async function setAsideState(db: Kysely<DB>): Promise<SetAsideState> {
 }
 
 /**
- * The image (`image` is the table or alias it is read as) has a set-aside row that counts: any
- * dismissal, or a row set aside after a report while its owner's row is in the view. False when
- * `state` has no table.
+ * The image (`image` is the table or alias it is read as) has a set-aside row that counts: a
+ * dismissal while the image is still removed, or a row set aside after a report while its owner's
+ * row is in the view. False when `state` has no table.
  */
 export function setAsideCounts(image: string, state: SetAsideState) {
   if (!state.table) return sql<boolean>`false`;
@@ -36,6 +36,6 @@ export function setAsideCounts(image: string, state: SetAsideState) {
     select 1
     from "CsamQueueSetAside" s
     where s."imageId" = ${col('id')}
-      and (s.outcome = 'Dismissed' or ${afterReport})
+      and ((s.outcome = 'Dismissed' and ${col('ingestion')} = 'Blocked') or ${afterReport})
   )`;
 }

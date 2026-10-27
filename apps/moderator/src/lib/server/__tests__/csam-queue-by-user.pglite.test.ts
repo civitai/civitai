@@ -403,6 +403,16 @@ describe('images set aside from the CSAM queue', () => {
     expect(await listed(303)).toEqual([67]);
   });
 
+  it('shows a dismissed image again once it is no longer removed', async () => {
+    await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 68`);
+    try {
+      expect(await listed(303)).toEqual([68, 67]);
+      expect(await pendingOf(303)).toBe(2);
+    } finally {
+      await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68`);
+    }
+  });
+
   it('leaves the other queues alone', async () => {
     // A row on an image in another queue: the trigger keeps this from happening, the reads do not
     // rely on it.
