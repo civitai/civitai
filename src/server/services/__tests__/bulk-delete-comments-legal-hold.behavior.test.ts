@@ -51,7 +51,7 @@ const MARKED = 3; // held by the marker view
 const ids = (...authors: number[]) => authors.flatMap((a) => [a * 10 + 1, a * 10 + 2]);
 
 /** Runs just before the first statement whose text includes `on`. */
-let hook: { on: string; run: () => Promise<unknown> } | null = null;
+let hook: { on: string; run: (sql: Prisma.Sql) => Promise<unknown> } | null = null;
 
 const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)
@@ -109,7 +109,7 @@ beforeEach(async () => {
     if (hook && sql.text.includes(hook.on)) {
       const { run } = hook;
       hook = null;
-      await run();
+      await run(sql);
     }
     return (await holder.db.query(sql.text, sql.values)).rows;
   };
@@ -178,6 +178,40 @@ async function state(table: 'Comment' | 'CommentV2') {
   );
   return Object.fromEntries(rows.map((r) => [r.id, r.tosViolation ? 'hidden' : 'public']));
 }
+
+/**
+ * The most times one statement ran a per-account hold check that cannot be hashed (the
+ * blocked-image leg, aliased `bi`) when the first DELETE on `table` ran. The EXPLAIN is rolled
+ * back, so the delete itself still runs after it.
+ */
+async function mostHoldChecksPerStatement(table: 'Comment' | 'CommentV2', commentIds: number[]) {
+  let loops = -1;
+  hook = {
+    on: `DELETE FROM "${table}"`,
+    run: async (sql) => {
+      await holder.db.query('SAVEPOINT explain');
+      const { rows } = await holder.db.query<{ 'QUERY PLAN': { Plan: PlanNode }[] }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sql.text}`,
+        sql.values
+      );
+      await holder.db.query('ROLLBACK TO SAVEPOINT explain');
+      loops = maxLoops(rows[0]['QUERY PLAN'][0].Plan, /^bi(_\d+)?$/);
+    },
+  };
+  await bulkDeleteComments(
+    table === 'Comment'
+      ? { commentIds, commentV2Ids: [] }
+      : { commentIds: [], commentV2Ids: commentIds }
+  );
+  return loops;
+}
+
+type PlanNode = { Alias?: string; 'Actual Loops'?: number; Plans?: PlanNode[] };
+const maxLoops = (node: PlanNode, alias: RegExp): number =>
+  Math.max(
+    node.Alias && alias.test(node.Alias) ? node['Actual Loops'] ?? 0 : 0,
+    ...(node.Plans ?? []).map((child) => maxLoops(child, alias))
+  );
 
 const retainedLogs = () =>
   vi
@@ -339,6 +373,16 @@ describe('a legacy comment with replies', () => {
     });
     expect(await state('Comment')).not.toHaveProperty('51');
   });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    await holder.db.exec(`
+      DELETE FROM "Comment" WHERE id = 41;
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId")
+        SELECT 1000 + g, 4 + g % 3, 100, 'zzfixture', CASE WHEN g = 0 THEN 11 ELSE 1000 + (g - 1) / 3 END
+        FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('Comment', [11])).toBe(3);
+  });
 });
 
 describe('a CommentV2 with replies', () => {
@@ -402,6 +446,45 @@ describe('a CommentV2 with replies', () => {
     });
     expect(await state('CommentV2')).toMatchObject({ 72: 'public' });
     expect(await state('CommentV2')).not.toHaveProperty('11');
+  });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    // 30 replies by three authors, each in the reply thread of the one before.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content)
+        SELECT 1000 + g, 4 + g % 3, CASE WHEN g = 0 THEN 900 ELSE 2000 + g - 1 END, 'zzfixture'
+        FROM generate_series(0, 29) g;
+      INSERT INTO "Thread" (id, "commentId") SELECT 2000 + g, 1000 + g FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('CommentV2', [11])).toBe(3);
+  });
+
+  it('ends on a reply chain that loops back on itself, and still keeps it for a held reply', async () => {
+    // 11 sits in thread 100, so thread 100 hanging off reply 72 closes a loop: 11 → 900 → 72 → 100.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES
+        (72, ${CLEAN}, 900, 'zzfixture'), (76, ${HELD}, 100, 'zzfixture');
+      INSERT INTO "Thread" (id, "commentId") VALUES (100, 72);
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+  });
+
+  it('goes when the held reply is in a thread already unlinked from it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (902, NULL);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (77, ${HELD}, 902, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 1,
+      retainedHidden: 0,
+    });
   });
 });
 
