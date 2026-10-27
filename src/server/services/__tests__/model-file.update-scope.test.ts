@@ -82,8 +82,9 @@ type VersionState = { status: string; trainingStatus: string | null };
  * `locked` is the version row the transaction reads under FOR UPDATE; it defaults to the snapshot.
  */
 const tx = {
-  modelFile: { deleteMany: vi.fn(), create: vi.fn() },
+  modelFile: { create: vi.fn() },
   $queryRaw: vi.fn(),
+  $executeRaw: vi.fn(),
 };
 let locked: VersionState;
 let linkedRows: { sourceId: number | null }[];
@@ -130,11 +131,14 @@ beforeEach(() => {
   dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
     fn(tx)
   );
-  tx.modelFile.deleteMany.mockResolvedValue({ count: 1 });
+  tx.$executeRaw.mockResolvedValue(1);
   tx.modelFile.create.mockResolvedValue({ id: NEW_ID });
-  tx.$queryRaw.mockImplementation(async (...call: unknown[]) =>
-    sqlOf(call).includes('FOR UPDATE') ? [locked] : linkedRows
-  );
+  tx.$queryRaw.mockImplementation(async (...call: unknown[]) => {
+    if (sqlOf(call).includes('FOR UPDATE')) return [locked];
+    // The owner's hold, read only when the delete removed nothing. Not held.
+    if (sqlOf(call).includes('AS held')) return [{ held: false }];
+    return linkedRows;
+  });
 });
 
 const writtenData = () =>
@@ -142,6 +146,13 @@ const writtenData = () =>
     .data;
 const createdData = () =>
   (tx.modelFile.create.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> }).data;
+/** The old record's DELETE: its id, url and the owner it is scoped to (none for a moderator). */
+const fileDelete = () => {
+  const call = tx.$executeRaw.mock.calls.find((c) => sqlOf(c).includes('DELETE FROM "ModelFile"'));
+  if (!call) return undefined;
+  const [, id, url, scope] = call as [unknown, number, string, { values: unknown[] }];
+  return { id, url, owner: scope.values[0] };
+};
 const repointCalls = () =>
   tx.$queryRaw.mock.calls.filter((call) => sqlOf(call).includes('UPDATE "RecommendedResource"'));
 
@@ -202,9 +213,7 @@ describe('a new upload creates a new file record', () => {
   it('deletes the old record and creates an unscanned one with the new id', async () => {
     const result = await updateFile({ id: 1, url: NEW_URL, sizeKB: 2048, userId: 7 });
 
-    expect(tx.modelFile.deleteMany).toHaveBeenCalledWith({
-      where: { id: 1, url: OLD_URL, modelVersion: { model: { userId: 7 } } },
-    });
+    expect(fileDelete()).toEqual({ id: 1, url: OLD_URL, owner: 7 });
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     // The whole row, so a scan field or old header that leaks across is a diff here, and the
     // omitted name/type/visibility/overrideName must come from the old record.
@@ -262,13 +271,11 @@ describe('a new upload creates a new file record', () => {
   it('scopes the delete to the caller unless they are a moderator', async () => {
     await updateFile({ id: 1, url: NEW_URL, userId: 7, isModerator: true });
 
-    expect(tx.modelFile.deleteMany).toHaveBeenCalledWith({
-      where: { id: 1, url: OLD_URL, modelVersion: { model: undefined } },
-    });
+    expect(fileDelete()).toEqual({ id: 1, url: OLD_URL, owner: undefined });
   });
 
   it('creates nothing when the record was replaced or removed since it was read', async () => {
-    tx.modelFile.deleteMany.mockResolvedValue({ count: 0 });
+    tx.$executeRaw.mockResolvedValue(0);
 
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
       'modified concurrently'
@@ -338,7 +345,7 @@ describe('a published version keeps its files', () => {
       await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
         'This version has been published. Upload the new file as a new version.'
       );
-      expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+      expect(fileDelete()).toBeUndefined();
       expect(tx.modelFile.create).not.toHaveBeenCalled();
     }
   );
@@ -358,7 +365,7 @@ describe('a published version keeps its files', () => {
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
       'This version has been published'
     );
-    expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+    expect(fileDelete()).toBeUndefined();
   });
 
   it.each(['Draft', 'Training'])('allows a new upload on a %s version', async (status) => {
@@ -392,7 +399,7 @@ describe('training data once training has started', () => {
       withFile({ type: 'Training Data', trainingStatus });
 
       await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(LOCKED);
-      expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+      expect(fileDelete()).toBeUndefined();
       expect(mockDeleteObject).not.toHaveBeenCalled();
     }
   );
@@ -415,7 +422,7 @@ describe('training data once training has started', () => {
     });
 
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(LOCKED);
-    expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+    expect(fileDelete()).toBeUndefined();
   });
 
   it('locks the version row before deleting anything', async () => {
@@ -429,7 +436,7 @@ describe('training data once training has started', () => {
     );
     expect(lock?.slice(1)).toEqual([10]);
     expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.modelFile.deleteMany.mock.invocationCallOrder[0]
+      tx.$executeRaw.mock.invocationCallOrder[0]
     );
   });
 

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { contentKeptError, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -1535,7 +1536,17 @@ export const deleteVersionById = async ({
       where: { entityType: 'ModelVersion', entityId: id },
     });
 
-    const deleted = await tx.modelVersion.delete({ where: { id } });
+    // The caller returns the whole row, so it is read here, under the lock taken above.
+    const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
+    // A held owner's version is refused, and the throw rolls back the access rows removed above.
+    const removed = await tx.$executeRaw`
+      DELETE FROM "ModelVersion" mv
+      USING "Model" m
+      WHERE mv.id = ${id}
+        AND m.id = mv."modelId"
+        AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+    `.catch(() => 0);
+    if (removed !== 1) throw contentKeptError(isModerator);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -3530,6 +3541,10 @@ export const mergeVersions = async ({
     }
   }
 
+  // Checked again in the delete below; this only spares a held owner the long transaction.
+  if (await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`))
+    throw contentKeptError(false);
+
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -3826,9 +3841,15 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      await tx.modelVersion.deleteMany({
-        where: { id: { in: sourceVersionIds } },
-      });
+      // A held owner's merge is refused, and the throw rolls back the whole merge.
+      const removed = await tx.$executeRaw`
+        DELETE FROM "ModelVersion" mv
+        USING "Model" m
+        WHERE mv.id = ANY(${sourceVersionIds}::int[])
+          AND m.id = mv."modelId"
+          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+      `.catch(() => -1);
+      if (removed !== sourceVersionIds.length) throw contentKeptError(false);
 
       // 13. Update the model's lastVersionAt
       await updateModelLastVersionAt({ id: modelId, tx });

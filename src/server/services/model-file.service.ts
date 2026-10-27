@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { contentKeptError, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -337,15 +338,25 @@ async function replaceFileContent({
     if (!version) throw throwNotFoundError();
     assertVersionAcceptsNewUpload(version, file.type);
 
-    const removed = await tx.modelFile.deleteMany({
-      where: {
-        id: file.id,
-        url: file.url,
-        modelVersion: { model: !isModerator ? { userId } : undefined },
-      },
-    });
+    // A held owner's file is not replaced: the replace deletes the old row and its bytes.
+    const removed = await tx.$executeRaw`
+      DELETE FROM "ModelFile" mf
+      USING "ModelVersion" mv, "Model" m
+      WHERE mf.id = ${file.id}
+        AND mf.url = ${file.url}
+        AND mv.id = mf."modelVersionId"
+        AND m.id = mv."modelId"
+        ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+        AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+    `.catch(() => null);
+    if (
+      removed === null ||
+      (removed === 0 &&
+        (await ownerHeld(tx, fileOwnerSql(file.id, isModerator ? undefined : userId))))
+    )
+      throw contentKeptError(isModerator);
     // Another writer replaced or removed the file since we read it.
-    if (removed.count === 0)
+    if (removed === 0)
       throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
 
     const row = await tx.modelFile.create({
@@ -439,6 +450,17 @@ async function replaceFileContent({
   };
 }
 
+/** The file `id` with its model owner as `m."userId"`, for `ownerHeld`; only `userId`'s when given. */
+function fileOwnerSql(id: number, userId?: number) {
+  return Prisma.sql`
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf.id = ${id}
+    ${userId === undefined ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+  `;
+}
+
 const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
 
 export async function deleteFile({
@@ -496,6 +518,7 @@ export async function deleteFile({
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
     ${
       // Repeats the check above at delete time, in case the run was moved to review in between.
       isModerator
@@ -509,9 +532,16 @@ export async function deleteFile({
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `;
+  `.catch(() => null);
 
-  const row = rows[0];
+  const row = rows?.[0];
+  // A held owner's file is refused. The ownership condition keeps a stranger from telling a held
+  // file from a missing one.
+  if (
+    !row &&
+    (!rows || (await ownerHeld(dbWrite, fileOwnerSql(id, isModerator ? undefined : userId))))
+  )
+    throw contentKeptError(isModerator);
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
 
   // Clean up S3 object after DB delete succeeds (best-effort).
