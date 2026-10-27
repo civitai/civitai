@@ -29,6 +29,6 @@ export async function bustProfilePictures(
       'userIds' in target ? target.userIds : await profilePictureUserIds(target.imageIds);
     await bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds);
   } catch (error) {
-    void logAxiomError(error, { name: 'profile-picture-cache-bust' });
+    void logAxiomError(error, { event: 'profile-picture-cache-bust' });
   }
 }

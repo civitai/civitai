@@ -6,6 +6,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
 import type * as Axiom from '../axiom';
+import type * as ProfilePictureCache from '../profile-picture-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** What this app hands the main app's takedown CDN sync, on the committed queue function. */
@@ -36,8 +37,8 @@ vi.mock('../redis', () => ({
   getRedis: () => ({ del: vi.fn(async () => 0) }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
-vi.mock('../profile-picture-cache', () => ({
-  profilePictureUserIds: vi.fn(async () => []),
+vi.mock('../profile-picture-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProfilePictureCache>()),
   bustProfilePictures: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
@@ -95,7 +96,7 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -295,6 +296,32 @@ describe('an article delete in one transaction', () => {
     expect(transaction).toBeDefined();
     expect(matching.length).toBeGreaterThan(0);
     expect(new Set(matching)).toEqual(new Set([transaction]));
+  });
+
+  it('reads the avatars on the transaction', async () => {
+    await articleWithCover(10, 1);
+    await db.query(`INSERT INTO "User" ("id", "profilePictureId") VALUES (5, 1)`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    const { transaction, matching } = connectionsOf(/from "User"/);
+    expect(matching.length).toBeGreaterThan(0);
+    expect(new Set(matching)).toEqual(new Set([transaction]));
+  });
+
+  it('fails and changes nothing when the avatar read fails', async () => {
+    await articleWithCover(10, 1);
+    await db.exec(`ALTER TABLE "User" RENAME TO "UserUnavailable"`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toMatchObject({
+      ok: false,
+    });
+
+    expect(await articleExists(10)).toBe(true);
+    expect(await imageExists(1)).toBe(true);
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
   });
 
   it('deletes an orphaned content image and keeps one another entity still uses', async () => {

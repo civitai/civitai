@@ -92,7 +92,10 @@ CREATE TABLE "Model3D" (
   "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "Model3DMetric" ("model3dId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" (
+  "id" INTEGER PRIMARY KEY,
+  "profilePictureId" INTEGER REFERENCES "Image"(id) ON DELETE SET NULL
+);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
