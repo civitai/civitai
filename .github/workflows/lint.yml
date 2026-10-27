@@ -214,8 +214,9 @@ jobs:
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
     if: github.event_name == 'pull_request'
-    # 15, not 10: a full run (see the header) lints ~10,600 files. That took
-    # 115s locally (ESLint is single-threaded), before install and Prettier.
+    # 15, not 10: a full run (see the header) lints ~10,600 files with ESLint and
+    # ~12,500 with Prettier. The first one on ubuntu-latest (PR #7038) took 4m50s
+    # for the whole job: ESLint 95s, Prettier 104s, setup and install about 90s.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -300,7 +301,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s report-lint.txt ]; then echo "no modified lintable files"; exit 0; fi
+          if [ ! -s report-lint.txt ]; then echo "no lintable files to report on"; exit 0; fi
           xargs -a report-lint.txt pnpm exec eslint --format unix \
             | sed "s|^$GITHUB_WORKSPACE/||"
 
@@ -310,17 +311,17 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s report.txt ]; then echo "no modified files"; exit 0; fi
+          if [ ! -s report.txt ]; then echo "no files to report on"; exit 0; fi
           xargs -a report.txt pnpm exec prettier --list-different > unformatted.txt || true
           while IFS= read -r f; do
             [ -n "$f" ] || continue
             echo "::warning file=$f::Not formatted (pre-existing, not blocking). Run: pnpm exec prettier --write $f"
           done < unformatted.txt
           if [ -s unformatted.txt ]; then
-            echo "$(wc -l < unformatted.txt) modified file(s) are not formatted."
+            echo "$(wc -l < unformatted.txt) file(s) are not formatted (report-only)."
             exit 1
           fi
-          echo "all modified files formatted"
+          echo "all checked files formatted"
 
   typecheck:
     name: Typecheck (main pushes / fork PRs / non-main base)
