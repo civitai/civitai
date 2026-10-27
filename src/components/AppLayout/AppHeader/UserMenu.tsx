@@ -108,20 +108,24 @@ export const UserMenuTrigger = forwardRef<
       type="button"
       {...props}
     >
-      <CountIndicator label={badge} disabled={!badge}>
-        <div
-          className={clsx('flex items-center gap-2', {
-            ['hidden']: !currentUser,
-            ['@max-md:hidden']: !features.buzzSpendPop,
-          })}
-        >
-          <div className="@max-md:hidden">
+      <div
+        className={clsx('flex items-center gap-2', {
+          ['hidden']: !currentUser,
+          ['@max-md:hidden']: !features.buzzSpendPop,
+        })}
+      >
+        <div className="@max-md:hidden">
+          <CountIndicator label={badge} disabled={!badge}>
             <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
-          </div>
-          {features.buzz && currentUser && <HeaderUserBuzz />}
+          </CountIndicator>
         </div>
-        <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
-      </CountIndicator>
+        {features.buzz && currentUser && <HeaderUserBuzz />}
+      </div>
+      <div className={clsx({ ['@md:hidden']: !!currentUser })}>
+        <CountIndicator label={badge} disabled={!badge}>
+          <Burger opened={open} />
+        </CountIndicator>
+      </div>
     </UnstyledButton>
   );
 });
