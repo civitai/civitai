@@ -54,7 +54,9 @@ export async function getPromptScans(
     // stays under Cloudflare's 100 s with room for the request around it. A closed tab cancels it.
     clickhouse_settings: {
       max_execution_time: PROMPT_SCAN_TIMEOUT_S,
-      // Without this ClickHouse keeps running a query whose client went away.
+      // ClickHouse keeps running a query whose HTTP client went away unless the query is readonly and
+      // asks to be cancelled; the app's user also writes, so this read marks itself readonly.
+      readonly: '2',
       cancel_http_readonly_queries_on_client_close: 1,
     },
     abort_signal: signal,

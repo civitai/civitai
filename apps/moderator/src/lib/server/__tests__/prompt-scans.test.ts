@@ -35,9 +35,12 @@ describe('getPromptScans', () => {
   it('asks ClickHouse to cancel the scan when the client goes away', async () => {
     rows([]);
     await getPromptScans(1, { days: 30, limit: 100 });
-    expect(
-      query.mock.calls[0][0].clickhouse_settings.cancel_http_readonly_queries_on_client_close
-    ).toBe(1);
+    const settings = query.mock.calls[0][0].clickhouse_settings;
+    // The cancel only applies to a readonly query; this app's user is not readonly by default.
+    expect(settings).toMatchObject({
+      readonly: '2',
+      cancel_http_readonly_queries_on_client_close: 1,
+    });
   });
 
   it('reads prompts and scores, an empty negative prompt as none', async () => {
