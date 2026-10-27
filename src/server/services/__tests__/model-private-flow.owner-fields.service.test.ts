@@ -169,6 +169,10 @@ function updateData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a one-shot transaction a test queued but never reached; drop it.
+  mockDbWrite.$transaction.mockReset();
+  mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+    typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
   vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockEvaluateContent.mockReturnValue(cleanEvaluation);
   mockStored();
