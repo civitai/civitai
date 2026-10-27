@@ -112,6 +112,25 @@ const tunnelCalls = () =>
 /** The sandbox the fake made for `app`. */
 const sandboxOf = (app: string) => fake.sandboxes.find((s) => s.app === app)!.name;
 
+/**
+ * Runs `n` keep-alive ticks, each to the point where it has asked the sandbox (`tunnel_status`,
+ * over real HTTP, which fake timers do not advance). A tick still in flight makes the next one
+ * skip, so each is driven until its own ask is seen; a later tick's ask therefore also means every
+ * earlier tick finished. What a tick then keeps is awaited with `vi.waitFor` by the caller.
+ */
+async function ticks(n = 1) {
+  for (let i = 0; i < n; i++) {
+    const before = fake.callsTo('tunnel_status');
+    for (let tries = 0; fake.callsTo('tunnel_status') === before; tries++) {
+      if (tries > 200) throw new Error('no keep-alive tick asked the sandbox');
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      if (fake.callsTo('tunnel_status') === before) await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+}
+/** Waits for exactly `expected` to have been kept (ticks finish over real HTTP). */
+const keptToBe = (expected: unknown[]) => vi.waitFor(() => expect(tunnels.kept).toEqual(expected));
+
 describe('start_preview on the runner', () => {
   it('is offered with stop_preview, and the raw tunnel tools are not', async () => {
     fake.add('my-app');
@@ -229,9 +248,9 @@ describe('start_preview on the runner', () => {
     opened.push(tools);
     await call(tools.tools, 'start_preview');
     tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    await ticks(1);
     // Control: the failure was logged.
-    expect(logged).toContain('keeping a preview alive failed');
+    await vi.waitFor(() => expect(logged).toContain('keeping a preview alive failed'));
     expect(JSON.stringify(logged)).not.toContain(SESSION);
   });
 
@@ -277,9 +296,9 @@ describe('keeping the preview alive', () => {
     await call(tools.tools, 'start_preview');
     expect(tunnels.kept).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    await ticks(3);
     // The control: alive while the run lives, named by the host the sandbox is connected to.
-    expect(tunnels.kept).toEqual([CONNECTED, CONNECTED, CONNECTED]);
+    await keptToBe([CONNECTED, CONNECTED, CONNECTED]);
 
     // The run ends: the runner closes its tools.
     await tools.close();
@@ -295,16 +314,21 @@ describe('keeping the preview alive', () => {
     const { tools } = await open();
     await call(tools.tools, 'start_preview');
     tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toHaveLength(2);
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED]);
     tunnels.keepaliveError = new DevTunnelError('gone', 404, 'NOT_FOUND');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toHaveLength(4);
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED, CONNECTED, CONNECTED]);
     // The run's own tunnel went: a start of the same preview opens a new one, not the old answer.
     await call(tools.tools, 'start_preview');
     expect(tunnels.started).toHaveLength(2);
     tunnels.keepaliveError = new DevTunnelError('no', 403, 'FORBIDDEN');
+    await ticks(1);
+    await vi.waitFor(() => expect(tunnels.kept).toHaveLength(5));
+    // Refused: no tick asks again.
+    const asked = fake.callsTo('tunnel_status');
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(fake.callsTo('tunnel_status')).toBe(asked);
     expect(tunnels.kept).toHaveLength(5);
   });
 
@@ -315,10 +339,10 @@ describe('keeping the preview alive', () => {
     fake.add('my-app');
     fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
     const { tools } = await open();
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    await ticks(2);
     // Nothing was opened by this run, and the tunnel its sandbox serves was kept all the same.
+    await keptToBe([{ host: RESTARTED_HOST }, { host: RESTARTED_HOST }]);
     expect(tunnels.started).toEqual([]);
-    expect(tunnels.kept).toEqual([{ host: RESTARTED_HOST }, { host: RESTARTED_HOST }]);
     await tools.close();
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
     expect(tunnels.kept).toHaveLength(2);
@@ -328,12 +352,12 @@ describe('keeping the preview alive', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     fake.add('my-app');
     await open();
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
-    expect(tunnels.kept).toEqual([]);
-    // Control: once the sandbox is connected, the next tick keeps it.
+    await ticks(3);
+    // Control: once the sandbox is connected, the next tick keeps it — and only it, so none of
+    // the three before (each finished before it asked) kept anything.
     fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
-    expect(tunnels.kept).toEqual([{ host: RESTARTED_HOST }]);
+    await ticks(1);
+    await keptToBe([{ host: RESTARTED_HOST }]);
   });
 
   it('never keeps another app’s preview alive: once the run opens another app, only that one’s', async () => {
@@ -341,18 +365,18 @@ describe('keeping the preview alive', () => {
     fake.add('my-app');
     const { tools } = await open();
     await call(tools.tools, 'start_preview');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    await ticks(1);
     // Control: the first app's preview was kept while it was the open one.
-    expect(tunnels.kept).toEqual([CONNECTED]);
+    await keptToBe([CONNECTED]);
     expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
       app: 'tip-calculator',
     });
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    // The first app's tunnel is no longer the open app's: it is left to idle out.
-    expect(tunnels.kept).toEqual([CONNECTED]);
+    await ticks(2);
     fake.tunnelHosts.set(sandboxOf('tip-calculator'), RESTARTED_HOST);
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
-    expect(tunnels.kept).toEqual([CONNECTED, { host: RESTARTED_HOST }]);
+    await ticks(1);
+    // The first app's tunnel is no longer the open app's: it is left to idle out, and only the
+    // open app's is kept.
+    await keptToBe([CONNECTED, { host: RESTARTED_HOST }]);
   });
 
   it('keeps nothing alive after stop_preview, until the next start', async () => {
@@ -363,11 +387,13 @@ describe('keeping the preview alive', () => {
     await call(tools.tools, 'stop_preview');
     // Even were the sandbox's side still up (its disconnect failed): the user asked for it to go.
     fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    const asked = fake.callsTo('tunnel_status');
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    expect(fake.callsTo('tunnel_status')).toBe(asked);
     expect(tunnels.kept).toEqual([]);
     await call(tools.tools, 'start_preview');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
-    expect(tunnels.kept).toEqual([CONNECTED]);
+    await ticks(1);
+    await keptToBe([CONNECTED]);
   });
 
   it('is every 5 minutes, well inside civitai’s 30-minute idle window', () => {
@@ -693,8 +719,8 @@ describe('the preview opens by itself once the dev server starts', () => {
     fake.add('my-app');
     const { tools } = await open();
     await startDevServer(tools.tools);
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toEqual([CONNECTED, CONNECTED]);
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED]);
     await tools.close();
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
     expect(tunnels.kept).toHaveLength(2);
