@@ -44,7 +44,10 @@ name: Lint
 #                       package.json or pnpm-lock.yaml (list in
 #                       scripts/ci/lint-targets.mjs). Those can change the
 #                       verdict for files the PR never touched, so checking only
-#                       the changed files would hide what the change does.
+#                       the changed files would hide what the change does. Every
+#                       file is linted at HEAD and at the merge base, and only
+#                       the findings HEAD adds are reported, so the change's
+#                       effect is not buried under the pre-existing backlog.
 #
 # Findings surface as file annotations on the PR diff: ESLint via the problem
 # matcher in .github/problem-matchers/, Prettier via ::warning / ::error commands.
@@ -214,8 +217,9 @@ jobs:
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
     if: github.event_name == 'pull_request'
-    # 15, not 10: sized for the full run (see the header), which lints every
-    # tracked file. A normal PR finishes far inside it. If full runs approach the
+    # Sized for the full run (see the header), which lints every tracked file
+    # twice, at HEAD and at the merge base, and may reinstall dependencies for
+    # the base. A normal PR finishes far inside it. If full runs approach the
     # limit, raise it rather than letting a config PR time out with no verdict.
     timeout-minutes: 15
     steps:
@@ -291,9 +295,9 @@ jobs:
           echo "all new files formatted"
 
       # Report-only: 10% of recently-touched files carry a pre-existing
-      # error-severity finding. See the header comment. On a full run (lint config
-      # or dependencies changed) this covers every tracked file, not just modified ones.
-      - name: ESLint (${{ steps.changed.outputs.full == 'true' && 'all files' || 'modified files' }}, report-only)
+      # error-severity finding. See the header comment.
+      - name: ESLint (modified files, report-only)
+        if: steps.changed.outputs.full != 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -302,8 +306,9 @@ jobs:
             | sed "s|^$GITHUB_WORKSPACE/||"
 
       # Report-only: 19% of src files are unformatted today and a formatter has no
-      # changed-line granularity. See the header comment. Same full-run widening.
-      - name: Prettier (${{ steps.changed.outputs.full == 'true' && 'all files' || 'modified files' }}, report-only)
+      # changed-line granularity. See the header comment.
+      - name: Prettier (modified files, report-only)
+        if: steps.changed.outputs.full != 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -318,6 +323,46 @@ jobs:
             exit 1
           fi
           echo "all checked files formatted"
+
+      # FULL RUN (lint config or dependencies changed): lint every file at HEAD, then
+      # the same files at the merge base, and report only what HEAD adds. The base
+      # is checked out in this workspace so the HEAD install is reused; it is
+      # reinstalled only when the lockfile differs, since linting the base with
+      # HEAD's dependencies would hide every finding a version bump introduces.
+      # The script is copied out first because the base may not have it.
+      - name: Lint all files at HEAD (full run)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/lint"
+          cp scripts/ci/lint-new-findings.mjs "$RUNNER_TEMP/lint/"
+          node "$RUNNER_TEMP/lint/lint-new-findings.mjs" collect head report-lint.txt report.txt "$RUNNER_TEMP/lint"
+
+      - name: Lint the same files at the merge base (full run)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          head_sha=$(git rev-parse HEAD)
+          base_sha=$(git merge-base FETCH_HEAD HEAD)
+          # -f: postinstall can rewrite tracked generated files, and no later step reads
+          # the working tree.
+          trap 'git checkout -q -f --detach "$head_sha"' EXIT
+          git checkout -q -f --detach "$base_sha"
+          if ! git diff --quiet "$base_sha" "$head_sha" -- pnpm-lock.yaml; then
+            echo "pnpm-lock.yaml differs from the merge base: installing the base's dependencies"
+            pnpm install --frozen-lockfile --prefer-offline
+          fi
+          node "$RUNNER_TEMP/lint/lint-new-findings.mjs" collect base report-lint.txt report.txt "$RUNNER_TEMP/lint" --existing-only
+
+      # Fails (and annotates) only on findings the PR adds; the backlog both trees
+      # share is counted in the step summary but never fails it. continue-on-error
+      # keeps the job green either way, like the other report-only steps.
+      - name: New lint findings vs merge base (full run, report-only)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: node "$RUNNER_TEMP/lint/lint-new-findings.mjs" compare "$RUNNER_TEMP/lint"
 
   typecheck:
     name: Typecheck (main pushes / fork PRs / non-main base)

@@ -17,8 +17,8 @@
 // installed versions (package.json, pnpm-lock.yaml) — linting only the changed files would
 // miss every new finding elsewhere, so the report-only lists become EVERY tracked
 // *.ts/*.tsx file instead (still excluding the added ones, which the blocking steps already
-// check). It stays report-only in that mode: the repo has pre-existing errors and unformatted
-// files, so a blocking full run would be red on every config PR.
+// check). The job then lints those files at the merge base too and reports only what the PR
+// adds (lint-new-findings.mjs), so the repo's pre-existing errors do not bury the PR's own.
 //
 // Prints `full=true|false` (and appends it to $GITHUB_OUTPUT when set) and, for a full run,
 // every changed path that triggered it.
@@ -53,7 +53,7 @@ const FULL_RUN_TRIGGERS = [
   /^tailwind\.config\.[cm]?[jt]s$/, // read by eslint-plugin-tailwindcss
   /^\.github\/workflows\/lint\.yml$/,
   /^\.github\/problem-matchers\//,
-  /^scripts\/ci\/lint-targets\.mjs$/,
+  /^scripts\/ci\/lint-(targets|new-findings)\.mjs$/,
 ];
 
 const [baseRef, outDir = '.'] = process.argv.slice(2);

@@ -121,6 +121,7 @@ describe('lint-targets', () => {
     '.github/workflows/lint.yml',
     '.github/problem-matchers/eslint-unix.json',
     'scripts/ci/lint-targets.mjs',
+    'scripts/ci/lint-new-findings.mjs',
   ])('lints every tracked file when the PR changes %s', (trigger) => {
     put(trigger, `changed ${trigger}\n`);
     put('src/brand-new.ts');
