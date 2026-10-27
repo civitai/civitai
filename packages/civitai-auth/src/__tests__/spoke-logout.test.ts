@@ -68,6 +68,27 @@ describe('spokeLogout', () => {
     expect(clears(res.headers.getSetCookie(), '__Secure-civ-token')).toBe(true);
   });
 
+  it('revokes a host-only token in host mode', async () => {
+    process.env.AUTH_SESSION_COOKIE_MODE = 'host';
+    const revoke = vi.fn(async () => {});
+    const res = await spokeLogout(request('__Host-civ-token=host-tok; other=1'), {
+      hubBase: HUB,
+      sessionTokenClient: { revoke },
+    });
+    expect(revoke).toHaveBeenCalledWith('host-tok');
+    expect(clears(res.headers.getSetCookie(), '__Host-civ-token')).toBe(true);
+  });
+
+  it('revokes the tokens in both slots when the request carries both', async () => {
+    process.env.AUTH_SESSION_COOKIE_MODE = 'host';
+    const revoke = vi.fn<(token: string) => Promise<void>>(async () => {});
+    await spokeLogout(request('__Secure-civ-token=shared-tok; __Host-civ-token=host-tok'), {
+      hubBase: HUB,
+      sessionTokenClient: { revoke },
+    });
+    expect(revoke.mock.calls.map(([t]) => t).sort()).toEqual(['host-tok', 'shared-tok']);
+  });
+
   it('skips the revoke when there is no session cookie', async () => {
     const revoke = vi.fn(async () => {});
     await spokeLogout(request(), { hubBase: HUB, sessionTokenClient: { revoke } });
