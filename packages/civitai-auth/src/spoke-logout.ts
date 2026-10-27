@@ -1,5 +1,5 @@
 import { DEVICE_COOKIE_BASE, HOST_COOKIE_PREFIX, SESSION_COOKIE_BASE } from './constants';
-import { allCookieNames, sessionCookieName } from './cookies';
+import { allCookieNames, readCookie, sessionCookieName } from './cookies';
 import { hubBaseUrl } from './hub';
 import { hubLogoutUrl } from './providers';
 import { createSessionTokenClient, type SessionTokenClient } from './session-token-client';
@@ -10,15 +10,6 @@ export interface SpokeLogoutOptions {
   /** Defaults to `AUTH_JWT_ISSUER`. */
   hubBase?: string | null;
   sessionTokenClient?: Pick<SessionTokenClient, 'revoke'>;
-}
-
-function readCookie(header: string, name: string): string | undefined {
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
-  }
-  return undefined;
 }
 
 // Same 2-label registrable domain the hub and the main app scope the shared cookie to.

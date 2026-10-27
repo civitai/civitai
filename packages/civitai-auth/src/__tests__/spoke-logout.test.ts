@@ -55,6 +55,19 @@ describe('spokeLogout', () => {
     expect(setCookies.some((h) => h.startsWith('__Host-') && /Domain=/.test(h))).toBe(false);
   });
 
+  // A malformed %-escape in the cookie value used to throw out of decodeURIComponent, so the sign-out never
+  // happened. Control: with the try/catch removed, this rejects with URIError.
+  it('still signs out when the session cookie value is not valid URI encoding', async () => {
+    const revoke = vi.fn(async () => {});
+    const res = await spokeLogout(request('__Secure-civ-token=tok%E0%A4%A; other=1'), {
+      hubBase: HUB,
+      sessionTokenClient: { revoke },
+    });
+    expect(revoke).toHaveBeenCalledWith('tok%E0%A4%A');
+    expect(res.status).toBe(302);
+    expect(clears(res.headers.getSetCookie(), '__Secure-civ-token')).toBe(true);
+  });
+
   it('skips the revoke when there is no session cookie', async () => {
     const revoke = vi.fn(async () => {});
     await spokeLogout(request(), { hubBase: HUB, sessionTokenClient: { revoke } });
