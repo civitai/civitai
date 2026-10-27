@@ -7,7 +7,8 @@
 // All counters are registered at module load with their full label sets pre-declared, so they export `0`
 // before the first increment (no "metric appears only after the first event" gaps in dashboards).
 
-import { Registry, collectDefaultMetrics, Counter } from 'prom-client';
+import { Registry, collectDefaultMetrics, Counter, Gauge } from 'prom-client';
+import { env } from '$env/dynamic/private';
 
 // Single default registry for the whole process. `register.metrics()` (in the /metrics route) serializes
 // everything registered here.
@@ -108,4 +109,30 @@ export const crossDomainHandoffConsumeTotal = new Counter({
   help: 'Cross-domain hand-off record consumption at /authorize, by outcome.',
   labelNames: ['outcome'] as const,
   registers: [register],
+});
+
+/**
+ * Service-to-service calls to the session routes, by route, caller shape (see `CallerShape`) and HTTP status.
+ * Callers move from the session-as-credential shapes to `internal` one deploy at a time; this is how the
+ * remaining ones are found.
+ */
+export const authS2sRequestsTotal = new Counter({
+  name: 'auth_s2s_requests_total',
+  help: 'Calls to the hub session routes, labeled by route, caller shape and HTTP status.',
+  labelNames: ['route', 'shape', 'result'] as const,
+  registers: [register],
+});
+
+/**
+ * 1 when the hub holds a caller credential to compare against. Every other app reports the same gauge from
+ * its own `/api/auth/internal-ping` probe, so a 0 anywhere names the app whose credential disagrees.
+ */
+export const authInternalParity = new Gauge({
+  name: 'auth_internal_parity',
+  help: "1 when this app's service credential is accepted by the hub, 0 when it is not.",
+  labelNames: ['app'] as const,
+  registers: [register],
+  collect() {
+    this.set({ app: 'hub' }, env.AUTH_INTERNAL_TOKEN ? 1 : 0);
+  },
 });

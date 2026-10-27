@@ -19,8 +19,9 @@ export type { SessionClient, SessionClientConfig } from './session-client';
 export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
 export type { DeviceAccountClient, DeviceAccount } from './device-client';
 export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
-export type { SessionTokenClient } from './session-token-client';
+export type { SessionTokenClient, RefreshFailure } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
+export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
 export type { SpokeGuard, SpokeGuardConfig, SpokeGuardResult } from './spoke-guard';

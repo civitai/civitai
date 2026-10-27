@@ -58,3 +58,13 @@ export const allCookieNames = (base: string): string[] => [
   `${SECURE_COOKIE_PREFIX}${base}`,
   `${HOST_COOKIE_PREFIX}${base}`,
 ];
+
+/** Pull a single cookie value out of a `Cookie` header string. */
+export function readCookie(header: string, name: string): string | undefined {
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return undefined;
+}

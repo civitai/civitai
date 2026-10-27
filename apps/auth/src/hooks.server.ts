@@ -5,7 +5,9 @@ import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
 import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
-import { unhandledErrorsTotal } from '$lib/server/metrics';
+import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics';
+import { getDeviceId } from '$lib/server/auth/device';
+import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -24,6 +26,25 @@ const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
   // The main app's logout revokes the hub session server-to-server with no Origin.
   '/logout': isTrustedSessionCaller,
 };
+
+// Routes other services call with a user's session. Those that read the session through `locals` take it from
+// the body when the caller uses the `internal` shape; refresh and `/session` read their own request.
+const S2S_ROUTES = new Set([
+  '/api/auth/refresh',
+  '/api/auth/oauth/session',
+  '/api/auth/switch',
+  '/api/auth/accounts',
+  '/api/auth/impersonate',
+  '/api/auth/impersonate/exit',
+  '/logout',
+]);
+const BODY_SESSION_ROUTES = new Set([
+  '/api/auth/switch',
+  '/api/auth/accounts',
+  '/api/auth/impersonate',
+  '/api/auth/impersonate/exit',
+  '/logout',
+]);
 
 // One body for every rejection, so the response says nothing about which admin routes exist.
 const forbidden = () => new Response('Forbidden', { status: 403 });
@@ -61,7 +82,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Populate locals.user from the session cookie. The cookie is THIN (identity only), so resolve the rich user
   // by userId from the shared cache (produce on miss) rather than trusting an embedded user. The verifier handles
   // both ES256 and legacy NextAuth JWE; verification / resolve failures are non-fatal.
-  const token = event.cookies.get(SESSION_COOKIE);
+  const routeId = event.route?.id ?? '';
+  const cookieToken = event.cookies.get(SESSION_COOKIE);
+  const internal = BODY_SESSION_ROUTES.has(routeId)
+    ? await readInternalCaller(event.request)
+    : null;
+  const token = internal ? internal.token : cookieToken;
+  event.locals.deviceId = internal ? internal.deviceId : getDeviceId(event.cookies);
   if (token) {
     const claims = await verifier.verifyToken(token).catch(() => null);
     const userId = Number(claims?.sub);
@@ -96,6 +123,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   const response = await resolve(event);
+  if (S2S_ROUTES.has(routeId)) {
+    authS2sRequestsTotal.inc({
+      route: routeId,
+      shape: callerShape(event.request, !!cookieToken),
+      result: String(response.status),
+    });
+  }
   if (corsOrigin) {
     response.headers.set('access-control-allow-origin', corsOrigin);
     response.headers.set('access-control-allow-credentials', 'true');

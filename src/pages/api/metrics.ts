@@ -18,6 +18,8 @@ import '~/server/prom/resource-intent-tags.metrics';
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
 // which is the exact ambiguity that counter exists to remove.
 import '~/server/auth/session-metrics';
+// Side-effect import: registers auth_internal_parity (collect()-based, probed at most every ten minutes).
+import '~/server/prom/auth-internal-parity.metrics';
 // Side-effect import: registers the Flipt eval-cache counters (collect()-based), so the
 // series exist from the first scrape rather than only after some other module happens to
 // pull them in. Same reasoning as the neighbours — an absent series here would read as

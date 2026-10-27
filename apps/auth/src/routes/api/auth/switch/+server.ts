@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getDeviceId, isLinkedAndFresh, rollDeviceCookie, touchAccount } from '$lib/server/auth/device';
+import { isLinkedAndFresh, rollDeviceCookie, touchAccount } from '$lib/server/auth/device';
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { readUserId } from '$lib/server/auth/request';
@@ -13,7 +13,7 @@ import { readUserId } from '$lib/server/auth/request';
 // never a User-to-User DB link. A target that's not linked / has aged out → 403 → re-login. See cutover doc (E).
 export const POST: RequestHandler = async ({ request, cookies, locals }) => {
   if (!locals.user) error(401, 'active session required');
-  const deviceId = getDeviceId(cookies);
+  const deviceId = locals.deviceId;
   if (!deviceId) error(401, 'no device');
 
   const userId = await readUserId(request);

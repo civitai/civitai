@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // fresh on this device. Only the device set and the session-user cache are stubbed.
 
 const h = vi.hoisted(() => ({
-  getDeviceId: vi.fn(),
   listAccounts: vi.fn(),
   isLinkedAndFresh: vi.fn(),
   removeAccount: vi.fn(),
@@ -12,7 +11,6 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/auth/device', () => ({
-  getDeviceId: h.getDeviceId,
   listAccounts: h.listAccounts,
   isLinkedAndFresh: h.isLinkedAndFresh,
   removeAccount: h.removeAccount,
@@ -28,7 +26,7 @@ const ACTIVE = 100;
 const MODERATOR = 900;
 
 function makeEvent(locals: Record<string, unknown> = { user: { id: ACTIVE } }) {
-  return { cookies: {}, locals } as never;
+  return { cookies: {}, locals: { deviceId: DEVICE, ...locals } } as never;
 }
 
 // The device set holds exactly these user ids.
@@ -44,7 +42,6 @@ const listedIds = async (event: never) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.getDeviceId.mockReturnValue(DEVICE);
   h.getOrProduceSessionUser.mockImplementation(async (id: number) => ({
     id,
     username: `u${id}`,
