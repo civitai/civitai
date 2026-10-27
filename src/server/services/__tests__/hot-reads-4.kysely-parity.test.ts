@@ -382,15 +382,12 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
     const scopes: PinnedScope[] = ['any', 'unpinned', 'pinned'];
     // The filters without `hidden`, de-duplicated: the hidden-view filters collapse onto their
     // plain-view twins.
-    const bases = [
-      ...new Map(
-        FILTERS.map(([label, { hidden: _hidden, ...base }]) => [
-          JSON.stringify(base),
-          [label, base],
-        ])
-      ).values(),
-    ] as [string, TopLevelCommentsBaseFilter][];
-    const cases = bases.flatMap(([label, base]) =>
+    const bases = new Map<string, [string, TopLevelCommentsBaseFilter]>();
+    for (const [label, { hidden: _hidden, ...base }] of FILTERS) {
+      // The first label wins: the plain-view filter, not its hidden-view twin.
+      if (!bases.has(JSON.stringify(base))) bases.set(JSON.stringify(base), [label, base]);
+    }
+    const cases = [...bases.values()].flatMap(([label, base]) =>
       scopes.map((scope) => [`${label}, ${scope}`, base, scope] as const)
     );
 
