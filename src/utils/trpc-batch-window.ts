@@ -86,10 +86,9 @@ export function deferToBatchWindow(run: () => void) {
  * leaves with the queries pending there; otherwise it runs at once, exactly as before the flag.
  */
 export function scheduleBatcherFlush(flush: () => void, ownWindowMs: number) {
-  setTimeout(() => {
-    if (isUnifiedBatchWindowActive()) deferToBatchWindow(flush);
-    else flush();
-  }, ownWindowMs);
+  // MUTANT A: batcher windows shrink to the shared 16 ms window
+  if (isUnifiedBatchWindowActive()) deferToBatchWindow(flush);
+  else setTimeout(flush, ownWindowMs);
 }
 
 /** Test-only: drop queued work and the flag. */

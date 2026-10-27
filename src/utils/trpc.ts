@@ -397,11 +397,9 @@ export const batchWindowLink: TRPCLink<AppRouter> = () => {
         if (unsubscribed) return;
         // A synchronous throw here would otherwise be caught by the window's own guard and the
         // query would never settle; hand it to the caller as this operation's error instead.
-        try {
-          subscription = next(op).subscribe(observer);
-        } catch (error) {
-          observer.error(TRPCClientError.from(error as Error));
-        }
+        // MUTANT B: a synchronous throw is swallowed again
+        subscription = next(op).subscribe(observer);
+        void TRPCClientError;
       });
       return () => {
         unsubscribed = true;
