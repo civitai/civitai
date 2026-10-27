@@ -29,7 +29,7 @@ export default AuthedEndpoint(
           .status(result.status || 502)
           .json({ error: result.error ?? 'could not exit impersonation' });
       }
-      setSessionCookie(res, result.token, { host: req.headers.host });
+      setSessionCookie(res, result.token, { host: req.headers.host, requestCookies: req.cookies });
       return res.status(200).json({ ok: true });
     }
 
@@ -45,7 +45,7 @@ export default AuthedEndpoint(
     }
 
     // NB: impersonation deliberately does NOT touch the device account-set
-    setSessionCookie(res, minted.token, { host: req.headers.host });
+    setSessionCookie(res, minted.token, { host: req.headers.host, requestCookies: req.cookies });
     return res.status(200).json({ ok: true });
   },
   ['POST', 'DELETE']

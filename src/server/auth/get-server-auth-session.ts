@@ -97,7 +97,9 @@ export const getServerAuthSession = async ({
     const civ = readSessionToken(req.cookies);
     const slot = civ && rollSlot(civ);
     const device = readDeviceId(req.cookies)?.value;
-    if (civ && slot) await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot);
+    if (civ && slot) {
+      await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot, req.cookies);
+    }
     return hub;
   }
 
@@ -113,7 +115,9 @@ export const getServerAuthSession = async ({
     observeLegacyDecode();
     const legacyToken = req.cookies?.[legacySessionCookieName()];
     const device = readDeviceId(req.cookies)?.value;
-    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
+    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host, req.cookies).catch(
+      () => undefined
+    );
   }
   return legacy;
 };

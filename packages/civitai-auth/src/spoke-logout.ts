@@ -13,7 +13,7 @@ export interface SpokeLogoutOptions {
 }
 
 // Same 2-label registrable domain the hub and the main app scope the shared cookie to.
-function registrableDomain(hostname: string): string | undefined {
+export function registrableDomain(hostname: string): string | undefined {
   const h = hostname.toLowerCase();
   if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
   const parts = h.split('.');

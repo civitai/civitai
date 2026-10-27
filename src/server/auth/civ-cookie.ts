@@ -1,5 +1,6 @@
 import {
   deviceCookieNameForSlot,
+  hostDeviceCookieName,
   hostSessionCookieName,
   isSecureCookie,
   sessionCookieMode,
@@ -161,12 +162,18 @@ export function clearLegacyCookies(host?: string): string[] {
  * Does NOT clear legacy cookies — the transitions that need that (login callback, upgrade-on-read) call
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
  * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
- * never carries a Domain (`__Host-` forbids it).
+ * never carries a Domain (`__Host-` forbids it). Pass `requestCookies` so the write also expires, host-only, the
+ * other slot's session and device names the request carries.
  */
 export function setSessionCookie(
   res: CookieWritable,
   token: string,
-  opts?: { deviceCookie?: string; host?: string; slot?: CookieSlot }
+  opts?: {
+    deviceCookie?: string;
+    host?: string;
+    slot?: CookieSlot;
+    requestCookies?: Partial<Record<string, string | undefined>>;
+  }
 ): void {
   const secure = isSecureCookie();
   const slot = opts?.slot ?? sessionCookieMode();
@@ -184,6 +191,15 @@ export function setSessionCookie(
   if (opts?.deviceCookie) {
     const deviceName = deviceCookieNameForSlot(slot, secure);
     all.push(buildCookie(deviceName, opts.deviceCookie, secure, domain, DEVICE_TTL_S));
+  }
+  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
+  for (const [mine, theirs] of [
+    [sessionCookieNameForSlot(slot, secure), sessionCookieNameForSlot(other, secure)],
+    [deviceCookieNameForSlot(slot, secure), deviceCookieNameForSlot(other, secure)],
+  ]) {
+    // On http dev both slots share the bare name; expiring "the other" would delete what was just written.
+    if (theirs !== mine && opts?.requestCookies?.[theirs])
+      all.push(buildCookie(theirs, '', secure, undefined, 0));
   }
   res.setHeader('Set-Cookie', all);
 }
@@ -268,6 +284,7 @@ export function clearAllSessionCookies(host?: string): string[] {
     }
   }
   out.push(`${hostSessionCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
+  out.push(`${hostDeviceCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
   out.push(clearPostLoginMarker(), clearLoginRetryCookie(), clearPostLoginRetryCookie());
   return out;
 }

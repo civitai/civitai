@@ -1,4 +1,4 @@
-import { deviceCookieName, readCookie, sessionCookieName } from './cookies';
+import { parseCookieHeader, readDeviceId, readSessionToken } from './cookies';
 import { hubFetch, sessionCall, type SessionRef } from './hub';
 
 // DEVICE-ACCOUNT CLIENT — the hub's per-device account set (multi-account switching; cutover doc E). Callers
@@ -27,10 +27,10 @@ export interface DeviceAccountClient {
   remove(cookie: string, userId: number): Promise<boolean>;
 }
 
-const sessionOf = (cookie: string): SessionRef => ({
-  token: readCookie(cookie, sessionCookieName()),
-  deviceId: readCookie(cookie, deviceCookieName()),
-});
+const sessionOf = (cookie: string): SessionRef => {
+  const jar = parseCookieHeader(cookie);
+  return { token: readSessionToken(jar)?.value, deviceId: readDeviceId(jar)?.value };
+};
 
 export function createDeviceAccountClient(): DeviceAccountClient {
   return {
