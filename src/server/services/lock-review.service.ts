@@ -4,6 +4,8 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   LOCK_REVIEW_COOLDOWN_DAYS,
   LOCK_REVIEW_REPORT_REASON,
+  lockReviewQueueLabel,
+  REQUESTABLE_LOCKS,
   requestableLocks,
   type RequestableLock,
 } from '~/shared/constants/lock-review.constants';
@@ -25,10 +27,13 @@ const lockReviewReports = (modelId: number) => ({
 export async function getLockReviewState({
   modelId,
   userId,
+  isModerator,
 }: {
   modelId: number;
   userId: number;
+  isModerator?: boolean;
 }): Promise<LockReviewState | null> {
+  if (isModerator) return null;
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
     select: { userId: true, lockedProperties: true },
@@ -71,12 +76,15 @@ export async function getLockReviewState({
 export async function assertLockReviewAllowed({
   modelId,
   userId,
+  isModerator,
   lockedProperties,
 }: {
   modelId: number;
   userId: number;
+  isModerator?: boolean;
   lockedProperties: unknown;
 }) {
+  if (isModerator) throw throwBadRequestError('Moderators can change locked settings directly.');
   const state = await getLockReviewState({ modelId, userId });
   if (!state) throw throwBadRequestError("Only the model's owner can request this review.");
 
@@ -90,4 +98,27 @@ export async function assertLockReviewAllowed({
         'MMMM D, YYYY'
       )}.`
     );
+}
+
+const asLocks = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
+
+/** The details an owner's open request carries after they ask again: one request, every setting named. */
+export function mergeOwnLockReview(existing: unknown, incoming: MixedObject): MixedObject {
+  const current = (existing ?? {}) as MixedObject;
+  const named = new Set([
+    ...asLocks(current.lockedProperties),
+    ...asLocks(incoming.lockedProperties),
+  ]);
+  const lockedProperties = REQUESTABLE_LOCKS.filter((key) => named.has(key));
+  const comments = [current.comment, incoming.comment].filter(
+    (text, index, all): text is string =>
+      typeof text === 'string' && !!text.trim() && all.indexOf(text) === index
+  );
+  return {
+    ...current,
+    lockedProperties,
+    violation: lockReviewQueueLabel(lockedProperties),
+    ...(comments.length ? { comment: comments.join('\n\n') } : {}),
+  };
 }

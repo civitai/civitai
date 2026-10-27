@@ -43,8 +43,11 @@ beforeAll(async () => {
       (2, ${OWNER}, '{}', 'AdminAttention', 'Unactioned', now(), '${lockReview}'),
       (3, ${OWNER}, '{}', 'AdminAttention', 'Pending', NULL, '${lockReview}'),
       (4, ${BANNED_OWNER}, '{}', 'AdminAttention', 'Actioned', now(), '${lockReview}'),
-      (5, ${OTHER}, '{}', 'AdminAttention', 'Actioned', now(), '{"reason":"Other concern"}');
-    INSERT INTO "ModelReport" VALUES (${MODEL}, 1), (${MODEL}, 2), (${MODEL}, 3), (${MODEL}, 4), (${MODEL}, 5);
+      (5, ${OTHER}, '{}', 'AdminAttention', 'Actioned', now(), '{"reason":"Other concern"}'),
+      (6, ${OWNER}, '{}', 'TOSViolation', 'Unactioned', now(), '${lockReview}'),
+      (7, ${OTHER}, '{}', 'TOSViolation', 'Actioned', now(), NULL);
+    INSERT INTO "ModelReport" VALUES
+      (${MODEL}, 1), (${MODEL}, 2), (${MODEL}, 3), (${MODEL}, 4), (${MODEL}, 5), (${MODEL}, 6), (${MODEL}, 7);
   `);
 });
 
@@ -71,6 +74,10 @@ describe('lock-review-resolved', () => {
   });
 
   it('is not also sent as a thank-you for reporting', async () => {
-    expect(await notified('report-actioned')).toEqual([`${OTHER}:report-actioned:5`]);
+    // 7 has no details at all and must still be thanked.
+    expect(await notified('report-actioned')).toEqual([
+      `${OTHER}:report-actioned:5`,
+      `${OTHER}:report-actioned:7`,
+    ]);
   });
 });

@@ -74,8 +74,11 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import { assertLockReviewAllowed } from '~/server/services/lock-review.service';
-import { LOCK_REVIEW_REPORT_REASON } from '~/shared/constants/lock-review.constants';
+import { assertLockReviewAllowed, mergeOwnLockReview } from '~/server/services/lock-review.service';
+import {
+  LOCK_REVIEW_REPORT_REASON,
+  lockReviewQueueLabel,
+} from '~/shared/constants/lock-review.constants';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -288,6 +291,13 @@ const validateReportCreation = async ({
   if (!existingReport) return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
+  // An owner asking again extends their own request rather than joining it as a second reporter.
+  if (existingReport.userId === userId && isLockReview({ reportType, reason, details }))
+    return db.report.update({
+      where: { id },
+      data: { details: mergeOwnLockReview(existingReport.details, details ?? {}) },
+    });
+
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;
 
@@ -484,12 +494,11 @@ export const createReport = async ({
     throw throwNotFoundError('That service no longer exists.');
 
   const lockReview = isLockReview({ reportType: type, reason: data.reason, details: data.details });
-  if (lockReview)
-    await assertLockReviewAllowed({
-      modelId: id,
-      userId,
-      lockedProperties: (data.details as MixedObject).lockedProperties,
-    });
+  if (lockReview) {
+    const lockedProperties = (data.details as MixedObject).lockedProperties;
+    await assertLockReviewAllowed({ modelId: id, userId, isModerator, lockedProperties });
+    (data.details as MixedObject).violation = lockReviewQueueLabel(lockedProperties as string[]);
+  }
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 

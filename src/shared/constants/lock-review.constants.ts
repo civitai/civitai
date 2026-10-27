@@ -23,3 +23,7 @@ export const isRequestableLock = (value: unknown): value is RequestableLock =>
 /** The model's locked settings an owner may ask a moderator to review, in display order. */
 export const requestableLocks = (lockedProperties?: (string | null)[] | null): RequestableLock[] =>
   REQUESTABLE_LOCKS.filter((key) => lockedProperties?.includes(key));
+
+/** What the moderator queue shows as the report's reason: the sub-reason and the settings named. */
+export const lockReviewQueueLabel = (locks: string[]) =>
+  `${LOCK_REVIEW_REPORT_REASON}: ${locks.join(', ')}`;

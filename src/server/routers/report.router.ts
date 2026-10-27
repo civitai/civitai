@@ -50,7 +50,13 @@ export const reportRouter = router({
   getLockReviewState: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }) => getLockReviewState({ modelId: input.id, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getLockReviewState({
+        modelId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   createAppeal: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)

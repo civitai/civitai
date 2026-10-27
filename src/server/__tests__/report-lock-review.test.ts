@@ -65,21 +65,34 @@ beforeEach(() => {
 
 describe('a request to review a locked setting', () => {
   it('is refused from anyone but the model owner', async () => {
-    await expect(createReport(lockReview(STRANGER))).rejects.toThrow();
+    await expect(createReport(lockReview(STRANGER))).rejects.toThrow(/Only the model's owner/);
     expect(reportCreate).not.toHaveBeenCalled();
     expect(reportUpdate).not.toHaveBeenCalled();
   });
 
+  it('is refused from a moderator, even on their own model', async () => {
+    await expect(createReport({ ...lockReview(OWNER), isModerator: true })).rejects.toThrow(
+      /Moderators can change locked settings directly/
+    );
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
   it('is refused for a setting that is not locked', async () => {
-    await expect(createReport(lockReview(OWNER, ['category']))).rejects.toThrow();
+    await expect(createReport(lockReview(OWNER, ['category']))).rejects.toThrow(
+      /can't be reviewed this way/
+    );
     expect(reportCreate).not.toHaveBeenCalled();
   });
 
   it('is refused for a lock that is not requestable, even alongside one that is', async () => {
     modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'poi'] });
 
-    await expect(createReport(lockReview(OWNER, ['poi']))).rejects.toThrow();
-    await expect(createReport(lockReview(OWNER, ['nsfw', 'poi']))).rejects.toThrow();
+    await expect(createReport(lockReview(OWNER, ['poi']))).rejects.toThrow(
+      /can't be reviewed this way/
+    );
+    await expect(createReport(lockReview(OWNER, ['nsfw', 'poi']))).rejects.toThrow(
+      /can't be reviewed this way/
+    );
     expect(reportCreate).not.toHaveBeenCalled();
   });
 
@@ -105,8 +118,30 @@ describe('a request to review a locked setting', () => {
     expect(reportCreate).toHaveBeenCalled();
   });
 
+  it('is allowed again when only some of the settings it named are still locked', async () => {
+    closedRequestsAre([{ daysAgo: 5, lockedProperties: ['nsfw', 'category'] }]);
+
+    await createReport(lockReview(OWNER));
+    expect(reportCreate).toHaveBeenCalled();
+  });
+
+  it('during a cooldown, still joins a request that is already open', async () => {
+    closedRequestsAre([{ daysAgo: 5, lockedProperties: ['sfwOnly'] }]);
+    openRequest.mockResolvedValue({ id: EXISTING_REPORT });
+    reportFindFirst.mockResolvedValue({
+      id: EXISTING_REPORT,
+      userId: OWNER,
+      alsoReportedBy: [],
+      previouslyReviewedCount: 0,
+      details: { reason: LOCK_REVIEW_REPORT_REASON, lockedProperties: ['sfwOnly'] },
+    });
+
+    await expect(createReport(lockReview(OWNER))).resolves.toBeTruthy();
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
   it('is refused when it names no setting', async () => {
-    await expect(createReport(lockReview(OWNER, []))).rejects.toThrow();
+    await expect(createReport(lockReview(OWNER, []))).rejects.toThrow(/can't be reviewed this way/);
     expect(reportCreate).not.toHaveBeenCalled();
   });
 
@@ -124,7 +159,10 @@ describe('a request to review a locked setting', () => {
       details: { path: ['reason'], equals: LOCK_REVIEW_REPORT_REASON },
     });
     const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
-    expect(created.data.details).toMatchObject({ lockedProperties: ['sfwOnly'] });
+    expect(created.data.details).toMatchObject({
+      lockedProperties: ['sfwOnly'],
+      violation: `${LOCK_REVIEW_REPORT_REASON}: sfwOnly`,
+    });
   });
 
   it('earns its owner no report reward when actioned', async () => {
@@ -134,18 +172,37 @@ describe('a request to review a locked setting', () => {
     expect(created.data.details).toMatchObject({ [NO_REPORT_REWARD_KEY]: true });
   });
 
-  it('a second request while one is open returns the open one', async () => {
+  it("the owner's second request extends their open one, not as a second reporter", async () => {
     reportFindFirst.mockResolvedValue({
       id: EXISTING_REPORT,
+      userId: OWNER,
       alsoReportedBy: [],
       previouslyReviewedCount: 0,
-      details: {},
-      userId: OWNER,
+      details: {
+        reason: LOCK_REVIEW_REPORT_REASON,
+        lockedProperties: ['sfwOnly'],
+        comment: 'First reason.',
+      },
     });
 
-    await createReport(lockReview(OWNER));
+    await createReport({
+      ...lockReview(OWNER, ['nsfw']),
+      details: { ...lockReview(OWNER, ['nsfw']).details, comment: 'Second reason.' },
+    });
 
     expect(reportCreate).not.toHaveBeenCalled();
+    expect(reportUpdate).toHaveBeenCalledTimes(1);
+    const [{ where, data }] = reportUpdate.mock.calls[0] as [
+      { where: MixedObject; data: MixedObject }
+    ];
+    expect(where).toEqual({ id: EXISTING_REPORT });
+    expect(data).not.toHaveProperty('alsoReportedBy');
+    expect(data.details).not.toHaveProperty('additionalReports');
+    expect(data.details).toMatchObject({
+      lockedProperties: ['nsfw', 'sfwOnly'],
+      violation: `${LOCK_REVIEW_REPORT_REASON}: nsfw, sfwOnly`,
+      comment: 'First reason.\n\nSecond reason.',
+    });
   });
 
   it('control: any other AdminAttention report on a model dedupes as before', async () => {
@@ -165,6 +222,12 @@ describe('a request to review a locked setting', () => {
 describe('what the owner is offered', () => {
   it('nothing, for someone else', async () => {
     expect(await getLockReviewState({ modelId: MODEL, userId: STRANGER })).toBeNull();
+  });
+
+  it('nothing, for a moderator', async () => {
+    expect(
+      await getLockReviewState({ modelId: MODEL, userId: OWNER, isModerator: true })
+    ).toBeNull();
   });
 
   it('nothing, when the only locks are not requestable', async () => {
