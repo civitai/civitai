@@ -117,14 +117,20 @@ async function refundMissingLegs({
       result.refundedLegs++;
       result.refundedAmount += leg.amount;
     } catch (error) {
-      // Another attempt reversed this leg between the lookup and the refund.
-      if (await isConflictWithRefundOnLedger(error, leg.transactionId)) {
-        result.alreadyRefundedLegs++;
+      let settled: boolean;
+      try {
+        // Another attempt reversed this leg between the lookup and the refund.
+        settled = await isConflictWithRefundOnLedger(error, leg.transactionId);
+      } catch (lookupError) {
+        failures.push(
+          `${leg.transactionId}: ${messageOf(error)}, and its refund lookup failed: ${messageOf(
+            lookupError
+          )}`
+        );
         continue;
       }
-      failures.push(
-        `${leg.transactionId}: ${error instanceof Error ? error.message : String(error)}`
-      );
+      if (settled) result.alreadyRefundedLegs++;
+      else failures.push(`${leg.transactionId}: ${messageOf(error)}`);
     }
   }
 
@@ -136,3 +142,5 @@ async function refundMissingLegs({
     );
   return result;
 }
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
