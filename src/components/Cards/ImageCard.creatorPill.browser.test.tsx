@@ -65,14 +65,15 @@ import { ImageCard } from './ImageCard';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { contrastOnBlack } from '~/utils/contrast-floor';
 
-const nameplate = {
-  cosmetic: {
-    type: 'NamePlate',
-    data: { variant: 'gradient', gradient: { from: '#e58cff', to: '#7b2fe0', deg: 90 } },
-  },
+const plate = (from: string, to: string) => ({
+  cosmetic: { type: 'NamePlate', data: { variant: 'gradient', gradient: { from, to, deg: 90 } } },
   data: null,
-};
+});
+// Supernova, whose dark stop is 3.33:1 on black unlifted.
+const nameplate = plate('#e58cff', '#7b2fe0');
+const HARD_BLACK_EDGE = /rgb\(0, 0, 0\) 1px 0px 0px.*rgb\(0, 0, 0\) -1px 0px 0px/;
 
 function imageData(cosmetics: unknown[]) {
   return {
@@ -110,27 +111,44 @@ async function renderPill(cosmetics: unknown[]) {
     expect(document.body.querySelector('[class*="creatorPill"]')).not.toBeNull();
   });
   const pill = document.body.querySelector('[class*="creatorPill"]')!;
-  return { pill: getComputedStyle(pill), name: getComputedStyle(pill.firstElementChild!) };
+  const nameEl = pill.firstElementChild!;
+  const gradient = getComputedStyle(nameEl).getPropertyValue('--text-gradient');
+  const stops = [...gradient.matchAll(/#([0-9a-f]{6})/gi)].map(([, hex]) =>
+    [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  );
+  return { pill: getComputedStyle(pill), name: getComputedStyle(nameEl), stops };
 }
 
 describe('ImageCard creator pill', () => {
-  test('keeps the shared translucent backing and no glow for a default name', async () => {
+  test('keeps the shared translucent backing and no edge for a default name', async () => {
     const { pill, name } = await renderPill([]);
     expect(pill.backgroundColor).toBe('rgba(0, 0, 0, 0.31)');
-    expect(name.filter).not.toMatch(/0px 0px 0\.5px/);
+    expect(name.filter).not.toMatch(HARD_BLACK_EDGE);
+    expect(name.color).toBe('rgb(255, 255, 255)');
   });
 
-  test('keeps that backing behind a cosmetic nameplate and glows the name instead', async () => {
+  test('keeps that backing behind a cosmetic nameplate and edges the name in black', async () => {
     const { pill, name } = await renderPill([nameplate]);
     expect(pill.backgroundColor).toBe('rgba(0, 0, 0, 0.31)');
-    expect(name.filter).toMatch(/rgba\(0, 0, 0, 0\.9\d*\) 0px 0px 0\.5px/);
+    expect(name.filter).toMatch(HARD_BLACK_EDGE);
+  });
+
+  test.each([
+    ['Supernova', '#e58cff', '#7b2fe0'],
+    ['Champion 2', '#07d1d3', '#b10ce0'],
+    ['Champion 5', '#00f2f4', '#b142ff'],
+    ['Moderator', '#b31a1a', '#de2222'],
+  ])('every %s stop meets 4.5:1 against the black edge', async (_, from, to) => {
+    const { stops } = await renderPill([plate(from, to)]);
+    expect(stops.length).toBeGreaterThanOrEqual(2);
+    for (const stop of stops) expect(contrastOnBlack(stop)).toBeGreaterThanOrEqual(4.5);
   });
 
   test("the dark scheme does not swap the nameplate glow for the name's default shadow", async () => {
     document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
     try {
       const { name } = await renderPill([nameplate]);
-      expect(name.filter).toMatch(/0px 0px 0\.5px/);
+      expect(name.filter).toMatch(HARD_BLACK_EDGE);
     } finally {
       document.documentElement.removeAttribute('data-mantine-color-scheme');
     }

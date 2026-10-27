@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
 import { useAutoplayGifs } from '~/providers/BrowserSettingsProvider';
 import type { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { liftToContrastOnBlack } from '~/utils/contrast-floor';
 
 type NamePlateData = NamePlateCosmetic['data'] | null | undefined;
 
@@ -31,6 +32,23 @@ export function getNamePlateTextProps(data: NamePlateData, { animate }: { animat
   };
 }
 
+/** The plate with every hex colour lifted to stay readable against a black text edge. */
+export function withContrastFloor(data: NamePlateData): NamePlateData {
+  if (!data) return data;
+  const { color, gradient } = data;
+  return {
+    ...data,
+    ...(typeof color === 'string' && { color: liftToContrastOnBlack(color) }),
+    ...(gradient && {
+      gradient: {
+        ...gradient,
+        from: liftToContrastOnBlack(gradient.from),
+        to: liftToContrastOnBlack(gradient.to),
+      },
+    }),
+  };
+}
+
 /**
  * A username styled by its nameplate. Animated plates stand still when the viewer turned off
  * autoplay, when the caller passes `autoplay={false}`, or under prefers-reduced-motion.
@@ -38,12 +56,15 @@ export function getNamePlateTextProps(data: NamePlateData, { animate }: { animat
 export function NamePlateText({
   nameplate,
   autoplay = true,
+  contrastFloor = false,
   className,
   children,
   ...props
 }: Omit<TextProps, 'style'> & {
   nameplate?: NamePlateData;
   autoplay?: boolean;
+  /** Lift dark plate colours for a name drawn with a black edge (`withContrastFloor`). */
+  contrastFloor?: boolean;
   children?: ReactNode;
 }) {
   const autoplayGifs = useAutoplayGifs();
@@ -51,7 +72,9 @@ export function NamePlateText({
     className: plateClassName,
     style,
     ...plateProps
-  } = getNamePlateTextProps(nameplate, { animate: autoplay && autoplayGifs }) as TextProps & {
+  } = getNamePlateTextProps(contrastFloor ? withContrastFloor(nameplate) : nameplate, {
+    animate: autoplay && autoplayGifs,
+  }) as TextProps & {
     style?: CSSProperties;
   };
 

@@ -161,13 +161,13 @@
   }
 }
 
-/* A nameplate's gradient is clipped to the glyphs, so text-shadow can't reach it: a tight dark edge
-   plus a small offset keeps mid-tone plates readable on bright images without a heavier pill.
-   The name's own shadow (UserAvatarSimple.module.scss) is replaced; the extra class beats its
-   dark-scheme rule. */
+/* A nameplate's gradient is clipped to the glyphs, so text-shadow can't reach it: four hard 1px
+   offsets draw a solid black edge, which is what the plate colours are floored against
+   (UserAvatarSimple passes `contrastFloor` with this class). The name's own shadow
+   (UserAvatarSimple.module.scss) is replaced; the extra class beats its dark-scheme rule. */
 .creatorPill.creatorPillPlate > [class] {
-  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95))
-    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000) drop-shadow(0 1px 0 #000)
+    drop-shadow(0 -1px 0 #000);
 }
 
 .creatorAvatar {

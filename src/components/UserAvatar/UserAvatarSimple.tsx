@@ -83,6 +83,7 @@ export function UserAvatarSimple({
       color="white"
       className={classes.username}
       nameplate={nameplate?.data}
+      contrastFloor={!!classNames?.namePillPlate}
       autoplay={autoplayAnimations !== false}
     >
       {username}
