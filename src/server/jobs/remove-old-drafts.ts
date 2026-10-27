@@ -3,7 +3,7 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { getModelHoldContext, modelDataHeldSql } from '~/server/services/legal-hold.service';
+import { modelDataHeldSql } from '~/server/services/legal-hold.service';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
@@ -197,8 +197,6 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
-  // The marker view is assumed present, so a database without it fails each DELETE: held, not reaped.
-  const holdContext = { ...(await getModelHoldContext()), markerView: true };
   const batches = chunk(modelIds, BATCH_SIZE);
   for (const batch of batches) {
     try {
@@ -241,7 +239,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
         DELETE FROM "Model" m
         WHERE m.id = ANY(${deletable})
-          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), holdContext)}
+          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
         RETURNING m.id
       `;
       const deletedSet = new Set(deletedRows.map((r) => r.id));

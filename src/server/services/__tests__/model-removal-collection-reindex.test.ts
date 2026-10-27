@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
  * Coverage for the two model removal paths, which want OPPOSITE things.
@@ -340,6 +340,10 @@ describe('permaDeleteModelById — legal hold', () => {
     __dirname,
     '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
   );
+  const OWNERSHIP_MIGRATION = path.resolve(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+  );
   let db: PGlite;
   let refusal: string | undefined;
 
@@ -364,6 +368,7 @@ describe('permaDeleteModelById — legal hold', () => {
       );
     `);
     await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+    await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
     await db.exec(`
       INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
       INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
@@ -435,6 +440,45 @@ describe('permaDeleteModelById — legal hold', () => {
       expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
     }
   );
+
+  describe('with an earlier owner on record', () => {
+    // The history is append-only; each case clears it as its owner would, past the guard.
+    afterEach(() =>
+      db.exec(`
+        ALTER TABLE "ModelOwnership" DISABLE TRIGGER USER;
+        DELETE FROM "ModelOwnership";
+        ALTER TABLE "ModelOwnership" ENABLE TRIGGER USER;
+      `)
+    );
+
+    it('refuses a model a held owner transferred to an unheld one', async () => {
+      await db.exec(`
+        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+          (${MODEL_ID}, ${MARKED_OWNER}, 'create'), (${MODEL_ID}, ${OWNER_ID}, 'transfer')
+      `);
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({
+        result: 'FORBIDDEN',
+        left: 1,
+        rolledBack: true,
+      });
+    });
+
+    it('deletes a model only unheld owners had (control for the above)', async () => {
+      await db.exec(`
+        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+          (${MODEL_ID}, 99, 'create'), (${MODEL_ID}, ${OWNER_ID}, 'transfer')
+      `);
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'deleted', left: 0 });
+    });
+
+    it('refuses a model the placeholder owner once had', async () => {
+      await db.exec(`
+        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+          (${MODEL_ID}, -1, 'account-delete'), (${MODEL_ID}, ${OWNER_ID}, 'restore')
+      `);
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'FORBIDDEN', left: 1 });
+    });
+  });
 
   it('deletes a model whose owner is not held, and its files', async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({

@@ -58,6 +58,7 @@ const TRANSFERRED_FROM_HELD = 16; // unheld; given the model of PENDING_REPORT
 const TRANSFERRED_FROM_UNHELD = 17; // unheld; given the model of UNHELD
 const REPORTED_IMAGE_HELD = 18; // named on no report; an image of theirs is listed on one
 const REPORTED_IMAGE_SUBJECT = 19; // owns nothing; the subject of that report
+const ONCE_PLACEHOLDER_OWNED = 20; // unheld; given back a model the placeholder owner had
 const OWNERS = [
   UNHELD,
   PENDING_REPORT,
@@ -75,6 +76,7 @@ const OWNERS = [
   TRANSFERRED_FROM_HELD,
   TRANSFERRED_FROM_UNHELD,
   REPORTED_IMAGE_HELD,
+  ONCE_PLACEHOLDER_OWNED,
 ];
 const ELIGIBLE = [
   UNHELD,
@@ -145,7 +147,9 @@ beforeAll(async () => {
       (${TRANSFERRED_FROM_HELD * 10}, ${PENDING_REPORT}, 'create'),
       (${TRANSFERRED_FROM_HELD * 10}, ${TRANSFERRED_FROM_HELD}, 'transfer'),
       (${TRANSFERRED_FROM_UNHELD * 10}, ${UNHELD}, 'create'),
-      (${TRANSFERRED_FROM_UNHELD * 10}, ${TRANSFERRED_FROM_UNHELD}, 'transfer');
+      (${TRANSFERRED_FROM_UNHELD * 10}, ${TRANSFERRED_FROM_UNHELD}, 'transfer'),
+      (${ONCE_PLACEHOLDER_OWNED * 10}, -1, 'account-delete'),
+      (${ONCE_PLACEHOLDER_OWNED * 10}, ${ONCE_PLACEHOLDER_OWNED}, 'restore');
     INSERT INTO "Image" (id, "userId", "needsReview") VALUES
       (1, ${IMAGE_REVIEW_HELD}, 'csam'),
       (2, ${REPORTED_IMAGE_HELD}, NULL);
@@ -284,16 +288,16 @@ describe('model ownership history', () => {
     expect(deletedUrls()).toContain(trainingFileUrl(TRANSFERRED_FROM_UNHELD));
   });
 
-  it('still runs, on current owners only, before the history table exists', async () => {
+  it('deletes nothing without the history table', async () => {
     await holder.db.exec(`ALTER TABLE "ModelOwnership" RENAME TO "ModelOwnershipAside"`);
     try {
-      await purgeReplacedFilesJob.run({}).result;
+      await purgeReplacedFilesJob.run({}).result.catch(() => undefined);
+      await deleteOldTrainingData.run({}).result.catch(() => undefined);
     } finally {
       await holder.db.exec(`ALTER TABLE "ModelOwnershipAside" RENAME TO "ModelOwnership"`);
     }
 
-    expect(deletedUrls()).toContain(replacedFileUrl(TRANSFERRED_FROM_HELD));
-    expect(deletedUrls()).not.toContain(replacedFileUrl(PENDING_REPORT));
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
   });
 
   it('refuses to change or remove a recorded owner', async () => {

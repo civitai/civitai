@@ -37,10 +37,10 @@ const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget, mockGetQuaran
     mockGetQuarantineBucket: vi.fn(() => 'civitai-quarantine'),
   }));
 
-// The hold's optional objects exist; the statements that read them are what is under test here.
+// The hold marker view exists; the statements that read it are what is under test here.
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<typeof LegalHoldService>()),
-  getModelHoldContext: async () => ({ markerView: true, ownershipHistory: true }),
+  holdMarkerViewExists: async () => true,
 }));
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,

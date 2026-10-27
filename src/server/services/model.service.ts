@@ -13,14 +13,13 @@ import type { VersionReadiness } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
-  accountHoldSql,
   assertOwnersNotUnderLegalHold,
   HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
+  modelDataHeldSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -2410,16 +2409,16 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
-      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
-      // account hold too: its image legs cover the images this deletes.
-      const owner = Prisma.raw('m."userId"');
+      // A held model is refused, and the rollback restores its posts and images: its owner, or any
+      // owner it had before, is held. The hold is checked in the DELETE itself, so one placed during
+      // this transaction still stops it. It is the account hold too: its image legs cover the images
+      // this deletes.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
         DELETE FROM "Model" m
         WHERE m.id = ${id}
-          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
       `.catch((e: unknown) => {
         throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });

@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
@@ -37,9 +41,10 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 import { restoreUser } from '~/server/services/user.service';
 
 const USER_ID = 7;
-// The audit names three models; only two are still orphaned, so only those two are restored.
+// The account created three models; only two are still orphaned, so only those two are restored.
 const AUDITED = [31, 52, 83];
 const ORPHANED = [31, 83];
+const OTHER_USER = 8;
 
 const restore = () =>
   restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true });
@@ -53,7 +58,7 @@ beforeEach(() => {
   );
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER_ID });
   auditRows.mockResolvedValue(AUDITED.map((modelId) => ({ modelId })));
-  dbMock.dbWrite.model.findMany.mockResolvedValue(ORPHANED.map((id) => ({ id })));
+  dbMock.dbWrite.$queryRaw.mockResolvedValue(ORPHANED.map((id) => ({ id })));
   dbMock.dbWrite.model.updateMany.mockResolvedValue({ count: ORPHANED.length });
   bustForModels.mockResolvedValue(undefined);
 });
@@ -107,9 +112,55 @@ describe('restoreUser -> model ownership history', () => {
     expect(reclaim![1].values).toEqual([USER_ID, 'restore', null, ORPHANED, USER_ID]);
   });
 
-  it("does not reclaim a model whose only event by the user is a moderator's transfer", async () => {
+  it('reads only Create events, whose actor is the creator', async () => {
     await restore();
 
-    expect(auditRows.mock.calls[0][0]).toContain("type != 'Transfer'");
+    expect(auditRows.mock.calls[0][0]).toMatch(/type = 'Create'/);
+  });
+});
+
+describe("restoreUser -> which orphaned models are the account's", () => {
+  let db: PGlite;
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);`);
+    await db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+    // Every model below sits with the placeholder owner.
+    await db.exec(`
+      INSERT INTO "Model" VALUES (1, -1), (2, -1), (3, -1), (4, -1), (5, -1), (6, -1);
+      INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+        -- created, then moved to the placeholder when the account was deleted: theirs
+        (1, ${USER_ID}, 'create'), (1, -1, 'account-delete'),
+        -- created, transferred away, and the new owner's account deleted: not theirs
+        (2, ${USER_ID}, 'create'), (2, ${OTHER_USER}, 'transfer'), (2, -1, 'account-delete'),
+        -- backfilled: the placeholder baseline, then the creator from the analytics store: theirs
+        (4, -1, 'baseline'), (4, ${USER_ID}, 'baseline'),
+        -- someone else's, which this account's analytics events also name: not theirs
+        (5, ${OTHER_USER}, 'create'), (5, -1, 'account-delete');
+      -- 3 and 6 have no history: the Create event decides
+    `);
+  });
+  afterAll(() => db.close());
+
+  it("reclaims the models whose last owner before the placeholder was this account's", async () => {
+    // Create events by this account: 3 has no history, 2 and 5 do and are someone else's.
+    auditRows.mockResolvedValue([{ modelId: 2 }, { modelId: 3 }, { modelId: 5 }]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
+    }) as never);
+
+    await expect(restore()).resolves.toMatchObject({ modelIds: [1, 3, 4] });
   });
 });

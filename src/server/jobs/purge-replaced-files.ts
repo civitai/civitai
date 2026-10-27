@@ -1,11 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  getModelHoldContext,
-  ownerUnderLegalHoldSql,
-  type ModelHoldContext,
-} from '~/server/services/legal-hold.service';
+import { holdMarkerViewExists, ownerUnderLegalHoldSql } from '~/server/services/legal-hold.service';
 import { legalHoldSkipReason } from '~/server/utils/legal-hold';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { createJob } from '~/server/jobs/job';
@@ -66,11 +62,11 @@ export async function processReplacedFiles(rows: ReplacedRow[]) {
 // The grace period is inlined as a literal: Prisma binds a JS number as int8 and
 // `make_interval` only takes int4, so an interpolated parameter fails to resolve the
 // function (42883) at plan time — the statement throws before any row is examined.
-export function buildReplacedFilesQuery(holdContext: ModelHoldContext): Prisma.Sql {
+export function buildReplacedFilesQuery(markerView: boolean): Prisma.Sql {
   return Prisma.sql`
     SELECT id, url, ${ownerUnderLegalHoldSql(
       Prisma.raw('"ModelFile"."modelVersionId"'),
-      holdContext
+      markerView
     )} AS held
     FROM "ModelFile"
     WHERE "replacedAt" < now() - make_interval(days => ${Prisma.raw(String(GRACE_DAYS))})
@@ -80,7 +76,7 @@ export function buildReplacedFilesQuery(holdContext: ModelHoldContext): Prisma.S
 
 export const purgeReplacedFilesJob = createJob('purge-replaced-files', '15 11 * * *', async () => {
   const rows = await dbWrite.$queryRaw<ReplacedRow[]>(
-    buildReplacedFilesQuery(await getModelHoldContext())
+    buildReplacedFilesQuery(await holdMarkerViewExists())
   );
   if (rows.length === 0) return { status: 'ok' };
   const { purged, failed, skipped } = await processReplacedFiles(rows);

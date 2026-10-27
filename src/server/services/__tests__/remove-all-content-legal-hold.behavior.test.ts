@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -133,6 +134,8 @@ const ARTICLE = 500;
 const MODEL = 700;
 const BOUNTY = 900;
 const MODEL_VERSION = (modelId: number) => modelId * 10;
+const GIVEN_BY_HELD = 7901;
+const GIVEN_BY_BYSTANDER = 7902;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -184,6 +187,21 @@ beforeAll(async () => {
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
+  `);
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  // Append-only, so set once: two models CLEAN was given, one by a held owner.
+  await holder.db.exec(`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+      (${GIVEN_BY_HELD}, ${HELD}, 'create'), (${GIVEN_BY_HELD}, ${CLEAN}, 'transfer'),
+      (${GIVEN_BY_BYSTANDER}, ${BYSTANDER}, 'create'), (${GIVEN_BY_BYSTANDER}, ${CLEAN}, 'transfer');
   `);
 });
 
@@ -621,6 +639,19 @@ describe('removeAllContent', () => {
   it('names a document store wipe that failed', async () => {
     docStore.wipeAccount.mockRejectedValueOnce(new Error('store down'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['doc-store'] });
+  });
+
+  it('keeps a model an earlier owner of which is held, and deletes one only unheld owners had', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN}), (${GIVEN_BY_BYSTANDER}, ${CLEAN})
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`);
+    expect(left.rows.map((r) => r.id)).toContain(GIVEN_BY_HELD);
+    expect(left.rows.map((r) => r.id)).not.toContain(GIVEN_BY_BYSTANDER);
+    expect(left.rows.map((r) => r.id)).not.toContain(MODEL);
   });
 
   it('leaves the bids on a model a hold kept', async () => {

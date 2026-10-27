@@ -6,6 +6,7 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
+  modelDataHeldSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -1222,39 +1223,53 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     );
   }
 
-  // Look up the audited model ownership up front (ClickHouse lives outside Postgres).
-  let auditIds: number[] = [];
+  // The models the account created, for those with no recorded owner but the placeholder (ClickHouse
+  // lives outside Postgres, so read up front). A Create event's actor is the model's creator; every
+  // other event's actor may be a moderator.
+  let createdIds: number[] = [];
   if (restoreModels) {
-    // `modelEvents.userId` is the actor of each event; for a model that's the original owner. A
-    // Transfer's actor is the moderator who moved it, never an owner.
-    // The deletion path (removeModels:false) sets Model.userId = -1 without touching
-    // status/deletedAt, so we reclaim only those orphans. Models deleted via removeModels:true
-    // keep their userId and get status='Deleted' instead — they are intentionally NOT restored
-    // here, and a model with no tracked event won't appear, so reclaim is best-effort.
-    const auditRows =
+    const createdRows =
       (await clickhouse?.$query<{ modelId: number }>(`
         SELECT DISTINCT modelId
         FROM modelEvents
-        WHERE userId = ${id} AND type != 'Transfer'
+        WHERE userId = ${id} AND type = 'Create'
       `)) ?? [];
-    auditIds = auditRows.map((r) => r.modelId);
+    createdIds = createdRows.map((r) => r.modelId);
   }
 
   // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and
   // model writes in one transaction: a user can own thousands of models, and an interactive
   // transaction would hold a connection + row locks open across the whole set (and risk Prisma's
-  // 5s timeout). The model reclaim is a single atomic UPDATE, so it doesn't need one. Doing it
-  // first also keeps the operation re-runnable — if it fails, deletedAt is still set, so a retry
-  // passes the guard above instead of being locked out.
+  // 5s timeout). Doing it first also keeps the operation re-runnable — if it fails, deletedAt is
+  // still set, so a retry passes the guard above instead of being locked out.
+  //
+  // The deletion path (removeModels:false) sets Model.userId = -1 without touching status/deletedAt,
+  // so only those orphans are reclaimed, and only those whose last recorded owner before the
+  // placeholder is this account. Models deleted via removeModels:true keep their userId and get
+  // status='Deleted' instead — they are intentionally NOT restored here.
   let modelsRestored = 0;
   let restoredModelIds: number[] = [];
-  if (restoreModels && auditIds.length > 0) {
-    // Capture the exact orphaned rows we're about to reclaim so the returned ids reflect what
-    // actually changed (rather than every audited model, some of which may not be orphaned).
-    const orphans = await dbWrite.model.findMany({
-      where: { id: { in: auditIds }, userId: -1 },
-      select: { id: true },
-    });
+  if (restoreModels) {
+    const orphans = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT m.id
+      FROM "Model" m
+      WHERE m."userId" = -1
+        AND m.id IN (
+          SELECT o."modelId" FROM "ModelOwnership" o WHERE o."userId" = ${id}
+          UNION
+          SELECT unnest(${createdIds}::int[])
+        )
+        AND COALESCE(
+          (
+            SELECT o."userId" FROM "ModelOwnership" o
+            WHERE o."modelId" = m.id AND o."userId" <> -1
+            ORDER BY o.id DESC
+            LIMIT 1
+          ),
+          CASE WHEN m.id = ANY(${createdIds}::int[]) THEN ${id}::int END
+        ) = ${id}
+      ORDER BY m.id
+    `;
     restoredModelIds = orphans.map((m) => m.id);
 
     if (restoredModelIds.length > 0) {
@@ -1605,7 +1620,11 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // A model is also kept while any owner it had before is held.
+    await dbWrite.$executeRaw`
+      DELETE FROM "Model"
+      WHERE "userId" = ${id} AND ${unlessHeld}
+        AND NOT ${modelDataHeldSql(Prisma.raw('"Model".id'), markerView)}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
     // Rows, storage objects and caches; then any image uploaded since the list was read.
