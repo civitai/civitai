@@ -1,0 +1,32 @@
+{
+  "name": "@civitai/knights-app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "svelte-kit sync && vite build",
+    "preview": "vite preview",
+    "prepare": "svelte-kit sync",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@civitai/auth": "workspace:*",
+    "@civitai/brand": "workspace:*",
+    "@civitai/db": "workspace:*",
+    "@civitai/db-schema": "workspace:*",
+    "@civitai/redis": "workspace:*"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.3.2",
+    "@sveltejs/kit": "^2.43.2",
+    "@sveltejs/vite-plugin-svelte": "^6.0.0",
+    "@types/node": "^20.19.9",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.0.4"
+  }
+}
