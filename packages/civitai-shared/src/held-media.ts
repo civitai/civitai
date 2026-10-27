@@ -168,3 +168,39 @@ export function heldServeRecord(input: {
     bytes: Number.isFinite(length) ? length : null,
   };
 }
+
+/** What a moderator did with one image on screen: opened its full view, or selected it. */
+export type ShownAction = 'open' | 'select';
+/** Which copy was on screen: the stored original, or the public CDN's 450px rendition. */
+export type ShownRendition = 'original' | 'cdn-450';
+export const SHOWN_ACTIONS: readonly ShownAction[] = ['open', 'select'];
+export const SHOWN_RENDITIONS: readonly ShownRendition[] = ['original', 'cdn-450'];
+
+/** The ModActivity `activity` for one shown image. ModActivity has no details column, so the act and
+ *  the rendition ride in the string. */
+export const shownActivity = (action: ShownAction, rendition: ShownRendition) =>
+  `reportMedia:${action}:${rendition}` as const;
+
+/** The share of a video actually played: the union of its `played` ranges over its duration. A seek
+ *  adds nothing, since `played` holds only what played. 0 while the duration is unknown. */
+export function playedFraction(video: {
+  duration: number;
+  played: { length: number; start(i: number): number; end(i: number): number };
+}): number {
+  const { duration, played } = video;
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  const ranges = Array.from({ length: played.length }, (_, i) => [played.start(i), played.end(i)])
+    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end > start)
+    .sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let reached = -Infinity;
+  for (const [start, end] of ranges) {
+    const from = Math.max(start, reached);
+    if (end > from) total += end - from;
+    reached = Math.max(reached, end);
+  }
+  return Math.min(total / duration, 1);
+}
+
+/** The share of a video that must have played before it counts as watched. */
+export const WATCHED_FRACTION = 0.95;
