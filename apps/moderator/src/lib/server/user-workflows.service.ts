@@ -17,21 +17,42 @@ import { logToAxiom } from './axiom';
 
 /**
  * Which submitter's workflows to read. The orchestrator holds everything an account touched under one
- * id — on-site generations, Comfy Cloud sessions, training runs, prompt-enhancement and scan workflows
- * — and only the tag separates them, so an unfiltered query answers no question at all.
+ * id, and only the tag separates the sources. `comfy` makes Comfy Cloud investigable: it submits under
+ * the user's own id and never appears in the `gen` feed.
  *
- * `comfy` is what makes Comfy Cloud investigable: it submits under the user's own id, so its work never
- * reaches the site and does not appear in the `gen` feed.
+ * `all` sends no tag at all. Work submitted straight to the orchestrator can carry no tags, so every
+ * tagged view misses it — one account ran ~10k such jobs a day while the `gen` view showed two — and
+ * the tag filter is also what made that account's query take a minute (84 ms unfiltered). Each row
+ * says where it came from instead (see `workflowOrigin`).
  */
 export const WORKFLOW_SOURCE_TAGS = {
   onsite: 'gen',
   comfy: 'civitai-comfy-nodes',
 } as const;
 
-export type WorkflowSource = keyof typeof WORKFLOW_SOURCE_TAGS;
+export const WORKFLOW_SOURCES = ['all', 'onsite', 'comfy'] as const;
+export type WorkflowSource = (typeof WORKFLOW_SOURCES)[number];
 
 export const isWorkflowSource = (v: string | null | undefined): v is WorkflowSource =>
-  !!v && Object.prototype.hasOwnProperty.call(WORKFLOW_SOURCE_TAGS, v);
+  (WORKFLOW_SOURCES as readonly string[]).includes(v ?? '');
+
+export type WorkflowOrigin = 'appblock' | 'onsite' | 'comfy' | 'untagged' | 'other';
+
+/** Where a row came from, read from its own tags. App blocks also tag `gen`, so they are checked first:
+ *  their trainings and step workflows keep no generation params. */
+export function workflowOrigin(tags: string[]): WorkflowOrigin {
+  if (tags.includes('app-block')) return 'appblock';
+  if (tags.includes(WORKFLOW_SOURCE_TAGS.onsite)) return 'onsite';
+  if (tags.includes(WORKFLOW_SOURCE_TAGS.comfy)) return 'comfy';
+  return tags.length === 0 ? 'untagged' : 'other';
+}
+
+// Tags every submitter adds; they name nothing about what the workflow was.
+const GENERIC_TAGS = new Set(['civitai']);
+
+/** For an `other` row, the tag that says what it was (`training`, `prompt-enhancement`, …). */
+export const otherSourceTag = (tags: string[]): string | null =>
+  tags.find((t) => !GENERIC_TAGS.has(t) && !t.includes(':')) ?? null;
 
 export type GeneratedMedia = {
   id: string;
@@ -51,6 +72,12 @@ export type GeneratedWorkflow = {
   /** The generation form that produced it (`txt2img`, `img2vid:ref2vid`, …), and its model family. */
   workflow: string | null;
   ecosystem: string | null;
+  origin: WorkflowOrigin;
+  /** Set for `other` rows only. */
+  sourceTag: string | null;
+  /** A generation that recorded none of prompt, form or model family. Not said of Comfy Cloud, which
+   *  never sends them, nor of `other` workflows, whose params live elsewhere. */
+  paramsMissing: boolean;
   media: GeneratedMedia[];
   /** Outputs the orchestrator will not serve — expired, or withheld. Counted so an empty grid is not
    *  read as "they generated nothing". */
@@ -138,6 +165,7 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
     status?: unknown;
     metadata?: { params?: Record<string, unknown> };
     steps?: unknown;
+    tags?: unknown;
   };
   const id = str(w.id);
   if (!id) return null;
@@ -145,6 +173,10 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
   // Comfy Cloud sends `metadata: {}`, so every field read from it is null for those rows — the prompt
   // exists only inside the raw node graph at `steps[].input.workflow`. The media carries them instead.
   const params = w.metadata?.params ?? {};
+  const tags = Array.isArray(w.tags)
+    ? w.tags.filter((t): t is string => typeof t === 'string')
+    : [];
+  const origin = workflowOrigin(tags);
   const steps = Array.isArray(w.steps) ? w.steps : [];
   const media: GeneratedMedia[] = [];
   let unavailable = 0;
@@ -162,6 +194,13 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
     negativePrompt: str(params.negativePrompt),
     workflow: str(params.workflow),
     ecosystem: str(params.ecosystem),
+    origin,
+    sourceTag: origin === 'other' ? otherSourceTag(tags) : null,
+    paramsMissing:
+      (origin === 'onsite' || origin === 'untagged') &&
+      !params.prompt &&
+      !params.workflow &&
+      !params.ecosystem,
     media,
     unavailable,
   };
@@ -184,9 +223,10 @@ export async function getUserGeneratedWorkflows(
   const query = new URLSearchParams({
     UserId: String(userId),
     Take: String(Math.min(Math.max(options.take ?? 20, 1), 100)),
-    Tags: WORKFLOW_SOURCE_TAGS[options.source ?? 'onsite'],
     ExcludeFailed: 'true',
   });
+  const source = options.source ?? 'all';
+  if (source !== 'all') query.set('Tags', WORKFLOW_SOURCE_TAGS[source]);
   if (options.cursor) query.set('Cursor', options.cursor);
 
   const started = Date.now();
@@ -210,7 +250,7 @@ export async function getUserGeneratedWorkflows(
         name: 'user-workflows-slow',
         type: 'info',
         userId,
-        source: options.source ?? 'onsite',
+        source,
         ms,
         outcome,
       }).catch(() => null);
