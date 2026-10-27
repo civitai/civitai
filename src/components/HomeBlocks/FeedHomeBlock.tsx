@@ -19,6 +19,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HostCrucibleTile } from '~/components/HomeBlocks/HostCrucibleTile';
+import { useGridSlots } from '~/components/HomeBlocks/useGridSlots';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -296,24 +297,34 @@ function CrucibleFeedGrid({
   'maxPerUser' | 'order'
 > & { eventTag?: string }) {
   const currentUser = useCurrentUser();
-  const { loadingPreferences, items: visible } = useApplyHiddenPreferences({
+  const { loadingPreferences, items: hiddenFiltered } = useApplyHiddenPreferences({
     type: 'crucibles',
     data: items,
   });
+  const { gridRef, slots } = useGridSlots(rows, !!eventTag, loadingPreferences);
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
+  // Only ever beside at least one crucible: a row whose crucibles are all hidden for this viewer
+  // shows nothing, as an untagged event row does.
+  const showTile = !!eventTag && hiddenFiltered.length > 0;
+  const visible =
+    showTile && slots !== undefined
+      ? hiddenFiltered.slice(0, Math.max(slots - 1, 1))
+      : hiddenFiltered;
+
   return (
     <div
+      ref={gridRef}
       className={classes.grid}
-      style={{ '--count': visible.length + (eventTag ? 1 : 0) } as React.CSSProperties}
+      style={{ '--count': visible.length + (showTile ? 1 : 0) } as React.CSSProperties}
     >
       {visible.map((item) => (
         <div key={item.id} className="p-2">
           <CrucibleCard data={item} />
         </div>
       ))}
-      {eventTag && (
+      {showTile && (
         <div className="p-2">
           <HostCrucibleTile eventTag={eventTag} signedIn={!!currentUser} />
         </div>

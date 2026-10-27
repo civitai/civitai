@@ -1,13 +1,7 @@
 import { AspectRatio, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-
-/** `halloween` -> `Halloween`, `winter-fest` -> `Winter Fest`. */
-const eventNameFromTag = (tag: string) =>
-  tag
-    .split('-')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+import { toPascalCase } from '~/utils/string-helpers';
 
 /** Last tile of an event's crucibles row; sized like a CrucibleCard. */
 export function HostCrucibleTile({ eventTag, signedIn }: { eventTag: string; signedIn: boolean }) {
@@ -21,7 +15,7 @@ export function HostCrucibleTile({ eventTag, signedIn }: { eventTag: string; sig
       >
         <IconPlus size={32} />
         <Text fw={700} size="lg" inherit>
-          Host your own {eventNameFromTag(eventTag)} crucible
+          Host your own {toPascalCase(eventTag)} crucible
         </Text>
         <Text size="sm" c="dimmed">
           Start a challenge, set a prize, let the community compete
