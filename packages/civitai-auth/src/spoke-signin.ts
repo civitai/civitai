@@ -15,7 +15,7 @@ import {
   safePath,
 } from './first-party-bridge';
 import { hubBaseUrl } from './hub';
-import { registrableDomain, spokeLogoutCookies } from './spoke-logout';
+import { registrableDomain } from './spoke-logout';
 
 // Sign-in handlers for a first-party app on its own host: `GET /api/auth/authorize` and `GET /api/auth/callback`.
 // They write only the host-only slot, which no other host can set; the shared slot belongs to the hub and the main
@@ -176,8 +176,11 @@ export function spokeAuthorize(request: Request, opts: SpokeSignInOptions = {}):
     const retries = Number.parseInt(jar[LOGIN_RETRY_COOKIE] ?? '', 10) || 0;
     if (retries >= 1) {
       opts.onEvent?.('loop-terminal', { retries });
+      // Only this host's own slot: the shared Domain session belongs to every other app.
+      const secure = isSecureCookie();
       return problemPage([
-        ...spokeLogoutCookies(url.hostname),
+        expire(sessionCookieNameForSlot('host', secure), secure),
+        expire(deviceCookieNameForSlot('host', secure), secure),
         clearBridgeCookie(),
         clearMarker(),
         clearRetry(),
