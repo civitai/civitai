@@ -19,5 +19,7 @@ export const DEVICE_ID_TOKEN_TYPE = 'urn:civitai:token-type:device-id';
 export const JWT_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:jwt';
 /** A worker device id, as sent in `subject_token` or read from a Salad token's machine id. */
 export const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+/** The civitai system account (User id -1): owner of system OAuth apps, the first-party convention. */
+export const SYSTEM_USER_ID = -1;
 /** Held by the account that owns workload clients. The hub produces no session for a holder. */
 export const SYSTEM_WORKLOAD_ROLE = 'system:workload';

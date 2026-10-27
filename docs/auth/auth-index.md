@@ -39,6 +39,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | [centralized-auth-app.md](./centralized-auth-app.md) | Topology decision: hub issues, spokes verify + the `@civitai/auth` SDK. (2026-06-09) |
 | [auth-verification-strategy.md](./auth-verification-strategy.md) | How a spoke verifies a session — Shared-lib (A) vs JWKS hybrid (C). Determines whether auth changes force consumer redeploys. (2026-06-09) |
 | [thin-session-token-design.md](./thin-session-token-design.md) | The **thin ES256 token** model — *decided*; supersedes the fat-token framing elsewhere. |
+| [choosing-sign-in-for-an-app.md](./choosing-sign-in-for-an-app.md) | Which sign-in an app uses: first-party, a system OAuth app, or a developer OAuth app. (Proposed 2026-10-26) |
 
 ## Visual reference (read alongside the specs)
 
