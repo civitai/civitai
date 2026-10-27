@@ -129,7 +129,13 @@ describe('writing a review', () => {
     const { status } = await call(reviewHandler, 'POST', REVIEW);
     expect(status).toBe(200);
     expect(createReview).toHaveBeenCalledWith(
-      expect.objectContaining({ dealId: 4, class: 'B1', mode: 'shadow', reviewerId: MODERATOR })
+      expect.objectContaining({
+        dealId: 4,
+        class: 'B1',
+        mode: 'shadow',
+        reviewerId: MODERATOR,
+        disputeOpenedAt: new Date('2026-10-20T10:00:00.000Z'),
+      })
     );
   });
 

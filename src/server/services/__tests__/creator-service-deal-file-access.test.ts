@@ -118,11 +118,15 @@ describe('reading the deal file access log', () => {
     );
   });
 
-  it('is null when only one half of the read fails', async () => {
+  it.each([
+    ['the per-file summary', 'GROUP BY'],
+    ['the recording start', 'minOrNull'],
+  ])('is null when only %s fails', async (_, failing) => {
     const query = answer([]);
-    query
-      .mockResolvedValueOnce({ json: async () => [] })
-      .mockRejectedValueOnce(new Error('timeout'));
+    query.mockImplementation(async ({ query: sql }: { query: string }) => {
+      if (sql.includes(failing)) throw new Error('timeout');
+      return { json: async () => [] };
+    });
     expect(await readServiceDealFileAccess([1])).toBeNull();
   });
 });

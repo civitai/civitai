@@ -2797,9 +2797,13 @@ describe('dispute reviews', () => {
     return id;
   };
   // The opening the reviewer read, as an agent takes it from the evidence bundle.
-  const openedAt = async (dealId: number) =>
-    (await reviews.getServiceDisputeEvidence({ dealId, viewerId: STRANGER })).deal
-      .disputeOpenedAt ?? new Date(0);
+  const openedAt = async (dealId: number) => {
+    const { disputeOpenedAt } = (
+      await reviews.getServiceDisputeEvidence({ dealId, viewerId: STRANGER })
+    ).deal;
+    if (!disputeOpenedAt) throw new Error(`deal ${dealId} has no dispute opening`);
+    return disputeOpenedAt;
+  };
   const review = async (
     dealId: number,
     proposal: 'Refund' | 'Release' | null,
@@ -2837,7 +2841,9 @@ describe('dispute reviews', () => {
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();
-    await expect(review(id, 'Refund')).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(review(id, 'Refund', STRANGER, new Date())).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
     expect(await rows(id)).toEqual([]);
   });
 
@@ -2932,6 +2938,20 @@ describe('dispute reviews', () => {
       { proposal: 'Release', humanRuling: 'Release', humanId: STRANGER, agreed: true },
       { proposal: null, humanRuling: 'Release', humanId: STRANGER, agreed: null },
     ]);
+  });
+
+  it('accepts the current opening whatever the session time zone', async () => {
+    const id = await disputed();
+    const opening = await openedAt(id);
+    // The stored column has no zone; the comparison must not borrow the session's.
+    await q(`SET TIME ZONE 'Asia/Tokyo'`);
+    try {
+      await expect(review(id, 'Refund', STRANGER, opening)).resolves.toMatchObject({
+        id: expect.any(Number),
+      });
+    } finally {
+      await q(`SET TIME ZONE 'UTC'`);
+    }
   });
 
   it("bundles the deal's evidence, and counts each party's other recent disputes", async () => {
