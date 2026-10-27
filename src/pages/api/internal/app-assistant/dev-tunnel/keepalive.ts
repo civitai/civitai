@@ -57,7 +57,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   );
   if (!request) return;
   const { grant } = request;
-  const target =
+  const target: { sessionId: string } | { host: string } =
     'sessionId' in request.body
       ? { sessionId: request.body.sessionId }
       : { host: request.body.host };
