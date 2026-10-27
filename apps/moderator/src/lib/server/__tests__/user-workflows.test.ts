@@ -174,8 +174,10 @@ describe('getUserGeneratedWorkflows', () => {
         { id: 'b', tags: ['civitai-comfy-nodes'] },
         { id: 'c', tags: [] },
         { id: 'd' },
-        { id: 'e', tags: ['civitai', 'training', 'modelVersion:1'] },
+        { id: 'e', tags: ['civitai', 'modelVersion:1', 'training'] },
         { id: 'f', tags: ['gen', 'civitai-comfy-nodes'] },
+        { id: 'g', tags: ['civitai', 'gen', 'training', 'app-block'] },
+        { id: 'h', tags: ['civitai', 'modelVersion:1'] },
       ],
       next: null,
     });
@@ -187,7 +189,11 @@ describe('getUserGeneratedWorkflows', () => {
       ['d', 'untagged', null],
       // A non-generation row names what it was rather than a bare "other source".
       ['e', 'other', 'training'],
+      // The site generator's own tag wins over Comfy Cloud's when a row carries both.
       ['f', 'onsite', null],
+      // App blocks also tag `gen`; their trainings must not read as site generations.
+      ['g', 'appblock', null],
+      ['h', 'other', null],
     ]);
   });
 
@@ -195,6 +201,8 @@ describe('getUserGeneratedWorkflows', () => {
     respond({
       items: [
         { id: 'blank', tags: [] },
+        { id: 'site-blank', tags: ['gen'] },
+        { id: 'block-step', tags: ['gen', 'app-block'] },
         { id: 'upscale', tags: ['gen'], metadata: { params: { workflow: 'img-upscale' } } },
         { id: 'comfy', tags: ['civitai-comfy-nodes'] },
         { id: 'enhance', tags: ['prompt-enhancement'] },
@@ -204,6 +212,8 @@ describe('getUserGeneratedWorkflows', () => {
     const page = await getUserGeneratedWorkflows(42);
     expect(page.items.map((w) => [w.id, w.paramsMissing])).toEqual([
       ['blank', true],
+      ['site-blank', true],
+      ['block-step', false],
       ['upscale', false],
       ['comfy', false],
       ['enhance', false],

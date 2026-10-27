@@ -22,6 +22,7 @@
 
   // A fact about the row's tags, not a guess at how it was submitted.
   const ORIGIN_LABEL: Record<WorkflowOrigin, string> = {
+    appblock: 'app block',
     onsite: 'site generator',
     comfy: 'Comfy Cloud (sends no prompt)',
     untagged: 'no source tag',

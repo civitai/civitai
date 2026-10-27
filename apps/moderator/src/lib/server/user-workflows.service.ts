@@ -36,10 +36,12 @@ export type WorkflowSource = (typeof WORKFLOW_SOURCES)[number];
 export const isWorkflowSource = (v: string | null | undefined): v is WorkflowSource =>
   (WORKFLOW_SOURCES as readonly string[]).includes(v ?? '');
 
-export type WorkflowOrigin = 'onsite' | 'comfy' | 'untagged' | 'other';
+export type WorkflowOrigin = 'appblock' | 'onsite' | 'comfy' | 'untagged' | 'other';
 
-/** Where a row came from, read from its own tags. */
+/** Where a row came from, read from its own tags. App blocks also tag `gen`, so they are checked first:
+ *  their trainings and step workflows keep no generation params. */
 export function workflowOrigin(tags: string[]): WorkflowOrigin {
+  if (tags.includes('app-block')) return 'appblock';
   if (tags.includes(WORKFLOW_SOURCE_TAGS.onsite)) return 'onsite';
   if (tags.includes(WORKFLOW_SOURCE_TAGS.comfy)) return 'comfy';
   return tags.length === 0 ? 'untagged' : 'other';
