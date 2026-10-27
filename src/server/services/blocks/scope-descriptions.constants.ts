@@ -97,6 +97,29 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     'React to images this app shows you, as you — reactions appear on Civitai like your own, without asking each time',
 };
 
+/** Short plain-language name per scope, shown as the row title on the viewer's permissions list. */
+export const SCOPE_PLAIN_TITLES: Record<string, string> = {
+  'user:read:self': 'See your username',
+  'models:read:self': 'See the model it sits on',
+  'buzz:read:self': 'See your Buzz balance',
+  'ai:write:budgeted': 'Run AI work with your Buzz',
+  'social:tip:self': 'Tip on your behalf',
+  'apps:storage:read': 'Read its saved data for you',
+  'apps:storage:write': 'Save data for you',
+  'apps:storage:shared:read': 'Read community data',
+  'apps:storage:shared:write': 'Post to community data',
+  'apps:storage': 'Keep your data in the app',
+  'apps:storage:publish': 'Share entries with other users',
+  'collections:read:self': 'Browse collections',
+  'collections:write:self': 'Follow collections for you',
+  'collections:read:private': 'See your private collections',
+  'posts:write:self': 'Publish posts to your profile',
+  'goods:read:self': 'See items you own in the app',
+  'goods:purchase:self': 'Buy items with your Buzz',
+  'apps:store:items:write': 'List your items in the App Store',
+  'social:react:self': 'React to images for you',
+};
+
 export const SLOT_DESCRIPTIONS: Record<string, string> = {
   'model.sidebar_top': 'Top of the model page sidebar',
   'model.below_images': 'Below the model page image gallery',

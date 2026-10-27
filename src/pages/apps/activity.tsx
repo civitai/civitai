@@ -1,10 +1,12 @@
 import {
   ActionIcon,
   Anchor,
+  Avatar,
   Badge,
   Button,
   Card,
   Center,
+  Collapse,
   Divider,
   Group,
   Loader,
@@ -14,9 +16,12 @@ import {
   Tabs,
   Text,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconChevronDown,
   IconEyeOff,
   IconHistory,
   IconPlugConnected,
@@ -24,6 +29,7 @@ import {
   IconShieldLock,
   IconTrash,
 } from '@tabler/icons-react';
+import type { inferRouterOutputs } from '@trpc/server';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
@@ -70,6 +76,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import type { AppRouter } from '~/server/routers';
 import { trpc } from '~/utils/trpc';
 
 /** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
@@ -549,7 +556,7 @@ function AppBudgetControl({
  * the drift the shared `ScopeConsentList` exists to make impossible — and it would stay green
  * while the page diverged.
  */
-export function ScopeGrantsPanel() {
+export function ScopeGrantsPanel({ defaultOpened = false }: { defaultOpened?: boolean }) {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
   if (isLoading) {
@@ -601,23 +608,62 @@ export function ScopeGrantsPanel() {
   return (
     <AppsCardGrid testId="apps-installed-grants-grid">
       {grants.map((grant) => (
-        <Card key={grant.appBlockId} withBorder padding="sm" radius="md">
-          <Stack gap="xs">
-            <Group justify="space-between" wrap="nowrap">
+        <GrantCard key={grant.appBlockId} grant={grant} defaultOpened={defaultOpened} />
+      ))}
+    </AppsCardGrid>
+  );
+}
+
+type ActivityGrant = inferRouterOutputs<AppRouter>['blocks']['listMyScopeGrants'][number];
+
+function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpened: boolean }) {
+  const [opened, { toggle }] = useDisclosure(defaultOpened);
+  const panelId = `grant-permissions-${grant.appBlockId}`;
+  const count = grant.scopes.length;
+  return (
+    <Card withBorder padding="sm" radius="md" data-testid="apps-grant-card">
+      <Stack gap="xs">
+        <UnstyledButton
+          onClick={toggle}
+          aria-expanded={opened}
+          aria-controls={panelId}
+          w="100%"
+          data-testid="apps-grant-toggle"
+        >
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Avatar src={grant.iconUrl} alt="" radius="md" size={40} style={{ flexShrink: 0 }}>
+                {grant.name.charAt(0).toUpperCase()}
+              </Avatar>
               <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                <Group gap="xs">
-                  <Text fw={600} className="truncate">
-                    {grant.name}
-                  </Text>
-                  <Badge size="xs" variant="outline">
-                    {grant.slug}
-                  </Badge>
-                </Group>
+                <Text fw={600} className="truncate">
+                  {grant.name}
+                </Text>
                 <Text size="xs" c="dimmed" data-testid="apps-grant-surface-line">
                   {buildScopeGrantSurfaceLine({ origin: grant.origin, ...grant.surfaces })}
                 </Text>
               </Stack>
             </Group>
+            <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+              <Text size="xs" c="dimmed" data-testid="apps-grant-count">
+                {count === 0
+                  ? 'No permissions listed'
+                  : count === 1
+                  ? '1 permission'
+                  : `${count} permissions`}
+              </Text>
+              <IconChevronDown
+                size={16}
+                style={{
+                  transform: opened ? 'rotate(180deg)' : undefined,
+                  transition: 'transform 150ms',
+                }}
+              />
+            </Group>
+          </Group>
+        </UnstyledButton>
+        <Collapse in={opened} id={panelId}>
+          <Stack gap="xs">
             <Divider />
             {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
                 `<BlockScopeList scopes={grant.scopes} />`, which fell through to the component's
@@ -638,10 +684,7 @@ export function ScopeGrantsPanel() {
                 revoke control present on one surface and absent on the other would be a much
                 worse divergence than any of them. `emptyLabel` is still passed per caller — see
                 `scopeGrantEmptyScopeLabel`, which owns the difference. */}
-            <ScopeConsentList
-              grant={grant}
-              emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
-            />
+            <ScopeConsentList grant={grant} emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)} />
             {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
                 `<Anchor>` reading "See what it did under Recent activity" directly beneath
                 `<BlockScopeList>` — whose `emptyLabel` for this row class already ENDS with
@@ -670,9 +713,9 @@ export function ScopeGrantsPanel() {
               </>
             ) : null}
           </Stack>
-        </Card>
-      ))}
-    </AppsCardGrid>
+        </Collapse>
+      </Stack>
+    </Card>
   );
 }
 
