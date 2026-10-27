@@ -60,16 +60,13 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * the right. The whole card is one click target: the title link is stretched over it
  * (`after:inset-0`) and every other control sits above that layer (`relative z-10`).
  *
- * 🔴 THE CREATOR BYLINE IS BACK. The operator dropped it from the store card on 2026-09-06
- * (a grid of ~24 tiles is a browsing surface); the design pass of 2026-10-27 reversed that.
- * A creator without a username renders no byline link. The detail page has its own
- * `CreatorChip`.
+ * A creator without a username renders no byline link. The detail page uses `CreatorChip`.
  *
  * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from `appListingCardGeometry.ts`
  * (cover ratio, icon size and overlap, title font and line-height, CTA/menu/footer/avatar
  * sizes). `AppListingCardSkeleton` must reserve EXACTLY this geometry or the grid reflows
- * when the query resolves. `__tests__/appListingCardView.test.ts` enumerates the module's
- * exports and requires both files to read every one. Do not re-literalise a value below.
+ * when the query resolves. `__tests__/appListingCardView.test.ts` requires the card to read
+ * every export (the skeleton is checked separately). Do not re-literalise a value below.
  *
  * 🔴 THE PLAY COUNT RENDERS ONLY FOR A COUNT OF ONE OR MORE. Both `openCount === null`
  * (off-site, unmeasurable) and `0` (measured, empty) render nothing: an OPERATOR OVERRIDE
