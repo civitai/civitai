@@ -31,6 +31,32 @@ const paths: Record<number, Chapter[]> = {
   7: [...route, chapter(7, 4, 700)],
   8: [...route, chapter(7, 4, 700), chapter(8, 5, 800)],
 };
+
+// The tester's screenshot: 21 -> 22 -> 23 -> 24 -> {25 canon, 35}; 35 -> 36 -> {37, 38}, none canon.
+const main = [
+  chapter(21, 0, 2100),
+  chapter(22, 1, 2200),
+  chapter(23, 2, 2300),
+  chapter(24, 3, 2400),
+];
+const b5 = chapter(35, 4, 3500);
+const b6 = { ...chapter(36, 5, 3600), childCount: 2 };
+Object.assign(paths, {
+  35: [...main, b5],
+  36: [...main, b5, b6],
+  37: [...main, b5, b6, chapter(37, 6, 3700)],
+});
+const child = (c: Chapter) => ({ ...c, rank: 'community', firstImage: null });
+const childrenOf: Record<number, unknown[]> = {
+  7: [child(chapter(8, 5, 800))],
+  24: [{ ...child(chapter(25, 4, 2500)), rank: 'canon' }, child(b5)],
+  35: [child(b6)],
+  36: [child(chapter(37, 6, 3700)), child(chapter(38, 6, 3800))],
+};
+const childrenByChapterId = (ids: number[]) =>
+  new Map(ids.flatMap((id) => (childrenOf[id] ? [[id, childrenOf[id]] as const] : [])));
+// The canon line ahead of a path's end: from B5 it is B6, which has no canon child.
+const aheadOf: Record<number, Chapter[]> = { 35: [b6] };
 const imageOf = (postId: number) => ({ id: postId / 10, postId, index: 0 });
 
 const mocks = vi.hoisted(() => ({ unwalkedPostIds: new Set<number>() }));
@@ -69,14 +95,16 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
       isFetching: query.isFetching,
     };
   },
-  useStorylineCanonAhead: () => ({
-    ahead: [],
-    childrenByChapterId: new Map(),
-    isLoading: false,
-    isSuccess: true,
-  }),
-  useStorylinePathChildren: () =>
-    new Map([[7, [{ ...chapter(8, 5, 800), rank: 'community', firstImage: null }]]]),
+  useStorylineCanonAhead: (chapterId: number | undefined) => {
+    const ahead = aheadOf[chapterId as number] ?? [];
+    return {
+      ahead,
+      childrenByChapterId: childrenByChapterId(ahead.map((c) => c.chapterId)),
+      isLoading: false,
+      isSuccess: true,
+    };
+  },
+  useStorylinePathChildren: (ids: number[]) => childrenByChapterId(ids),
   useStorylineForkShares: () => ({ data: undefined }),
 }));
 vi.mock('~/components/PageLoader/PageLoader', () => ({ PageLoader: () => null }));
@@ -179,10 +207,20 @@ function Detail({
     carouselNavigate(index);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, storyline.active]);
+  const seekTo = useRef<(imageId: number) => void>();
+  // Only for the image the URL already names: any other moves the URL, and the effect above follows.
+  seekTo.current = (imageId) => {
+    if (images[index]?.id !== imageId) return;
+    lastSettledIdRef.current = imageId;
+    carouselNavigate(index);
+  };
+  const onSeek = storyline.active ? storyline.onSeek : undefined;
+  useEffect(() => onSeek?.((imageId) => seekTo.current?.(imageId)), [onSeek]);
   const shown = images[carouselNavigation.index]?.id;
   return (
     <div style={{ width: 400, height: 300, display: 'flex' }}>
       <output data-testid="image">{shown}</output>
+      <button type="button" data-testid="previous" onClick={navigation.previous} />
       <ImageDetailCarousel
         images={images}
         onSettle={handleSettle}
@@ -213,11 +251,11 @@ layout.textContent = `
 `;
 document.head.appendChild(layout);
 
-async function openReader(storylineChapter: number, width: number) {
+async function openReader(storylineChapter: number, width: number, imageId = 70) {
   await page.viewport(width, 800);
-  const asPath = `/images/70?storylineChapter=${storylineChapter}`;
+  const asPath = `/images/${imageId}?storylineChapter=${storylineChapter}`;
   Object.assign(Router, {
-    query: { imageId: '70', storylineChapter: String(storylineChapter) },
+    query: { imageId: String(imageId), storylineChapter: String(storylineChapter) },
     asPath,
     pathname: '/images/[imageId]',
   });
@@ -229,8 +267,8 @@ async function openReader(storylineChapter: number, width: number) {
     </BrowserRouterProvider>
   );
   await expect.element(page.getByTestId('image')).toBeInTheDocument();
-  getBrowserRouter().replace({ query: { imageId: 70, storylineChapter } }, asPath);
-  await expect.element(page.getByTestId('image')).toHaveTextContent('70');
+  getBrowserRouter().replace({ query: { imageId, storylineChapter } }, asPath);
+  await expect.element(page.getByTestId('image')).toHaveTextContent(String(imageId));
   await page.getByRole('button', { name: /map/i }).first().click();
 }
 
@@ -272,5 +310,78 @@ describe('the map from chapter 5 of a non-canon route', () => {
     await page.getByTestId('storyline-map-read-next').click();
     expect(Router.push).toHaveBeenCalledWith('/images/80?storylineChapter=8');
     await expect.element(page.getByTestId('image')).toHaveTextContent('70');
+  });
+});
+
+/**
+ * Tester report, storyline 1 on prod, the shape in his screenshot: chapter 5 is a branch (B5) beside
+ * the canon chapter 5, chapter 6 (B6) follows it, and B6 forks with no canon child.
+ */
+describe('the map from a branch chapter 5 beside the canon one', () => {
+  afterEach(() => {
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  // Entered at B5 (from the story page, or chosen at the end of chapter 4): B6 is the canon ahead.
+  test('"Read chapter 6" opens B6', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByTestId('storyline-map-read-next').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+  });
+
+  test('the chapter 6 row opens B6', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByText('ch36').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+  });
+
+  test('a chapter 7 branch opens that chapter', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByText('ch37').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('370');
+  });
+});
+
+/**
+ * The address bar trails the carousel until it settles. A map click inside that window, here in the
+ * same task as the swipe back from B6 to B5, must still land where the reader chose.
+ */
+describe('the map clicked before a swipe back has settled', () => {
+  afterEach(() => {
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  const control = (target: string) =>
+    [...document.querySelectorAll<HTMLElement>('button')].find(
+      (el) => el.dataset.testid === target || el.textContent?.includes(target)
+    );
+  const swipeBackThenClick = async (target: string) => {
+    document.querySelector<HTMLElement>('[data-testid="previous"]')?.click();
+    // "Read chapter 6" only shows once the map sees B5.
+    await vi.waitFor(() => expect(control(target)).toBeDefined(), { interval: 1 });
+    expect(getBrowserRouter().query?.imageId, 'the swipe settled before the click').toBe(360);
+    control(target)?.click();
+  };
+
+  for (const target of ['ch36', 'storyline-map-read-next'])
+    test(`${target} brings the reader back to B6`, async () => {
+      await openReader(36, 1200, 360);
+      await swipeBackThenClick(target);
+      // Past the carousel's settle fallback (800ms): the swipe's late settle must not drag it back.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    });
+
+  test('a chapter 7 branch opens that chapter', async () => {
+    await openReader(36, 1200, 360);
+    await swipeBackThenClick('ch37');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await expect.element(page.getByTestId('image')).toHaveTextContent('370');
   });
 });

@@ -212,6 +212,15 @@ export function ImageDetail2() {
     carouselNavigate(index);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
   }, [index, storyline.active]);
+  const seekTo = useRef<(imageId: number) => void>();
+  // Only for the image the URL already names: any other moves the URL, and the effect above follows.
+  seekTo.current = (imageId) => {
+    if (images[index]?.id !== imageId) return;
+    lastSettledIdRef.current = imageId;
+    carouselNavigate(index);
+  };
+  const onSeek = storyline.active ? storyline.onSeek : undefined;
+  useEffect(() => onSeek?.((imageId) => seekTo.current?.(imageId)), [onSeek]);
 
   const image = images[carouselNavigation.index];
 
