@@ -97,7 +97,7 @@ export function reportLoginGateWithAuthCookie(
     const pushEvent =
       deps.pushEvent ?? (faro?.config ? faro.api?.pushEvent?.bind(faro.api) : undefined);
     if (!pushEvent) return 'no-faro';
-    // MUTANT M2: reported = true;
+    reported = true;
     pushEvent(LOGIN_GATE_WITH_AUTH_COOKIE_EVENT, buildLoginGateAttributes(signal));
     return 'sent';
   } catch {
