@@ -45,7 +45,7 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
 }));
 
 import { bulkDeleteComments } from '~/server/services/comment.service';
-import { isLegalHoldAbort } from '~/server/services/legal-hold.service';
+import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -550,6 +550,66 @@ describe('a CommentV2 with replies', () => {
       commentV2Deleted: 1,
       retainedHidden: 0,
     });
+  });
+});
+
+describe('logging the authors whose rows were kept', () => {
+  const loggedLegs = () =>
+    Object.fromEntries(
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(
+          ([entry]) => (entry as { details?: { userId?: number; legs?: unknown } }).details
+        )
+        .filter((d) => d?.userId !== undefined)
+        .map((d) => [d!.userId, d!.legs])
+    );
+
+  it('reads every author’s holds in one statement', async () => {
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, CLEAN, HELD, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(loggedLegs()).toEqual({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: [],
+      4: [],
+      5: [],
+      6: [],
+    });
+  });
+
+  it('adds one statement for the marker, whatever the number of authors', async () => {
+    await createMarker();
+
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(loggedLegs()).toMatchObject({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: ['hold-marker'],
+    });
+  });
+
+  it('logs at most 200 authors, and counts the rest', async () => {
+    await logHoldRetained(
+      'test',
+      Array.from({ length: 205 }, (_, i) => 1000 + i)
+    );
+
+    expect(Object.keys(loggedLegs())).toHaveLength(200);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'test: rows retained for 5 more authors' })
+    );
+  });
+
+  it('logs every author as held when the marker table stands without its view', async () => {
+    await createMarker(false);
+
+    await logHoldRetained('test', [CLEAN, HELD]);
+
+    expect(loggedLegs()).toEqual({ [CLEAN]: ['hold-marker'], [HELD]: ['report', 'hold-marker'] });
   });
 });
 
