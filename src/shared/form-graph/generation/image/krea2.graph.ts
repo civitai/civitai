@@ -144,7 +144,7 @@ const krea2CreativityOptions = [
   { label: 'High', value: 'high' },
 ] as const;
 
-export const KREA2_EDIT_IMAGES_LIMIT = 4;
+export const KREA2_EDIT_IMAGES_LIMIT = 2;
 export const KREA2_STYLE_REFERENCES_LIMIT = 10;
 export const KREA2_STYLE_REFERENCE_STRENGTH_DEFAULT = 0.5;
 const STRENGTH_MIN = 0;
