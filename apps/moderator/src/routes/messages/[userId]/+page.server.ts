@@ -4,7 +4,12 @@ import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { getChatMembers, getTranscript } from '$lib/server/chat-audit.service';
 import { readerOf } from '$lib/server/chat-read-audit';
-import { claimThread, getThread, releaseThread, sendAsCivitai } from '$lib/server/message-as-civitai';
+import {
+  claimThread,
+  getThread,
+  releaseThread,
+  sendAsCivitai,
+} from '$lib/server/message-as-civitai';
 import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
 

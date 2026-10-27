@@ -37,7 +37,10 @@ beforeEach(() => vi.clearAllMocks());
 describe('messageAsCivitai action', () => {
   it('refuses a moderator holding only user.strike', async () => {
     const result = await actions.messageAsCivitai(
-      formEvent({ 'user.strike': true }, { userId: String(TARGET), message: 'hi', idempotencyKey: KEY })
+      formEvent(
+        { 'user.strike': true },
+        { userId: String(TARGET), message: 'hi', idempotencyKey: KEY }
+      )
     );
     expect(result).toMatchObject({ status: 403, data: { scope: 'denied' } });
     expect(sendAsCivitai).not.toHaveBeenCalled();
@@ -51,11 +54,18 @@ describe('messageAsCivitai action', () => {
       )
     );
     expect(result).toEqual({ success: true, chatId: 41, deduped: false });
-    expect(sendAsCivitai).toHaveBeenCalledWith({ userId: TARGET, message: 'hi', idempotencyKey: KEY });
+    expect(sendAsCivitai).toHaveBeenCalledWith({
+      userId: TARGET,
+      message: 'hi',
+      idempotencyKey: KEY,
+    });
   });
 
   it('shows the main app refusal instead of reporting success', async () => {
-    sendAsCivitai.mockResolvedValueOnce({ ok: false, error: 'Another moderator is answering.' } as never);
+    sendAsCivitai.mockResolvedValueOnce({
+      ok: false,
+      error: 'Another moderator is answering.',
+    } as never);
     const result = await actions.messageAsCivitai(
       formEvent(
         { 'user.message.asCivitai': true },
