@@ -3189,6 +3189,9 @@ const REDIS_KEYS_UNPREFIXED = {
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
     EARNED: 'buzz:earned:v2',
   },
+  CREATOR_SERVICES: {
+    ACCESS_RECORDED_SINCE: 'packed:caches:creator-services:access-recorded-since',
+  },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',

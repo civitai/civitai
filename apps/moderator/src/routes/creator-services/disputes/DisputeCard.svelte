@@ -7,9 +7,10 @@
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
-  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { DisputeResolution } from '$lib/server/creator-services-disputes.service';
+  import { buyerFinalDownloads } from './downloads';
   import { disputeOrigin, viewerParty } from './origin';
   import type { DisputeCardRow, ResolveOutcome } from './+page.server';
 
@@ -38,6 +39,22 @@
   const releaseBlocked = $derived(!row.finalsClear || !!outcome?.releaseRefused);
   // The main app refuses a party too; hiding the buttons only saves the round trip.
   const party = $derived(viewerParty(row, viewerId));
+  const buyerDownloads = $derived(
+    row.files ? buyerFinalDownloads(row.files, row, row.accessRecordedSince) : null
+  );
+  const firstTaken = $derived.by(() => {
+    if (buyerDownloads?.state !== 'yes') return null;
+    const when =
+      buyerDownloads.beforeDispute === null
+        ? ''
+        : buyerDownloads.beforeDispute
+          ? ', before the dispute'
+          : ', after the dispute opened';
+    const since = buyerDownloads.partial
+      ? ` · recorded only since ${dateTime(row.accessRecordedSince)}`
+      : '';
+    return `first ${dateTime(buyerDownloads.firstAt)}${when}${since}`;
+  });
 
   const choose = (value: DisputeResolution) => () => {
     chosen = value;
@@ -90,6 +107,26 @@
   {#if origin.text}
     <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0 whitespace-pre-wrap">
       {origin.text}
+    </p>
+  {/if}
+
+  {#if buyerDownloads}
+    <p class="mt-2 text-sm text-dark-0">
+      Buyer downloaded the final:
+      {#if buyerDownloads.state === 'yes'}
+        yes, {dateTime(buyerDownloads.lastAt)}, {plural(buyerDownloads.count, 'time')}
+        <span class="text-xs text-dark-2">· {firstTaken}</span>
+      {:else if buyerDownloads.state === 'never'}
+        No download recorded
+      {:else if buyerDownloads.reason === 'before-recording'}
+        <span class="text-dark-2">unknown (the deal completed before downloads were recorded)</span>
+      {:else}
+        <span class="text-dark-2">unknown (the download log could not be read)</span>
+      {/if}
+    </p>
+    <p class="mt-1 text-xs text-dark-2">
+      A download before the dispute counts toward releasing to the seller, unless the files are missing
+      or broken.
     </p>
   {/if}
 

@@ -51,16 +51,33 @@ export type DealFile = {
   scanStatus: 'Pending' | 'Passed' | 'Failed' | 'NotScanned';
   previewUrl: string | null;
   canDownload: boolean;
+  /** Who has taken the file. Absent from a main app that predates it. */
+  access?: DealFileAccess[];
+};
+
+/** One role's accesses of one file. `ModeratorFetch` is the dispute tool, never a party's download. */
+export type DealFileAccess = {
+  role: 'Buyer' | 'Seller' | 'Moderator';
+  kind: 'Download' | 'ModeratorFetch';
+  count: number;
+  firstAt: string;
+  lastAt: string;
 };
 
 /**
  * Every file of the given deals (the endpoint takes at most 25), failed and unscanned included: a
  * moderator reviews what the buyer cannot see. A deal with no files, or no such deal, contributes no rows.
  */
-export async function listDealFiles(
-  dealIds: number[]
-): Promise<{ ok: true; files: DealFile[] } | { ok: false; error: string }> {
-  if (dealIds.length === 0) return { ok: true, files: [] };
+export async function listDealFiles(dealIds: number[]): Promise<
+  | {
+      ok: true;
+      files: DealFile[];
+      /** When file accesses started being recorded; nothing earlier is in `access`. */
+      accessRecordedSince: string | null;
+    }
+  | { ok: false; error: string }
+> {
+  if (dealIds.length === 0) return { ok: true, files: [], accessRecordedSince: null };
   const result = await readModEndpoint(
     'creator-services/deal-files',
     { dealIds: dealIds.join(',') },
@@ -69,7 +86,12 @@ export async function listDealFiles(
   if (!result.ok) return result;
   if (!Array.isArray(result.body.items))
     return { ok: false, error: 'Deal files returned an unexpected body.' };
-  return { ok: true, files: result.body.items as DealFile[] };
+  const { accessRecordedSince } = result.body;
+  return {
+    ok: true,
+    files: result.body.items as DealFile[],
+    accessRecordedSince: typeof accessRecordedSince === 'string' ? accessRecordedSince : null,
+  };
 }
 
 /** A short-lived signed URL for the ORIGINAL file, in any status. Fetched here so the browser needs no
