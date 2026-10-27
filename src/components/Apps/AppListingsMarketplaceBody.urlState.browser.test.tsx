@@ -378,6 +378,27 @@ describe('(b) two fast filter clicks must not drop one', () => {
     });
   });
 
+  test('a sort click while the search write is in flight keeps the search term', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    await userEvent.fill(page.getByLabelText('Search'), 'matrix');
+    // The 300ms debounce has fired and the search write is on its way (the router applies it
+    // ROUTER_LATENCY_MS later), but the URL does not carry the term yet.
+    await vi.waitFor(() => expect(replaceCalls).toBeGreaterThanOrEqual(1));
+    expect(currentQuery()).not.toHaveProperty('query');
+
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
+
+    await vi.waitFor(
+      () => expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' }),
+      { timeout: 4000 }
+    );
+    // …and the box was not rewritten from the URL while the dust settled.
+    await new Promise((resolve) => setTimeout(resolve, ROUTER_LATENCY_MS * 2));
+    await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
+    expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' });
+  });
+
   test('clearing a filter still CLEARS it (the merge must not resurrect defaults)', async () => {
     // The mirror risk of fixing (b) by merging: a write that sets a field back to
     // its default must still drop the param, not re-add it from the merged state.
