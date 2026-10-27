@@ -148,11 +148,14 @@ export function ImageDetailCarousel({
   };
 
   useEffect(() => {
-    if (!embla || embla.selectedScrollSnap() === index) return;
+    if (!embla) return;
     syncingRef.current = true;
-    embla.scrollTo(index);
+    // Slides added in the same commit as the index that names one are not embla's yet, and its
+    // own reinit would announce the old slide and write it back through `navigate`.
+    if (embla.slideNodes().length !== images.length) embla.reInit({ startIndex: index });
+    else if (embla.selectedScrollSnap() !== index) embla.scrollTo(index);
     syncingRef.current = false;
-  }, [embla, index]);
+  }, [embla, index, images.length]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
