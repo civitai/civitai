@@ -5,6 +5,8 @@ import { isNotHeldAnswer, playedFraction, WATCHED_FRACTION } from '@civitai/shar
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ModerationImageModel } from '~/server/services/image.service';
 
+const CAPTURE = { capture: true };
+
 /** The summary audit row, once per account opened; a refetch of the same account adds none. Each
  *  image is audited by the route as it is served. */
 export function useHeldGridReport(userId: number, count: number) {
@@ -132,11 +134,11 @@ function useShown(
         if (playedFraction(e.target) >= WATCHED_FRACTION) report();
     };
     const progress = ['timeupdate', 'pause', 'ended'] as const;
-    node.addEventListener('load', onLoad, true);
-    for (const type of progress) node.addEventListener(type, onProgress, true);
+    node.addEventListener('load', onLoad, CAPTURE);
+    for (const type of progress) node.addEventListener(type, onProgress, CAPTURE);
     return () => {
-      node.removeEventListener('load', onLoad, true);
-      for (const type of progress) node.removeEventListener(type, onProgress, true);
+      node.removeEventListener('load', onLoad, CAPTURE);
+      for (const type of progress) node.removeEventListener(type, onProgress, CAPTURE);
     };
   }, [node, isVideo, rendition]);
 
