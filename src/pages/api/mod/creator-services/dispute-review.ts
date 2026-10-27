@@ -20,6 +20,7 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
     'A deal that is not Disputed answers CONFLICT. A moderator who is its buyer or seller answers FORBIDDEN.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
+  // Up to 64 KB: keep it out of the audit log.
   auditExclude: ['evidence'],
   input: z.object({
     dealId: z.coerce.number().int().positive(),
