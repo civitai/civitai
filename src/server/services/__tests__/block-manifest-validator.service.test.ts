@@ -76,6 +76,95 @@ describe('BlockManifestValidator', () => {
     });
   });
 
+  // A name with its own DNS record shadows the static server's catch-all, so an app taking it
+  // would never be reachable at <blockId>.civit.ai.
+  describe('blockId (reserved names)', () => {
+    it.each([
+      ['a-thing', 'a-'],
+      ['aaaa-thing', 'aaaa-'],
+      ['cname-thing', 'cname-'],
+      ['dev-0123456789abcdef', 'dev-'],
+      ['review-0123456789abcdef', 'review-'],
+    ])('rejects %j, which starts with %j, with an author-facing reason', (blockId, prefix) => {
+      const result = BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId }, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContainEqual(
+          expect.stringContaining(`blockId "${blockId}" is reserved: ids starting with "${prefix}"`)
+        );
+      }
+    });
+
+    it('rejects www', () => {
+      const result = BlockManifestValidator.validate(
+        { ...VALID_MANIFEST, blockId: 'www' },
+        APP_CTX
+      );
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContainEqual(expect.stringContaining('blockId "www" is reserved'));
+      }
+    });
+
+    // INVARIANT guard, green before the rule existed too: every app live on 2026-10-27, plus
+    // near-misses of each reserved name, must stay valid.
+    it.each([
+      'ab-img-poster',
+      'app-requests',
+      'arcane-deck',
+      'buzz',
+      'buzz-generator',
+      'character-sheet-studio',
+      'civlings',
+      'continuous-gen',
+      'custom-generators',
+      'dataset-commons',
+      'df-qwen-canvas',
+      'dogfood-manual',
+      'email-builder',
+      'generate-from-model',
+      'gen-matrix',
+      'goods-demo-app',
+      'hello-world',
+      'lora-matrix-tester',
+      'lora-weight-lab',
+      'metadata-medic',
+      'model-benchmarking',
+      'model-notes',
+      'notepad',
+      'oauth-probe',
+      'oauth-test-block',
+      'one-click-workflows',
+      'panorama-360',
+      'paywall-demo',
+      'playable-collections',
+      'poc-prompt-polisher',
+      'pp-fighter',
+      'prompt-library',
+      'prompt-vault',
+      'ramthrust-metadata-inspector',
+      'seed-explorer',
+      'sensei',
+      'service-status',
+      'strength-finder',
+      'style-explorer',
+      'turnaround',
+      'w6-ui-dogfood',
+      'yt-thumbnail',
+      'abc-app',
+      'cnamex',
+      'dev',
+      'devtools',
+      'reviewer',
+      'wwwx',
+      'my-dev-app',
+    ])('accepts %j', (blockId) => {
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId }, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+  });
+
   // Canonical version rule: semver x.y.z (optional -prerelease).
   describe('version (canonical semver rule)', () => {
     it.each(['1.0.0', '1.2.3-beta.1', '10.20.30', '0.0.1-rc.0'])(

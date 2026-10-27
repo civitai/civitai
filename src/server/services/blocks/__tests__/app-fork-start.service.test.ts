@@ -600,6 +600,13 @@ describe('fork slugs', () => {
     expect(isValidForkSlug('9app-fork-0f0f')).toBe(false);
   });
 
+  it('never accepts a reserved app id (a fork of an app named "dev" would be a dev tunnel host)', () => {
+    expect(forkSlugFor('dev', '0f0f')).toBe('dev-fork-0f0f');
+    expect(isValidForkSlug('dev-fork-0f0f')).toBe(false);
+    expect(isValidForkSlug('review-fork-0f0f')).toBe(false);
+    expect(isValidForkSlug('devtools-fork-0f0f')).toBe(true);
+  });
+
   it('exclusions are by path segment, not substring', () => {
     expect(forkSeedExclusionReason('src/environment.ts')).toBeNull();
     expect(forkSeedExclusionReason('docs/build/guide.md')).toBeNull();
