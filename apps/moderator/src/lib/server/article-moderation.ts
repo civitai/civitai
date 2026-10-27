@@ -5,7 +5,6 @@ import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { deleteImageRows, finishImageDeletes } from './image-deletion';
-import { profilePictureUserIds } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
@@ -278,7 +277,7 @@ async function deleteArticle(id: number): Promise<void> {
 
   // The orphaned images go in the same transaction, so a delete that cannot finish leaves the
   // article and its images as they were, and can be retried.
-  const { rows, avatarUserIds } = await dbWrite.transaction().execute(async (trx) => {
+  const rows = await dbWrite.transaction().execute(async (trx) => {
     const article = await trx
       .selectFrom('Article')
       .select('coverId')
@@ -322,10 +321,8 @@ async function deleteArticle(id: number): Promise<void> {
       toDelete.push(...orphaned.map((o) => o.id));
     }
 
-    if (!toDelete.length) return { rows: null, avatarUserIds: [] };
-    const avatarUserIds = await profilePictureUserIds(toDelete).catch(() => []);
-    return { rows: await deleteImageRows(trx, toDelete), avatarUserIds };
+    return toDelete.length ? deleteImageRows(trx, toDelete) : null;
   });
 
-  if (rows) await finishImageDeletes(rows, avatarUserIds);
+  if (rows) await finishImageDeletes(rows);
 }

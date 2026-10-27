@@ -1,12 +1,17 @@
 import { REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbWrite } from './db';
 
 /** The users whose profile picture is one of `imageIds`. Read before a delete: the relation is set null. */
-export async function profilePictureUserIds(imageIds: number[]): Promise<number[]> {
+export async function profilePictureUserIds(
+  imageIds: number[],
+  db: Kysely<DB> = dbWrite
+): Promise<number[]> {
   if (!imageIds.length) return [];
-  const rows = await dbWrite
+  const rows = await db
     .selectFrom('User')
     .select('id')
     .where('profilePictureId', 'in', imageIds)

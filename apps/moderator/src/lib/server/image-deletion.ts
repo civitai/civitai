@@ -19,13 +19,18 @@ type DeletedImage = {
   parentId: number | null;
 };
 
-export type DeletedImageRows = { deleted: DeletedImage[]; notReturned: number[] };
+export type DeletedImageRows = {
+  deleted: DeletedImage[];
+  notReturned: number[];
+  avatarUserIds: number[];
+};
 
 /**
  * The database half of a delete, run in the caller's transaction. A follow-up that cannot be queued
  * throws, so the transaction rolls back and the image stays.
  */
 export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<DeletedImageRows> {
+  const avatarUserIds = await profilePictureUserIds(ids, trx);
   const deleted: DeletedImage[] = [];
   // No row came back: already gone, or kept by a hold marker, whose delete trigger blocks the image
   // instead. Neither is live, so both leave search with the deleted ones.
@@ -51,14 +56,15 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
       });
     deleted.push({ id, url: image.url, postId: image.postId, parentId: image.parentId });
   }
-  return { deleted, notReturned };
+  return { deleted, notReturned, avatarUserIds };
 }
 
 /** Everything after the rows are gone: storage, caches, search, post levels. Best-effort. */
-export async function finishImageDeletes(
-  { deleted, notReturned }: DeletedImageRows,
-  avatarUserIds: number[]
-): Promise<void> {
+export async function finishImageDeletes({
+  deleted,
+  notReturned,
+  avatarUserIds,
+}: DeletedImageRows): Promise<void> {
   const affectedPostIds = new Set<number>();
   for (const image of deleted) {
     if (image.postId != null) affectedPostIds.add(image.postId);
@@ -120,27 +126,8 @@ export async function finishImageDeletes(
   }
 }
 
-/** Deletes each image in its own transaction; throws, after the rest are done, if any failed. */
-export async function deleteImagesByIds(ids: number[]): Promise<void> {
-  const avatarUserIds = await profilePictureUserIds(ids).catch(() => []);
-  const rows: DeletedImageRows = { deleted: [], notReturned: [] };
-  const failed: number[] = [];
-  for (const id of ids) {
-    try {
-      const one = await dbWrite.transaction().execute((trx) => deleteImageRows(trx, [id]));
-      rows.deleted.push(...one.deleted);
-      rows.notReturned.push(...one.notReturned);
-    } catch (err) {
-      failed.push(id);
-      logImageDeletionError(err, 'delete', [id]);
-    }
-  }
-  await finishImageDeletes(rows, avatarUserIds);
-  if (failed.length) throw new Error(`Could not delete image(s) ${failed.join(', ')}; try again`);
-}
-
 function logImageDeletionError(error: unknown, step: string, imageIds: number[]) {
-  void logAxiomError(error, { name: 'image-deletion', step, imageIds });
+  void logAxiomError(error, { event: 'image-deletion', step, imageIds });
 }
 
 // A kept image is now blocked and out of its post (`EvidenceHoldImage` names the post), so its
