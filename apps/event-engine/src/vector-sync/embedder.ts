@@ -252,6 +252,11 @@ export type EmbedderOptions = {
   /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
   resubmitDelayMs?: number;
   /**
+   * False ignores the RateLimit in-flight quota (q and r) for the cap and the workflow size, as
+   * the orchestrator owners asked while its value is provisional. 429s and Retry-After still hold.
+   */
+  honorQuota?: boolean;
+  /**
    * Steps submitted per second, across every call on this embedder; 0 or unset is unlimited.
    * Cache hits create no orchestrator job, so neither job budget bounds them.
    */
@@ -339,6 +344,7 @@ export class Embedder {
       batchSize: config.vectorSync.embedBatchSize,
       resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
       outageRetryForMs: config.vectorSync.embedOutageRetrySeconds * 1000,
+      honorQuota: config.vectorSync.embedHonorQuota,
       // Backfill and reconcile only: live sync must keep up with uploads, and is bounded by the
       // event rate rather than a walk over existing images.
       maxStepsPerSecond: priority === 'low' ? config.vectorSync.embedMaxStepsPerSecond : 0,
@@ -366,10 +372,9 @@ export class Embedder {
         await this.sleep(hold);
         continue;
       }
-      const size = this.limits.allowance(
+      const size = this.allowance(
         Math.min(this.batchSize, this.budget.capacity),
-        running.size === 0,
-        this.now()
+        running.size === 0
       );
       if (size === 0) {
         if (running.size) await Promise.race(running);
@@ -381,10 +386,9 @@ export class Embedder {
       // jobs, and is sized from what the quota says after the wait, not before it.
       await this.paceSteps(size);
       if (call.result.error) break;
-      const fresh = this.limits.allowance(
+      const fresh = this.allowance(
         Math.min(this.batchSize, this.budget.capacity),
-        running.size === 0,
-        this.now()
+        running.size === 0
       );
       if (fresh === 0) continue;
       const batch = takeBatch(queue, Math.min(size, fresh));
@@ -634,10 +638,19 @@ export class Embedder {
     this.applyCapacity();
   }
 
+  private get honorsQuota() {
+    return this.opts.honorQuota !== false;
+  }
+
   private applyCapacity() {
-    this.budget.setCapacity(
-      Math.min(this.opts.maxInFlight, this.inFlightLimit ?? Infinity, this.limits.quota ?? Infinity)
-    );
+    const quota = this.honorsQuota ? this.limits.quota ?? Infinity : Infinity;
+    this.budget.setCapacity(Math.min(this.opts.maxInFlight, this.inFlightLimit ?? Infinity, quota));
+  }
+
+  /** How many steps may go out now. A 429's hold applies even when the quota headers are ignored. */
+  private allowance(max: number, nothingInFlight: boolean) {
+    if (!this.honorsQuota) return this.limits.waitMs(this.now()) > 0 ? 0 : max;
+    return this.limits.allowance(max, nothingInFlight, this.now());
   }
 
   /** Applies the account quota as the cap, and logs the limits once, from the first response. */
@@ -651,6 +664,7 @@ export class Embedder {
         {
           inflightQuota: seen.quota,
           inflightRemaining: seen.remaining,
+          quotaHonored: this.honorsQuota,
           buzzPolicy: seen.policies.get('buzz'),
           buzzRemaining: seen.states.get('buzz'),
           cap: this.budget.capacity,
