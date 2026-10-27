@@ -70,7 +70,7 @@ describe('session token state', () => {
     await refreshSession(USER_ID, { sendSignal: false });
 
     expect(lua.hash(TOKEN_STATE)).toEqual({ 'token-a': 'invalid', 'token-b': 'refresh' });
-    expect(lua.hpttl(TOKEN_STATE, 'token-b')).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(lua.hpttl(TOKEN_STATE, 'token-b')).toBe(91 * 24 * 60 * 60 * 1000);
     expect(await revoked('token-a')).toBe(true);
     expect(await revoked('token-b')).toBe(false);
     expect(lua.errors).toEqual([]);
@@ -80,7 +80,7 @@ describe('session token state', () => {
     await invalidateSession(USER_ID);
 
     expect(lua.hash(TOKEN_STATE)).toEqual({ 'token-a': 'invalid', 'token-b': 'invalid' });
-    expect(lua.hpttl(TOKEN_STATE, 'token-a')).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(lua.hpttl(TOKEN_STATE, 'token-a')).toBe(91 * 24 * 60 * 60 * 1000);
     expect(await revoked('token-a')).toBe(true);
     expect(lua.hash(USER_TOKENS)).toBeUndefined();
     expect(lua.errors).toEqual([]);
