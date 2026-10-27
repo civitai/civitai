@@ -4,9 +4,14 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type { ModerationImageModel } from '~/server/services/image.service';
 
-// The public CDN copy, as an <img> the test can load.
+// The public CDN copy, as an element the test can load or play.
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
-  EdgeMedia: () => <img data-testid="cdn-media" alt="" />,
+  EdgeMedia: (props: { type?: string; html5Controls?: boolean; onClick?: () => void }) =>
+    props.type === 'video' ? (
+      <video data-testid="cdn-media" controls={props.html5Controls} onClick={props.onClick} />
+    ) : (
+      <img data-testid="cdn-media" alt="" onClick={props.onClick} />
+    ),
 }));
 
 import { CsamHeldMedia } from '~/components/Csam/CsamHeldMedia';
@@ -156,13 +161,30 @@ describe('CsamHeldMedia onShown', () => {
 
     play(el, 100, [[0, 50]]);
     expect(onShown).not.toHaveBeenCalled();
+    play(el, 100, [[0, 94]]);
+    expect(onShown).not.toHaveBeenCalled();
     play(el, 100, [
       [0, 50],
       [50, 96],
     ]);
+    expect(onShown).toHaveBeenCalledWith('original');
     play(el, 100, [[0, 100]]);
 
     expect(onShown.mock.calls).toEqual([['original']]);
+  });
+
+  test('reports the CDN rendition of a video once 95% has played, with controls to play it', async () => {
+    notHeld();
+    const onShown = vi.fn();
+    await renderWithProviders(
+      <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />
+    );
+    const el = (await media('video[data-testid="cdn-media"]')) as HTMLVideoElement;
+    expect(el.hasAttribute('controls')).toBe(true);
+
+    play(el, 100, [[0, 96]]);
+
+    expect(onShown.mock.calls).toEqual([['cdn-450']]);
   });
 });
 
@@ -220,6 +242,38 @@ describe('selecting on the report page', () => {
     loadImage((await media('img')) as HTMLImageElement);
     expect(shownPosts()).toEqual([]);
   });
+
+  test('clicking the CDN copy of an image selects it and records it', async () => {
+    notHeld();
+    await renderCard(image);
+    const img = (await media('[data-testid="cdn-media"]')) as HTMLImageElement;
+    loadImage(img);
+
+    img.click();
+
+    expect(useCsamImageSelectStore.getState().selected[20]?.[41]).toBe(true);
+    expect(shownPosts()).toEqual([
+      { imageId: 41, userId: 20, action: 'select', rendition: 'cdn-450' },
+    ]);
+  });
+
+  test.each([
+    ['held', held, 'video'],
+    ['CDN', notHeld, 'video[data-testid="cdn-media"]'],
+  ] as const)(
+    'clicking a watched %s video (its controls) neither selects nor records',
+    async (_, answer, selector) => {
+      answer();
+      await renderCard(video);
+      const el = (await media(selector)) as HTMLVideoElement;
+      play(el, 100, [[0, 100]]);
+
+      el.click();
+
+      expect(useCsamImageSelectStore.getState().selected[20]?.[41]).toBeUndefined();
+      expect(shownPosts()).toEqual([]);
+    }
+  );
 
   test('a video selected before 95% played records nothing', async () => {
     held();

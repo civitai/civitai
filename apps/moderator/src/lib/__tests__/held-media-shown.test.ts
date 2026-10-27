@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { shown } from '../held-media-shown';
 
@@ -77,6 +78,22 @@ describe('shown', () => {
     shown(video as never, { video: true, onshown });
     video.dispatchEvent(new Event('load'));
     expect(onshown).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an image', 'img', false, { naturalWidth: 640 }, 'load'],
+    ['a video', 'video', true, { duration: 100, played: ranges([[0, 100]]) }, 'ended'],
+  ] as const)('hears %s inside the wrapper it sits on', (_, tag, video, props, type) => {
+    const onshown = vi.fn();
+    const wrapper = document.createElement('div');
+    const media = wrapper.appendChild(document.createElement(tag));
+    for (const [key, value] of Object.entries(props))
+      Object.defineProperty(media, key, { configurable: true, value });
+    shown(wrapper, { video, onshown });
+
+    media.dispatchEvent(new Event(type));
+
+    expect(onshown).toHaveBeenCalledTimes(1);
   });
 
   it('stops listening when destroyed', () => {

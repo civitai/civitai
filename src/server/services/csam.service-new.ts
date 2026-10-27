@@ -1287,8 +1287,8 @@ const SHOWN_ACTIVITIES = SHOWN_ACTIONS.flatMap((action) =>
 );
 
 /** Each image's earliest counted row stamped before now, by the database's own clock, as the
- *  rendition it records. `createdAt` is zoneless, stamped by its column default in the server's time
- *  zone (UTC), so it is compared in UTC whatever the reading session's time zone. */
+ *  rendition it records. `createdAt` is zoneless, stamped by its column default in the writing
+ *  session's time zone; compared in UTC, which assumes the writers' sessions run in UTC. */
 async function getViewedImageIds(imageIds: number[]) {
   const viewed = new Map<number, ShownRendition>();
   if (!imageIds.length) return viewed;

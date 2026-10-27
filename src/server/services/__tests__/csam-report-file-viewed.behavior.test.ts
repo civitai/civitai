@@ -10,7 +10,7 @@ import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * `fileViewedByEsp` per file, from the `heldMedia:view` rows written before the CyberTip is opened.
+ * `fileViewedByEsp` per file, from the `reportMedia:*` rows written before the CyberTip is opened.
  * The view lookup runs against a Postgres stand-in holding ModActivity. All ids and bytes below are
  * invented.
  */
@@ -256,12 +256,12 @@ describe('image report: fileViewedByEsp per file', () => {
 
   it('stores what was sent for each file, and the rendition of its earliest record', async () => {
     await view(501, {
-      activity: 'reportMedia:select:cdn-450',
-      createdAt: `CURRENT_TIMESTAMP - interval '2 minutes'`,
-    });
-    await view(501, {
       activity: 'reportMedia:open:original',
       createdAt: `CURRENT_TIMESTAMP - interval '1 minute'`,
+    });
+    await view(501, {
+      activity: 'reportMedia:select:cdn-450',
+      createdAt: `CURRENT_TIMESTAMP - interval '2 minutes'`,
     });
     await view(502, { activity: 'reportMedia:open:original' });
     await view(503, { activity: 'heldMedia:view' });
@@ -378,6 +378,17 @@ describe('image report: fileViewedByEsp per file', () => {
         message: 'synthetic replica outage',
       }),
     ]);
+  });
+
+  it('looks again on the retry after a failed lookup', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('synthetic replica outage'));
+    await processCsamReport(imageReport([501, 502]));
+    expect(submitReport).not.toHaveBeenCalled();
+
+    await view(501);
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
   });
 });
 

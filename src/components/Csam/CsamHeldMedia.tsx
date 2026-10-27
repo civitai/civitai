@@ -44,11 +44,9 @@ export function CsamHeldMedia({
     fetch(`${src}?probe=1`)
       .then((res) => setState(isNotHeldAnswer(res) ? 'cdn' : 'error'))
       .catch(() => setState('error'));
-  const shownRef = useShown(
-    image.type === 'video',
-    state === 'cdn' ? 'cdn-450' : 'original',
-    onShown
-  );
+  const shownRef = useShown(state === 'cdn' ? 'cdn-450' : 'original', onShown);
+  // Native controls take clicks on a video, so it is selected by its checkbox only.
+  const isVideo = image.type === 'video';
 
   if (state === 'cdn')
     return (
@@ -61,7 +59,8 @@ export function CsamHeldMedia({
           width={450}
           placeholder="empty"
           style={{ width: '100%' }}
-          onClick={onClick}
+          html5Controls={isVideo}
+          onClick={isVideo ? undefined : onClick}
         />
       </div>
     );
@@ -73,7 +72,7 @@ export function CsamHeldMedia({
         </Text>
       </Center>
     );
-  if (image.type === 'video')
+  if (isVideo)
     return (
       <div ref={shownRef}>
         <video
@@ -83,7 +82,6 @@ export function CsamHeldMedia({
           controls
           preload="metadata"
           style={{ width: '100%' }}
-          onClick={onClick}
           onError={onError}
         />
       </div>
@@ -110,7 +108,6 @@ export function CsamHeldMedia({
  * EdgeMedia's.
  */
 function useShown(
-  isVideo: boolean,
   rendition: ShownRendition,
   onShown: ((rendition: ShownRendition) => void) | undefined
 ) {
@@ -127,11 +124,11 @@ function useShown(
       callback.current?.(rendition);
     };
     const onLoad = (e: Event) => {
-      if (!isVideo && e.target instanceof HTMLImageElement && e.target.naturalWidth > 0) report();
+      if (e.target instanceof HTMLImageElement && e.target.naturalWidth > 0) report();
     };
     const onProgress = (e: Event) => {
-      if (isVideo && e.target instanceof HTMLVideoElement)
-        if (playedFraction(e.target) >= WATCHED_FRACTION) report();
+      if (e.target instanceof HTMLVideoElement && playedFraction(e.target) >= WATCHED_FRACTION)
+        report();
     };
     const progress = ['timeupdate', 'pause', 'ended'] as const;
     node.addEventListener('load', onLoad, CAPTURE);
@@ -140,7 +137,7 @@ function useShown(
       node.removeEventListener('load', onLoad, CAPTURE);
       for (const type of progress) node.removeEventListener(type, onProgress, CAPTURE);
     };
-  }, [node, isVideo, rendition]);
+  }, [node, rendition]);
 
   return setNode;
 }

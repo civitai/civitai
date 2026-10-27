@@ -60,6 +60,12 @@ describe('reportMedia rows', () => {
     ).rejects.toThrow(/cannot be changed or removed/);
   });
 
+  it('cannot be renamed into another kind of row', async () => {
+    await expect(
+      pg.query(`UPDATE "ModActivity" SET activity = 'heldMedia:view' WHERE id = $1`, [shown])
+    ).rejects.toThrow(/cannot be changed or removed/);
+  });
+
   it('cannot be deleted', async () => {
     await expect(pg.query(`DELETE FROM "ModActivity" WHERE id = $1`, [shown])).rejects.toThrow(
       /cannot be changed or removed/
@@ -71,7 +77,7 @@ describe('reportMedia rows', () => {
       pg.query(`UPDATE "ModActivity" SET activity = 'reportMedia:open:original' WHERE id = $1`, [
         other,
       ])
-    ).rejects.toThrow(/cannot be changed or removed/);
+    ).rejects.toThrow(/cannot become a reportMedia row/);
   });
 
   it('the table cannot be truncated', async () => {
@@ -79,12 +85,21 @@ describe('reportMedia rows', () => {
   });
 
   it('can still be inserted', async () => {
-    await expect(
-      pg.query(
-        `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-         VALUES (12, 'image', 'reportMedia:open:cdn-450', 502)`
-      )
-    ).resolves.toBeDefined();
+    await pg.query(
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+       VALUES (12, 'image', 'reportMedia:open:cdn-450', 502)`
+    );
+    const { rows } = await pg.query(
+      `SELECT "userId" FROM "ModActivity" WHERE activity = 'reportMedia:open:cdn-450' AND "entityId" = 502`
+    );
+    expect(rows).toEqual([{ userId: 12 }]);
+  });
+
+  it('a re-run of the migration keeps them guarded', async () => {
+    await pg.exec(readFileSync(migration, 'utf8'));
+    await expect(pg.query(`DELETE FROM "ModActivity" WHERE id = $1`, [shown])).rejects.toThrow(
+      /cannot be changed or removed/
+    );
   });
 });
 

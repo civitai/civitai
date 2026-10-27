@@ -41,6 +41,10 @@ describe('playedFraction', () => {
     expect(watched(video(100, [[0, 0.1]]))).toBe(false);
   });
 
+  it('94% is not watched', () => {
+    expect(watched(video(100, [[0, 94]]))).toBe(false);
+  });
+
   it('seeking to the end adds nothing that did not play', () => {
     expect(
       watched(

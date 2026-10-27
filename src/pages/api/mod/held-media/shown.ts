@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { SHOWN_ACTIONS, SHOWN_RENDITIONS, shownActivity } from '@civitai/shared/held-media';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getHeldMedia } from '~/server/services/held-media.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -31,14 +31,15 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   if (!parsed.success) return void res.status(400).json({ error: 'Bad request' });
   const { imageId, userId, action, rendition } = parsed.data;
 
-  // The report page lists the subject's images and nothing else.
-  const image = await dbRead.image.findFirst({
+  // The report page lists the subject's images and nothing else. Both reads are on the primary: a
+  // replica can lag a hold placed just before the page loaded.
+  const image = await dbWrite.image.findFirst({
     where: { id: imageId, userId },
     select: { id: true },
   });
   if (!image) return void res.status(404).json({ error: 'Not on this page' });
   // A held image is shown only from storage, any other only from the CDN.
-  const held = !!(await getHeldMedia(imageId));
+  const held = !!(await getHeldMedia(imageId, dbWrite));
   if ((rendition === 'original') !== held)
     return void res.status(409).json({ error: 'Not shown that way' });
 

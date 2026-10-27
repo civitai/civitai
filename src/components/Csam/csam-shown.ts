@@ -21,5 +21,10 @@ export function recordShown(body: {
   pending.add(sending);
 }
 
-/** Settles once every row sent so far has landed or failed, so a filing made now follows them. */
-export const settleShown = () => Promise.allSettled([...pending]);
+/** Settles once every row sent so far has landed or failed, or after `waitMs`, so a filing made now
+ *  follows them without a stalled request holding it. */
+export const settleShown = (waitMs = 3000) =>
+  Promise.race([
+    Promise.allSettled([...pending]),
+    new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
+  ]);

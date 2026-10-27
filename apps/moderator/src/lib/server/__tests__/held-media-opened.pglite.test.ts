@@ -55,13 +55,13 @@ const rows = async () =>
     }>(`SELECT "userId", activity, "entityType", "entityId", "createdAt" FROM "ModActivity"`)
   ).rows;
 
-async function post(imageId: string, body?: string) {
+async function post(imageId: string, body?: string, origin: string | null = 'http://mod.test') {
   const url = new URL(`http://mod.test/api/held-media/${imageId}/opened`);
   try {
     const res = await POST({
       params: { imageId },
       url,
-      request: new Request(url, { method: 'POST', body }),
+      request: new Request(url, { method: 'POST', body, headers: origin ? { origin } : {} }),
       locals: { user: { id: 42, roles: ['moderator:staff'] }, grants: {} },
     } as never);
     return res.status;
@@ -130,6 +130,23 @@ describe('POST /api/held-media/[imageId]/opened', () => {
   ])('refuses a body naming %s, and writes nothing', async (_, body) => {
     expect(await post('7', body)).toBe(400);
     expect(await rows()).toEqual([]);
+  });
+
+  it.each([
+    ['another site', 'https://other.example'],
+    ['no origin', null],
+  ])('refuses a request from %s, and writes nothing', async (_, origin) => {
+    expect(await post('7', undefined, origin)).toBe(403);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('answers a write that did not land with an error, not success', async () => {
+    await db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivityAway"`);
+    try {
+      expect(await post('7')).toBe(500);
+    } finally {
+      await db.exec(`ALTER TABLE "ModActivityAway" RENAME TO "ModActivity"`);
+    }
   });
 
   it('refuses a bad image id, and writes nothing', async () => {

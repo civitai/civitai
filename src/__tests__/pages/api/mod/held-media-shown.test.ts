@@ -96,7 +96,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$executeRaw.mockReset().mockImplementation(executeRaw as never);
   // Image 501 is user 20's, on whose report page it is; 502 is user 21's.
   const owners: Record<number, number> = { 501: 20, 502: 21 };
-  dbMock.dbRead.image.findFirst
+  dbMock.dbWrite.image.findFirst
     .mockReset()
     .mockImplementation((async ({ where }: { where: { id: number; userId?: number } }) =>
       where.id in owners && (where.userId === undefined || owners[where.id] === where.userId)
@@ -129,6 +129,7 @@ describe('POST /api/mod/held-media/shown', () => {
     expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(204);
 
     expect((await rows()).map((row) => row.activity)).toEqual(['reportMedia:open:original']);
+    expect(getHeldMedia).toHaveBeenCalledWith(501, dbMock.dbWrite);
   });
 
   it.each([
@@ -145,6 +146,8 @@ describe('POST /api/mod/held-media/shown', () => {
     ['an unknown act', { action: 'hover' }],
     ['an unknown rendition', { rendition: 'cdn-1080' }],
     ['a non-integer image', { imageId: 'x' }],
+    ['an image id past int4', { imageId: 2 ** 31 }],
+    ['a subject id past int4', { userId: 2 ** 31 }],
   ])('refuses %s, and writes nothing', async (_, change) => {
     expect(await post({ ...valid, ...change })).toBe(400);
     expect(await rows()).toEqual([]);
