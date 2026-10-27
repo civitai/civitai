@@ -48,6 +48,14 @@ export const SERVICE_RELEASE_SQL = `(${clickhouseTransactionTypePredicate(
   `-${SERVICE_RELEASE_LEG}`
 )}) AND JSONExtractInt(details, 'buyerId') > 0)`;
 
+/** A generation tip: platform-paid, one row per creator per day per account type. */
+export const GENERATION_TIP_SQL = `(type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, ${sqlString(
+  GENERATION_TIP_TRANSACTION_PREFIX
+)}))`;
+
+/** A tip one user paid another from their own account: not a hand grant (account 0), not to self. */
+export const USER_TIP_SQL = `(type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)`;
+
 /**
  * Transactions that raise a creator's bankable amount. Excludes generation `compensation`, purchased
  * Buzz, and system-minted tips. Generation tips are stored as `compensation` but are bankable: the
@@ -61,9 +69,7 @@ export const SERVICE_RELEASE_SQL = `(${clickhouseTransactionTypePredicate(
 export const BANKABLE_EARNING_PREDICATE_SQL = `(
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
-  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, ${sqlString(
-    GENERATION_TIP_TRANSACTION_PREFIX
-  )}))
+  OR ${GENERATION_TIP_SQL}
   OR (type = 'fee' AND description IN (${placementEarningDescriptionsSql}))
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE ${sqlString(
     `${APP_AUTHOR_FEE_DESCRIPTION}%`
@@ -72,12 +78,15 @@ export const BANKABLE_EARNING_PREDICATE_SQL = `(
 )`;
 
 /**
- * Sets the Peak Earning Month. Narrower than the bankable predicate on purpose: tips, donations,
- * sales, bounties and app/placement fees are bankable but do not set the peak.
+ * Sets the Peak Earning Month. Narrower than the bankable predicate on purpose: donations, sales,
+ * bounties and app/placement fees are bankable but do not set the peak. Tips set it (Justin,
+ * 2026-10-27); tips the creator paid out are netted from bankable, not from the peak.
  */
 export const PEAK_EARNING_PREDICATE_SQL = `(
   type = 'licenseFee'
   OR (type = 'purchase' AND fromAccountId != 0)
+  OR ${USER_TIP_SQL}
+  OR ${GENERATION_TIP_SQL}
 )`;
 
 /** Until the cutover generation compensation still sets the peak, so caps do not drop early. */
