@@ -276,6 +276,18 @@ describe('image report: fileViewedByEsp per file', () => {
     expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
   });
 
+  it('reads a UTC-stamped view in a session with another time zone', async () => {
+    await view(501, { createdAt: `(now() AT TIME ZONE 'UTC') - interval '1 minute'` });
+    await db.pg.exec(`SET TIME ZONE 'America/Denver'`);
+    try {
+      await processCsamReport(imageReport([501, 502]));
+    } finally {
+      await db.pg.exec(`SET TIME ZONE 'UTC'`);
+    }
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': false });
+  });
+
   it('counts no other record for the same id', async () => {
     await view(501, { activity: 'heldMedia:grid', entityType: 'heldMediaGrid' });
     await view(502, { activity: 'trainingData:download', entityType: 'modelVersion' });

@@ -1275,7 +1275,8 @@ async function reportImages(claim: SendClaim) {
     );
 }
 
-/** The images with a `heldMedia:view` row stamped before now, by the database's own clock. */
+/** The images with a `heldMedia:view` row stamped before now, by the database's own clock.
+ *  `createdAt` is zoneless UTC, so it is compared in UTC whatever the session time zone. */
 async function getViewedImageIds(imageIds: number[]) {
   if (!imageIds.length) return new Set<number>();
   // The primary: a replica may not have a view recorded just before the send.
@@ -1284,7 +1285,7 @@ async function getViewedImageIds(imageIds: number[]) {
     WHERE activity = 'heldMedia:view'
       AND "entityType" = 'image'
       AND "entityId" = ANY(${imageIds}::int[])
-      AND "createdAt" < now()
+      AND "createdAt" < (now() AT TIME ZONE 'UTC')
   `;
   return new Set(rows.map((row) => row.entityId));
 }
