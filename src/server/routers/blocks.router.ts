@@ -50,9 +50,7 @@ import {
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
-  buzzCapRedisKey,
   buzzCapWindowKey,
   refundBlockBuzzSpend,
   reserveBlockBuzzSpend,
