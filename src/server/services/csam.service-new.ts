@@ -91,6 +91,8 @@ type EvidenceFileRecord = {
 type CsamReportImage = {
   id: number;
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
+  /** The `fileViewedByEsp` sent for this file. */
+  viewedByEsp?: boolean;
 } & CsamReportUploadProps &
   Partial<EvidenceFileRecord>;
 
@@ -1110,6 +1112,14 @@ async function reportImages(claim: SendClaim) {
       'archive-data'
     );
 
+  // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
+  let viewed: Set<number>;
+  try {
+    viewed = await getViewedImageIds(images.map((image) => image.id));
+  } catch (e) {
+    return logSendFailure(report, e, 'send-view-check');
+  }
+
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
   const noLongerStored =
     absent.length +
@@ -1194,12 +1204,13 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
+      const viewedByEsp = viewed.has(image.id);
       await cybertipClient.submitFileDetails({
         reportId: ncmecReportId,
         fileId,
         originalFileName: image.name?.split('?')[0] ?? undefined,
         locationOfFile: imageUrl,
-        fileViewedByEsp: true,
+        fileViewedByEsp: viewedByEsp,
         fileAnnotations,
       });
 
@@ -1209,6 +1220,7 @@ async function reportImages(claim: SendClaim) {
         fileAnnotations,
         fileId,
         hash,
+        viewedByEsp,
         source: original.source,
         sha256: original.sha256,
         bytes: original.data.length,
@@ -1261,6 +1273,20 @@ async function reportImages(claim: SendClaim) {
       },
       'error'
     );
+}
+
+/** The images with a `heldMedia:view` row stamped before now, by the database's own clock. */
+async function getViewedImageIds(imageIds: number[]) {
+  if (!imageIds.length) return new Set<number>();
+  // The primary: a replica may not have a view recorded just before the send.
+  const rows = await dbWrite.$queryRaw<{ entityId: number }[]>`
+    SELECT DISTINCT "entityId" FROM "ModActivity"
+    WHERE activity = 'heldMedia:view'
+      AND "entityType" = 'image'
+      AND "entityId" = ANY(${imageIds}::int[])
+      AND "createdAt" < now()
+  `;
+  return new Set(rows.map((row) => row.entityId));
 }
 
 async function reportGenerationData(claim: SendClaim) {
@@ -1338,6 +1364,7 @@ async function reportGenerationData(claim: SendClaim) {
             await cybertipClient.submitFileDetails({
               fileId,
               reportId,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
@@ -1410,7 +1437,12 @@ async function reportTrainingData(claim: SendClaim) {
           const {
             data: { fileId, hash },
           } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-          await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            originalFileName: filename,
+            fileViewedByEsp: false,
+          });
           return { filename, fileId, hash };
         });
         return { trainingData: await sending.sent };
@@ -1549,7 +1581,7 @@ async function reportExternalLink(claim: SendClaim) {
               fileId,
               originalFileName: filename,
               locationOfFile,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileAnnotations,
             });
@@ -1574,7 +1606,7 @@ async function reportExternalLink(claim: SendClaim) {
               reportId,
               fileId,
               originalFileName: filename,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileRelevance: FileRelevance.SupplementalReported,
               additionalInfo: ['Chat log screenshot / supplemental evidence'],
