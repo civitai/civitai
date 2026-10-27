@@ -334,6 +334,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
         'server/services/model-sfw-face.service.ts:DRAFT_WAIT_SECONDS',
         'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
         'server/services/product-badge.service.ts:30',
+        'server/services/task-router-mcp.service.ts:RUN_WAIT_SECONDS',
         'server/services/text-scan/harness.ts:SUGGEST_ALIASES_WAIT_SECONDS',
         'server/services/training-studio-auto-label.service.ts:0',
         'server/services/training.service.ts:0',
