@@ -22,8 +22,8 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // minimum of 1, so an omitted param would read as an account that generated almost nothing.
   const takeParam = url.searchParams.get('take');
   const take = takeParam === null ? undefined : Number(takeParam);
-  // An unrecognised source falls back to the on-site feed rather than erroring: it is a tab name, and
-  // the tab that exists is the honest answer to one that does not.
+  // An unrecognised source falls back to the default (all sources) rather than erroring: it is a tab
+  // name, and the tab that exists is the honest answer to one that does not.
   const sourceParam = url.searchParams.get('source');
   const source = isWorkflowSource(sourceParam) ? sourceParam : undefined;
 

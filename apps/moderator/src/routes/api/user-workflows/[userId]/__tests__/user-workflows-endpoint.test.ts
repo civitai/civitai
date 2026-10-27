@@ -10,10 +10,10 @@ vi.mock('$lib/server/access', () => ({ canAccess: () => true }));
 
 const { GET } = await import('../+server');
 
-const call = () =>
+const call = (search = '') =>
   GET({
     params: { userId: '5' },
-    url: new URL('http://x/api/user-workflows/5'),
+    url: new URL(`http://x/api/user-workflows/5${search}`),
     locals: { user: { id: 1 }, grants: { 'user.generations.view': true } },
   } as never) as Promise<Response>;
 
@@ -41,5 +41,26 @@ describe('/api/user-workflows when the orchestrator fails', () => {
     expect(await res.json()).toEqual({
       error: 'The orchestrator did not answer within 90 seconds.',
     });
+  });
+});
+
+describe('/api/user-workflows source', () => {
+  it('passes a known source through', async () => {
+    getUserGeneratedWorkflows.mockResolvedValue({ items: [], nextCursor: null });
+    await call('?source=onsite');
+    expect(getUserGeneratedWorkflows).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ source: 'onsite' })
+    );
+  });
+
+  it('leaves an unknown source to the service default rather than erroring', async () => {
+    getUserGeneratedWorkflows.mockResolvedValue({ items: [], nextCursor: null });
+    const res = await call('?source=bogus');
+    expect(res.status).toBe(200);
+    expect(getUserGeneratedWorkflows).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ source: undefined })
+    );
   });
 });

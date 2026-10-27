@@ -8,12 +8,25 @@
   import { fetchJson } from '$lib/fetch-json';
   import { dateTime, num } from '$lib/format';
   import { denied } from '$lib/permissions';
-  import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
+  import type {
+    GeneratedWorkflowPage,
+    WorkflowOrigin,
+    WorkflowSource,
+  } from '$lib/server/user-workflows.service';
 
   const SOURCES: { value: WorkflowSource; label: string }[] = [
+    { value: 'all', label: 'All' },
     { value: 'onsite', label: 'On-site generator' },
     { value: 'comfy', label: 'Comfy Cloud' },
   ];
+
+  // A fact about the row's tags, not a guess at how it was submitted.
+  const ORIGIN_LABEL: Record<WorkflowOrigin, string> = {
+    onsite: 'site generator',
+    comfy: 'Comfy Cloud',
+    untagged: 'no source tag',
+    other: 'other source',
+  };
 
   let {
     userId,
@@ -42,7 +55,7 @@
   let toggled = $state<boolean | null>(null);
   const shown = $derived(toggled ?? open);
 
-  let source = $state<WorkflowSource>('onsite');
+  let source = $state<WorkflowSource>('all');
 
   // A stack of the cursors walked so far, so Previous is an index move rather than a second query the
   // orchestrator cannot answer (its paging is forward-only). `''` is the first page.
@@ -55,7 +68,7 @@
     userId;
     untrack(() => {
       toggled = null;
-      source = 'onsite';
+      source = 'all';
     });
   });
 
@@ -139,7 +152,7 @@
         {#if result.items.length === 0}
           <p class="mt-3 text-sm text-dark-2">
             No successful generations on record for this account
-            {source === 'comfy' ? ' in Comfy Cloud' : ' on-site'}.
+            {source === 'comfy' ? ' in Comfy Cloud' : source === 'onsite' ? ' on-site' : ''}.
           </p>
         {:else}
           <ul class="mt-3 space-y-3">
@@ -147,6 +160,9 @@
               <li class="rounded-md border border-dark-4 p-3">
                 <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
                   <span>{dateTime(workflow.createdAt)}</span>
+                  {#if source === 'all'}
+                    <Badge variant="outline">{ORIGIN_LABEL[workflow.origin]}</Badge>
+                  {/if}
                   {#if workflow.workflow}
                     <Badge variant="secondary">{workflow.workflow}</Badge>
                   {/if}
@@ -163,6 +179,8 @@
 
                 {#if workflow.prompt}
                   <p class="mt-1 wrap-break-word text-sm text-dark-0">{workflow.prompt}</p>
+                {:else if workflow.origin !== 'comfy'}
+                  <p class="mt-1 text-xs text-dark-2">No generation params recorded.</p>
                 {/if}
                 {#if workflow.negativePrompt}
                   <p class="mt-1 wrap-break-word text-xs text-dark-2">

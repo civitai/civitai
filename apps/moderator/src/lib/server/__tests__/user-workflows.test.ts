@@ -146,7 +146,9 @@ describe('getUserGeneratedWorkflows', () => {
     expect(video.unavailable).toBe(0);
   });
 
-  it('asks the manager endpoint for that user, generations only, excluding failures', async () => {
+  // Changed deliberately: the default used to be the `gen` tag, which hid an account's untagged work
+  // entirely (two rows shown of ~10k a day). The default now sends no tag; each row carries its origin.
+  it('asks the manager endpoint for that user with no tag by default, excluding failures', async () => {
     respond({ items: [], next: null });
 
     await getUserGeneratedWorkflows(42, { cursor: 'abc' });
@@ -154,11 +156,36 @@ describe('getUserGeneratedWorkflows', () => {
     const url = new URL(fetchMock.mock.calls[0][0] as string);
     expect(url.pathname).toBe('/v1/manager/workflows');
     expect(url.searchParams.get('UserId')).toBe('42');
-    // Without the tag the list fills with prompt-enhancement and scan workflows, which answer nothing
-    // about what the account made.
-    expect(url.searchParams.get('Tags')).toBe('gen');
+    expect(url.searchParams.has('Tags')).toBe(false);
     expect(url.searchParams.get('ExcludeFailed')).toBe('true');
     expect(url.searchParams.get('Cursor')).toBe('abc');
+  });
+
+  it('asks for on-site generations under the `gen` tag', async () => {
+    respond({ items: [], next: null });
+    await getUserGeneratedWorkflows(42, { source: 'onsite' });
+    expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('Tags')).toBe('gen');
+  });
+
+  it("names each row's origin from its own tags", async () => {
+    respond({
+      items: [
+        { id: 'a', tags: ['civitai', 'gen', 'img'] },
+        { id: 'b', tags: ['civitai-comfy-nodes'] },
+        { id: 'c', tags: [] },
+        { id: 'd' },
+        { id: 'e', tags: ['training'] },
+      ],
+      next: null,
+    });
+    const page = await getUserGeneratedWorkflows(42);
+    expect(page.items.map((w) => [w.id, w.origin])).toEqual([
+      ['a', 'onsite'],
+      ['b', 'comfy'],
+      ['c', 'untagged'],
+      ['d', 'untagged'],
+      ['e', 'other'],
+    ]);
   });
 
   it('asks for Comfy Cloud under its own tag, not the on-site one', async () => {
