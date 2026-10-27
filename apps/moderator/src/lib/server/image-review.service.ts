@@ -192,9 +192,9 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
-/** A CSAM-queue image listed in a sent image report on its owner, unless the send recorded its file as
- *  missing (then it went out without it). An entry is `{ id }` or a bare id. `image` is the table or
- *  alias the image row is read as. */
+/** A CSAM-queue image listed as `{ id }` in a sent image report on its owner, unless that send
+ *  recorded it as missing. The send reads only `{ id }` entries. `image` is the table or alias the
+ *  image row is read as. */
 function coveredBySentCsamReport(image: string) {
   const col = (name: string) => sql.ref(`${image}.${name}`);
   return sql<boolean>`exists (
@@ -206,14 +206,14 @@ function coveredBySentCsamReport(image: string) {
     where r."userId" = ${col('userId')}
       and r."reportSentAt" is not null
       and r.type = 'Image'
-      and coalesce(e ->> 'id', e #>> '{}') = ${col('id')}::text
+      and e ->> 'id' = ${col('id')}::text
       and not exists (
         select 1
         from jsonb_array_elements(
           case when jsonb_typeof(r.details -> 'images') = 'array' then r.details -> 'images'
           else '[]'::jsonb end
         ) d
-        where coalesce(d ->> 'id', d #>> '{}') = ${col('id')}::text
+        where d ->> 'id' = ${col('id')}::text
           and d ->> 'source' = 'missing'
       )
   )`;

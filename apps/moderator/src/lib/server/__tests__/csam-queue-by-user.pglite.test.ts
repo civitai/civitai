@@ -149,16 +149,18 @@ describe('the CSAM queue by user', () => {
 
 describe('what a sent CSAM report takes out of the pending count', () => {
   // Every image predates every send (2026-03-01) unless said, so dates never cover one.
-  // 201: both listed, one as { id }, one as a bare id. 202: one of two listed. 203: none listed.
+  // 201: both listed, one as { id }, one as a bare id the send cannot read. 202: one of two listed.
+  // 203: none listed.
   // 204: listed on a report never sent. 205: no report. 206: created after the send, listed.
   // 207: listed only on a report about someone else. 211: listed only on a report of another type.
   // 212: both listed, but the send recorded one file as missing. 213: a report whose images are not
-  // a list. 206's report details are malformed, which must not change its result.
+  // a list. 206's report details are malformed, which must not change its result. 214: one send
+  // recorded image 37 as missing, a later send carried it.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "User" ("id", "username") VALUES
         (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm'),
-        (211, 'o'), (212, 'p'), (213, 'q');
+        (211, 'o'), (212, 'p'), (213, 'q'), (214, 'r');
       INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt") VALUES
         (21, 201, 'csam', '2026-01-01'),
         (22, 201, 'csam', '2026-01-01'),
@@ -173,8 +175,13 @@ describe('what a sent CSAM report takes out of the pending count', () => {
         (32, 211, 'csam', '2026-01-01'),
         (33, 212, 'csam', '2026-01-01'),
         (34, 212, 'csam', '2026-01-01'),
-        (35, 213, 'csam', '2026-01-01');
+        (35, 213, 'csam', '2026-01-01'),
+        (36, 214, 'csam', '2026-01-01'),
+        (37, 214, 'csam', '2026-01-01');
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "details") VALUES
+        (214, '2026-03-01', '[{"id": 36}, {"id": 37}]',
+          '{"images": [{"id": 36, "fileId": "f"}, {"id": 37, "source": "missing"}]}'),
+        (214, '2026-03-02', '[{"id": 37}]', '{"images": [{"id": 37, "fileId": "g"}]}'),
         (212, '2026-03-01', '[{"id": 33}, {"id": 34}]',
           '{"images": [{"id": 33, "fileId": "f"}, {"id": 34, "source": "missing"}]}'),
         (213, '2026-03-01', '{"id": 35}', NULL),
@@ -192,9 +199,9 @@ describe('what a sent CSAM report takes out of the pending count', () => {
 
   afterAll(async () => {
     await db.exec(`
-      DELETE FROM "CsamReport" WHERE "userId" BETWEEN 201 AND 211;
-      DELETE FROM "Image" WHERE "userId" BETWEEN 201 AND 211;
-      DELETE FROM "User" WHERE id BETWEEN 201 AND 211;
+      DELETE FROM "CsamReport" WHERE "userId" BETWEEN 201 AND 214;
+      DELETE FROM "Image" WHERE "userId" BETWEEN 201 AND 214;
+      DELETE FROM "User" WHERE id BETWEEN 201 AND 214;
     `);
   });
 
@@ -213,7 +220,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       102: 1,
       103: 1,
       106: 1,
-      201: 0,
+      201: 1,
       202: 1,
       203: 1,
       204: 1,
@@ -223,17 +230,18 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       211: 1,
       212: 1,
       213: 1,
+      214: 0,
     });
   });
 
   it('lists users with something pending first', async () => {
     const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
-    expect(users.slice(-2).map((u) => u.userId)).toEqual([201, 206]);
+    expect(users.slice(-2).map((u) => u.userId)).toEqual([214, 206]);
   });
 
   it('badges exactly what the by-user page shows as pending', async () => {
     const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
-    expect(pending).toBe(13);
+    expect(pending).toBe(14);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 
