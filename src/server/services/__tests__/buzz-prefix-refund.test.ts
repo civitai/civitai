@@ -124,13 +124,26 @@ describe('refundAllLegsByPrefix', () => {
   it('counts a leg another attempt refunded between the lookup and the refund as settled', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
     refundsExistFor('tx-a', 'tx-b');
-    refundTransaction.mockRejectedValue(mapped(409));
+    refundTransaction.mockImplementation(async (transactionId: string) => {
+      refundsExistFor('tx-a', 'tx-b', transactionId);
+      throw mapped(409);
+    });
 
     await expect(refundAllLegsByPrefix(input)).resolves.toEqual({
       refundedLegs: 0,
       refundedAmount: 0,
       alreadyRefundedLegs: 3,
     });
+  });
+
+  it('throws when a leg refund is refused as a conflict but no refund is on the ledger', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+    refundsExistFor('tx-a', 'tx-b');
+    refundTransaction.mockRejectedValue(mapped(409));
+
+    await expect(refundAllLegsByPrefix(input)).rejects.toThrow(
+      /left 1 of 3 transactions unreversed \(tx-c: /
+    );
   });
 
   it('throws when a missing leg cannot be refunded, after trying the others', async () => {

@@ -56,11 +56,14 @@ export async function refundTransactionOnce(
   try {
     return await refundTransaction(transactionId, description, details);
   } catch (error) {
-    if (getBuzzApiStatus(error) !== 409) throw error;
-    const refund = await getTransactionByExternalId(`refund-${transactionId}`);
-    if (!refund) throw error;
+    if (!(await isConflictWithRefundOnLedger(error, transactionId))) throw error;
     return { transactionId };
   }
+}
+
+async function isConflictWithRefundOnLedger(error: unknown, transactionId: string) {
+  if (getBuzzApiStatus(error) !== 409) return false;
+  return !!(await getTransactionByExternalId(`refund-${transactionId}`));
 }
 
 type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
@@ -114,9 +117,8 @@ async function refundMissingLegs({
       result.refundedLegs++;
       result.refundedAmount += leg.amount;
     } catch (error) {
-      // Single-transaction refunds key on `refund-<transactionId>`, so a 409 here means another
-      // attempt reversed this leg between the lookup and the refund.
-      if (getBuzzApiStatus(error) === 409) {
+      // Another attempt reversed this leg between the lookup and the refund.
+      if (await isConflictWithRefundOnLedger(error, leg.transactionId)) {
         result.alreadyRefundedLegs++;
         continue;
       }
