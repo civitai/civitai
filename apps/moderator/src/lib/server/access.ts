@@ -306,6 +306,7 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
+  { path: '/knights', label: 'Knights Review' },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];
