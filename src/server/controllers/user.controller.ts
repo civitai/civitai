@@ -148,6 +148,7 @@ import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.servi
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
@@ -547,6 +548,17 @@ export const completeOnboardingHandler = async ({
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
+        // Off the primary row, not `ctx.user`: the session copy can be hours stale, and this
+        // decides a payment.
+        const current = await dbWrite.user.findUnique({
+          where: { id },
+          select: { onboarding: true, meta: true },
+        });
+        const bonusOwed =
+          !!current &&
+          !Flags.hasFlag(current.onboarding, OnboardingSteps.Buzz) &&
+          !isSystemAccountMeta(current.meta);
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
@@ -557,17 +569,18 @@ export const completeOnboardingHandler = async ({
           });
         }
 
-        await withRetries(() =>
-          createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(),
-            description: 'Onboarding bonus',
-            type: TransactionType.Reward,
-            externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'blue',
-          })
-        ).catch(handleLogError);
+        if (bonusOwed)
+          await withRetries(() =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: ctx.user.id,
+              amount: getUserBuzzBonusAmount(),
+              description: 'Onboarding bonus',
+              type: TransactionType.Reward,
+              externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+              toAccountType: 'blue',
+            })
+          ).catch(handleLogError);
         break;
       }
     }

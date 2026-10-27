@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as UsernamePermitted from '~/server/services/username-permitted';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -10,9 +9,8 @@ import { OnboardingComplete } from '~/server/common/enums';
 // WEBHOOK_TOKEN comes from the worker-level env mock (src/__tests__/setup.ts).
 const TOKEN = 'test-webhook-token';
 
-const { trackModActivity, createBuzzTransaction, isUsernamePermitted } = vi.hoisted(() => ({
+const { trackModActivity, isUsernamePermitted } = vi.hoisted(() => ({
   trackModActivity: vi.fn(async () => undefined),
-  createBuzzTransaction: vi.fn(),
   isUsernamePermitted: vi.fn(async () => true),
 }));
 
@@ -20,10 +18,6 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity,
-}));
-vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof BuzzService>()),
-  createBuzzTransaction,
 }));
 vi.mock('~/server/services/username-permitted', async (importOriginal) => ({
   ...(await importOriginal<typeof UsernamePermitted>()),
@@ -88,12 +82,18 @@ function call(body: Record<string, unknown>, { token = TOKEN, method = 'POST' } 
 }
 
 const valid = { email: 'disputes@civitai.com', username: 'CivDisputes' };
+const systemRow: Row = {
+  id: 0,
+  email: 'disputes@civitai.com',
+  username: 'CivDisputes',
+  deletedAt: null,
+  meta: { systemAccount: true },
+};
 
 beforeEach(() => {
   users = [];
   installUserTable();
   trackModActivity.mockClear();
-  createBuzzTransaction.mockClear();
   isUsernamePermitted.mockClear();
   isUsernamePermitted.mockImplementation(async () => true);
 });
@@ -109,7 +109,7 @@ describe('POST /api/admin/create-system-account', () => {
     expect(users).toHaveLength(1);
   });
 
-  it('creates a verified, onboarded account with no Buzz bonus and audits who created it', async () => {
+  it('creates a verified, onboarded system account and audits who created it', async () => {
     const { status, body } = await call({ ...valid, actorUserId: 42 });
 
     expect(status).toBe(201);
@@ -123,9 +123,7 @@ describe('POST /api/admin/create-system-account', () => {
       rewardsEligibility: 'Ineligible',
       meta: { systemAccount: true },
     });
-    // Onboarding is marked complete without running the step that pays the bonus.
     expect(users[0].onboarding).toBe(OnboardingComplete);
-    expect(createBuzzTransaction).not.toHaveBeenCalled();
     expect(trackModActivity).toHaveBeenCalledWith(42, {
       entityType: 'user',
       activity: 'createSystemAccount',
@@ -156,6 +154,26 @@ describe('POST /api/admin/create-system-account', () => {
     expect(users).toHaveLength(1);
   });
 
+  // Same email and username, but not created here: answering 200 would hand its id to the caller
+  // as if it were a system account.
+  it('refuses an ordinary account that matches on email and username', async () => {
+    users.push({ ...systemRow, id: 7, meta: {} });
+
+    const { status } = await call(valid);
+
+    expect(status).toBe(409);
+    expect(users).toHaveLength(1);
+  });
+
+  it('refuses a soft-deleted system account on that email', async () => {
+    users.push({ ...systemRow, id: 7, deletedAt: new Date() });
+
+    const { status } = await call(valid);
+
+    expect(status).toBe(409);
+    expect(users).toHaveLength(1);
+  });
+
   it('refuses a username taken by another account', async () => {
     users.push({ id: 7, email: 'other@civitai.com', username: 'civdisputes', deletedAt: null });
 
@@ -168,7 +186,7 @@ describe('POST /api/admin/create-system-account', () => {
   it('treats a create that loses a race as the account the winner made', async () => {
     dbMock.dbWrite.user.findUnique.mockImplementationOnce(async () => null);
     dbMock.dbWrite.user.findUnique.mockImplementationOnce(async () => null);
-    users.push({ id: 7, email: 'disputes@civitai.com', username: 'CivDisputes', deletedAt: null });
+    users.push({ ...systemRow, id: 7 });
 
     const { status, body } = await call(valid);
 
@@ -180,6 +198,8 @@ describe('POST /api/admin/create-system-account', () => {
   it.each([
     ['an outside domain', { ...valid, email: 'disputes@example.com' }],
     ['a lookalike subdomain', { ...valid, email: 'disputes@civitai.com.example.com' }],
+    ['a domain ending in the name', { ...valid, email: 'disputes@evilcivitai.com' }],
+    ['a subdomain', { ...valid, email: 'disputes@sub.civitai.com' }],
     ['an invalid email', { ...valid, email: 'not-an-email' }],
     ['a username with illegal characters', { ...valid, username: 'Civ Disputes!' }],
     ['a too-short username', { ...valid, username: 'ab' }],

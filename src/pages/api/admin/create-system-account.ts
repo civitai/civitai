@@ -8,6 +8,7 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { isUsernamePermitted } from '~/server/services/username-permitted';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from '@civitai/auth';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 
 /**
@@ -44,14 +45,18 @@ type Resolution =
   | { kind: 'available' };
 
 async function resolve(email: string, username: string): Promise<Resolution> {
-  const select = { id: true, username: true, deletedAt: true } as const;
+  const select = { id: true, username: true, deletedAt: true, meta: true } as const;
   const [byEmail, byUsername] = await Promise.all([
     dbWrite.user.findUnique({ where: { email }, select }),
     dbWrite.user.findUnique({ where: { username }, select }),
   ]);
 
   if (byEmail) {
-    if (!byEmail.deletedAt && byEmail.username?.toLowerCase() === username.toLowerCase())
+    if (
+      !byEmail.deletedAt &&
+      isSystemAccountMeta(byEmail.meta) &&
+      byEmail.username?.toLowerCase() === username.toLowerCase()
+    )
       return { kind: 'existing', userId: byEmail.id, username: byEmail.username };
     return { kind: 'conflict', error: 'Email belongs to another account' };
   }
@@ -91,7 +96,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
         onboarding: OnboardingComplete,
         excludeFromLeaderboards: true,
         rewardsEligibility: 'Ineligible',
-        meta: { systemAccount: true },
+        meta: SYSTEM_ACCOUNT_META,
       },
       select: { id: true },
     });
