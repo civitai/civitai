@@ -1622,8 +1622,8 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    await refundBidsForDeletedModels(models, alertedBy);
-    throw new LegalHoldStoppedError();
+    const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -1677,7 +1677,7 @@ export const removeAllContent = async ({
       message: 'Stopped by a legal hold before the App Blocks stores',
       userId: id,
     }).catch(() => undefined);
-    throw new LegalHoldStoppedError();
+    throw new LegalHoldStoppedError(incomplete);
   });
 
   // ── App Blocks per-user storage ─────────────────────────────────────────────

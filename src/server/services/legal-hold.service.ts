@@ -28,9 +28,13 @@ export class LegalHoldError extends Error {
 /** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
 export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
 
+/** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
+export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; see the bid-refund-failed alert.`;
+
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {
-  constructor() {
+  /** The steps that ran before the stop and failed, as `removeAllContent` names them. */
+  constructor(readonly incomplete: string[] = []) {
     super();
     this.name = 'LegalHoldStoppedError';
   }
@@ -49,7 +53,10 @@ export class LegalHoldUnconfirmedError extends LegalHoldError {
 
 /** What a moderator is told for a `LegalHoldError`; the most specific class wins. */
 export function legalHoldMessage(e: LegalHoldError) {
-  if (e instanceof LegalHoldStoppedError) return LEGAL_HOLD_STOPPED;
+  if (e instanceof LegalHoldStoppedError)
+    return e.incomplete.includes('bid-refunds')
+      ? LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE
+      : LEGAL_HOLD_STOPPED;
   if (e instanceof LegalHoldUnconfirmedError) return HOLD_UNCONFIRMED;
   return LEGAL_HOLD_REFUSAL;
 }
