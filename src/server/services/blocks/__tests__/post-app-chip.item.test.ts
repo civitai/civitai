@@ -17,6 +17,7 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 
 const POST_ID = 31107522;
@@ -205,6 +206,21 @@ describe('the post chip names the sub-listing a post was shared from', () => {
     await expect(read()).resolves.toMatchObject({ slug: 'aaa', item: { name: 'Fakeful' } });
   });
 
+  it("never shows an item under one of the app's listings the viewer cannot see", async () => {
+    const app = appRow();
+    const pending = { ...app.appBlocks[0].appListing, id: 'apl_pending', status: 'pending' };
+    app.appBlocks.push({ ...app.appBlocks[0], appListing: pending });
+    given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ parentListingId: 'apl_pending' })], app });
+    await expect(read()).resolves.toEqual(PARENT_CHIP);
+  });
+
+  it('strips hidden and reordering characters from the item name, and drops one left empty', async () => {
+    given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ title: '\u202eFake\u200bful\n' })] });
+    await expect(read()).resolves.toMatchObject({ item: { name: 'Fakeful' } });
+    given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ title: '\u200b\u202e' })] });
+    await expect(read()).resolves.toEqual(PARENT_CHIP);
+  });
+
   it('leaves a post with no item marker unchanged, with no item read', async () => {
     given({ rows: [subRow()] });
     await expect(read()).resolves.toEqual(PARENT_CHIP);
@@ -217,9 +233,17 @@ describe('the post chip names the sub-listing a post was shared from', () => {
     expect(dbMock.dbRead.appSubListing.findFirst).not.toHaveBeenCalled();
   });
 
-  it("keeps the app's chip when the item read fails", async () => {
+  it("keeps the app's chip when the item read fails, and logs it as an item read", async () => {
+    loggingMock.logToAxiom.mockClear();
     given({ subListingId: 'asl_FAKEFUL' });
     dbMock.dbRead.appSubListing.findFirst.mockRejectedValue(new Error('replica down'));
     await expect(read()).resolves.toEqual(PARENT_CHIP);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'post-app-chip-read-degraded',
+        read: 'item',
+        message: 'replica down',
+      })
+    );
   });
 });

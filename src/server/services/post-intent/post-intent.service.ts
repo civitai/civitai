@@ -33,7 +33,9 @@ import { getToolByDomain } from '~/server/services/tool.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { SafeFetchError, safeFetch } from '~/server/utils/safe-fetch';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { constants } from '~/server/common/constants';
+import { effectiveSubListingRating } from '~/shared/constants/app-sub-listing.constants';
 import { plainTextToPostHtml } from '~/shared/utils/post-intent';
 import { EntityType, JobQueueType, MediaType } from '~/shared/utils/prisma/enums';
 import {
@@ -117,7 +119,7 @@ export async function resolveAppForManifestUrl(
 export async function resolveIntentItem(
   record: Pick<AppPostIntentRecord, 'listingId'>,
   item: string | undefined
-): Promise<{ id: string; title: string } | null> {
+): Promise<{ id: string; title: string; rating: string | null } | null> {
   if (!item) return null;
   try {
     const row = await dbRead.appSubListing.findFirst({
@@ -128,9 +130,20 @@ export async function resolveIntentItem(
         author: { bannedAt: null, deletedAt: null },
         parentListing: { subListingParent: { is: { enabled: true } } },
       },
-      select: { id: true, title: true },
+      select: {
+        id: true,
+        title: true,
+        contentRating: true,
+        parentListing: { select: { contentRating: true } },
+      },
     });
-    return row && { id: row.id, title: sanitizeAppChromeName(row.title) ?? '' };
+    return (
+      row && {
+        id: row.id,
+        title: sanitizeAppChromeName(row.title) ?? '',
+        rating: effectiveSubListingRating(row.parentListing.contentRating, row.contentRating),
+      }
+    );
   } catch (err) {
     logToAxiom({
       name: 'post-intent',
@@ -279,11 +292,13 @@ async function stageMediaItem(
   return staged;
 }
 
+/** `requestHost` hides a mature item's name where the post's chip would hide the item. */
 async function toStagedIntent(
   manifestUrl: string,
   record: Pick<AppPostIntentRecord, 'listingId' | 'listingName' | 'host'>,
   manifest: PostIntentManifest,
-  staged: StagedIntentMedia[]
+  staged: StagedIntentMedia[],
+  requestHost: string
 ): Promise<StagedIntent> {
   const item = await resolveIntentItem(record, manifest.item);
   return {
@@ -291,7 +306,7 @@ async function toStagedIntent(
     app: {
       name: record.listingName,
       host: record.host,
-      ...(item?.title && { itemName: item.title }),
+      ...(item?.title && ratingAllowedOnHost(item.rating, requestHost) && { itemName: item.title }),
     },
     title: manifest.title,
     description: manifest.description,
@@ -308,10 +323,13 @@ async function toStagedIntent(
 export async function stageIntent({
   manifestUrl: rawManifestUrl,
   userId,
+  requestHost = '',
   now = new Date(),
 }: {
   manifestUrl: string;
   userId: number;
+  /** The site host the user is on; absent, a mature item goes unnamed. */
+  requestHost?: string;
   now?: Date;
 }): Promise<StagedIntent> {
   const manifestUrl = toCanonical(rawManifestUrl);
@@ -321,7 +339,7 @@ export async function stageIntent({
 
   const existing = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
   if (existing) {
-    const resumed = await resumeClaim(existing, manifestUrl, userId, now, record);
+    const resumed = await resumeClaim(existing, manifestUrl, userId, now, record, requestHost);
     if (resumed) return resumed;
     if (!(await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]))) {
       const after = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
@@ -340,7 +358,7 @@ export async function stageIntent({
     if (!releaseUrl)
       throw new PostIntentRefusal('busy', 'This share is still loading. Try again in a moment.');
     await checkStageRateLimit(`user:${userId}`, POST_INTENT_USER_STAGE_LIMIT);
-    return await fetchAndStage({ manifestUrl, record, userId, now });
+    return await fetchAndStage({ manifestUrl, record, userId, requestHost, now });
   } finally {
     await releaseUser();
     await releaseUrl?.();
@@ -362,7 +380,8 @@ async function resumeClaim(
   manifestUrl: string,
   userId: number,
   now: Date,
-  record: AppPostIntentRecord
+  record: AppPostIntentRecord,
+  requestHost: string
 ): Promise<StagedIntent | null> {
   if (row.postedAt)
     throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
@@ -374,7 +393,8 @@ async function resumeClaim(
     manifestUrl,
     record,
     row.manifest as PostIntentManifest,
-    row.staged as StagedIntentMedia[]
+    row.staged as StagedIntentMedia[],
+    requestHost
   );
 }
 
@@ -382,11 +402,13 @@ async function fetchAndStage({
   manifestUrl,
   record,
   userId,
+  requestHost,
   now,
 }: {
   manifestUrl: string;
   record: AppPostIntentRecord;
   userId: number;
+  requestHost: string;
   now: Date;
 }): Promise<StagedIntent> {
   const { bytes } = await fetchFromApp(manifestUrl, POST_INTENT_MANIFEST_MAX_BYTES, [
@@ -419,13 +441,14 @@ async function fetchAndStage({
     await deleteStagedObjects(staged);
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       const winner = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
-      const resumed = winner && (await resumeClaim(winner, manifestUrl, userId, now, record));
+      const resumed =
+        winner && (await resumeClaim(winner, manifestUrl, userId, now, record, requestHost));
       if (resumed) return resumed;
       throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
     }
     throw err;
   }
-  return toStagedIntent(manifestUrl, record, manifest, staged);
+  return toStagedIntent(manifestUrl, record, manifest, staged, requestHost);
 }
 
 /**

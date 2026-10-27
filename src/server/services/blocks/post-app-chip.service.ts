@@ -54,11 +54,13 @@ import type { SessionUser } from '~/types/session';
  * an unhandled rejection from a fail-open path would defeat the point of failing
  * open.
  */
-function noteDegradedChipRead(err: unknown, surface: AppChipSurface): void {
+function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'item'): void {
   logToAxiom({
     name: 'post-app-chip-read-degraded',
     type: 'error',
     surface,
+    // Tells a failed item read, which still served the app's chip, from a whole-chip failure.
+    ...(read && { read }),
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
   }).catch(() => null);
@@ -135,7 +137,7 @@ export async function readPostAppChip({
           postAppChipItemQuery(subListingId, listingIds)
         )) as PostAppChipItemRow | null;
       } catch (err) {
-        noteDegradedChipRead(err, 'post');
+        noteDegradedChipRead(err, 'post', 'item');
         return null;
       }
     },

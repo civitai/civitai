@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as BlockPostService from '~/server/services/blocks/block-post.service';
 import type * as ImageService from '~/server/services/image.service';
@@ -12,14 +13,19 @@ import type * as VideoDimensions from '~/server/services/video-dimensions';
 import type * as S3Utils from '~/utils/s3-utils';
 
 const { requestMock, lookupMock, createImageMock, uploadMock, deleteManyMock, probeMock } =
-  vi.hoisted(() => ({
-    requestMock: vi.fn(),
-    lookupMock: vi.fn(),
-    createImageMock: vi.fn(),
-    uploadMock: vi.fn(),
-    deleteManyMock: vi.fn(),
-    probeMock: vi.fn(),
-  }));
+  vi.hoisted(() => {
+    // Before the static imports: `server-domain.ts` reads these at import time.
+    process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+    process.env.SERVER_DOMAIN_RED = 'civitai.red';
+    return {
+      requestMock: vi.fn(),
+      lookupMock: vi.fn(),
+      createImageMock: vi.fn(),
+      uploadMock: vi.fn(),
+      deleteManyMock: vi.fn(),
+      probeMock: vi.fn(),
+    };
+  });
 
 vi.mock('node:dns/promises', () => ({ lookup: lookupMock }));
 vi.mock('sharp', () => ({
@@ -634,8 +640,36 @@ describe('item: the app sub-listing a share names', () => {
   function parentWith(enabled: boolean) {
     return { parentListing: { subListingParent: { enabled } } };
   }
-  const SUB_LISTINGS = [
+  const SUB_LISTINGS: {
+    id: string;
+    parentListingId: string;
+    itemKey: string;
+    status: string;
+    title?: string;
+    contentRating?: string;
+  }[] = [
     { id: 'asl_FAKEFUL', parentListingId: 'apl_games', itemKey: 'fakeful', status: 'approved' },
+    {
+      id: 'asl_MATURE',
+      parentListingId: 'apl_games',
+      itemKey: 'mature',
+      status: 'approved',
+      contentRating: 'x',
+    },
+    {
+      id: 'asl_BIDI',
+      parentListingId: 'apl_games',
+      itemKey: 'bidi',
+      status: 'approved',
+      title: '\u202eFake\u200bful\n',
+    },
+    {
+      id: 'asl_BLANK',
+      parentListingId: 'apl_games',
+      itemKey: 'blank',
+      status: 'approved',
+      title: '\u200b\u202e',
+    },
     { id: 'asl_PENDING', parentListingId: 'apl_games', itemKey: 'unreviewed', status: 'pending' },
     { id: 'asl_HIDDEN', parentListingId: 'apl_games', itemKey: 'hidden', status: 'hidden' },
     { id: 'asl_OTHER', parentListingId: 'apl_other_app', itemKey: 'elsewhere', status: 'approved' },
@@ -678,7 +712,14 @@ describe('item: the app sub-listing a share names', () => {
       where: Record<string, unknown>;
     }) => {
       const row = SUB_LISTINGS.find((r) => matches(r, where));
-      return row ? { id: row.id, title: `Title of ${row.itemKey}` } : null;
+      return row
+        ? {
+            id: row.id,
+            title: row.title ?? `Title of ${row.itemKey}`,
+            contentRating: row.contentRating ?? null,
+            parentListing: { contentRating: 'pg' },
+          }
+        : null;
     }) as never);
   }
 
@@ -729,17 +770,28 @@ describe('item: the app sub-listing a share names', () => {
     expect(dbMock.dbRead.appSubListing.findFirst).not.toHaveBeenCalled();
   });
 
-  it('still posts, credited to the app, when the item lookup fails', async () => {
+  it('still posts, credited to the app, when the item lookup fails, and logs it', async () => {
+    loggingMock.logToAxiom.mockClear();
     dbMock.dbRead.appSubListing.findFirst.mockRejectedValue(new Error('replica down'));
     expect(await publishWith('fakeful')).toEqual({ blockPublishedAppId: APP_ID });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'failed to resolve item', error: 'replica down' })
+    );
   });
 
-  const stageWith = async (item: string) => {
+  it('credits an item whose title sanitises to nothing, which the chip then leaves unnamed', async () => {
+    expect(await publishWith('blank')).toEqual({
+      blockPublishedAppId: APP_ID,
+      blockPublishedSubListingId: 'asl_BLANK',
+    });
+  });
+
+  const stageWith = async (item: string, requestHost = 'civitai.com') => {
     serve(
       { headers: { 'content-type': 'application/json' }, body: manifestJson({ item }) },
       { headers: { 'content-type': 'image/png' }, body: PNG }
     );
-    return (await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).app;
+    return (await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, requestHost, now })).app;
   };
 
   it('names an approved item on the compose sheet', async () => {
@@ -748,6 +800,17 @@ describe('item: the app sub-listing a share names', () => {
       host: 'games.civitai.com',
       itemName: 'Title of fakeful',
     });
+  });
+
+  it('names a mature item on the compose sheet only on a host that shows its rating', async () => {
+    expect(await stageWith('mature')).not.toHaveProperty('itemName');
+    expect(await stageWith('mature', 'civitai.red')).toMatchObject({ itemName: 'Title of mature' });
+    expect(await stageWith('fakeful')).toMatchObject({ itemName: 'Title of fakeful' });
+  });
+
+  it('strips hidden and reordering characters from the item name', async () => {
+    expect(await stageWith('bidi')).toMatchObject({ itemName: 'Fakeful' });
+    expect(await stageWith('blank')).not.toHaveProperty('itemName');
   });
 
   it("does not name another app's item on the compose sheet", async () => {
