@@ -93,18 +93,22 @@ const isVersionLock = (sql: string) => sql.includes('"ModelVersion"') && sql.inc
 
 // Routed by statement: the account check, the split's version read and takedown lock, the posts.
 function mockPosts(
-  ...rows: (ReturnType<typeof postRow> | { downed?: boolean; ownsModel?: boolean })[]
+  ...rows: (
+    | ReturnType<typeof postRow>
+    | { downed?: boolean; ownsModel?: boolean; readVersionId?: number | null }
+  )[]
 ) {
   const posts = rows.filter((r): r is ReturnType<typeof postRow> => 'id' in r);
-  const { downed = false, ownsModel = true } = rows.find((r) => !('id' in r)) ?? {};
-  const source = posts[0];
+  const options = rows.find((r) => !('id' in r)) ?? {};
+  const { downed = false, ownsModel = true } = options;
+  // The version the split reads before the post lock; the source row's unless a test moves it.
+  const readVersionId =
+    'readVersionId' in options ? options.readVersionId : posts[0]?.modelVersionId;
   db.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
     const sql = strings.join('?');
     if (isPostLock(sql)) return Promise.resolve(posts);
     if (sql.includes('"ownsModel"'))
-      return Promise.resolve(
-        source?.modelVersionId ? [{ modelVersionId: source.modelVersionId, ownsModel }] : []
-      );
+      return Promise.resolve(readVersionId ? [{ modelVersionId: readVersionId, ownsModel }] : []);
     if (sql.includes('AS downed')) return Promise.resolve([{ downed }]);
     return Promise.resolve([accountRow()]);
   }) as never);
@@ -245,6 +249,22 @@ describe('moveImagesToPost', () => {
     ).rejects.toThrow(/taken down/);
     expectNothingWritten();
   });
+
+  it.each([
+    ['another version', 55, 66],
+    ['a version', null, 66],
+    ['no version', 55, null],
+  ])(
+    'fails the split and writes nothing when the source moves to %s under the post lock',
+    async (_, readVersionId, lockedVersionId) => {
+      mockPosts(postRow({ modelVersionId: lockedVersionId }), { readVersionId });
+
+      await expect(
+        moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+      ).rejects.toThrow(/changed while moving/);
+      expectNothingWritten();
+    }
+  );
 
   it.each([
     ['another version', 66],
