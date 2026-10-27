@@ -28,6 +28,12 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
  * because they share the layout.
  */
+const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
+
+function getCommentMaxDepth(entityType: string) {
+  return wideCommentSurfaces.has(entityType) ? 10 : 5;
+}
+
 /** civitai.com and the deployment's own host, each with its `image.` subdomain. */
 function chatCivHosts() {
   let baseHost = 'civitai.com';
@@ -40,12 +46,6 @@ function chatCivHosts() {
     }
   }
   return [...new Set([baseHost, 'civitai.com'])].flatMap((host) => [host, `image.${host}`]);
-}
-
-const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
-
-function getCommentMaxDepth(entityType: string) {
-  return wideCommentSurfaces.has(entityType) ? 10 : 5;
 }
 
 /**
