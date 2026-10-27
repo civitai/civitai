@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import Router from 'next/router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
 import { QS } from '~/utils/qs';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { withStorylineNavigation } from '~/components/Storyline/storyline-mode.utils';
@@ -32,7 +31,7 @@ const paths: Record<number, Chapter[]> = {
   8: [...route, chapter(7, 4, 700), chapter(8, 5, 800)],
 };
 
-// The tester's screenshot: 21 -> 22 -> 23 -> 24 -> {25 canon, 35}; 35 -> 36 -> {37, 38}, none canon.
+// A branch beside the canon chapter 5: 21 -> 22 -> 23 -> 24 -> {25 canon, 35}; 35 -> 36 -> {37, 38}.
 const main = [
   chapter(21, 0, 2100),
   chapter(22, 1, 2200),
@@ -151,7 +150,11 @@ import {
   StorylineModeProvider,
   useStorylineMode,
 } from '~/components/Storyline/StorylineModeProvider';
-import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import {
+  ImageDetailCarousel,
+  SETTLE_FALLBACK_MS,
+} from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { StorylineToolbarChip } from '~/components/Storyline/StorylineDetail';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 
@@ -165,7 +168,7 @@ const imageProps = (id: number) => ({
   name: null,
 });
 
-/** ImageDetail2's carousel wiring, copied: the provider's index, its own carousel state, the sync. */
+/** ImageDetail2's carousel wiring: the provider's index, its own carousel state, the shared sync. */
 function Detail({
   placement,
   walked,
@@ -192,30 +195,12 @@ function Detail({
     images.length,
     storyline.active ? () => storyline.setEndOpen(true) : undefined
   );
-  const lastSettledIdRef = useRef(images[index]?.id);
-  const handleSettle = (settledIndex: number) => {
-    const settled = images[settledIndex];
-    if (!settled || lastSettledIdRef.current === settled.id) return;
-    lastSettledIdRef.current = settled.id;
-    navigate(settled.id);
-  };
-  const carouselNavigate = carouselNavigation.navigate;
-  useEffect(() => {
-    const target = images[index];
-    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
-    lastSettledIdRef.current = target.id;
-    carouselNavigate(index);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, storyline.active]);
-  const seekTo = useRef<(imageId: number) => void>();
-  // Only for the image the URL already names: any other moves the URL, and the effect above follows.
-  seekTo.current = (imageId) => {
-    if (images[index]?.id !== imageId) return;
-    lastSettledIdRef.current = imageId;
-    carouselNavigate(index);
-  };
-  const onSeek = storyline.active ? storyline.onSeek : undefined;
-  useEffect(() => onSeek?.((imageId) => seekTo.current?.(imageId)), [onSeek]);
+  const handleSettle = useCarouselUrlSync({
+    images,
+    index,
+    navigate,
+    carouselNavigate: carouselNavigation.navigate,
+  });
   const shown = images[carouselNavigation.index]?.id;
   return (
     <div style={{ width: 400, height: 300, display: 'flex' }}>
@@ -314,8 +299,8 @@ describe('the map from chapter 5 of a non-canon route', () => {
 });
 
 /**
- * Tester report, storyline 1 on prod, the shape in his screenshot: chapter 5 is a branch (B5) beside
- * the canon chapter 5, chapter 6 (B6) follows it, and B6 forks with no canon child.
+ * Chapter 5 is a branch (B5) beside the canon chapter 5, chapter 6 (B6) follows it, and B6 forks
+ * with no canon child.
  */
 describe('the map from a branch chapter 5 beside the canon one', () => {
   afterEach(() => {
@@ -373,15 +358,15 @@ describe('the map clicked before a swipe back has settled', () => {
     test(`${target} brings the reader back to B6`, async () => {
       await openReader(36, 1200, 360);
       await swipeBackThenClick(target);
-      // Past the carousel's settle fallback (800ms): the swipe's late settle must not drag it back.
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Past the carousel's settle fallback: the swipe's late settle must not drag it back.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
       await expect.element(page.getByTestId('image')).toHaveTextContent('360');
     });
 
   test('a chapter 7 branch opens that chapter', async () => {
     await openReader(36, 1200, 360);
     await swipeBackThenClick('ch37');
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
     await expect.element(page.getByTestId('image')).toHaveTextContent('370');
   });
 });
