@@ -9,8 +9,9 @@ import { isPrivateIp, isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
  * SSRF-hardened server-side fetch — the ONE guarded outbound-fetch primitive for
  * pulling an attacker-influenced URL (an App Blocks external-listing page or its
  * og:image). There is NO existing safeFetch/isPrivateIp util in the repo; this is
- * it. `unfurl.js` does UNGUARDED outbound fetches — do NOT use it to reach a
- * user-supplied URL; use this instead.
+ * it. `unfurl.js` on its own does UNGUARDED outbound fetches — only reach a
+ * user-supplied URL with it through `safeUnfurl` (`safe-unfurl.ts`), which hands it
+ * this function as `opts.fetch`.
  *
  * Controls (all enforced on every hop):
  *   1. LEXICAL — https-only + `isPublicHttpsUrl` (rejects hex/int/octal IPv4,

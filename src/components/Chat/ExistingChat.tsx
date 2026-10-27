@@ -48,6 +48,7 @@ import { useChatLayout } from '~/components/Chat/useChatTheme';
 import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
 import {
   getLinkHref,
+  isExternalChatLink,
   linkifyOptions,
   loadMotion,
   showsChatModeratorMark,
@@ -62,7 +63,6 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
@@ -1163,7 +1163,7 @@ function ChatInputBox({
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
   if (!href) return <span className={classes.embedTitle}>{title}</span>;
 
-  if (constants.chat.externalRegex.test(href)) {
+  if (isExternalChatLink(href)) {
     return (
       <Anchor
         className={classes.embedTitle}
