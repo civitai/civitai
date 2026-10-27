@@ -54,7 +54,7 @@
   <header>
     <h1 class="text-xl font-semibold text-white">Rating confirmation</h1>
     <p class="text-sm text-dark-2">
-      Rate this image as you see it. Agreeing ratings become Knights training data.
+      Rate this image as you see it. Agreeing ratings become Knights of New Order training data.
     </p>
   </header>
 
