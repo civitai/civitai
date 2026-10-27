@@ -48,6 +48,7 @@ import {
   SET_CHECKLIST,
   createAssistantGate,
 } from '~/components/Apps/AppAssistant/assistantGate';
+import { useFillScrollParent } from '~/components/Apps/AppAssistant/useFillScrollParent';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
 import { APP_ASSISTANT_SUBAGENTS } from '~/components/Apps/AppAssistant/assistantSubagents';
 import {
@@ -1106,6 +1107,8 @@ export function AppAssistantWorkspace({
     setSwitcherOpen(false);
   };
 
+  const fillRef = useFillScrollParent<HTMLDivElement>();
+
   if (!sandboxUrl)
     return (
       <Alert color="yellow" variant="light">
@@ -1151,7 +1154,7 @@ export function AppAssistantWorkspace({
     );
 
   return (
-    <div className={clsx('flex flex-col gap-3', classes.workspace)}>
+    <div ref={fillRef} className={clsx('flex flex-col gap-3', classes.workspace)}>
       {(active || apps.length > 0) && (
         <Popover
           opened={switcherOpen}
