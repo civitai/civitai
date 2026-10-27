@@ -1515,17 +1515,17 @@ export const removeAllContent = async ({
   const { markerView } = await assertAccountNotUnderLegalHold(id);
   const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
 
-  // The primary, as the delete below: a model the replica has not seen yet still has bids to refund.
+  // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({
     where: { userId: id },
     select: { id: true, name: true, modelVersions: { select: { id: true } } },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { userId: id },
     select: { id: true, url: true },
   });
-  const articles = await dbRead.article.findMany({ where: { userId: id }, select: { id: true } });
-  const collections = await dbRead.collection.findMany({
+  const articles = await dbWrite.article.findMany({ where: { userId: id }, select: { id: true } });
+  const collections = await dbWrite.collection.findMany({
     where: { userId: id },
     select: { id: true },
   });

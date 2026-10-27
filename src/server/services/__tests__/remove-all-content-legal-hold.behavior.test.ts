@@ -155,7 +155,7 @@ let landsBefore = EVIDENCE[0];
 let failLookups = false;
 /** Fails the wipe's read of which of its models are gone. */
 let failGoneModels = false;
-/** Models the primary has and the replica does not yet: made inside replication lag. */
+/** Rows the primary has and the replica does not yet: made inside replication lag. */
 let notYetOnReplica: number[] = [];
 /** Replaces what the wipe's re-check after its evidence deletes reads back. */
 let afterHeld: unknown = undefined;
@@ -243,14 +243,22 @@ beforeEach(async () => {
     }
     return (await run(sql)).affectedRows ?? 0;
   }) as never);
-  const rowsOf = (table: string, columns: string) =>
+  const rowsOf = (table: string, columns: string, replica = false) =>
     (async (args: { where: { userId: number } }) =>
       (
-        await holder.db.query(`SELECT ${columns} FROM "${table}" WHERE "userId" = $1`, [
-          args.where.userId,
-        ])
+        await holder.db.query(
+          `SELECT ${columns} FROM "${table}" WHERE "userId" = $1 AND id <> ALL($2::int[])`,
+          [args.where.userId, replica ? notYetOnReplica : []]
+        )
       ).rows) as never;
-  vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
+  for (const [db, replica] of [
+    [dbMock.dbRead, true],
+    [dbMock.dbWrite, false],
+  ] as const) {
+    vi.mocked(db.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"', replica));
+    vi.mocked(db.article.findMany).mockImplementation(rowsOf('Article', 'id', replica));
+    vi.mocked(db.collection.findMany).mockImplementation(rowsOf('Collection', 'id', replica));
+  }
   // Each model has one version, MODEL_VERSION(id). Only the selected fields come back, as from
   // Prisma, so a select that drops one is visible.
   const modelsOf = (replica: boolean) =>
@@ -270,8 +278,6 @@ beforeEach(async () => {
       })) as never;
   vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(modelsOf(true));
   vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation(modelsOf(false));
-  vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
-  vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
   vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
     where: { userId: number };
   }) => ({
@@ -576,6 +582,17 @@ describe('removeAllContent', () => {
     expect(refundAlerts()).toEqual([
       expect.objectContaining({ modelIds: [MODEL], versionIds: [MODEL_VERSION(MODEL)] }),
     ]);
+  });
+
+  it('drops from storage and the indexes the rows the replica does not have yet', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${CLEAN * 100 + 2}, ${CLEAN}, 1);
+      INSERT INTO "Article" (id, "userId") VALUES (${ARTICLE + 60}, ${CLEAN});
+    `);
+    notYetOnReplica = [CLEAN * 100 + 2, ARTICLE + 60];
+    await removeAllContent({ id: CLEAN });
+    expect(vi.mocked(deleteImages).mock.calls[0][0]).toContain(CLEAN * 100 + 2);
+    expect(dropped().articles).toContain(ARTICLE + 60);
   });
 
   it('refunds the bids on a model the replica does not have yet', async () => {
