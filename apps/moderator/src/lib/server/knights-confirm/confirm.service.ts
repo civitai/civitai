@@ -89,7 +89,10 @@ const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
  * The item the moderator holds a live lease on, else the oldest open one they may rate: not their
  * own rating, not an image they answered on an earlier item, and not leased to another moderator.
  */
-export async function claimNext(userId: number, now: Date = new Date()): Promise<ConfirmCard | null> {
+export async function claimNext(
+  userId: number,
+  now: Date = new Date()
+): Promise<ConfirmCard | null> {
   return dbWrite.transaction().execute(async (trx) => {
     const held = await trx
       .selectFrom('KnightsConfirmClaim as c')
