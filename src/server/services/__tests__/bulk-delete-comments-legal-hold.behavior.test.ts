@@ -1,4 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -58,9 +61,7 @@ const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
     : (first as Prisma.Sql);
 
-beforeAll(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
+const SCHEMA = `
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
@@ -83,7 +84,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-  `);
+`;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(SCHEMA);
 });
 
 beforeEach(async () => {
@@ -212,6 +217,56 @@ const maxLoops = (node: PlanNode, alias: RegExp): number =>
     node.Alias && alias.test(node.Alias) ? node['Actual Loops'] ?? 0 : 0,
     ...(node.Plans ?? []).map((child) => maxLoops(child, alias))
   );
+
+/**
+ * Runs `sql` on a copy of the stand-in in a worker, so a statement that never ends fails the test
+ * rather than hanging it: PGlite ignores statement_timeout, and blocks the thread it runs on.
+ */
+async function runBounded(sql: Prisma.Sql, ms: number) {
+  const seed = [SCHEMA];
+  for (const table of ['CsamReport', 'Image', 'CommentV2', 'Thread', 'Comment', 'Model']) {
+    const { rows } = await holder.db.query(`SELECT * FROM "${table}"`);
+    if (rows.length)
+      seed.push(
+        `INSERT INTO "${table}" SELECT * FROM json_populate_recordset(NULL::"${table}", '${JSON.stringify(
+          rows
+        ).replace(/'/g, "''")}')`
+      );
+  }
+  const worker = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { PGlite } = await import(workerData.pglite);
+      const db = new PGlite();
+      await db.exec(workerData.seed);
+      const { rows } = await db.query(workerData.text, workerData.values);
+      parentPort.postMessage({ deleted: rows.length });
+    })().catch((e) => parentPort.postMessage({ error: e.message }));`,
+    {
+      eval: true,
+      workerData: {
+        pglite: pathToFileURL(createRequire(import.meta.url).resolve('@electric-sql/pglite')).href,
+        seed: seed.join(';\n'),
+        text: sql.text,
+        values: sql.values,
+      },
+    }
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      new Promise<{ deleted?: number; error?: string }>((resolve) =>
+        worker.once('message', resolve)
+      ),
+      new Promise<{ timedOutAfterMs: number }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOutAfterMs: ms }), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    await worker.terminate();
+  }
+}
 
 const retainedLogs = () =>
   vi
@@ -459,19 +514,29 @@ describe('a CommentV2 with replies', () => {
     expect(await mostHoldChecksPerStatement('CommentV2', [11])).toBe(3);
   });
 
-  it('ends on a reply chain that loops back on itself, and still keeps it for a held reply', async () => {
+  it.each([
+    ['keeps it for a held reply in the loop', HELD, 0],
+    ['deletes it when no reply in the loop is held', CLEAN, 1],
+  ])('ends on a reply chain that loops back on itself, and %s', async (_, author, deleted) => {
     // 11 sits in thread 100, so thread 100 hanging off reply 72 closes a loop: 11 → 900 → 72 → 100.
     await holder.db.exec(`
       INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES
-        (72, ${CLEAN}, 900, 'zzfixture'), (76, ${HELD}, 100, 'zzfixture');
+        (72, ${CLEAN}, 900, 'zzfixture'), (76, ${author}, 100, 'zzfixture');
       INSERT INTO "Thread" (id, "commentId") VALUES (100, 72);
     `);
+    let outcome: unknown;
+    hook = {
+      on: 'DELETE FROM "CommentV2"',
+      run: async (sql) => {
+        outcome = await runBounded(sql, 20_000);
+        throw new Error('ran in the worker');
+      },
+    };
 
-    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
-      commentDeleted: 0,
-      commentV2Deleted: 0,
-      retainedHidden: 1,
-    });
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).rejects.toThrow(
+      'ran in the worker'
+    );
+    expect(outcome).toEqual({ deleted });
   });
 
   it('goes when the held reply is in a thread already unlinked from it', async () => {
