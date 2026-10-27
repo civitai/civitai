@@ -6,6 +6,8 @@ import { FeedbackAttachments } from '~/components/Feedback/FeedbackAttachments';
 import { useFeedbackSubmission } from '~/components/Feedback/useFeedbackSubmission';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
+import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import {
   FEEDBACK_MESSAGE_MAX_LENGTH,
   FEEDBACK_PATH_MAX_LENGTH,
@@ -20,7 +22,27 @@ import {
  * point of this entry point is that a report carries the Faro session id and the
  * screenshot, which a support ticket does not.
  */
-export default function FeedbackDrawer() {
+export type FeedbackDrawerProps = {
+  /** Which feedback area the report lands in. Defaults to the site-wide bug report. */
+  area?: FeedbackArea;
+  /** Triage context sent with the report. Defaults to the bare route. */
+  context?: CreateFeedbackInput['context'];
+  title?: string;
+  intro?: string;
+  placeholder?: string;
+  submitLabel?: string;
+  closeLabel?: string;
+};
+
+export default function FeedbackDrawer({
+  area = SITE_BUG_REPORT_AREA,
+  context,
+  title = 'Report a bug',
+  intro = 'Tell us what went wrong — what you were doing, and what happened instead.',
+  placeholder = 'What were you doing, and what happened instead?',
+  submitLabel = 'Send report',
+  closeLabel = 'Close bug report',
+}: FeedbackDrawerProps = {}) {
   const dialog = useDialogContext();
   // `media`, not the default container query: a Drawer is positioned against the
   // viewport, and the container one also makes this component unmountable outside a
@@ -29,7 +51,7 @@ export default function FeedbackDrawer() {
   const router = useRouter();
 
   const feedback = useFeedbackSubmission({
-    area: SITE_BUG_REPORT_AREA,
+    area,
     // 🔴 THE ROUTE ONLY — the query string is cut off deliberately. This entry point
     // is reachable from the footer on every route, including ones that carry a secret
     // in the URL (`/redeem-code?code=…`, `/payment/coinbase?key=…`), and `context` is
@@ -37,7 +59,9 @@ export default function FeedbackDrawer() {
     // redeemable code into it, permanently, without ever telling the reporter. The
     // inline /apps prompt already splits this way: it reports a bare pathname and
     // sends its search term through the bounded `filters` field.
-    context: { path: router.asPath.split(/[?#]/)[0].slice(0, FEEDBACK_PATH_MAX_LENGTH) },
+    context: context ?? {
+      path: router.asPath.split(/[?#]/)[0].slice(0, FEEDBACK_PATH_MAX_LENGTH),
+    },
   });
   const { sent, message, setMessage, busy, canSubmit, handleSubmit } = feedback;
 
@@ -61,13 +85,13 @@ export default function FeedbackDrawer() {
       transitionProps={{ transition: mobile ? 'slide-up' : 'slide-left' }}
       title={
         <Title order={4} className="font-semibold">
-          Report a bug
+          {title}
         </Title>
       }
       // Named, because without an overlay this button is the only VISIBLE way out of
       // the panel (Mantine wires click-outside to the overlay alone) and Mantine's
       // close button carries no accessible name of its own.
-      closeButtonProps={{ 'aria-label': 'Close bug report' }}
+      closeButtonProps={{ 'aria-label': closeLabel }}
       {...dialog}
     >
       {sent ? (
@@ -109,12 +133,12 @@ export default function FeedbackDrawer() {
               sentence would look for the data in Loki, where it has never been. Pinned by
               `FeedbackDrawer.browser.test.tsx`. */}
           <Text size="sm" c="dimmed">
-            Tell us what went wrong — what you were doing, and what happened instead.
+            {intro}
           </Text>
           <Textarea
             value={message}
             onChange={(event) => setMessage(event.currentTarget.value)}
-            placeholder="What were you doing, and what happened instead?"
+            placeholder={placeholder}
             maxLength={FEEDBACK_MESSAGE_MAX_LENGTH}
             autosize
             minRows={5}
@@ -123,7 +147,7 @@ export default function FeedbackDrawer() {
           />
           <FeedbackAttachments feedback={feedback} />
           <Button radius="xl" fullWidth disabled={!canSubmit} loading={busy} onClick={handleSubmit}>
-            Send report
+            {submitLabel}
           </Button>
         </Stack>
       )}
