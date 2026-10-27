@@ -27,8 +27,10 @@ export const MAX_VIDEOS_PER_WORKFLOW = 8;
 const MAX_VIDEO_SECONDS = 60;
 const MAX_VIDEO_KB = 100 * 1024;
 const MAX_VIDEO_SIDE = 4096;
-// The embedding profile is 512x512 pixels; 512 is on the image cacher's width ladder.
-const EMBED_IMAGE_WIDTH = 512;
+// The variant the site's image cards request for 2x screens (a 450 card's hi-DPI rung), so it is
+// usually already stored and the image cacher redirects to it without converting the original.
+// The smallest ladder rung at or above the model's 512x512 profile that the site requests.
+const EMBED_IMAGE_PARAMS = 'anim=false,width=800,optimized=true';
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 /**
@@ -65,7 +67,7 @@ const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOpti
   image: (row, { imageLocation }) => ({
     input: {
       id: String(row.id),
-      imageUrl: edgeUrl(imageLocation, row.url, `width=${EMBED_IMAGE_WIDTH}`, '.jpeg'),
+      imageUrl: edgeUrl(imageLocation, row.url, EMBED_IMAGE_PARAMS, '.jpeg'),
     },
   }),
   video: (row, { imageLocation, embedVideo }) => {
