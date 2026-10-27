@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createDeviceAccountClient, deviceCookieName } from '@civitai/auth';
+import { createDeviceAccountClient, readDeviceId } from '@civitai/auth';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
 import { isAllowedOriginRequest, isJsonRequest } from '~/server/utils/origin-helpers';
 import { isProd } from '~/env/other';
@@ -26,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Set the new session cookie + roll the device cookie in lockstep (the hub slid the device record).
   setSessionCookie(res, result.token, {
-    deviceCookie: req.cookies[deviceCookieName()],
+    deviceCookie: readDeviceId(req.cookies)?.value,
     host: req.headers.host,
   });
   return res.status(200).json({ ok: true, userId });

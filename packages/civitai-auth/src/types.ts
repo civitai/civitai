@@ -38,6 +38,13 @@ export interface SessionUser {
    * as a Flipt targeting property without a per-request DB read.
    */
   isEarlyAdopter?: boolean;
+  /**
+   * The user has an APPROVED App Access Request (`AppAccessRequest.status = 'approved'`), read by
+   * the hub's session producer. Carried on the session so `buildFliptContext` can expose it as the
+   * `appBuilderApproved` targeting property. Server-derived only: no settings key or request input
+   * feeds it.
+   */
+  appBuilderApproved?: boolean;
   // Client-only fields (parity with the main app's ExtendedUser — see src/types/next-auth.d.ts).
   name?: string;
   autoplayGifs?: boolean;
@@ -64,6 +71,12 @@ export interface SessionClaims {
    * reads it to re-mint the moderator's own session. Identity-only — no extra credential. See cutover (F).
    */
   impersonatedBy?: number;
+  /** epoch ms after which an impersonation session is no longer accepted. */
+  impExp?: number;
+  /** Sign-in lineage: the family id (the root session's jti). Absent on a root; read it through `familyId`. */
+  sid?: string;
+  /** epoch ms of the interactive sign-in this session descends from; the 90-day limit counts from it. */
+  iat0?: number;
   /**
    * id ONLY. The thin civ-token carries identity in `sub`; a decoded LEGACY next-auth cookie (the only place
    * `user` is populated) embedded a full enriched user, but it is STALE — captured at login — so we deliberately

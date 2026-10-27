@@ -46,9 +46,21 @@ const openForm = (offering?: ServiceOffering) =>
 
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
-/** `unpublishedShop` is set only while the seller's Creator Shop is known to be a draft. */
-export function ManageServicesPanel({ unpublishedShop }: { unpublishedShop?: ShopPublishState }) {
-  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(true);
+/**
+ * `unpublishedShop` is set only while the seller's Creator Shop is known to be a draft.
+ * `servicesEnabled` false is a seller without the services flag: they can only pause and remove.
+ */
+export function ManageServicesPanel({
+  unpublishedShop,
+  servicesEnabled = true,
+}: {
+  unpublishedShop?: ShopPublishState;
+  servicesEnabled?: boolean;
+}) {
+  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(
+    true,
+    servicesEnabled
+  );
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
@@ -79,6 +91,12 @@ export function ManageServicesPanel({ unpublishedShop }: { unpublishedShop?: Sho
       </Group>
 
       {eligibility && !canSell && <SellGate eligibility={eligibility} />}
+      {!servicesEnabled && (
+        <Text size="sm" c="dimmed">
+          Services aren&apos;t open to your account right now. You can still pause or remove your
+          services and finish your open deals.
+        </Text>
+      )}
 
       <Stack gap="xs">
         <Title order={3}>Incoming requests</Title>

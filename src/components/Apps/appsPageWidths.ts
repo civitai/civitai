@@ -426,8 +426,7 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
 export const APPS_FULL_MEASURE_PAGES = [
   '/apps',
   '/apps/activity',
-  /** Chat beside a live preview: the preview wants every pixel the container has. */
-  '/apps/assistant',
+  /** Also the App Assistant: chat beside a live preview wants every pixel the container has. */
   '/apps/build',
   '/apps/revenue',
   '/apps/review',

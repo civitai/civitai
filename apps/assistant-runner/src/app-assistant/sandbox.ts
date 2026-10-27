@@ -18,7 +18,7 @@ import {
 import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { ToolSet } from 'ai';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 
 /** How long the sandbox has to start running once it was asked to (the page holds a message as long). */
 export const WAKE_TIMEOUT_MS = 3 * 60_000;
@@ -175,13 +175,15 @@ export class AppSandbox {
   async call(
     tool: string,
     args: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /** `timeoutMs`: how long to wait for its answer (`RUNNER_CALL_TIMEOUT_MS` unless set). */
+    options: { timeoutMs?: number } = {}
   ): Promise<{ text: string; isError: boolean }> {
     const connection = this.#connection;
     if (!connection || this.#closed) throw new Error('Your app is not running.');
     const result = await connection.callTool(tool, args, {
       ...(signal ? { signal } : {}),
-      timeoutMs: RUNNER_CALL_TIMEOUT_MS,
+      timeoutMs: options.timeoutMs ?? RUNNER_CALL_TIMEOUT_MS,
     });
     return { text: mcpResultToText(result, Infinity), isError: result.isError === true };
   }

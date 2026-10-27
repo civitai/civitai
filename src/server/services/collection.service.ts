@@ -4,6 +4,7 @@ import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
@@ -1588,7 +1589,7 @@ export const upsertCollection = async ({
             )
           )
       `;
-    } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
+    } else if (!updated.mode && updated.read !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
       // left alone so their own stamps survive.
       await dbWrite.$executeRaw`
@@ -1864,6 +1865,7 @@ export const getCollectionItemsByCollectionId = async ({
   input,
   user,
   imagesAsPublicCatalog = false,
+  coverage,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -1874,6 +1876,8 @@ export const getCollectionItemsByCollectionId = async ({
    * collection permission check above still uses `user`.
    */
   imagesAsPublicCatalog?: boolean;
+  /** See `getModelsRaw`. */
+  coverage?: CoverageAudience;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2160,6 +2164,7 @@ export const getCollectionItemsByCollectionId = async ({
           await modelService()
         ).getModelsWithImagesAndModelVersions({
           user,
+          coverage,
           input: {
             limit: modelIds.length,
             sort: ModelSort.Newest,
@@ -3026,15 +3031,15 @@ export const validateContestCollectionEntry = async ({
     }));
   if (isChallengeCollection) {
     const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
-      SELECT DISTINCT th."imageId"
-      FROM "Thread" th
-      JOIN "CommentV2" cm ON cm."threadId" = th.id
+      SELECT DISTINCT cm."entityId" AS "imageId"
+      FROM "CommentV3" cm
       JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
-      WHERE th."imageId" IN (${Prisma.join(imageIds)})
+      WHERE cm."entityType" = 'image' AND cm."parentId" IS NULL AND cm."deletedAt" IS NULL
+        AND cm."entityId" IN (${Prisma.join(imageIds)})
         AND NOT EXISTS (
           SELECT 1 FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
-            AND ci."imageId" = th."imageId"
+            AND ci."imageId" = cm."entityId"
             AND ci.status IN ('ACCEPTED', 'REVIEW')
         )
     `;

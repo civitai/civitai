@@ -19,6 +19,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
+  // The image feed without Meilisearch: every website and REST image-feed request goes to the feed
+  // service, whatever the three flags above say, and what the feed cannot serve is answered without
+  // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
+  // of falling back. Off or missing, the flags above decide as before.
+  FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -92,6 +97,49 @@ export enum FLIPT_FEATURE_FLAGS {
   // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_2 = 'kysely-hot-reads-2',
+  // Reads the next hot Prisma read shapes (packages/civitai-db-queries/src/hot-reads-3.db.ts) through
+  // Kysely-over-pg instead of the Prisma query engine: the model page's default-version lookup
+  // (`getDefaultModelVersion`, three Prisma queries, one statement here), three reads
+  // `getModelHandler` makes after the model row (the suggested-resource count, the owner's settings,
+  // the owner's posts on the versions), and the viewer's pending remix-gallery submissions
+  // (`getViewerPendingSubmissions`). DEFAULT-OFF, same semantics as KYSELY_HOT_READS_2 above: boolean
+  // only, evaluated with no entityId. Every statement reads base tables only, never a view.
+  //
+  // 🔴 Each read keeps its database: the default-version lookup takes
+  // `getKyselyWithoutLag('model', id)`, the twin of the `getDbWithoutLag('model', id)` decision the
+  // Prisma read made; the others read `kyselyRead`, as they read `dbRead`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every model page render and every model page payload.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_3 = 'kysely-hot-reads-3',
+  // Reads the model page's comment reads (packages/civitai-db-queries/src/hot-reads-4.db.ts) through
+  // Kysely-over-pg instead of the Prisma query engine: the visible top-level comment count
+  // (`getVisibleCommentCount`, `comment.getVisibleCountByModel`), both views' counts in one
+  // statement (`getVisibleCommentCounts`, `comment.getVisibleCountsByModel`) and the first page of
+  // `comment.getAll` (the unpinned list sorted newest or oldest first, and the pinned block), each
+  // list with its author, reactions and model name in one statement where Prisma issues one query
+  // per relation. A cursor page or another sort stays on Prisma. DEFAULT-OFF, same semantics as
+  // KYSELY_HOT_READS_2 above: boolean only, evaluated with no entityId. Every statement reads base
+  // tables only, never a view.
+  //
+  // 🔴 Each read keeps its database: `getKyselyWithoutLag('commentModel', modelId)`, the twin of the
+  // `getDbWithoutLag('commentModel', modelId)` decision the Prisma reads make.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // this is evaluated on every model page comment count and comment list request.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_4 = 'kysely-hot-reads-4',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -99,6 +147,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_VERSION_IMAGES_SKIP_TAGS = 'model-version-images-skip-tags',
+  // ON skips `getModelHandler`'s read of the owner's posts on the versions (`modelVersions[].posts`)
+  // when the viewer is neither the owner nor a moderator, returning `posts: []` on every version —
+  // what an owner with no posts gets. Every client reader of that field is owner- or
+  // moderator-only (the publish/republish buttons, the version list's problem icons and menu, the
+  // model wizard). Owners and moderators are unchanged. Boolean, evaluated with no entityId, and
+  // only for a viewer who is neither.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -172,6 +230,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // Lets `withSpan` (@civitai/telemetry/otel-helpers) run its work without opening a span when the
+  // active parent is a local, unsampled span — that span could never be recorded or exported.
+  // DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized client, which
+  // keeps today's behaviour. Global boolean, evaluated with no entity or context, and read at most
+  // once per refresh interval per process. See `src/server/utils/otel-withspan-gate.ts`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
+  // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
+  OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path

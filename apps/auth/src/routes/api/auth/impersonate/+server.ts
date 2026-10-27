@@ -19,7 +19,11 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
   const mod = locals.user;
   if (!mod) error(401, 'unauthorized');
 
-  const permitted = mod.isModerator && (dev || (mod.permissions ?? []).includes('impersonation'));
+  const permitted =
+    mod.isModerator &&
+    !mod.bannedAt &&
+    !mod.deletedAt &&
+    (dev || (mod.permissions ?? []).includes('impersonation'));
   if (!permitted) error(403, 'not permitted to impersonate');
 
   const userId = await readUserId(request);

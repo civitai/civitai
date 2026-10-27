@@ -102,7 +102,8 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw);
 });
 
-async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
+// `by` other than the owner saves as a co-manager, whose `read` the service ignores.
+async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private', by = OWNER) {
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     {
       id: COLLECTION_ID,
@@ -111,8 +112,9 @@ async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
       userId: OWNER,
       type: 'Post',
       mode: null,
-      contributorPermissions: null,
+      contributorPermissions: by === OWNER ? null : ['VIEW', 'ADD', 'MANAGE'],
       collaborationDisabledAt: null,
+      hasAcceptedSeat: by !== OWNER,
     },
   ] as never);
   dbMock.dbWrite.collection.findUnique.mockResolvedValue({
@@ -128,18 +130,22 @@ async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
       collection: { update: dbMock.dbWrite.collection.update },
       tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
     })) as never);
-  dbMock.dbWrite.collection.update.mockResolvedValue({
+  dbMock.dbWrite.collection.update.mockImplementation((async ({
+    data,
+  }: {
+    data: { read?: string };
+  }) => ({
     id: COLLECTION_ID,
-    read: to,
+    read: data.read ?? from,
     write: 'Private',
     userId: OWNER,
     mode: null,
     image: null,
-  } as never);
+  })) as never);
   dbMock.dbWrite.collectionInvite.findMany.mockResolvedValue([] as never);
 
   await upsertCollection({
-    input: { id: COLLECTION_ID, name: 'c', read: to, userId: OWNER, isMember: true },
+    input: { id: COLLECTION_ID, name: 'c', read: to, userId: by, isMember: true },
   } as never);
 }
 
@@ -212,6 +218,19 @@ describe('collection privacy toggle and its posts', () => {
     expect(await post(2)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
     expect(await post(3)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
   });
+
+  it.each(['Public', 'Private'] as const)(
+    "a co-manager's save of a Public collection (read sent as %s) hides none of its posts",
+    async (sent) => {
+      await insertPost(1);
+      await insertPost(2, { userId: OTHER });
+
+      await setRead('Public', sent, OTHER);
+
+      expect((await post(1)).publishedAt).toBe(PUBLISHED_AT);
+      expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
+    }
+  );
 
   it('leaves moderator-unpublished, model-unpublished and draft posts untouched both ways', async () => {
     await insertPost(1, { publishedAt: null, metadata: moderatorStamps });

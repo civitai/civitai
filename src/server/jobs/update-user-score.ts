@@ -517,7 +517,7 @@ export function rollupImageScoreDeltas(
   return byUser;
 }
 
-// New absolute images score = stored (or 0) + this run's delta. Keeps `images`
+// New absolute images score = max(stored (or 0) + this run's delta, 0). Keeps `images`
 // in the shared absolute-score persist path so `total` is recomputed there.
 export function foldImageDeltasOntoStored(
   scoreDeltaByUser: Map<number, number>,
@@ -525,7 +525,7 @@ export function foldImageDeltasOntoStored(
 ): Map<number, number> {
   const result = new Map<number, number>();
   for (const [userId, delta] of scoreDeltaByUser) {
-    result.set(userId, (storedByUser.get(userId) ?? 0) + delta);
+    result.set(userId, Math.max((storedByUser.get(userId) ?? 0) + delta, 0));
   }
   return result;
 }

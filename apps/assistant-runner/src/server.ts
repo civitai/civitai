@@ -5,18 +5,24 @@ import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
-import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
+import { OrchestrationConversationStore } from './conversation-store';
+import { AdvisoryLock } from './core/advisory-lock';
 import { RunCredentials } from './credentials';
 import { RunGrants } from './grants';
 import { PgModelCalls } from './model-calls';
-import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
+import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './core/interfaces';
 import { TokenMinter } from './minter';
 import { OrchestrationClient } from './orchestration';
 import { OrchestrationModels } from './orchestration-model';
-import { createPool } from './pg-pool';
-import { Runner } from './runner';
+import { createPool } from './core/pg-pool';
+import { Runner } from './core/runner';
 import { createTokenVerifier, viewerAuthenticator } from './tokens';
-import { noTools, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
+import {
+  noTools,
+  unconfiguredModel,
+  unconfiguredStore,
+  unconfiguredTools,
+} from './core/unconfigured';
 
 const config = loadConfig();
 /** Why a start is refused when the runner has no sandbox service (`SANDBOX_URL`). */

@@ -800,7 +800,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await cancel.click();
 
     // It navigated…
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
     // …and the modal was never raised. Asserted AFTER the navigation settled, so this
     // is a real absence in a mounted tree rather than a first-empty-observation pass.
     await expect.element(page.getByTestId('apps-offsite-discard-confirm')).not.toBeInTheDocument();
@@ -843,7 +843,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await page.getByTestId('apps-offsite-wizard-cancel').click();
     await page.getByTestId('apps-offsite-discard-confirm').click();
 
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
   });
 
   /**

@@ -1,4 +1,3 @@
-import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { navForUser } from '$lib/server/access';
@@ -22,7 +21,7 @@ export const load: LayoutServerLoad = ({ locals, url, route }) => {
 
   return {
     user: user ? { id: user.id, username: user.username ?? null, image: user.image ?? null } : null,
-    logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
+    logoutUrl: env.AUTH_JWT_ISSUER ? '/logout' : null,
     nav: navForUser(user),
     // From the one place they were resolved. Every page reads permissions from here rather than
     // re-deriving its own booleans.

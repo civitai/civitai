@@ -79,7 +79,7 @@ export async function submitAutoLabel(
 
   const { data, error } = await submitWorkflow({
     client,
-    // System-paid: no user Buzz currency required.
+    // Charged to the token's user (empty currencies = any account), so only a system token may submit this.
     body: { tags: AUTO_LABEL_TAGS, steps, currencies: [] },
     query: { wait: 0 },
   });
@@ -92,6 +92,8 @@ export interface AutoLabelResult {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
+  /** Why a failed item was refused, when the submit itself was rejected (shown on the tile). */
+  error?: string;
 }
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);

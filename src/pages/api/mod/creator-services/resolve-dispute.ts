@@ -13,6 +13,7 @@ export default defineModeratorEndpoint('creatorServices.resolveDispute', {
     'Refund cancels the deal and returns the hold to the buyer. Release completes it and pays the seller, including one held as `seller_unavailable`.',
     "Release is refused while the round's finals have not all finished uploading and passed scanning: refund, or clear a failed scan in moderation first.",
     'Idempotent: a deal already resolved answers `already-resolved` with its resolution and moves no money. A deal that is not Disputed answers CONFLICT.',
+    "A moderator who is the deal's buyer or seller answers FORBIDDEN, and nothing moves.",
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

@@ -134,7 +134,9 @@ describe('owner digest — copy and destination', () => {
   });
 
   it('a malformed row with no listing id links to the owner\'s apps, never to "undefined"', () => {
-    expect(render('app-feedback-new', { appName: APP_NAME, count: 1 })?.url).toBe('/apps/build');
+    expect(render('app-feedback-new', { appName: APP_NAME, count: 1 })?.url).toBe(
+      '/apps/build?view=apps'
+    );
   });
 });
 

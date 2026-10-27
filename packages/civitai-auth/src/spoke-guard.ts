@@ -1,5 +1,5 @@
 import { createSessionClient } from './session-client';
-import { sessionCookieName } from './cookies';
+import { readCookie, sessionCookieName } from './cookies';
 import { hubBaseUrl } from './hub';
 import type { SessionUser, SessionClaims } from './types';
 
@@ -59,14 +59,4 @@ export function createSpokeGuard(config: SpokeGuardConfig = {}): SpokeGuard {
   }
 
   return { check };
-}
-
-/** Pull a single cookie value out of a `Cookie` header string. */
-function readCookie(header: string, name: string): string | undefined {
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
-  }
-  return undefined;
 }

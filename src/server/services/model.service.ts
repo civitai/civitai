@@ -3,9 +3,13 @@ import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
   coveragePair,
+  coveragePairWithReadiness,
+  coveredForUserSql,
   pickCovered,
   nextCoverageEnabled,
+  type CoverageAudience,
 } from '~/server/services/generation/coverage-source';
+import type { VersionReadiness } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
@@ -433,6 +437,33 @@ export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
 export const MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL = Prisma.sql`(m."meta"->>'needsReview' = 'true'
           AND (m."meta"->'modelRules' IS NULL OR m."meta"->'modelRules' = 'null'::jsonb))`;
 
+/** A feed card's Create: the model page's coverage rule when the caller passed the viewer's audience. */
+export function feedVersionCanGenerate({
+  version,
+  modelType,
+  next,
+  coverage,
+  readiness,
+}: {
+  version: { covered: boolean; coveredNext: boolean; baseModel?: string; flags?: number };
+  modelType: ModelType;
+  next: boolean;
+  coverage?: CoverageAudience;
+  readiness?: VersionReadiness;
+}) {
+  return isGenerationEligible({
+    ...(coverage
+      ? coveragePairWithReadiness(version, readiness, next, {
+          member: coverage.member,
+          isCheckpoint: modelType === 'Checkpoint',
+        })
+      : coveragePair(version, next)),
+    baseModel: version.baseModel ?? '',
+    modelType,
+    flags: version.flags ?? 0,
+  });
+}
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -446,6 +477,7 @@ export const getModelsRaw = async ({
   _forceBaseModelMetrics,
   eventDecorationViewer,
   faceBrowsingLevel,
+  coverage,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -488,6 +520,12 @@ export const getModelsRaw = async ({
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
   eventDecorationViewer?: EventViewer;
+  /**
+   * The viewer's `coverageAudience`, which narrows generation coverage for free accounts. Set only
+   * by routes whose response is never cached for another viewer; omitted, every viewer gets the
+   * audience-blind answer.
+   */
+  coverage?: CoverageAudience;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -990,9 +1028,11 @@ export const getModelsRaw = async ({
   }
 
   if (supportsGeneration) {
+    const audience = coverage ?? { next: await nextCoverageEnabled(), member: true };
     AND.push(
-      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc.${Prisma.raw(
-        `"${coverageColumn(await nextCoverageEnabled())}"`
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND ${coveredForUserSql(
+        audience,
+        'gc'
       )})`
     );
   }
@@ -1744,6 +1784,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   faceBrowsingLevel,
   onlyModelIds,
   excludeModelIds,
+  coverage,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1759,6 +1800,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   /** See `getModelsRaw`. */
   onlyModelIds?: number[];
   excludeModelIds?: number[];
+  /** See `getModelsRaw`. */
+  coverage?: CoverageAudience;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1785,6 +1828,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     faceBrowsingLevel,
     onlyModelIds,
     excludeModelIds,
+    coverage,
   });
 
   const modelVersionIds = items
@@ -1863,7 +1907,16 @@ export const getModelsWithImagesAndModelVersions = async ({
     feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
   }
 
-  const next = await nextCoverageEnabled();
+  const next = coverage?.next ?? (await nextCoverageEnabled());
+  // Residency from the cache the submit path reads, so the card and the submit agree.
+  let readinessById: Map<number, VersionReadiness> | undefined;
+  if (coverage?.next && !coverage.member) {
+    const { resourceDataCache } = await import('~/server/redis/resource-data.redis');
+    const versionIds = items
+      .filter((m) => m.type === 'Checkpoint' && m.modelVersions[0])
+      .map((m) => m.modelVersions[0].id);
+    readinessById = new Map((await resourceDataCache.fetch(versionIds)).map((r) => [r.id, r]));
+  }
   const result = {
     nextCursor,
     isPrivate,
@@ -1889,11 +1942,12 @@ export const getModelsWithImagesAndModelVersions = async ({
           (input.user || input.username || includeDrafts);
         if (!filteredImages.length && !showImageless) return null;
 
-        const canGenerate = isGenerationEligible({
-          ...coveragePair(version, next),
-          baseModel: version?.baseModel ?? '',
+        const canGenerate = feedVersionCanGenerate({
+          version,
           modelType: model.type,
-          flags: version?.flags ?? 0,
+          next,
+          coverage,
+          readiness: readinessById?.get(version.id),
         });
 
         const isOwner = isMod || model.user.id === user?.id;

@@ -2,6 +2,7 @@
   import '../global.css';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { page, navigating } from '$app/state';
+  import { toLinkBase } from '$lib/civitai-link';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -133,7 +134,18 @@
     openGroups[item.label] ?? (holdsCurrentPage(item) || overThreshold(item));
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
+
+  // Stored absolute URLs (an appeal's link, pasted text) still name `.com`; every builder here already
+  // uses the link base. Rewritten on hover or focus, so the status bar, copy-link and middle-click agree.
+  const retarget = (event: Event) => {
+    const a = (event.target as Element | null)?.closest?.('a[href]');
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const next = toLinkBase(a.href, data.civitaiUrl);
+    if (next !== a.href) a.href = next;
+  };
 </script>
+
+<svelte:document onpointerover={retarget} onfocusin={retarget} />
 
 <SidebarProvider>
   {#if navigating.to}
@@ -308,6 +320,7 @@
         {#if data.logoutUrl}
           <a
             href={data.logoutUrl}
+            data-sveltekit-reload
             aria-label="Sign out"
             title="Sign out"
             class="rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"

@@ -13,6 +13,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 
 import {
   BANKABLE_EARNING_PREDICATE_SQL,
+  generationTipsPaidSql,
   getBankableAmount,
   paidToUsersSql,
   PEAK_EARNING_PREDICATE_SQL,
@@ -311,7 +312,7 @@ describe('getBankableAmount', () => {
   it('reads only the days after the stored total of what was paid, then stores the new total', async () => {
     sysRedis.hGet.mockImplementation(async (key: string) =>
       key === REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT
-        ? JSON.stringify({ through: '2026-12-10T00:00:00.000Z', spent: 500 })
+        ? JSON.stringify({ through: '2026-12-10T00:00:00.000Z', spent: 500, v: 2 })
         : '0'
     );
     mockLedger({ earned: 10_000, spent: 300, spentToday: 200, consumed: 0 });
@@ -336,8 +337,43 @@ describe('getBankableAmount', () => {
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
       String(userId),
-      JSON.stringify({ through: '2026-12-14T00:00:00.000Z', spent: 800 })
+      JSON.stringify({ through: '2026-12-14T00:00:00.000Z', spent: 800, v: 2 })
     );
+  });
+
+  // A total stored before generation tips were netted lacks them for good; reading it would leave
+  // every tip paid before it un-netted.
+  it('rescans from the cutover when the stored total of what was paid predates generation-tip netting', async () => {
+    sysRedis.hGet.mockImplementation(async (key: string) =>
+      key === REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT
+        ? JSON.stringify({ through: '2026-12-10T00:00:00.000Z', spent: 500 })
+        : '0'
+    );
+    mockLedger({ earned: 10_000, spent: 300, spentToday: 200, consumed: 0 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(500);
+    expect(issuedSql("AND date < toDateTime('2026-12-14 00:00:00', 'UTC')")).toContain(
+      "date >= toDateTime('2026-11-01 00:00:00', 'UTC')"
+    );
+    expect(sysRedis.hSet).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      String(userId),
+      JSON.stringify({ through: '2026-12-14T00:00:00.000Z', spent: 300, v: 2 })
+    );
+  });
+
+  it('takes generation tips the creator paid out of what remains bankable', async () => {
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
+      if (sql.includes('AS balance')) return [{ balance: '0' }];
+      if (sql.includes('AS settled')) return [{ settled: 1 }];
+      if (sql.includes('AS consumed')) return [{ earned: '10000', consumed: '0' }];
+      if (sql.includes('AS spent'))
+        return [{ spent: sql.includes('FROM orchestration.jobs') ? '1500' : '0' }];
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(7_000);
   });
 
   it('does not store the total of what was paid while ingest has not reached it', async () => {
@@ -451,6 +487,8 @@ describe('SERVICE_RELEASE_SQL', () => {
   });
 });
 
+const closedWindow = { from: BANKABLE_CUTOVER, to: new Date('2026-12-01T00:00:00Z') };
+
 describe('paidToUsersSql', () => {
   // Pinned whole: a wrong account column still returns a plausible number.
   // One row per transaction on a closed window: its total is stored for good, so a duplicate row not
@@ -486,12 +524,74 @@ describe('paidToUsersSql', () => {
           WHERE ${paidTo} AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
             AND length(ids) = length(amts) AND length(ids) = length(ats) AND arraySum(amts) > 0
           LIMIT 1 BY date, fromAccountId, toAccountId, transactionId )
-        WHERE has(ids, 42) )`)
+        WHERE has(ids, 42)
+        UNION ALL
+        SELECT amount FROM (${generationTipsPaidSql(42, closedWindow)}) )`)
     );
   });
 
   it('reads the live window as it is', () => {
-    expect(paidToUsersSql(42, { from: BANKABLE_CUTOVER })).not.toContain('LIMIT 1 BY');
+    expect(paidToUsersSql(42, { from: BANKABLE_CUTOVER })).not.toContain('LIMIT 1 BY date');
+  });
+});
+
+describe('generationTipsPaidSql', () => {
+  // Pinned whole: the currency gate is what keeps Blue and unknown-currency tips from lowering
+  // bankable, and a wrong one still returns a plausible number.
+  it('nets per-job creator tips, less workflow refunds, only on days whose generation charges were all Yellow', () => {
+    const near =
+      'arrayDistinct([toDate(date - INTERVAL 1 HOUR), toDate(date), toDate(date + INTERVAL 1 HOUR)])';
+    const ledgerWindow = `date >= toDateTime('2026-11-01 00:00:00', 'UTC') - INTERVAL 1 HOUR AND date < toDateTime('2026-12-01 00:00:00', 'UTC') + INTERVAL 1 HOUR`;
+    expect(squash(generationTipsPaidSql(42, closedWindow))).toBe(
+      squash(`SELECT toInt64(floor(greatest(0, tips - refunded))) AS amount
+      FROM (
+        SELECT toDate(createdAt) AS day, sum(creatorsTip) AS tips
+        FROM (
+          SELECT jobId, createdAt, creatorsTip FROM orchestration.jobs
+          WHERE userId = 42
+            AND createdAt >= toDateTime('2026-11-01 00:00:00', 'UTC') AND createdAt < toDateTime('2026-12-01 00:00:00', 'UTC') AND createdAt <= now()
+            AND creatorsTip > 0 AND creatorsTip < 1000000
+          LIMIT 1 BY jobId
+        )
+        GROUP BY day
+      ) AS tipped
+      INNER JOIN (
+        SELECT day, sum(refundedAmount) AS refunded FROM (
+          SELECT arrayJoin(${near}) AS day, 1 AS isCharge, fromAccountType = 'yellow' AS yellow, toInt64(0) AS refundedAmount
+          FROM buzzTransactions
+          WHERE type = 'generation' AND fromAccountId = 42
+            AND ${ledgerWindow}
+          UNION ALL
+          SELECT arrayJoin(${near}) AS day, 0 AS isCharge, 1 AS yellow, toInt64(amount) AS refundedAmount
+          FROM buzzTransactions
+          WHERE type = 'refund' AND toAccountId = 42
+            AND JSONExtractString(details, 'workflowId') != ''
+            AND ${ledgerWindow}
+        )
+        GROUP BY day
+        HAVING max(isCharge) = 1 AND min(yellow) = 1
+      ) AS yellowOnly USING (day)`)
+    );
+  });
+
+  // orchestration.jobs holds corrupt rows dated 2299 with garbage tips; an open window catches them.
+  it('bounds the live window at now', () => {
+    expect(generationTipsPaidSql(42, { from: BANKABLE_CUTOVER })).toMatch(
+      /createdAt >= toDateTime\('2026-11-01 00:00:00', 'UTC'\) AND createdAt <= now\(\)/
+    );
+  });
+
+  // Jobs late on a day are charged early the next: the gate reads the charges an hour past it.
+  it('reads charges an hour either side of the days whose jobs it nets, from a mid-day window too', () => {
+    const sql = squash(
+      generationTipsPaidSql(42, {
+        from: new Date('2026-11-03T12:00:00Z'),
+        to: new Date('2026-11-05T06:00:00Z'),
+      })
+    );
+    expect(sql).toContain(
+      "date >= toDateTime('2026-11-03 00:00:00', 'UTC') - INTERVAL 1 HOUR AND date < toDateTime('2026-11-06 00:00:00', 'UTC') + INTERVAL 1 HOUR"
+    );
   });
 });
 
@@ -543,12 +643,32 @@ describe('counterparty netting clauses', () => {
 });
 
 describe('peak-earning predicates', () => {
-  // Justin, 2026-10-09: generation tips are bankable but do not set the peak, like user tips.
-  it('counts licence fees and user-paid early access from the cutover', () => {
+  // Justin, 2026-10-27 (reverses 2026-10-09): tips received, direct and generation, set the peak.
+  it('counts licence fees, user-paid early access and tips from the cutover', () => {
     expect(PEAK_EARNING_PREDICATE_SQL).toBe(`(
   type = 'licenseFee'
   OR (type = 'purchase' AND fromAccountId != 0)
+  OR (type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)
+  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))
 )`);
+  });
+
+  // Hand grants are made as tips from account 0; they are support credits, not earnings.
+  it('counts direct tips only when a user other than the creator paid them', () => {
+    const tipClauses = PEAK_EARNING_PREDICATE_SQL.split('\n').filter((l) => l.includes("'tip'"));
+    expect(tipClauses).toEqual([
+      "  OR (type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)",
+    ]);
+  });
+
+  // Generation compensation stopped setting the peak at the cutover; only its tip rows still do.
+  it('leaves generation compensation out, except the generation-tip transactions', () => {
+    const compensationClauses = PEAK_EARNING_PREDICATE_SQL.split('\n').filter((l) =>
+      l.includes('compensation')
+    );
+    expect(compensationClauses).toEqual(
+      BANKABLE_EARNING_PREDICATE_SQL.split('\n').filter((l) => l.includes('compensation'))
+    );
   });
 
   it('also counts generation compensation before the cutover', () => {

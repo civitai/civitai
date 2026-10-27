@@ -1,29 +1,22 @@
 import { Alert, Group, Loader, Modal, SegmentedControl } from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   StorylineContinueForm,
   type StorylineSubmitOutcome,
 } from '~/components/Storyline/continue/StorylineContinueForm';
 import { StorylineJoinChapterForm } from '~/components/Storyline/continue/StorylineJoinChapterForm';
-import {
-  STORYLINE_CONTINUE_POST_LIMIT,
-  storylineContinuePostOptions,
-  storylineWithoutChapters,
-  storylineSubmitInput,
-} from '~/components/Storyline/storyline-ui';
+import { storylineSubmitInput } from '~/components/Storyline/storyline-ui';
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import {
   useAddOwnerStorylineChapter,
+  useOwnStorylinePosts,
   useInsertStorylineChapter,
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PostSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 export type StorylineContinueModalProps = {
@@ -69,23 +62,6 @@ export default function StorylineContinueModal({
     { id: storylineId ?? 0 },
     { enabled: !!storylineId }
   );
-  // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
-  // Newest, all time: the default sort lists only posts that already have reactions, which leaves
-  // out the post just made to continue the story.
-  const {
-    data: postPages,
-    isLoading: postsLoading,
-    isError: postsError,
-  } = trpc.post.getInfinite.useInfiniteQuery(
-    {
-      username: currentUser?.username,
-      browsingLevel: allBrowsingLevelsFlag,
-      limit: STORYLINE_CONTINUE_POST_LIMIT,
-      sort: PostSort.Newest,
-      period: MetricTimeframe.AllTime,
-    },
-    { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
-  );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
@@ -94,28 +70,10 @@ export default function StorylineContinueModal({
   const ownerAdd =
     !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
 
-  const firstPage = postPages?.pages[0];
-  const ownPosts = useMemo(
-    () =>
-      currentUser
-        ? storylineContinuePostOptions(firstPage?.items ?? [], {
-            viewerId: currentUser.id,
-            parentPostId,
-          })
-        : [],
-    [currentUser, firstPage, parentPostId]
-  );
-  // Which of them are already chapters; the author is told whatever the post's level.
-  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
-  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
-    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
-    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
-    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
-  );
-  const { posts, alreadyChapters } = storylineWithoutChapters(
-    ownPosts,
-    new Set(Object.keys(ownChapters ?? {}).map(Number))
-  );
+  const { posts, alreadyChapters, postsLoading, postsError, morePosts } = useOwnStorylinePosts({
+    enabled,
+    excludePostId: parentPostId,
+  });
 
   const parentName =
     parentChapter && parentPost
@@ -192,11 +150,10 @@ export default function StorylineContinueModal({
               inserting={inserting}
               isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
               posts={posts}
-              postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
+              postsLoading={postsLoading}
               alreadyChapters={alreadyChapters}
-              // A failed refetch keeps the posts already shown.
-              postsError={postsError && !firstPage}
-              morePosts={!!firstPage?.nextCursor}
+              postsError={postsError}
+              morePosts={morePosts}
               postId={postId}
               onPostChange={setPostId}
               submitting={ownerAdd ? ownerPending : submit.isPending}

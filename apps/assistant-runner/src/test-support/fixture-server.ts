@@ -14,13 +14,13 @@ import { join } from 'node:path';
 
 import { buildApp } from '../app';
 import { RunGrants } from '../grants';
-import type { ConversationStore } from '../interfaces';
-import { createPool } from '../pg-pool';
-import { Runner } from '../runner';
+import type { ConversationStore } from '../core/interfaces';
+import { createPool } from '../core/pg-pool';
+import { Runner } from '../core/runner';
 import { createTokenVerifier } from '../tokens';
-import { bearerAuthenticator, fakeTools, untilAborted } from './fakes';
-import { FileConversationStore } from './file-store';
-import { scriptedModel, toolResults } from './scripted-model';
+import { bearerAuthenticator, fakeTools, untilAborted } from '../core/test-support/fakes';
+import { FileConversationStore } from '../core/test-support/file-store';
+import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 
 const dir = process.env.FIXTURE_DIR!;
 const callLog = join(dir, 'calls.log');

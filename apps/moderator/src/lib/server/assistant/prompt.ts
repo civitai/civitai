@@ -12,6 +12,8 @@ export function systemPrompt(input: {
   today: Date;
   playbooks: Pick<Playbook, 'slug' | 'title' | 'summary' | 'body'>[];
   seed: { userId: number | null; reportId: number | null };
+  /** The tokens one question may spend, as `turnTokenBudget()` resolves it. */
+  turnBudget: number;
 }): string {
   const standing = input.playbooks.find((p) => p.slug === STANDING_PLAYBOOK);
   const listed = input.playbooks.filter((p) => p !== standing);
@@ -58,6 +60,12 @@ ${
 - Lead with the finding in one or two sentences, then the evidence as short bullets with citations, then what you could not check.
 - When asked to collect accounts, give the ids as a plain list in a code block, one per line, labelled as candidates for the moderator to verify.
 - Be brief. No preamble, no restating the question.
+
+## Lookups and your budget
+Each question has a budget of about ${input.turnBudget.toLocaleString(
+    'en-US'
+  )} tokens, and every lookup result is sent again with each later step, so lookups cost more the earlier they run. Work in small batches: at most 5 lookups at a time, read what they return, then decide what to fetch next. If a list is too long to check within the budget, check the first part rather than fetching it all.
+If you did not check everything that was asked, say so at the start of your answer: what you checked, what you did not, and that the moderator can ask you to continue. A partial check must never read as a complete one.
 
 ## Playbooks
 Moderators have written playbooks for common investigations. When one fits the request, call read_playbook and follow it; when the moderator names one, always follow it.

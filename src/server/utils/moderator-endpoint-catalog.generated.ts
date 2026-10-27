@@ -26,6 +26,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/creator-services/deal-file-url'),
   '/api/mod/creator-services/deal-files': () =>
     import('~/pages/api/mod/creator-services/deal-files'),
+  '/api/mod/creator-services/dispute-evidence': () =>
+    import('~/pages/api/mod/creator-services/dispute-evidence'),
+  '/api/mod/creator-services/dispute-review': () =>
+    import('~/pages/api/mod/creator-services/dispute-review'),
   '/api/mod/creator-services/disputes': () => import('~/pages/api/mod/creator-services/disputes'),
   '/api/mod/creator-services/resolve-dispute': () =>
     import('~/pages/api/mod/creator-services/resolve-dispute'),
@@ -72,7 +76,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
   '/api/mod/text-scan/csam-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
+  '/api/mod/text-scan/model-rules-hold/resolve': () =>
+    import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
+  '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
   '/api/mod/user/creator-program-ban': () => import('~/pages/api/mod/user/creator-program-ban'),
   '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),

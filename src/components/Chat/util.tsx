@@ -75,6 +75,13 @@ export const linkifyOptions: Opts = {
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
 
+/** Markdown the one-line preview would otherwise show raw: links, bold and inline code. */
+export const stripMarkdownForPreview = (text: string) =>
+  text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/`([^`]*)`/g, '$1');
+
 /**
  * The last-message line in a chat list row, with who said it.
  *
@@ -90,7 +97,7 @@ export const chatPreviewText = ({
   viewerId: number | undefined;
   otherMembers: { userId: number; user: { username: string | null } }[];
 }) => {
-  const text = stripStickerTokens(message.content);
+  const text = stripMarkdownForPreview(stripStickerTokens(message.content));
   if (message.userId === viewerId) return `You: ${text}`;
   if (otherMembers.length > 1) {
     const sender = otherMembers.find((cm) => cm.userId === message.userId)?.user.username;

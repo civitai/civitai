@@ -261,6 +261,11 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: [],
     serverColumns: [],
   },
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
   // Every comics call sits under the nearest async declaration above it.
   'src/server/routers/comics.router.ts#createSinglePanel': {
     calls: 11,

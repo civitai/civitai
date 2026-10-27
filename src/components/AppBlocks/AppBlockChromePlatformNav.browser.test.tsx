@@ -87,7 +87,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     // deliberately still "My apps" — it names what an owner arrives at.
     // and 301s there, so the in-app link points at the surviving route directly.
     const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
-    expect(mine.getAttribute('href')).toBe('/apps/build');
+    expect(mine.getAttribute('href')).toBe('/apps/build?view=apps');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {
@@ -96,9 +96,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
       <AppBlockChrome blockInstanceId="inst-nonmod" appName="App" slotId="app.page" />
     );
     await openPlatformNav();
-    await expect
-      .element(page.getByRole('menuitem', { name: 'Review' }))
-      .not.toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Review' })).not.toBeInTheDocument();
   });
 
   test('"Review" is SHOWN for a moderator and links to /apps/review', async () => {
@@ -124,9 +122,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
 describe('AppBlockChrome "Permissions & activity" item (Part B)', () => {
   async function openAppMenu() {
     await page.getByRole('button', { name: 'App menu' }).click();
-    await expect
-      .element(page.getByRole('menuitem', { name: 'Manage apps' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
   }
 
   test('the ⋯ menu shows "Permissions & activity" and clicking it opens the drawer', async () => {
@@ -141,9 +137,7 @@ describe('AppBlockChrome "Permissions & activity" item (Part B)', () => {
     );
     await openAppMenu();
     await page.getByRole('menuitem', { name: 'Permissions & activity' }).click();
-    await expect
-      .element(page.getByTestId('app-permissions-activity-drawer'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('app-permissions-activity-drawer')).toBeInTheDocument();
   });
 
   test('the "Permissions & activity" item is ABSENT when no appBlockId is threaded', async () => {

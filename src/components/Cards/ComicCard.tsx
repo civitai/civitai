@@ -9,7 +9,7 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { formatGenreLabel } from '~/utils/comic-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { slugitOr } from '~/utils/string-helpers';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
@@ -37,7 +37,7 @@ export const ComicCard = memo(function ComicCard({ data }: { data: ComicItem }) 
 
   return (
     <AspectRatioImageCard
-      href={`/comics/${data.id}/${slugit(data.name)}`}
+      href={`/comics/${data.id}/${slugitOr(data.name, 'comic')}`}
       alt={data.name}
       aspectRatio="portrait"
       image={coverImage}

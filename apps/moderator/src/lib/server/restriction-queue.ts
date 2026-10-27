@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions } from '@sveltejs/kit';
-import { parseForm, parseQuery } from '$lib/server/query';
+import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import { requiresGrant } from '$lib/server/access';
 import type { RestrictionType } from '$lib/restriction-types';
 import {
@@ -57,8 +57,6 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
   };
 }
 
-const selectedSchema = z.coerce.number().int().positive().optional().catch(undefined);
-
 /**
  * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
@@ -70,7 +68,7 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     {
       origin: z.enum(ORIGIN_FILTERS).optional().catch(undefined),
       sort: z.enum(SORT_ORDERS).optional().catch(undefined),
-      selected: selectedSchema,
+      selected: int4Id.optional().catch(undefined),
     }
   );
   const query = {

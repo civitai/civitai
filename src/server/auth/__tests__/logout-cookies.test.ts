@@ -82,6 +82,20 @@ describe('buildLogoutCookies', () => {
     }
   });
 
+  // The host-only `__Host-` session and device cookies live on this host only, so only this host's logout can
+  // clear them. Control: before this change neither name appears in the list.
+  it('clears the host-only session and device cookies, host-only and Secure', async () => {
+    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const headers = buildLogoutCookies('civitai.com');
+    for (const name of ['__Host-civ-token', '__Host-civ-device']) {
+      const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
+      expect(scoped.length, name).toBeGreaterThan(0);
+      expect(
+        scoped.every((h) => !/Domain=/.test(h) && /; Secure/.test(h) && /Max-Age=0/.test(h))
+      ).toBe(true);
+    }
+  });
+
   // Regression for the preview/staging logout bug: on a SUBDOMAIN host (e.g. stage.civitai.com) the spoke sets
   // civ-token/civ-device with Domain=civitai.com (the REGISTRABLE domain, via cookieDomainForHost). The old
   // logout cleared over `.{full-host}` (`.stage.civitai.com`) — which does NOT match `civitai.com` — so the

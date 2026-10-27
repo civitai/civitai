@@ -123,9 +123,11 @@
  * ## 🔴 DO NOT PUT THIS ON A FEED / CARD SURFACE WITHOUT RESHAPING IT FIRST
  *
  * One of the most important properties of this module is what it does NOT touch:
- * `publishedWithApp` is added to `post.get`'s return ONLY — not to `postSelect`,
- * not to `getInfiniteImages` / `getAllImages`, not to `/api/v1/images`. Every
- * cost note here is priced PER PAGE. Surface the chip on a card in a list and all
+ * `publishedWithApp` is added to `post.get`'s return, and the image detail page
+ * reads the same chip through its own single-image query
+ * (`image.getPublishedWithApp`, `image-app-chip.service.ts`) — and NOWHERE else:
+ * not to `postSelect`, not to `getInfiniteImages` / `getAllImages`, not to
+ * `/api/v1/images`. Every cost note here is priced PER PAGE. Surface the chip on a card in a list and all
  * of it becomes PER ROW, multiplied by the page size: the marker read would have
  * to become a batched `IN (…)` and the app row a `createCachedObject` by id array
  * BEFORE that is viable. Say so wherever the chip's reuse is next proposed.
@@ -220,13 +222,27 @@ export function postAppMarkerQuery(postId: number) {
  * treated as absent: it is not addressable and must not trigger a lookup.
  */
 export function readBlockPublishedAppId(metadata: unknown): string | null {
-  if (typeof metadata !== 'object' || metadata === null) return null;
   // 🔴 The key comes from the WRITER's own constant, never a re-spelled literal —
-  // see its declaration in `block-post.logic.ts`. An `Array.isArray` guard used
-  // to sit above this and was removed as dead: indexing an array with a string
-  // key yields `undefined`, which the `typeof` check below already rejects, so
-  // the branch could not be reached and a test over it could not fail.
-  const raw = (metadata as Record<string, unknown>)[BLOCK_POST_APP_ID_META_KEY];
+  // see its declaration in `block-post.logic.ts`.
+  return readAppIdMarker(metadata, BLOCK_POST_APP_ID_META_KEY);
+}
+
+/**
+ * The shared marker parser behind both surfaces: `Post.metadata` (above) and
+ * `Image.metadata` (`image-app-chip.service.ts`, which passes the IMAGE writer's
+ * own constant). One parser, so "what counts as a marker" cannot drift between
+ * the post page and the image page. The KEY is the caller's, deliberately: each
+ * surface names its own writer's constant, and the provenance-key ledger
+ * (`block-image-provenance-readers.test.ts`) sees each reader at its own site.
+ *
+ * An `Array.isArray` guard used to sit in here and was removed as dead: indexing
+ * an array with a string key yields `undefined`, which the `typeof` check below
+ * already rejects, so the branch could not be reached and a test over it could
+ * not fail.
+ */
+export function readAppIdMarker(metadata: unknown, key: string): string | null {
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const raw = (metadata as Record<string, unknown>)[key];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -271,6 +287,17 @@ export function readBlockPublishedAppId(metadata: unknown): string | null {
  * sibling precedent; they are closed here instead of inherited, because unlike
  * that resolver this one already has the host threaded to it.
  */
+const chipListingSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  status: true,
+  kind: true,
+  contentRating: true,
+  revisionOfId: true,
+  icon: { select: listingMediaImageSelect },
+};
+
 export function postAppChipQuery(appId: string) {
   return {
     where: { id: appId },
@@ -280,20 +307,11 @@ export function postAppChipQuery(appId: string) {
         select: {
           status: true,
           currentVersionDeployedAt: true,
-          appListing: {
-            select: {
-              id: true,
-              slug: true,
-              name: true,
-              status: true,
-              kind: true,
-              contentRating: true,
-              revisionOfId: true,
-              icon: { select: listingMediaImageSelect },
-            },
-          },
+          appListing: { select: chipListingSelect },
         },
       },
+      // An offsite Connect listing names its client through `connectClientId` and has no block.
+      connectListings: { where: { kind: 'offsite' }, select: chipListingSelect },
     },
   };
 }
@@ -302,7 +320,20 @@ export function postAppChipQuery(appId: string) {
 export type PostAppChipRow = {
   name?: unknown;
   appBlocks?: unknown;
+  connectListings?: unknown;
 };
+
+/**
+ * The row's blocks plus each offsite Connect listing as a block-shaped candidate. An offsite
+ * listing has no block, so the block-status and deploy terms do not apply and its own status gates.
+ */
+function chipCandidateBlocks(row: PostAppChipRow | null | undefined): unknown[] {
+  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const offsite = (Array.isArray(row?.connectListings) ? row.connectListings : [])
+    .filter((l) => (l as { kind?: unknown } | null)?.kind === 'offsite')
+    .map((appListing) => ({ status: APPROVED_STATUS, currentVersionDeployedAt: null, appListing }));
+  return [...blocks, ...offsite];
+}
 
 type ListingCandidate = {
   slug: string;
@@ -516,7 +547,7 @@ const EMPTY_HIDDEN: ReadonlySet<string> = new Set<string>();
  * reader here narrows defensively rather than trusting it.
  */
 export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
-  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const blocks = chipCandidateBlocks(row);
   const ids: string[] = [];
   for (const b of blocks) {
     const listing = (b as { appListing?: unknown } | null)?.appListing as
@@ -548,8 +579,7 @@ export function projectPostAppChip(
 ): PostAppChip | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
-  const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
-  const candidates = blocks
+  const candidates = chipCandidateBlocks(row)
     .map((b) => readListingCandidate(b, opts.host, opts.viewerBrowsingLevel, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
@@ -676,13 +706,46 @@ export async function resolvePostAppChip(args: {
    */
   readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
 }): Promise<PostAppChipResolution> {
+  const { postId, readPostMetadata, ...rest } = args;
+  return resolveAppChip({
+    ...rest,
+    readMarker: async () => readBlockPublishedAppId(await readPostMetadata(postId)),
+  });
+}
+
+/**
+ * The SURFACE-INDEPENDENT core of the chip decision: gate → marker → app →
+ * level → projection. {@link resolvePostAppChip} is this with the marker read
+ * from `Post.metadata`; the image detail page's resolver
+ * (`image-app-chip.service.ts`) is this with the marker read from the AUTHORISED
+ * `Image.metadata`. Every predicate — the scope gate, the four viewability terms,
+ * the maturity silence, the icon gate, the name sanitiser — lives here or below,
+ * ONCE, so the two pages cannot disagree about whether an app may be named.
+ *
+ * 🔴 `readMarker` IS CALLED ONLY AFTER THE GATE, and a caller may put real work in
+ * it (the image surface does its visibility check there), so a gated viewer costs
+ * that surface nothing either. It returns the parsed marker, or `null` for "no
+ * marker / nothing this viewer may see".
+ */
+export async function resolveAppChip(args: {
+  storeScope: StoreVisibilityScope;
+  /** The request's host, for the maturity term. See {@link projectPostAppChip}. */
+  host: string;
+  /** The viewer's browsing level, for the icon's red-host ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel?: number | null;
+  /** The parsed marker (see {@link readAppIdMarker}), or `null`. Runs only past the gate. */
+  readMarker: () => Promise<string | null>;
+  /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
+  readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
+  /** See {@link resolvePostAppChip}. */
+  readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
+}): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
   if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
     return { chip: null, outcome: 'gated' };
   }
 
-  const metadata = await args.readPostMetadata(args.postId);
-  const appId = readBlockPublishedAppId(metadata);
+  const appId = await args.readMarker();
   // No marker ⇒ an ordinary hand-made post. NO app lookup: this is the common
   // path and it must cost nothing extra.
   if (!appId) return { chip: null, outcome: 'no-marker' };

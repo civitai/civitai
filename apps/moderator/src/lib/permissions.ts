@@ -140,6 +140,13 @@ export const PERMISSIONS = [
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
   },
+  // Moves no Buzz, so a shadow agent can hold it without `resolveDispute`. Checked by this literal
+  // in the main app's `/api/mod/creator-services/dispute-review` and `dispute-evidence`
+  // (`ModeratorGrantId`); rename together.
+  {
+    id: 'creatorServices.reviewDispute',
+    label: 'Write Creator Services dispute reviews (no refund or release)',
+  },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan

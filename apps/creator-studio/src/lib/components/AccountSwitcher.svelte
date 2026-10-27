@@ -139,6 +139,7 @@
     {#if logoutUrl}
       <a
         href={logoutUrl}
+        data-sveltekit-reload
         class="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-dark-2 hover:bg-dark-6 hover:text-white"
       >
         <IconLogout size={14} class="shrink-0" />

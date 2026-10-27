@@ -4,7 +4,13 @@
  * (`server/schema/track.schema.ts`) accepts them, and the schema may not import the layout, which
  * pulls in icons.
  */
-export const USER_MENU_GROUP_IDS = ['your-stuff', 'creator-tools', 'rewards', 'help'] as const;
+export const USER_MENU_GROUP_IDS = [
+  'create',
+  'your-stuff',
+  'creator-tools',
+  'rewards',
+  'help',
+] as const;
 
 export type UserMenuGroupId = (typeof USER_MENU_GROUP_IDS)[number];
 

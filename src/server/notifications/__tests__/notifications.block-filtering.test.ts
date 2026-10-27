@@ -40,14 +40,15 @@ describe('comment notifications — block filtering', () => {
     expect(q).toMatch(/blk\.type = 'Block'/);
   });
 
-  // `new-thread-response` UNIONs the v1 and v2 comment tables and builds its recipient list with
-  // UNNEST(ARRAY_AGG(...)), so the filter has to sit inside each aggregate rather than in a shared
-  // WHERE. One branch carrying it and the other not would look correct in every other assertion.
-  it('new-thread-response filters inside BOTH union branches', () => {
+  // `new-thread-response` builds its recipients with UNNEST(ARRAY_AGG(...)), so the block filter
+  // has to sit inside the aggregate, against each fellow participant, rather than in a shared WHERE.
+  it('new-thread-response filters inside the participant aggregate', () => {
     const q = sqlFor('new-thread-response');
-    expect(q.match(/"UserEngagement" blk/g)).toHaveLength(2);
-    expect(q).toContain('FROM "Comment" cu');
-    expect(q).toContain('FROM "CommentV2" cu');
+    expect(q).toContain('FROM "CommentV3" cu');
+    const aggregate = q.slice(q.indexOf('ARRAY_AGG'), q.indexOf('"ownerId"'));
+    // Two arms (top-level siblings, reply siblings), each filtering its own participants.
+    expect(aggregate.match(/"UserEngagement" blk/g)).toHaveLength(2);
+    expect(aggregate).toMatch(/blk."userId" = s."userId" AND blk."targetUserId" = c."userId"/);
   });
 
   it('filters on the recipient, not only on the comment author', () => {
@@ -86,13 +87,14 @@ describe('actor-derived notifications outside the comment family', () => {
     expect(q).toMatch(/blk\.type = 'Block'/);
   });
 
-  // new-mention UNIONs three branches and derives its recipient with unnest() in the SELECT list,
+  // new-mention UNIONs two branches (comment, model description) and derives its recipient with unnest() in the SELECT list,
   // where no WHERE clause can see it. Each branch carries its author out as `actorId` so the filter
   // can run once on the outer query — a branch that forgets the column is a SQL error, but one that
   // selects the WRONG user silently notifies across the block.
   it('new-mention carries the acting user out of every union branch', () => {
     const q = others['new-mention'].prepareQuery?.({ lastSent: '2026-01-01' }) ?? '';
-    expect(q.match(/"userId" "actorId"/g)).toHaveLength(3);
+    // The comment arm and the model-description arm.
+    expect(q.match(/"userId" "actorId"/g)).toHaveLength(2);
     expect(q).toMatch(/blk\."userId" = r\."ownerId" AND blk\."targetUserId" = r\."actorId"/);
   });
 

@@ -55,6 +55,11 @@ import {
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
+import {
+  chatTokenOrchestration,
+  createBrowserCoverArtDeps,
+  createCoverArt,
+} from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
@@ -95,7 +100,7 @@ import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.c
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { FORK_SETUP_MESSAGE } from '~/shared/constants/app-fork.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
+import { trpc, trpcVanilla } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
@@ -407,6 +412,28 @@ export function AppAssistantWorkspace({
     gate.appChanged(activeName);
   }, [activeName, gate]);
 
+  // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
+  const trpcUtils = trpc.useUtils();
+  const coverTools = useMemo(
+    () =>
+      createCoverArt(
+        createBrowserCoverArtDeps({
+          currentApp: () => {
+            const app = live.current.active?.app;
+            return app && isAppBlockId(app) ? app : null;
+          },
+          api: {
+            getMyListingForApp: (input) => trpcVanilla.appListings.getMyListingForApp.query(input),
+            ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
+            setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
+          },
+          orchestration: chatTokenOrchestration(tokens),
+          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
+        })
+      ),
+    [tokens, trpcUtils]
+  );
+
   const tools = useMemo(
     () => ({
       ...createPreviewTools({
@@ -423,8 +450,9 @@ export function AppAssistantWorkspace({
       }),
       ...appTools.tools,
       ...gate.tools,
+      ...(remoteRunner ? {} : coverTools),
     }),
-    [canPreview, gate, appTools, showPreview]
+    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
   );
 
   const instructions = useCallback(

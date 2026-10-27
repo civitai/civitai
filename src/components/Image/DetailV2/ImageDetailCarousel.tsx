@@ -81,7 +81,7 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
-const SETTLE_FALLBACK_MS = 800;
+export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
   images,

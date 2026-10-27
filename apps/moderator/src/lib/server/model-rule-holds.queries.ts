@@ -7,11 +7,12 @@ import {
   type ModelRulesHoldMatch,
   type StoredModelRuleSnapshot,
 } from '@civitai/moderation/model-rules';
-import type {
-  HoldMode,
-  ModelRuleHoldFilters,
-  ModelRuleHoldModeFilter,
-  ModelRuleHoldStatusFilter,
+import {
+  holdClearsRules,
+  type HoldMode,
+  type ModelRuleHoldFilters,
+  type ModelRuleHoldModeFilter,
+  type ModelRuleHoldStatusFilter,
 } from '$lib/model-rule-holds';
 import { dbRead } from './db';
 import { escapeLike } from './like';
@@ -41,6 +42,12 @@ export type ModelRuleHoldRow = {
   modelName: string | null;
   modelStatus: string | null;
   modelType: string | null;
+  /** `Trained` when the model was trained on Civitai. */
+  uploadType: string | null;
+  /** `training` when a training run, not a publish or an edit, raised the hold. */
+  source: 'training' | null;
+  /** A ruling clears the matched rules for the text instead of restoring the model. */
+  clearsRules: boolean;
   poi: boolean;
   minor: boolean;
   textHash: string;
@@ -143,6 +150,9 @@ export async function listModelRuleHolds({
       'm.name as modelName',
       sql<string | null>`m.status::text`.as('modelStatus'),
       sql<string | null>`m.type::text`.as('modelType'),
+      sql<string | null>`m."uploadType"::text`.as('uploadType'),
+      sql<string | null>`m.availability::text`.as('modelAvailability'),
+      sql<boolean>`m."deletedAt" is not null`.as('modelDeleted'),
       sql<boolean>`coalesce(m.poi, false)`.as('poi'),
       sql<boolean>`coalesce(m.minor, false)`.as('minor'),
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
@@ -169,24 +179,33 @@ export async function listModelRuleHolds({
     .offset(offset)
     .execute();
 
-  const items = rows.slice(0, limit).map(({ meta, entityId, ...row }): ModelRuleHoldRow => {
-    const parsed = parseModelRulesHoldMeta(meta);
-    return {
-      ...row,
-      modelId: entityId,
-      username: row.username ?? null,
-      modelName: row.modelName ?? null,
-      decidedByUsername: row.decidedByUsername ?? null,
-      mode: parsed.mode,
-      decision: parsed.decision ?? null,
-      applied: row.hiddenAt !== null && row.restoredAt === null,
-      fields: parsed.fields,
-      matches: parsed.matches,
-      rules: parsed.rules,
-      redetected: parsed.kind === 'redetected' && parsed.priorHoldId !== undefined,
-      priorHoldId: parsed.priorHoldId ?? null,
-    };
-  });
+  const items = rows
+    .slice(0, limit)
+    .map(({ meta, entityId, modelAvailability, modelDeleted, ...row }): ModelRuleHoldRow => {
+      const parsed = parseModelRulesHoldMeta(meta);
+      return {
+        ...row,
+        modelId: entityId,
+        username: row.username ?? null,
+        modelName: row.modelName ?? null,
+        decidedByUsername: row.decidedByUsername ?? null,
+        mode: parsed.mode,
+        decision: parsed.decision ?? null,
+        applied: row.hiddenAt !== null && row.restoredAt === null,
+        fields: parsed.fields,
+        matches: parsed.matches,
+        rules: parsed.rules,
+        redetected: parsed.kind === 'redetected' && parsed.priorHoldId !== undefined,
+        priorHoldId: parsed.priorHoldId ?? null,
+        source: parsed.source ?? null,
+        clearsRules: holdClearsRules({
+          source: parsed.source ?? null,
+          modelStatus: row.modelStatus,
+          modelAvailability,
+          modelDeleted,
+        }),
+      };
+    });
   return { items, hasMore: rows.length > limit };
 }
 
@@ -222,7 +241,9 @@ export type ModelRuleHoldHistoryEntry = {
   decidedAt: Date | null;
   decidedByUsername: string | null;
   decisionNote: string | null;
-  subjects: string[];
+  rules: Pick<StoredModelRuleSnapshot, 'id' | 'subject' | 'category' | 'references'>[];
+  /** Its ruling cleared the matched rules for the text instead of restoring the model. */
+  clearsRules: boolean;
 };
 
 /** The other holds on the hold's model, newest first. */
@@ -235,6 +256,7 @@ export async function getModelRuleHoldHistory(
       join.onRef('self.entityId', '=', 'h.entityId').on('self.entityType', '=', 'Model')
     )
     .leftJoin('User as d', 'd.id', 'h.decidedById')
+    .leftJoin('Model as m', 'm.id', 'h.entityId')
     .select([
       'h.id',
       'h.status',
@@ -243,6 +265,9 @@ export async function getModelRuleHoldHistory(
       'd.username as decidedByUsername',
       'h.decisionNote',
       'h.meta',
+      sql<string | null>`m.status::text`.as('modelStatus'),
+      sql<string | null>`m.availability::text`.as('modelAvailability'),
+      sql<boolean>`m."deletedAt" is not null`.as('modelDeleted'),
     ])
     .where('self.id', '=', holdId)
     .where('h.entityType', '=', 'Model')
@@ -253,14 +278,25 @@ export async function getModelRuleHoldHistory(
     .orderBy('h.id', 'desc')
     .limit(20)
     .execute();
-  return rows.map(({ meta, ...row }) => {
+  return rows.map(({ meta, modelStatus, modelAvailability, modelDeleted, ...row }) => {
     const parsed = parseModelRulesHoldMeta(meta);
     return {
       ...row,
+      clearsRules: holdClearsRules({
+        source: parsed.source ?? null,
+        modelStatus,
+        modelAvailability,
+        modelDeleted,
+      }),
       decidedByUsername: row.decidedByUsername ?? null,
       decision: parsed.decision ?? null,
       mode: parsed.mode,
-      subjects: parsed.rules.map((rule) => rule.subject),
+      rules: parsed.rules.map(({ id, subject, category, references }) => ({
+        id,
+        subject,
+        category,
+        references,
+      })),
     };
   });
 }

@@ -59,28 +59,73 @@ Inputs are built per media type (`buildEmbedInput`):
 
 ## Embedding
 
-`Embedder` submits orchestrator workflows with one `multimodalEmbedding` step, up to 128 inputs
-each, tier `paid`. The step type is typed locally until the orchestration client ships it.
+`Embedder` submits orchestrator workflows of `multimodalEmbedding` steps, tier `paid`. Each step
+embeds exactly one image or video (float32) and is named `img-<Image.id>`, which is how results
+map back. A workflow carries up to `VECTOR_EMBED_BATCH_SIZE` steps (1 to 128, default 128) and at
+most 8 videos. Identical inputs are served from the orchestrator's cache. The step type is typed
+locally until the orchestration client ships it.
 
-- At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process, each with up to
-  `VECTOR_EMBED_BATCH_SIZE` inputs (1 to 128, default 128).
-- A 429 or 5xx backs off exponentially with jitter, never sooner than `Retry-After`. It gives up
-  after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a batch has one `externalId`, reused across
-  its retries, so a submit that succeeded server-side is not paid for twice. It is random rather
-  than derived from the inputs, because the orchestrator would also return a _failed_ workflow
-  for its key.
-- A batch the orchestrator rejects (400, or a failed workflow) is split in half, at most four
-  times (down to groups of 8), to isolate the bad input. What is still failing then is counted
-  as `failed`, and the rest are embedded.
-- When a batch fails for another reason (retries exhausted, auth, a model mismatch), batches not
-  yet submitted are skipped. The vectors already returned are stored before the error is raised,
-  so a retry pays only for what is missing.
-- Every batch's model stamp is checked against the collection before its vectors are accepted.
-  Until a model is recorded, a call's first batch runs alone, and checks are serialised within
-  a process, so one process cannot record two models into a new collection. Across processes
-  there is no compare-and-set, so the consumer never embeds into a collection whose model is
-  not yet recorded: **the backfill canary records it first**. Until then the consumer only
-  deletes and updates payloads.
+- **In-flight budget:** at most `VECTOR_EMBED_MAX_IN_FLIGHT` orchestrator jobs (= steps =
+  images) are in flight per process, default 500 and at least `VECTOR_EMBED_BATCH_SIZE` (a smaller
+  value refuses to start), and never more than the account's in-flight
+  quota the orchestrator reports (`RateLimit-Policy` `inflight-multimodalEmbedding` `q`). Each
+  workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
+  shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
+  or reconcile are separate processes; the orchestrator's quota is per account and bounds them
+  together. The first response's quota and buzz window are logged at info level
+  (`vector-sync: orchestrator rate limits`).
+- **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
+  `Retry-After` (at least 250 ms, at most an hour), and every submit on that process waits it out too. 429s
+  are budgeted by time (2 h), not count, since another process can hold the account's quota
+  for a whole workflow.
+- **Step rate:** in the backfill and the reconciler, steps go out at a steady
+  `VECTOR_EMBED_MAX_STEPS_PER_SECOND` per process (default 10, 0 is unlimited), each workflow
+  waiting its turn before it takes any budget, with no burst. Live sync is not paced: it must
+  keep up with uploads. It also bounds
+  cache hits, which create no orchestrator job and so pass every job-based limit, and which
+  share the submodel queue with image scanning.
+- **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
+  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Ephemeral workflows are not
+  deduplicated (the orchestrator ignores `externalId` for them, so none is sent), and a submit
+  that failed with a 5xx, a cut-off response, or a network error after connecting (such as a
+  reset) may still be running. It is sent
+  again only after `VECTOR_EMBED_RESUBMIT_DELAY_SECONDS` (default 120, at most 3600, 0 turns it off), so that
+  identical inputs usually come back from the cache instead of running twice. Under a backed-up
+  queue the first run can take longer, and then the re-send runs again. A failed poll is retried
+  as a poll. When the embedder gives up on a workflow that may still be running (retries or polls
+  exhausted), it waits the same delay before returning the error, because the caller's retry (a
+  backfill page, the next consumer flush) follows within seconds. A batch whose submits keep
+  failing can therefore hold its share of the in-flight budget for at least
+  (`VECTOR_EMBED_MAX_RETRIES` + 1) × the delay (18 min by default), plus the time each submit
+  takes to fail. A connection that never opened (refused, DNS, connect timeout, certificate) sent
+  nothing, so it gets the normal backoff instead.
+- **Failures are per step:** a step that fails (or returns a vector of the wrong size or
+  precision, or without a model revision or profile) fails only its image, counted as
+  `failed`. A workflow the orchestrator rejects outright (400) is split in half, at most four
+  times, to isolate the bad input. A workflow that ends expired or canceled, or failed with no
+  step succeeding across several images, is an outage rather than bad inputs: the vectors that did
+  finish are kept, and the unfinished inputs are re-submitted with backoff up to
+  `VECTOR_EMBED_MAX_RETRIES`, and only while a re-submit would start within
+  `VECTOR_EMBED_OUTAGE_RETRY_SECONDS` (default 900) of the batch's first attempt; time spent
+  waiting out 429s counts. Then they are counted as failed (logged at error level) for the
+  reconciler to retry. Outage re-submits hold one batch for at most that window plus the last
+  attempt, which can take a step's full 30-minute timeout and, if rate-limited, the 429 budget too.
+- When a workflow fails for another reason (retries exhausted, auth, a model mismatch),
+  workflows not yet submitted are skipped. The vectors already returned are stored before the
+  error is raised, so a retry pays only for what is missing.
+- **Model stamp per step:** every step reports its model, revision and profile; an image step's
+  profile is the image profile, a video step's the video profile. Each distinct stamp in a
+  workflow is checked against the collection before any of its vectors is kept, and a workflow
+  with two stamps for one media type is rejected. Until a model is recorded, a call's first
+  workflow runs alone, and checks are serialised within a process, so one process cannot record
+  two models into a new collection. Across processes there is no compare-and-set, so the
+  consumer never embeds into a collection whose model is not yet recorded: **the backfill canary
+  records it first**. Until then the consumer only deletes and updates payloads.
+- **Ephemeral workflows:** the orchestrator keeps no document for them. The result comes back
+  on the submit (`wait=60`) or on a long poll. A poll that fails is retried as a poll, never by
+  submitting again, which would run the steps twice. One that finishes between polls is gone
+  (a 404), and the whole workflow is sent again under a new key, which the orchestrator mostly
+  answers from its cache of identical inputs.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync
@@ -166,13 +211,20 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 - The cursor is kept in Redis (`vector-sync:{backfill:<collection>:<name>}:cursor`), so it
   survives restarts,
   deploys and reschedules. It moves past a page only once every page above it is written.
-  Points that already exist are not re-embedded, so resuming over a page costs payload writes
-  only. `--cursor-file` keeps it in a local file instead, for runs without Redis.
+  Within a page, each workflow's vectors are written as it returns and its rows re-read at once
+  (so a block that landed meanwhile is deleted right away), and a run killed mid-page loses only
+  its workflows still in flight. Points that already exist are not re-embedded, so
+  resuming over a page costs payload writes only. `--cursor-file` keeps it in a local file
+  instead, for runs without Redis.
 - `--dry-run` writes nothing, Qdrant or cursor, and reports what it would embed. `--limit N`
   stops after about N eligible images (it can overshoot by up to `--pages × --span` ids).
 - `pause` / `resume` set a flag the run checks before each page. They, `status` and `reset`
   address the run for `VECTOR_COLLECTION` in their own env, and log it. `status` prints the cursor.
-  `reset` clears it. SIGTERM finishes in-flight pages and stops.
+  `reset` clears it and the limits below. SIGTERM finishes in-flight pages and stops.
+- `set-inflight <n|clear>` and `set-steps-per-second <n|clear>` change a running backfill's
+  in-flight jobs and step rate within 30 s, with no restart. They only lower:
+  `VECTOR_EMBED_MAX_IN_FLIGHT` and `VECTOR_EMBED_MAX_STEPS_PER_SECOND` stay the ceiling.
+  `status` prints both, and the ceilings.
 - A run holds a lease (`...:lease` beside the cursor, renewed every 30 s, lapsing 2 minutes
   after the run dies), so a second copy of the same backfill refuses to start instead of
   paying for every page twice. A run that loses its lease stops and no longer writes the cursor.
@@ -204,4 +256,6 @@ the rest.
 
 ## Configuration
 
-See the vector-sync block in `apps/event-engine/.env.example`.
+See the vector-sync block in `apps/event-engine/.env.example`. A numeric variable that is not an
+integer in its range stops the consumer, backfill and reconciler at startup rather than running
+on its default.

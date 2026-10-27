@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -852,9 +852,11 @@ describe('who can download what', () => {
     await complete(dealId);
     const target = await download(finalId, BUYER);
     expect(target).toMatchObject({ bucket: 'bucket', fileName: 'result.zip' });
-    expect(await files.getServiceDealFileDownloadUrl(target!)).toMatch(
-      /^https:\/\/get\/service-deals\//
-    );
+    expect(
+      await files.getServiceDealFileDownloadUrl(target!, {
+        serviceDealFileAccess: async () => true,
+      })
+    ).toMatch(/^https:\/\/get\/service-deals\//);
     expect(s3.getGetUrlByKey).toHaveBeenCalledWith(
       target!.key,
       expect.objectContaining({ expiresIn: 300, fileName: 'result.zip' })
@@ -1425,5 +1427,123 @@ describe('a scanner verdict on a final', () => {
     await files.deleteServiceDealFile({ fileId: finalId, userId: SELLER });
     await uploaded(dealId, { fileName: 'fixed.zip' });
     await files.deliverServiceDeal({ dealId, userId: SELLER });
+  });
+});
+
+describe('recording who took a file', () => {
+  async function completedDeal() {
+    const dealId = await accepted();
+    const finalId = await uploaded(dealId);
+    await readyPreview(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed',
+        "deliveryKey" = 'service-deals/delivered/k', "repackedAt" = now() WHERE id = $1`,
+      [finalId]
+    );
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    return { dealId, finalId };
+  }
+  const tracker = { serviceDealFileAccess: vi.fn(async () => true) };
+  beforeEach(() => {
+    tracker.serviceDealFileAccess.mockReset().mockResolvedValue(true);
+  });
+  const take = async (target: Awaited<ReturnType<typeof download>>) =>
+    files.getServiceDealFileDownloadUrl(target!, tracker);
+  const tracked = () => tracker.serviceDealFileAccess.mock.calls.map(([access]) => access);
+
+  it("tracks the buyer's download of a final", async () => {
+    const { dealId, finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    expect(tracked()).toEqual([
+      { dealId, fileId: finalId, userId: BUYER, role: 'Buyer', kind: 'Download' },
+    ]);
+    // Waits for delivery off the request path, so a lost row reaches the failure log.
+    expect(tracker.serviceDealFileAccess).toHaveBeenCalledWith(expect.anything(), {
+      awaitDelivery: true,
+    });
+  });
+
+  it('tracks a moderator who is the buyer, fetching through the dispute tool, as the buyer', async () => {
+    const { finalId } = await completedDeal();
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: BUYER,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    expect(tracked().map((a) => [a.role, a.kind])).toEqual([['Buyer', 'ModeratorFetch']]);
+  });
+
+  it('tracks the seller and a non-party moderator apart from the buyer', async () => {
+    const { finalId } = await completedDeal();
+    await take(await download(finalId, SELLER));
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    expect(tracked().map((a) => [a.role, a.kind])).toEqual([
+      ['Seller', 'Download'],
+      ['Moderator', 'ModeratorFetch'],
+    ]);
+  });
+
+  it.each([
+    ['rejects', () => tracker.serviceDealFileAccess.mockRejectedValue(new Error('down'))],
+    [
+      'throws',
+      () =>
+        tracker.serviceDealFileAccess.mockImplementation(() => {
+          throw new Error('down');
+        }),
+    ],
+  ])('still hands out the link when tracking %s, and logs it', async (_, fail) => {
+    const { finalId } = await completedDeal();
+    const target = await download(finalId, BUYER);
+    fail();
+    expect(await take(target)).toBe('https://get/service-deals/delivered/k');
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
+      )
+    );
+  });
+
+  it('logs a download the tracker did not write because it is switched off', async () => {
+    const { finalId } = await completedDeal();
+    tracker.serviceDealFileAccess.mockResolvedValue(false);
+    await take(await download(finalId, BUYER));
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
+      )
+    );
+  });
+
+  it('logs nothing when the row is delivered', async () => {
+    const { finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-service-file-access' })
+    );
+  });
+
+  it('does not wait for the tracker before handing out the link', async () => {
+    const { finalId } = await completedDeal();
+    const target = await download(finalId, BUYER);
+    tracker.serviceDealFileAccess.mockReturnValue(new Promise(() => undefined));
+    const waited = new Promise((resolve) =>
+      setTimeout(() => resolve('waited on the tracker'), 1000)
+    );
+    expect(await Promise.race([take(target), waited])).toBe(
+      'https://get/service-deals/delivered/k'
+    );
   });
 });

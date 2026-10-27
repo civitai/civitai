@@ -1,4 +1,12 @@
-import { sessionCookieName, deviceCookieName, isSecureCookie } from '@civitai/auth';
+import {
+  deviceCookieNameForSlot,
+  hostSessionCookieName,
+  isSecureCookie,
+  sessionCookieMode,
+  sessionCookieName,
+  sessionCookieNameForSlot,
+  type CookieSlot,
+} from '@civitai/auth';
 import { decodeTokenClaim } from './token-claims';
 
 // Shared civ-token Set-Cookie assembly for the spoke proxies that receive a hub-minted token (switch,
@@ -152,14 +160,17 @@ export function clearLegacyCookies(host?: string): string[] {
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
  * Does NOT clear legacy cookies — the transitions that need that (login callback, upgrade-on-read) call
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
+ * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
+ * never carries a Domain (`__Host-` forbids it).
  */
 export function setSessionCookie(
   res: CookieWritable,
   token: string,
-  opts?: { deviceCookie?: string; host?: string }
+  opts?: { deviceCookie?: string; host?: string; slot?: CookieSlot }
 ): void {
   const secure = isSecureCookie();
-  const domain = cookieDomainForHost(opts?.host);
+  const slot = opts?.slot ?? sessionCookieMode();
+  const domain = slot === 'host' ? undefined : cookieDomainForHost(opts?.host);
   const exp = decodeTokenClaim(token, 'exp');
   const maxAge = exp ? Math.max(0, exp - Math.floor(Date.now() / 1000)) : undefined;
 
@@ -169,9 +180,10 @@ export function setSessionCookie(
     : existing != null
     ? [String(existing)]
     : [];
-  all.push(buildCookie(sessionCookieName(), token, secure, domain, maxAge));
+  all.push(buildCookie(sessionCookieNameForSlot(slot, secure), token, secure, domain, maxAge));
   if (opts?.deviceCookie) {
-    all.push(buildCookie(deviceCookieName(), opts.deviceCookie, secure, domain, DEVICE_TTL_S));
+    const deviceName = deviceCookieNameForSlot(slot, secure);
+    all.push(buildCookie(deviceName, opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
   res.setHeader('Set-Cookie', all);
 }
@@ -255,6 +267,7 @@ export function clearAllSessionCookies(host?: string): string[] {
       );
     }
   }
+  out.push(`${hostSessionCookieName(true)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`);
   out.push(clearPostLoginMarker(), clearLoginRetryCookie(), clearPostLoginRetryCookie());
   return out;
 }

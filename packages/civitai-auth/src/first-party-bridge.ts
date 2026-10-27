@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'crypto';
 import { TokenScope } from './token-scope';
-import { hubBaseUrl, hubFetch } from './hub';
+import { hubBaseUrl, hubFetch, internalShapeReady } from './hub';
+import { loadAuthEnv } from './env';
 import { firstPartyClientId, SPOKE_CALLBACK_PATH } from './first-party';
 import { isSecureCookie } from './cookies';
 import { safeReturnPath } from './return-path';
@@ -187,6 +188,8 @@ export async function completeFirstPartyCallback(opts: {
   // under internal routing (no proxy → no XFF), so the hub's getClientAddress() has a header to resolve.
   if (opts.clientIp) headers['x-forwarded-for'] = opts.clientIp;
   try {
+    const internal = internalShapeReady() && loadAuthEnv().AUTH_INTERNAL_TOKEN;
+    if (internal) headers.authorization = `Bearer ${internal}`;
     const res = await hubFetch('/api/auth/oauth/session', {
       method: 'POST',
       headers,

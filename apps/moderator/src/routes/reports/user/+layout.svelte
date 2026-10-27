@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import type { LayoutData } from './$types';
   import ReportQueueShell from '$lib/components/report-queue/ReportQueueShell.svelte';
+  import { ReportEntity } from '$lib/reports';
   import QueuePanel from './QueuePanel.svelte';
 
   let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -14,7 +15,7 @@
   );
 </script>
 
-<ReportQueueShell title="User reports" detailLabel="Reported account" detail={children}>
+<ReportQueueShell entity={ReportEntity.User} title="User reports" detailLabel="Reported account" detail={children}>
   {#snippet queue()}
     <QueuePanel {data} {suspectId} />
   {/snippet}

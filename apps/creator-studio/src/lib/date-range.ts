@@ -117,6 +117,17 @@ export function parseMonthRange(
   return lastCompletedMonthRange(today);
 }
 
+const MONTH_PARAM_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** Validate a `?month=YYYY-MM` deep-link param into that full calendar month. Null when absent, malformed, or a
+ *  month that hasn't started yet (a future month is always empty) — callers then fall back to the saved period. */
+export function parseMonthParam(param: string | null, today = new Date()): DateRange | null {
+  if (!param || !MONTH_PARAM_RE.test(param)) return null;
+  const todayKey = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (param > todayKey) return null;
+  return monthKeyToRange(param);
+}
+
 /** 'YYYY-MM' key of a month range. */
 export function monthKey(range: DateRange): string {
   return range.from.slice(0, 7);

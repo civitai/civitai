@@ -33,7 +33,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 
 | File | Domain | Commands |
 |------|--------|----------|
-| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm |
+| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm, creator-program-ban, end-buzz-membership |
 | `strikes.mjs` | Strike system | get-user, standings, list, create, void |
 | `images.mjs` | Image moderation | review-queue, review-counts, moderate, tos-violation, rescan, report-csam, poi-tags, user-images, rating-requests, ingestion-errors, resolve-ingestion, downleveled, pending-ingestion, toggle-flag |
 | `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
@@ -60,6 +60,7 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
 | `dm <id\|username>` | Send a DM (requires `--message`) |
 | `creator-program-ban <id\|username> <set\|clear>` | Ban from / unban from the Creator Program (requires `--internal <reason>`; optional `--gate <ref>`; needs the `user.creatorProgram.ban` permission). Use this, never a raw `onboarding` UPDATE. |
+| `end-buzz-membership <id\|username>` | End the account's Buzz-purchased membership now: `canceled`, `canceledAt`/`endedAt` = now, so the tier's perks stop (requires `--internal <reason>`; needs the `user.membership.code` permission). Stripe and code memberships are untouched. Moves no Buzz: refund the purchase separately. |
 
 **Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`, `--gate <ref>`
 
@@ -70,6 +71,7 @@ node .claude/skills/mod-actions/query.mjs user 3879899
 node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
 node .claude/skills/mod-actions/query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
+node .claude/skills/mod-actions/query.mjs end-buzz-membership 12345 --internal "Buzz refunded by support" --dry-run
 ```
 
 ---

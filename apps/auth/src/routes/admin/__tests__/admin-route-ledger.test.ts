@@ -74,6 +74,7 @@ const ENDPOINT_ROUTES = [
   '/api/auth/identity',
   '/api/auth/impersonate',
   '/api/auth/impersonate/exit',
+  '/api/auth/internal-ping',
   '/api/auth/jwks',
   '/api/auth/oauth/app-token',
   '/api/auth/oauth/authorize',

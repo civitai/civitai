@@ -23,6 +23,7 @@ import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { postIntentClaimSweep } from '~/server/jobs/post-intent-claim-sweep';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
@@ -106,6 +107,7 @@ import {
 } from '~/server/jobs/build-resource-intent-cooc';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-training-datasets';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -167,6 +169,7 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
   storageUsageMediaJob,
   sendNotificationsJob,
@@ -181,6 +184,7 @@ export const jobs: Job[] = [
   removeOldDrafts,
   resetToDraftWithoutRequirements,
   applyContestTags,
+  postIntentClaimSweep,
   ...applyDiscordRoles,
   userDeletedCleanup,
   removeDeletedUserImages,

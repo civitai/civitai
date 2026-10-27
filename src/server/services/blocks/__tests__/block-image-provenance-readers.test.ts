@@ -38,7 +38,12 @@ type Role =
   /** Reads Image provenance for the CROSS-USER gated read. */
   | 'gated-reader'
   /** `Post.metadata` attribution (a different table), never Image provenance. */
-  | 'post-attribution';
+  | 'post-attribution'
+  /**
+   * Reads Image provenance to DISPLAY a "Published with <app>" credit on an image the viewer
+   * was already authorised to open. A display read, never an access decision.
+   */
+  | 'image-attribution';
 
 const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_PUBLISHED_APP_ID_META_KEY':
@@ -56,7 +61,9 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
     'gated-reader',
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 'post-attribution',
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
+  'src/server/services/blocks/image-app-chip.service.ts#readImageAppChip': 'image-attribution',
   // The server-owned key list `createImage` and the image input schemas strip client copies
   // against. It decides what is DROPPED, never what an app may read.
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS': 'declaration',
@@ -186,6 +193,16 @@ describe('App Blocks image provenance-key sites', () => {
     const gated = Object.entries(LEDGER).filter(([, r]) => r === 'gated-reader');
     expect(gated.length).toBe(1);
     for (const [site] of gated) {
+      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED]);
+    }
+  });
+
+  it('the image-detail credit reads the PUBLISHED key only', () => {
+    // It credits what an app PUBLISHED. An in-tab bytes upload is not that, and the uploaded
+    // key is confined to its declaration and the server-owned list (pinned below).
+    const readers = Object.entries(LEDGER).filter(([, r]) => r === 'image-attribution');
+    expect(readers.length).toBe(1);
+    for (const [site] of readers) {
       expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED]);
     }
   });

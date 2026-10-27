@@ -25,7 +25,7 @@ export const init: ServerInit = async () => {
 };
 
 // Prerendered at build (no cookie), so it must resolve before the gate.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+const PUBLIC_PATHS = new Set(['/favicon.svg', '/logout']);
 // Public landing: no forced login redirect, but still attach the user if there is one (so it can bounce
 // signed-in visitors to the dashboard).
 const OPTIONAL_AUTH_PATHS = new Set(['/']);
