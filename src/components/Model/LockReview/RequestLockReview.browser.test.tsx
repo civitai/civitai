@@ -67,8 +67,15 @@ describe('Request review, beside a locked setting', () => {
     expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
   });
 
-  test('is shown for a mix that includes a requestable lock', async () => {
-    renderWithProviders(<RequestLockReviewLink model={model(['poi', 'nsfw'])} />);
+  test('is not shown while a real-person or minor lock is set, whatever else is locked', async () => {
+    await renderLink(['poi', 'nsfw', 'sfwOnly']);
+
+    expect(page.getByRole('button').elements()).toHaveLength(0);
+    expect(mocks.queried.every((opts) => !opts.enabled)).toBe(true);
+  });
+
+  test('is shown for any requestable lock', async () => {
+    renderWithProviders(<RequestLockReviewLink model={model(['category'])} />);
 
     await expect.element(page.getByRole('button', { name: 'Request review' })).toBeVisible();
   });

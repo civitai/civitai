@@ -20,9 +20,14 @@ export const REQUESTABLE_LOCKS = Object.keys(requestableLockLabels) as Requestab
 export const isRequestableLock = (value: unknown): value is RequestableLock =>
   typeof value === 'string' && (REQUESTABLE_LOCKS as string[]).includes(value);
 
+/** While either of these is locked, none of the model's locks can be requested. */
+const NON_REQUESTABLE_LOCKS = ['poi', 'minor'];
+
 /** The model's locked settings an owner may ask a moderator to review, in display order. */
 export const requestableLocks = (lockedProperties?: (string | null)[] | null): RequestableLock[] =>
-  REQUESTABLE_LOCKS.filter((key) => lockedProperties?.includes(key));
+  lockedProperties?.some((key) => !!key && NON_REQUESTABLE_LOCKS.includes(key))
+    ? []
+    : REQUESTABLE_LOCKS.filter((key) => lockedProperties?.includes(key));
 
 /** What the moderator queue shows as the report's reason: the sub-reason and the settings named. */
 export const lockReviewQueueLabel = (locks: string[]) =>

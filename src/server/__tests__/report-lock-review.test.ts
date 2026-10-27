@@ -32,6 +32,10 @@ vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async
 
 const { createReport } = await import('~/server/services/report.service');
 const { getLockReviewState } = await import('~/server/services/lock-review.service');
+const { POI_LOCKED_PROPERTIES } = await import(
+  '~/server/services/text-scan/actions/model-poi-minor'
+);
+const { MINOR_LOCKED_PROPERTIES } = await import('~/server/services/model.service');
 
 const DAY = 24 * 60 * 60 * 1000;
 /** Closed requests, filtered by the cutoff the service asks for so the window itself is exercised. */
@@ -104,6 +108,24 @@ describe('a request to review a locked setting', () => {
     );
     expect(reportCreate).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['real person', () => POI_LOCKED_PROPERTIES],
+    ['minor', () => MINOR_LOCKED_PROPERTIES],
+  ])(
+    'is refused on a model flagged as a %s, for the settings that flag locked',
+    async (_, locks) => {
+      modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: [...locks()] });
+
+      await expect(createReport(lockReview(OWNER, ['nsfw']))).rejects.toThrow(
+        /can't be reviewed this way/
+      );
+      await expect(createReport(lockReview(OWNER, ['sfwOnly']))).rejects.toThrow(
+        /can't be reviewed this way/
+      );
+      expect(reportCreate).not.toHaveBeenCalled();
+    }
+  );
 
   it('is refused within 30 days of a request closed with its settings still locked', async () => {
     closedRequestsAre([{ daysAgo: 5, lockedProperties: ['sfwOnly'] }]);
@@ -359,10 +381,27 @@ describe('what the owner is offered', () => {
     });
   });
 
-  it('only the requestable locks, when mixed', async () => {
-    modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['poi', 'nsfw'] });
+  it.each([
+    ['real person', () => POI_LOCKED_PROPERTIES],
+    ['minor', () => MINOR_LOCKED_PROPERTIES],
+  ])(
+    'nothing, for a model flagged as a %s, whose flag also locks other settings',
+    async (_, locks) => {
+      expect(locks()).toEqual(expect.arrayContaining(['nsfw', 'sfwOnly']));
+      modelFindUnique.mockResolvedValue({
+        userId: OWNER,
+        lockedProperties: [...locks(), 'category'],
+      });
+      expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
+        requestable: [],
+      });
+    }
+  );
+
+  it('every requestable lock, in display order, when none blocks the request', async () => {
+    modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['category', 'nsfw'] });
     expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
-      requestable: ['nsfw'],
+      requestable: ['nsfw', 'category'],
       pending: false,
       reopensAt: null,
     });
