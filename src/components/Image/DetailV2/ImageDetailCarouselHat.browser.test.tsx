@@ -9,8 +9,9 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 /**
  * The image detail letterboxes its picture inside a full-height slot, so an image's hat goes on the
  * box the picture is drawn in (useDrawnMediaBox), not on the slot's corner. To whoever changes this:
- * - the hat sits in the PICTURE's top-left corner and follows it when the slot resizes (the info
- *   sidebar opening or closing moves the picture without a window resize);
+ * - the hat sits ON the PICTURE's top-left corner, over its edge as in the feed, and follows it
+ *   when the slot resizes (the info sidebar opening or closing moves the picture without a window
+ *   resize); the slot clips, so it reaches out only over letterbox space and stays whole in the slot;
  * - it is the feed-card hat, never larger, and smaller on a narrower picture;
  * - Escape with the hat's popover open closes only the popover; with it closed, Escape still closes
  *   the viewer (the modal it opens in, ImageDetailModal's PageModal);
@@ -128,15 +129,19 @@ const hat = () => document.querySelector<HTMLElement>('button[data-event-decorat
 const rect = (el: Element | null) => el!.getBoundingClientRect();
 const popover = () => document.querySelector('[data-testid="worn-hat-popover"]');
 
-// The hat sits inside the picture's top-left corner: within its box and near its corner.
+// The hat straddles the picture's top edge near its left corner, whole within the slot: the slot
+// above the 2:1 picture is letterbox space the hat reaches into, and the slot clips beyond it.
 async function expectOnPictureCorner() {
   await vi.waitFor(() => {
-    const picture = rect(document.querySelector('[data-testid="picture"]'));
+    const el = document.querySelector('[data-testid="picture"]')!;
+    const picture = rect(el);
+    const slot = rect(el.closest('.relative'));
     const h = rect(hat());
-    expect(h.left).toBeGreaterThanOrEqual(picture.left - 1);
-    expect(h.top).toBeGreaterThanOrEqual(picture.top - 1);
+    expect(h.top).toBeLessThan(picture.top - 4);
+    expect(h.bottom).toBeGreaterThan(picture.top + 4);
+    expect(h.top).toBeGreaterThanOrEqual(slot.top - 1);
+    expect(h.left).toBeGreaterThanOrEqual(slot.left - 1);
     expect(h.left - picture.left).toBeLessThan(40);
-    expect(h.top - picture.top).toBeLessThan(40);
   });
 }
 
@@ -167,7 +172,7 @@ describe('the image detail wears the image hat on the picture', () => {
     renderWithProviders(<Viewer image={mocks.image(true)} />);
     await vi.waitFor(() => expect(hat()).not.toBeNull());
     // offsetWidth: the hat's own size, before its tilt widens its bounding box.
-    const full = getHatLayout('inside', undefined).width;
+    const full = getHatLayout('corner', undefined).width;
     await vi.waitFor(() => expect(hat()!.offsetWidth).toBe(Math.round(full)));
 
     setSlot({ width: 160, height: 600 });

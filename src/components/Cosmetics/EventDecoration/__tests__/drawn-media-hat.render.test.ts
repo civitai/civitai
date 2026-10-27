@@ -11,9 +11,11 @@ import type * as DrawnMediaBoxModule from '~/components/EdgeMedia/useDrawnMediaB
  * The image detail's hat sits on the box its picture is drawn in. happy-dom has no layout, so this
  * hands DrawnMediaHat a measured box and checks what it does with it; the browser test
  * (ImageDetailCarouselHat.browser.test) measures a real letterboxed picture but runs only locally.
- * To whoever changes this: the hat goes inside the drawn box, at the box's width (so a narrow
- * picture wears a smaller hat), marked as a media overlay so the sticker overlay beside it still
- * finds the picture; and nothing at all is drawn or measured when the image carries no hat.
+ * To whoever changes this: the hat goes on the drawn box's top-left corner as in the feed, at the
+ * box's width (so a narrow picture wears a smaller hat), reaching out only as far as the slot
+ * around the box shows it (the slot clips) and tucked inside on a side the box meets; it is marked
+ * as a media overlay so the sticker overlay beside it still finds the picture; and nothing at all
+ * is drawn or measured when the image carries no hat.
  */
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -48,7 +50,7 @@ vi.mock('~/components/Cosmetics/EventDecoration/WornHatPopover', () => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 
 const { DrawnMediaHat } = await import('~/components/Cosmetics/EventDecoration/DrawnMediaHat');
-const { getHatLayout } = await import(
+const { getHatLayout, getHatRoom, HAT_PLAIN_CARD_NUDGE } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 const { MEDIA_OVERLAY_ATTR } = await import('~/components/EdgeMedia/useDrawnMediaBox');
@@ -85,7 +87,7 @@ afterEach(async () => {
 });
 
 describe('the image detail hat sits on the drawn picture', () => {
-  it('inside the drawn box, at its width, worn on its image', async () => {
+  it('on the drawn box, at its width, worn on its image', async () => {
     await render(hat);
     const button = hatButton();
     expect(button).not.toBeNull();
@@ -99,13 +101,45 @@ describe('the image detail hat sits on the drawn picture', () => {
     expect(boxEl.style.width).toBe('160px');
 
     // A 160px picture wears the hat as a 160px card would: smaller than the feed-card hat.
-    const full = getHatLayout('inside', undefined).width;
-    const scaled = getHatLayout('inside', undefined, undefined, 0, 160).width;
+    const full = getHatLayout('corner', undefined).width;
+    const scaled = getHatLayout('corner', undefined, undefined, 0, 160).width;
     expect(scaled).toBeLessThan(full);
     expect(parseFloat(button!.style.width)).toBeCloseTo(scaled, 3);
 
     expect(container.querySelector(`[${MEDIA_OVERLAY_ATTR}]`)).not.toBeNull();
     expect(h.activeCalls.at(-1)).toBe(true);
+  });
+
+  it('reaches out over the letterbox space, as far as it shows', async () => {
+    // 12px of slot left of the box, 30px above it.
+    await render(hat);
+    const button = hatButton()!;
+    const layout = getHatLayout(
+      'corner',
+      undefined,
+      { left: getHatRoom(12), top: getHatRoom(30) },
+      HAT_PLAIN_CARD_NUDGE,
+      160
+    );
+    expect(parseFloat(button.style.left)).toBeCloseTo(layout.left, 3);
+    expect(parseFloat(button.style.top)).toBeCloseTo(layout.top, 3);
+    // On the edge, not inside it: the hat's visible extent starts outside the picture.
+    expect(layout.reach.left).toBeLessThan(0);
+    expect(layout.reach.top).toBeLessThan(0);
+  });
+
+  it('stays inside a side the picture meets', async () => {
+    h.box = { width: 160, height: 80, left: 0, top: 30 };
+    await render(hat);
+    const layout = getHatLayout(
+      'corner',
+      undefined,
+      { left: getHatRoom(0), top: getHatRoom(30) },
+      HAT_PLAIN_CARD_NUDGE,
+      160
+    );
+    expect(layout.reach.left).toBeCloseTo(2, 6);
+    expect(parseFloat(hatButton()!.style.left)).toBeCloseTo(layout.left, 3);
   });
 
   it('no hat until the picture is measured', async () => {
