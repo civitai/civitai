@@ -526,6 +526,18 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/manifest\.blockId .* lowercase/);
   });
 
+  it('rejects a reserved blockId before storing anything', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({ blockId: 'dev-0123456789abcdef' });
+    await expect(
+      submitVersion({
+        bundleBuffer: buf,
+        submittedByUserId: 42,
+      })
+    ).rejects.toThrow('blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-"');
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
   it('rejects when manifest.version is not valid semver', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({ version: 'not-semver' });
