@@ -28,14 +28,18 @@ import { readListingVisibilityMany } from '~/server/services/blocks/app-listing-
 import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { recordPostAppChipRead } from '~/server/prom/post-app-chip.metrics';
-import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
+import { recordPostAppChipRead, type AppChipSurface } from '~/server/prom/post-app-chip.metrics';
+import {
+  recordStoreScopeApplied,
+  type StoreScopeEntrypoint,
+} from '~/server/prom/store-scope.metrics';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import type { PostAppChip, PostAppChipRow } from '~/server/services/blocks/post-app-chip.logic';
 import {
   postAppChipQuery,
   postAppMarkerQuery,
-  resolvePostAppChip,
+  readBlockPublishedAppId,
+  resolveAppChip,
 } from '~/server/services/blocks/post-app-chip.logic';
 import type { SessionUser } from '~/types/session';
 
@@ -44,10 +48,11 @@ import type { SessionUser } from '~/types/session';
  * an unhandled rejection from a fail-open path would defeat the point of failing
  * open.
  */
-function noteDegradedChipRead(err: unknown): void {
+function noteDegradedChipRead(err: unknown, surface: AppChipSurface): void {
   logToAxiom({
     name: 'post-app-chip-read-degraded',
     type: 'error',
+    surface,
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
   }).catch(() => null);
@@ -88,6 +93,63 @@ export async function readPostAppChip({
    */
   viewerBrowsingLevel?: number | null;
 }): Promise<PostAppChip | null> {
+  return readAppChip({
+    surface: 'post',
+    entrypoint: 'post-detail',
+    user,
+    host,
+    viewerBrowsingLevel,
+    readMarker: async () => {
+      // 🔴 `getDbWithoutLag`, not a bare `dbRead` — the SAME routing
+      // `getPostDetail` uses for this post. The chip's own write happens inside
+      // the create-post transaction, so on a bare replica read the publishing
+      // author's first view of their own post can miss the marker and show no
+      // chip, which is the one view most likely to be looked at. The helper
+      // routes to the primary while this post id is inside its lag window.
+      //
+      // ⚠️ KNOWN DUPLICATE, accepted while the gate is narrow. `getPostDetail`
+      // already called `getDbWithoutLag('post', id)` for this same id earlier in
+      // the same request, and nothing memoises the ANSWER (the helper memoises
+      // the store, not the result) — so a scope-`full` post view makes two Redis
+      // GETs on one key, and two primary reads inside the lag window. Trivial
+      // today because only mods + app-dev-testers reach it; the fix, if the gate
+      // widens, is to thread one db handle down from the handler rather than to
+      // drop to bare `dbRead`, which would reintroduce the read-your-writes bug
+      // above.
+      const db = await getDbWithoutLag('post', postId);
+      const row = await db.post.findUnique(postAppMarkerQuery(postId));
+      return readBlockPublishedAppId(row?.metadata ?? null);
+    },
+  });
+}
+
+/**
+ * The SHARED I/O half of the chip, for any surface whose entity the caller has
+ * ALREADY authorised for this viewer: the server-resolved store scope, the
+ * allowlisted app read, the level read, the fail-open catch and the outcome
+ * counter. A surface supplies only how to read ITS marker. `readPostAppChip`
+ * (above) and `readImageAppChip` (`image-app-chip.service.ts`) are the two
+ * callers, so the disclosure gate and the `OauthClient` allowlist exist once.
+ *
+ * 🔴 `readMarker` runs ONLY past the scope gate (see `resolveAppChip`). It must
+ * return `null` — never throw — for "nothing this viewer may see", so that an
+ * ordinary not-found is not counted as `degraded`.
+ */
+export async function readAppChip({
+  surface,
+  entrypoint,
+  user,
+  host,
+  viewerBrowsingLevel,
+  readMarker,
+}: {
+  surface: AppChipSurface;
+  entrypoint: StoreScopeEntrypoint;
+  user?: SessionUser;
+  host: string;
+  viewerBrowsingLevel?: number | null;
+  readMarker: () => Promise<string | null>;
+}): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see
     // the gate note in `post-app-chip.logic.ts`.
@@ -114,47 +176,26 @@ export async function readPostAppChip({
     // touching the counter or Axiom. A real divergence needs the 10s eval-cache
     // entry to lapse BETWEEN the async and sync reads and the 60s config poll to
     // have flipped the answer inside that window.
-    recordStoreScopeApplied(storeScope, 'post-detail');
+    recordStoreScopeApplied(storeScope, entrypoint);
 
-    const { chip, outcome } = await resolvePostAppChip({
-      postId,
+    const { chip, outcome } = await resolveAppChip({
       storeScope,
       host,
       viewerBrowsingLevel,
-      readPostMetadata: async (id) => {
-        // 🔴 `getDbWithoutLag`, not a bare `dbRead` — the SAME routing
-        // `getPostDetail` uses for this post. The chip's own write happens inside
-        // the create-post transaction, so on a bare replica read the publishing
-        // author's first view of their own post can miss the marker and show no
-        // chip, which is the one view most likely to be looked at. The helper
-        // routes to the primary while this post id is inside its lag window.
-        //
-        // ⚠️ KNOWN DUPLICATE, accepted while the gate is narrow. `getPostDetail`
-        // already called `getDbWithoutLag('post', id)` for this same id earlier in
-        // the same request, and nothing memoises the ANSWER (the helper memoises
-        // the store, not the result) — so a scope-`full` post view makes two Redis
-        // GETs on one key, and two primary reads inside the lag window. Trivial
-        // today because only mods + app-dev-testers reach it; the fix, if the gate
-        // widens, is to thread one db handle down from the handler rather than to
-        // drop to bare `dbRead`, which would reintroduce the read-your-writes bug
-        // above.
-        const db = await getDbWithoutLag('post', id);
-        const row = await db.post.findUnique(postAppMarkerQuery(id));
-        return row?.metadata ?? null;
-      },
-      // The plain replica, deliberately: unlike the marker above, this row is not
-      // written inside the post's own transaction — an
-      // `OauthClient`/`AppBlock`/`AppListing` is approved long before any post is
+      readMarker,
+      // The plain replica, deliberately: unlike the marker, this row is not
+      // written inside the entity's own transaction — an
+      // `OauthClient`/`AppBlock`/`AppListing` is approved long before anything is
       // published through it — so there is no lag window to route around.
       //
       // 🔴 NOT CACHED, AND THAT IS A DECISION WITH A NAMED TRIGGER. This row is
       // near-static and shared across every post the app made, so it is the
       // obvious `createCachedObject` (`~/server/redis/caches.ts`, fetch-by-id-array)
       // candidate. It is deliberately not cached YET: the read fires only for a
-      // scope-`full` viewer on an app-published post, which is a near-zero rate, so
-      // a cache would add invalidation surface for no measured saving. The trigger
-      // is `post_app_chip_reads_total{outcome="chip"}` — when that stops being
-      // near-zero, build it.
+      // scope-`full` viewer on an app-published post or image, which is a
+      // near-zero rate, so a cache would add invalidation surface for no measured
+      // saving. The trigger is `post_app_chip_reads_total{outcome="chip"}` — when
+      // that stops being near-zero, build it.
       // 🔴 THE LEVEL TERM. One batched raw statement for every candidate listing, because
       // the column is `// @no-type` and therefore unreachable through the Prisma delegate.
       // Resolved for the `public` floor only — strictly narrower than any real viewer's
@@ -181,11 +222,11 @@ export async function readPostAppChip({
       readApp: async (appId) =>
         (await dbRead.oauthClient.findUnique(postAppChipQuery(appId))) as PostAppChipRow | null,
     });
-    recordPostAppChipRead(outcome);
+    recordPostAppChipRead(outcome, surface);
     return chip;
   } catch (err) {
-    noteDegradedChipRead(err);
-    recordPostAppChipRead('degraded');
+    noteDegradedChipRead(err, surface);
+    recordPostAppChipRead('degraded', surface);
     return null;
   }
 }

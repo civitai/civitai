@@ -75,6 +75,7 @@ import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/Image
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImagePublishedWithApp } from '~/components/Image/DetailV2/ImagePublishedWithApp';
 import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
@@ -552,6 +553,10 @@ export function ImageDetail2() {
                       className="rounded-xl"
                       tipsEnabled={!image.poi}
                     />
+                    {/* Beside, not inside, the creator card: the card's subText sits
+                        inside the profile link on the cosmetic-shop card, and an
+                        anchor cannot nest in an anchor. */}
+                    <ImagePublishedWithApp imageId={image.id} />
                     {image.postId && (
                       <EntityCollaboratorList
                         entityId={image.postId}
