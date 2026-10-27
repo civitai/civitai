@@ -129,6 +129,15 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     expect(results.sysRedis).toBe(true);
   });
 
+  it('runs exactly the live dependency checks: the retired feeds Meilisearch is not one', async () => {
+    // `searchMetrics` probed the feeds Meilisearch (METRICS_SEARCH_HOST), retired in HQ
+    // 793s8c2maetp. Pinned as the whole set so a re-added or dropped check is reviewed.
+    const { results } = await runHealthChecks(liveSignal());
+    expect(Object.keys(results).sort()).toEqual(
+      ['clickhouse', 'pgRead', 'pgWrite', 'read', 'redis', 'sysRedis', 'write'].sort()
+    );
+  });
+
   it('sysRedis ping returns non-PONG → still healthy, sysRedis result recorded false', async () => {
     mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
     const { healthy, results } = await runHealthChecks(liveSignal());

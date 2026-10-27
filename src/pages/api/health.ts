@@ -7,11 +7,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  MeiliCallTimeoutError,
-  metricsSearchClient,
-  withMeiliHealthProbe,
-} from '~/server/meilisearch/client';
-import {
   registerCounter,
   registerCounterWithLabels,
   registerHistogram,
@@ -104,24 +99,6 @@ const checkFns: Record<string, CancellableCheckFn> = {
     }
   },
 
-  async searchMetrics(signal: AbortSignal) {
-    if (signal.aborted) return false;
-    const client = metricsSearchClient;
-    if (client === null) return true;
-    // Wrap under withMeiliHealthProbe() — a dedicated tiny limiter that's
-    // ISOLATED from the user-traffic 'metricsSearch' limiter. Without this
-    // isolation, a backend brownout starves the probe first (because user
-    // calls fill the main limiter), kubelet trips at 10s, pods SIGKILL —
-    // exactly the 2026-05-29 cascade. The probe also inherits
-    // MEILI_CALL_TIMEOUT_MS so it can't hang.
-    // A MeiliCallTimeoutError here means "Meili is sick" → probe failure.
-    return await withMeiliHealthProbe(() => client.isHealthy()).catch((e) => {
-      if (e instanceof MeiliCallTimeoutError) return false;
-      logError({ error: e, name: 'metricsSearch', details: null });
-      return false;
-    });
-  },
-
   // Redis cluster client: skip explicit PING because redis@5 cluster client
   // throws `Cannot read properties of undefined (reading 'connectPromise')`
   // when a master is transiently re-establishing. isReady is the canonical
@@ -171,11 +148,10 @@ export type CheckKey =
   | 'read'
   | 'pgWrite'
   | 'pgRead'
-  | 'searchMetrics'
   | 'redis'
   | 'sysRedis'
   | 'clickhouse';
-// Static disable list from env (HEALTHCHECK_DISABLED="searchMetrics,clickhouse").
+// Static disable list from env (HEALTHCHECK_DISABLED="clickhouse").
 // Filtered to real check names so a typo can't silently swallow nothing-or-everything.
 // Applies in all environments; the sysRedis DISABLED_HEALTHCHECKS list (prod-only)
 // is layered on top at request time.

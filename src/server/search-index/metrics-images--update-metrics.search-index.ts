@@ -3,6 +3,7 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
@@ -30,6 +31,8 @@ type Metrics = {
 };
 
 export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpdateProcessor({
+  // Retired with the index it writes to; see metrics-images.search-index.ts.
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 1,
   indexName: INDEX_ID,
   jobName: `${INDEX_ID}_metrics`,

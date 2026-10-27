@@ -7,6 +7,7 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -273,6 +274,12 @@ const transformData = async ({
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
+  // Retired with the feeds Meilisearch (feeds-meilisearch-2, HQ 793s8c2maetp): feed reads moved to
+  // the feed service behind the `feed-service-meili-off` flag, so nothing reads this index on the
+  // flag-on path. Writes and syncs no-op, so the call sites that still queue updates cost nothing.
+  // 🔴 One-way while retired: turning the flag back off would read a STALE index. Restoring means
+  // removing it from RETIRED_SEARCH_INDEXES and re-running a reset.
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,

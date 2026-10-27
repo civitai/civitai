@@ -572,8 +572,8 @@ export async function fetchDocumentsAbortable<T>(
  * Typed error thrown by withMeili() when a wrapped Meilisearch call exceeds
  * MEILI_CALL_TIMEOUT_MS.
  *
- * Hot-path callers (image feed, /api/health.searchMetrics, getImagesFromSearch
- * SDK call) catch this and return a fast 408/probe-failure instead of
+ * Hot-path callers (image feed, getImagesFromSearch SDK call) catch this and
+ * return a fast 408 instead of
  * bleeding event-loop time waiting for Traefik's 30s router timeout — which
  * is what bled api-primary pods to kubelet SIGKILL on 2026-05-29.
  */

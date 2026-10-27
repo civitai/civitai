@@ -31,8 +31,10 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   images: UNRUNNABLE_JOB_CRON,
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
-  imageMetrics: '*/1 * * * *',
-  imageMetricsUpdateMetrics: '*/1 * * * *',
+  // Retired with the feeds Meilisearch (`metrics_images_v1`); both processors are `retired`, and
+  // keeping the jobs unrunnable also skips the per-minute Postgres/ClickHouse pulls.
+  imageMetrics: UNRUNNABLE_JOB_CRON,
+  imageMetricsUpdateMetrics: UNRUNNABLE_JOB_CRON,
   tools: UNRUNNABLE_JOB_CRON,
   comics: '*/5 * * * *',
 };
