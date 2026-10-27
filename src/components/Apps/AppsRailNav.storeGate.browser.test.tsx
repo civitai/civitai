@@ -98,6 +98,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
+const { useAppsNavSections } = await import('./useAppsNavSections');
 
 function link(name: string) {
   return page.getByRole('link', { name });
@@ -519,20 +520,47 @@ describe('the rail — the getNavSummary query gate stays on appBlocks', () => {
 describe('the rail — Build follows the page mode, App Assistant included', () => {
   const ASSISTANT_FLAGS = { appBlocks: true, appAssistant: true };
 
+  /**
+   * The hook's sections BEFORE the layout's `< 2` collapse. The last row below qualifies for
+   * Marketplace alone, so its rail collapses and an absent Build there would prove nothing; the
+   * probe still lists what the viewer qualified for.
+   */
+  function SectionsProbe() {
+    const labels = useAppsNavSections().map((s) => s.label);
+    return <div data-testid="sections-probe" data-labels={labels.join('|')} />;
+  }
+  const probedSections = () =>
+    (page.getByTestId('sections-probe').element().getAttribute('data-labels') ?? '')
+      .split('|')
+      .filter(Boolean);
+
+  // [label, flags, Build shown, the rail renders]
   test.each([
-    ['the assistant flags, not an author → Build shown', ASSISTANT_FLAGS, true],
-    ['the block runtime alone, not an author → no Build', { appBlocks: true }, false],
+    ['the assistant flags, not an author → Build shown', ASSISTANT_FLAGS, true, true],
+    ['the block runtime alone, not an author → no Build', { appBlocks: true }, false, true],
     [
       'the assistant flag without the block runtime → no Build',
       { appListings: true, appAssistant: true },
       false,
+      false,
     ],
-  ])('signed in with %s', async (_label, flags, shown) => {
+  ])('signed in with %s', async (_label, flags, shown, railRenders) => {
     mocks.flags = flags;
     mocks.user = { id: 21, username: 'palette_maker', isModerator: false };
-    await renderRail();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsPageLayout>
+        <SectionsProbe />
+      </AppsPageLayout>
+    );
+    await expect.element(page.getByTestId('sections-probe')).toBeInTheDocument();
+    // Positive first: every one of these viewers holds a store flag, so Marketplace qualifies.
+    // Without it, a "no Build" row would also pass for a gate that showed this viewer nothing.
+    expect(probedSections()).toContain('Marketplace');
+    expect(probedSections().includes('Build')).toBe(shown);
+    expect(renderedSections().includes('Marketplace')).toBe(railRenders);
     expect(renderedSections().includes('Build')).toBe(shown);
-    expect(renderedSections()).not.toContain('App Assistant');
+    expect(probedSections()).not.toContain('App Assistant');
   });
 
   test('signed out with the assistant flags → no Build entry and no App Assistant link', async () => {
