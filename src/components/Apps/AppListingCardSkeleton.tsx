@@ -1,15 +1,15 @@
-import { Box, Card, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { Box, Card, Divider, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useRef, useState } from 'react';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
 import {
-  LISTING_ACTION_ROW_CONTROL_PX,
-  LISTING_ACTION_ROW_HEIGHT_PX,
-  LISTING_ACTION_ROW_PT_PX,
   LISTING_CARD_COVER_ASPECT_RATIO,
+  LISTING_CARD_CREATOR_AVATAR_PX,
+  LISTING_CARD_CTA_HEIGHT_PX,
+  LISTING_CARD_FOOTER_HEIGHT_PX,
+  LISTING_CARD_HEADER_CENTER_PX,
+  LISTING_CARD_ICON_OVERLAP_PX,
   LISTING_CARD_ICON_SIZE_PX,
-  LISTING_CARD_TITLE_LINES,
   LISTING_CARD_TITLE_LINE_HEIGHT,
-  LISTING_CARD_TITLE_MIN_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { listingGridColumnsAt, MANTINE_BREAKPOINT_PX } from '~/components/Apps/appListingGrid';
 import { APPS_CONTAINER_GUTTER } from '~/components/Apps/appsPageWidths';
@@ -183,15 +183,14 @@ function MetaLineSkeleton({
 export function AppListingCardSkeleton() {
   return (
     <Card
-      padding="md"
+      padding={0}
       radius={0}
       className="h-full rounded-md"
       aria-hidden
       data-testid="apps-listing-card-skeleton"
     >
       {/* THE COVER. Same `Card.Section` + same ratio box as `ListingCover`, so the
-          cover's height is derived from the column width before anything loads —
-          in the skeleton for the same reason it is in the card. */}
+          cover's height is derived from the column width before anything loads. */}
       <Card.Section>
         <Box
           data-testid="apps-listing-skeleton-cover"
@@ -205,129 +204,69 @@ export function AppListingCardSkeleton() {
           <Skeleton radius={0} style={{ position: 'absolute', inset: 0 }} />
         </Box>
       </Card.Section>
-
-      <Stack gap="sm" h="100%" pt="sm">
-        <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
-          {/* The publisher icon — a square of exactly the avatar's edge length. */}
+      <Stack gap="xs" h="100%" px="md" pb="sm">
+        {/* THE HEADER ROW — icon (pulled up over the cover), title, Open. Every number is
+            the card's own constant; the title and the CTA are centred on the ICON's centre
+            exactly as in the card. */}
+        <Group gap="sm" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
           <Skeleton
             width={LISTING_CARD_ICON_SIZE_PX}
             height={LISTING_CARD_ICON_SIZE_PX}
             radius="md"
-            style={{ flexShrink: 0 }}
+            style={{ flexShrink: 0, marginTop: -LISTING_CARD_ICON_OVERLAP_PX }}
             data-testid="apps-listing-skeleton-icon"
           />
-          <Stack gap={2} style={{ minWidth: 0, flexGrow: 1 }}>
-            {/* THE RESERVED TITLE BOX — the card's `min-height` reservation, in the
-                same `em`, over the same font-size token.
-
-                🔴 THE BARS ARE ABSOLUTE, AND THE BOX'S HEIGHT COMES FROM
-                `LISTING_CARD_TITLE_MIN_HEIGHT` ALONE. That is what makes this box
-                the same 2 lines tall as the card's title whether the real title
-                wraps or not — the card reserves the full clamp height for every
-                listing precisely so the rows below it land at the same y on every
-                card. Laying the bars out in flow instead would make the height a
-                function of the bars, i.e. of a number this file chose. */}
-            <Box
-              data-testid="apps-listing-skeleton-title"
-              style={{
-                position: 'relative',
-                fontSize: 'var(--mantine-font-size-xl)',
-                lineHeight: LISTING_CARD_TITLE_LINE_HEIGHT,
-                minHeight: LISTING_CARD_TITLE_MIN_HEIGHT,
-              }}
-            >
-              {Array.from({ length: LISTING_CARD_TITLE_LINES }, (_, i) => (
-                <Skeleton
-                  key={i}
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: `calc(${i} * ${LISTING_CARD_TITLE_LINE_HEIGHT}em)`,
-                    height: `${LISTING_CARD_TITLE_LINE_HEIGHT}em`,
-                    // Cosmetic only: a ragged last line reads as text rather than
-                    // as a block. No geometry depends on it.
-                    width: i === LISTING_CARD_TITLE_LINES - 1 ? '58%' : '100%',
-                  }}
-                />
-              ))}
-            </Box>
-            {/* 🔴 NOTHING ELSE IS RESERVED IN THIS BLOCK, AND THAT IS THE CHANGE.
-                Two `MetaLineSkeleton`s used to sit here — a `size="sm"` creator
-                line (`apps-listing-skeleton-creator`) and a `size="xs"` recommend
-                rollup line (`apps-listing-skeleton-rollup`). The card dropped the
-                author chip and moved the rollup below the action row, so the
-                creator line is DELETED and the rollup line MOVED (it is rendered
-                after the action row below, keeping its testid). Reserving either
-                one here now would over-reserve the block by a whole line and
-                reflow the grid downward on every query resolve — the exact defect
-                this component exists to remove, in the direction that is easiest
-                to miss.
-
-                ⚠️ THE `gap={2}` ON THIS STACK IS THEREFORE INERT HERE, and it is
-                kept anyway — declared, not overlooked. It mirrors the CARD's meta
-                stack, where it is NOT inert: that stack still renders the title
-                plus up to two conditional badges (`Beta`, owner-only
-                `Incomplete`). Dropping it here would make the two files disagree
-                about a number for no gain, and would silently under-reserve the
-                day this block reserves a second row again. */}
-          </Stack>
-        </Group>
-
-        {/* THE ACTION ROW — the card's own `mt="auto"` bottom pin, its padding and
-            its minimum height, read from the same constants the card reads. The bar
-            is the CTA: it grows into the row exactly as the button does
-            (`flexGrow: 1` + `minWidth: 0`).
-
-            🔴 `LISTING_ACTION_ROW_GAP_PX` IS THE ONE GEOMETRY CONSTANT THIS FILE
-            DELIBERATELY DOES NOT READ, and that is a decision, not an omission. It
-            is the gap BETWEEN the CTA and the `⋮` overflow trigger — and whether a
-            card gets a trigger depends on the viewer being the owner or a
-            moderator, which a loading state cannot know. So this row holds exactly
-            one child and a gap has nothing to apply to. Passing it anyway would be
-            an unread declaration that reads as load-bearing, which is the shape
-            this component family has spent several rounds deleting (see the
-            `@container` note in `AppListingCard.tsx`). It costs nothing in
-            geometry, MEASURED not assumed: `AppListingCardSkeleton.geometry.test.tsx`
-            renders the same listings for a signed-out viewer and for their owner and
-            pins that the CTA gives up exactly the trigger + the row gap of WIDTH
-            while the card's box is identical across the two arms.
-            `__tests__/appListingCardSkeleton.test.ts` names this exclusion
-            explicitly, so it cannot become a silent hole. */}
-        <Group
-          mt="auto"
-          pt={LISTING_ACTION_ROW_PT_PX}
-          mih={LISTING_ACTION_ROW_HEIGHT_PX}
-          wrap="nowrap"
-          data-testid="apps-listing-skeleton-actions"
-        >
+          {/* One title line: its height is the line-height times the title's font size, as in
+              the card (the title is one ellipsized line). */}
+          <Box
+            data-testid="apps-listing-skeleton-title"
+            style={{
+              position: 'relative',
+              flex: 1,
+              minWidth: 0,
+              fontSize: 'var(--mantine-font-size-xl)',
+              lineHeight: LISTING_CARD_TITLE_LINE_HEIGHT,
+              height: `${LISTING_CARD_TITLE_LINE_HEIGHT}em`,
+              marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                LISTING_CARD_TITLE_LINE_HEIGHT / 2
+              }em)`,
+            }}
+          >
+            <Skeleton style={{ position: 'absolute', inset: 0, width: '70%' }} />
+          </Box>
           <Skeleton
-            height={LISTING_ACTION_ROW_CONTROL_PX}
-            style={{ flexGrow: 1, minWidth: 0 }}
+            width={72}
+            height={LISTING_CARD_CTA_HEIGHT_PX}
             radius="sm"
+            style={{
+              flexShrink: 0,
+              marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                LISTING_CARD_CTA_HEIGHT_PX / 2
+              }px)`,
+            }}
+            data-testid="apps-listing-skeleton-actions"
           />
         </Group>
-
-        {/* THE STATS LINE — the card's recommend rollup and (for a measurable
-            listing) its play count, on ONE `size="xs"` line BELOW the action row.
-
-            🔴 IT IS RESERVED UNCONDITIONALLY, AND BOTH HALVES OF THAT ARE SAFE FOR
-            DIFFERENT REASONS. The rollup half always renders on a card (a listing
-            with no reviews still gets "No reviews yet"), so the LINE always exists.
-            The play half is `openCount != null`-gated — off-site listings omit it —
-            but it shares the rollup's flex line rather than taking one of its own,
-            so its absence changes width and not height. A loading state cannot know
-            a listing's kind, and this is why it does not have to.
-
-            🔴 IT IS A SIBLING OF THE ACTION ROW, NOT A CHILD OF IT, mirroring the
-            card exactly: the row's `mt="auto"` absorbs the free space above it and
-            pushes BOTH to the bottom, and the outer `Stack`'s `gap="sm"` sets the
-            distance between them on both sides. A `pt` here instead would be a
-            second, hand-picked copy of that gap.
-
-            The 13px thumb/play icons are shorter than the `xs` line box, so — as
-            with the meta lines this replaces — the text is what sets the height and
-            the skeleton does not need to reproduce the icons to match it. */}
-        <MetaLineSkeleton size="xs" widthPct={62} data-testid="apps-listing-skeleton-rollup" />
+        {/* THE FOOTER — bottom-pinned like the card's: a divider, then the reviews/plays line
+            on the left and the creator on the right, at the card's footer height. It is
+            reserved unconditionally (the rollup half always renders on a card, and the play
+            count shares its line). */}
+        <Divider mt="auto" />
+        <Group
+          gap="sm"
+          wrap="nowrap"
+          justify="space-between"
+          mih={LISTING_CARD_FOOTER_HEIGHT_PX}
+          data-testid="apps-listing-skeleton-footer"
+        >
+          <MetaLineSkeleton size="xs" widthPct={100} data-testid="apps-listing-skeleton-rollup" />
+          <Skeleton
+            width={72}
+            height={LISTING_CARD_CREATOR_AVATAR_PX}
+            radius="xl"
+            style={{ flexShrink: 0 }}
+          />
+        </Group>
       </Stack>
     </Card>
   );
