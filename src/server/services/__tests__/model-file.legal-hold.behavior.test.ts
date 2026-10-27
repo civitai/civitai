@@ -28,13 +28,14 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/services/model-version.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(() => Promise.resolve()),
 }));
-const { mockDeleteObject } = vi.hoisted(() => ({
+const { mockDeleteObject, mockDeregister } = vi.hoisted(() => ({
   mockDeleteObject: vi.fn(() => Promise.resolve()),
+  mockDeregister: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
 vi.mock('~/utils/storage-resolver', async (importOriginal) => ({
   ...(await importOriginal<typeof StorageResolver>()),
-  deregisterFileLocationsByFile: vi.fn(() => Promise.resolve()),
+  deregisterFileLocationsByFile: mockDeregister,
 }));
 vi.mock('~/server/redis/resource-data.redis', () => ({
   resourceDataCache: { bust: vi.fn(() => Promise.resolve()) },
@@ -47,7 +48,12 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   createCachedObject: () => ({ bust: vi.fn(() => Promise.resolve()), fetch: vi.fn() }),
 }));
 
-import { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
+import { Prisma } from '@prisma/client';
+import {
+  LEGAL_HOLD_REFUSAL,
+  OWNER_CONTENT_KEPT,
+  ownerHeld,
+} from '~/server/services/legal-hold.service';
 import { deleteFile, updateFile } from '~/server/services/model-file.service';
 
 let db: PGlite;
@@ -95,6 +101,7 @@ describe('deleteFile', () => {
 
     expect(await fileIds(db)).toContain(fileOf(versionOf(owner)));
     expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockDeregister).not.toHaveBeenCalled();
   });
 
   it('tells a moderator why', async () => {
@@ -187,6 +194,7 @@ describe('a new upload replacing a file', () => {
     expect(await fileIds(db)).toContain(fileOf(versionOf(owner)));
     expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
     expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockDeregister).not.toHaveBeenCalled();
   });
 
   it('tells a moderator why', async () => {
@@ -212,5 +220,13 @@ describe('a new upload replacing a file', () => {
     await expect(replace(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
     expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
     expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('ownerHeld', () => {
+  it('reads a hold lookup that fails as held', async () => {
+    const failing = { $queryRaw: () => Promise.reject(new Error('connection reset')) };
+
+    await expect(ownerHeld(failing as never, Prisma.empty)).resolves.toBe(true);
   });
 });

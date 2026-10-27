@@ -6,8 +6,11 @@ import {
   MARKED,
   REPORTED,
   createModelHoldDb,
+  accessRowsOf,
   dropMarkerView,
   failDeletesFrom,
+  holdOwner,
+  realTransactions,
   fileIds,
   fileOf,
   modelOf,
@@ -25,8 +28,9 @@ import {
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockDeleteModelFileObjects } = vi.hoisted(() => ({
+const { mockDeleteModelFileObjects, mockDeregisterFileLocations } = vi.hoisted(() => ({
   mockDeleteModelFileObjects: vi.fn(),
+  mockDeregisterFileLocations: vi.fn(),
 }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -84,7 +88,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, deleteModelFileObjects: mockDeleteModelFileObjects };
 });
-vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocations: vi.fn() }));
+vi.mock('~/utils/storage-resolver', () => ({
+  deregisterFileLocations: mockDeregisterFileLocations,
+}));
 
 import { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 import { deleteVersionById, mergeVersions } from '~/server/services/model-version.service';
@@ -100,6 +106,11 @@ beforeEach(async () => {
   mockDeleteModelFileObjects.mockResolvedValue(undefined);
   await seedModelHoldDb(db);
   routeToDb(db);
+  // clearAllMocks keeps implementations, so undo a case's real transaction for the next one.
+  vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) =>
+    fn(dbMock.dbWrite)) as never);
+  dbMock.dbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 } as never);
+  dbMock.dbWrite.paidAccess.deleteMany.mockResolvedValue({ count: 0 } as never);
 });
 
 /** Stubs the reads `deleteVersionById` makes through Prisma for `owner`'s first version. */
@@ -138,7 +149,22 @@ describe('deleteVersionById', () => {
     expect(await versionIds(db)).toContain(id);
     expect(await fileIds(db)).toContain(fileOf(id));
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.paidAccess.deleteMany).toHaveBeenCalled(); // rolled back with the throw
+    expect(mockDeregisterFileLocations).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the access rows it removed before the refusal, in a real transaction', async () => {
+    realTransactions(db);
+    const held = stubVersion(REPORTED);
+    await expect(deleteVersionById({ id: held, isModerator: false })).rejects.toThrow(
+      OWNER_CONTENT_KEPT
+    );
+    expect(await accessRowsOf(db)).toContain(held);
+
+    // Positive control: the same transaction commits them away for an owner no hold covers.
+    const clean = stubVersion(CLEAN);
+    await deleteVersionById({ id: clean, isModerator: false });
+    expect(await accessRowsOf(db)).not.toContain(clean);
+    expect(await versionIds(db)).not.toContain(clean);
   });
 
   it('tells a moderator why, and an owner nothing about it', async () => {
@@ -173,6 +199,8 @@ describe('deleteVersionById on a database error', () => {
   });
 });
 
+const STRAGGLER = 'https://files.example.invalid/straggler';
+
 /** Stubs the model read `mergeVersions` validates against, for `owner`'s three versions. */
 function stubModel(owner: number) {
   const ids = [1, 2, 3].map((n) => versionOf(owner, n));
@@ -187,6 +215,8 @@ function stubModel(owner: number) {
       meta: {},
     })),
   } as never);
+  // A file row the move missed: deleted from storage once the merge commits.
+  dbMock.dbWrite.modelFile.findMany.mockResolvedValue([{ url: STRAGGLER }] as never);
   return { modelId: modelOf(owner), targetVersionId: ids[0], sourceVersionIds: ids.slice(1) };
 }
 
@@ -207,6 +237,7 @@ describe('mergeVersions', () => {
     const left = await versionIds(db);
     expect(left).toContain(targetVersionId);
     for (const id of sourceVersionIds) expect(left).not.toContain(id);
+    expect(mockDeleteModelFileObjects).toHaveBeenCalledWith([STRAGGLER]);
   });
 
   it.each([
@@ -245,6 +276,34 @@ describe('mergeVersions', () => {
     expect((error as Error).message).toContain('deadlock detected');
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
+  });
+
+  it('refuses a held owner before the transaction starts', async () => {
+    stubModel(REPORTED);
+
+    await expect(merge(REPORTED)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  // The check before the transaction reads the owner as not held; each case changes that between it
+  // and the transaction, so only the guard on the DELETE itself can stop the merge.
+  it.each([
+    ['a hold that lands after the first check', (d: PGlite) => holdOwner(d, CLEAN)],
+    ['a hold that can no longer be read', (d: PGlite) => dropMarkerView(d)],
+  ])('refuses on %s, at the delete', async (_, change) => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    let changed = false;
+    routeToDb(db, async (sql) => {
+      if (changed || !sql.includes('FOR UPDATE')) return;
+      changed = true;
+      await change(db);
+    });
+
+    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(changed).toBe(true);
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
   });
 
   it('deletes nothing when the hold cannot be read', async () => {
