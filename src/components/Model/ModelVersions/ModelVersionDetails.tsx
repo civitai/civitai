@@ -173,6 +173,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
+import { useLockReviewAction } from '~/components/Model/LockReview/useLockReviewAction';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
@@ -1032,6 +1033,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                         </div>
                       </ActionTooltip>
                     )}
+                    <LockReviewActionButton ds={ds} model={model} />
                   </div>
                 </Stack>
               </Card>
@@ -1999,6 +2001,27 @@ function VersionDescriptionModal({ description }: { description: string }) {
     <Modal {...dialog} title="About this version" size="lg" centered>
       <RenderHtml html={description} />
     </Modal>
+  );
+}
+
+function LockReviewActionButton({ ds, model }: { ds: boolean; model: ModelById }) {
+  const action = useLockReviewAction(model);
+  if (!action.show) return null;
+
+  return (
+    <ActionTooltip ds={ds} label={action.tooltip ?? action.label}>
+      <div className="flex-1">
+        <ActionButton
+          ds={ds}
+          color="gray"
+          disabled={action.disabled}
+          onClick={action.open}
+          aria-label={action.label}
+        >
+          <IconLock size={18} />
+        </ActionButton>
+      </div>
+    </ActionTooltip>
   );
 }
 

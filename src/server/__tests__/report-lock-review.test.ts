@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NO_REPORT_REWARD_KEY } from '@civitai/shared/report-reward';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason } from '~/shared/utils/prisma/enums';
 import { reportAdminAttentionDetailsSchema } from '~/server/schema/report.schema';
+import { LOCK_REVIEW_REPORT_REASON } from '~/shared/constants/lock-review.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
   fn({
@@ -10,9 +12,6 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
   })
 );
 
-// TODO(build): import from the shared constant once it exists; the wording awaits review.
-const LOCK_REVIEW_REPORT_REASON = 'Owner requests review of a locked setting';
-
 // Distinct so a value reaching the wrong place cannot pass by colliding with the right one.
 const MODEL = 71;
 const OWNER = 82;
@@ -20,6 +19,8 @@ const STRANGER = 93;
 const EXISTING_REPORT = 104;
 
 const reportFindFirst = dbMock.dbWrite.report.findFirst;
+const closedRequests = dbMock.dbRead.report.findMany;
+const openRequest = dbMock.dbRead.report.findFirst;
 const reportUpdate = dbMock.dbWrite.report.update;
 const modelFindUnique = dbMock.dbRead.model.findUnique;
 const reportCreate = vi.fn();
@@ -27,6 +28,18 @@ const reportCreate = vi.fn();
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 
 const { createReport } = await import('~/server/services/report.service');
+const { getLockReviewState } = await import('~/server/services/lock-review.service');
+
+const DAY = 24 * 60 * 60 * 1000;
+/** Closed requests, filtered by the cutoff the service asks for so the window itself is exercised. */
+const closedRequestsAre = (rows: { daysAgo: number; lockedProperties: string[] }[]) =>
+  closedRequests.mockImplementation((async (args: { where: { statusSetAt: { gt: Date } } }) =>
+    rows
+      .map(({ daysAgo, lockedProperties }) => ({
+        statusSetAt: new Date(Date.now() - daysAgo * DAY),
+        details: { reason: LOCK_REVIEW_REPORT_REASON, lockedProperties },
+      }))
+      .filter((row) => row.statusSetAt > args.where.statusSetAt.gt)) as never);
 
 const lockReview = (userId: number, lockedProperties: string[] = ['sfwOnly']) => ({
   userId,
@@ -46,6 +59,8 @@ beforeEach(() => {
   reportCreate.mockResolvedValue({ id: 137, details: {} });
   reportUpdate.mockResolvedValue({ id: EXISTING_REPORT });
   modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'sfwOnly'] });
+  closedRequests.mockReset().mockResolvedValue([]);
+  openRequest.mockReset().mockResolvedValue(null);
 });
 
 describe('a request to review a locked setting', () => {
@@ -58,6 +73,36 @@ describe('a request to review a locked setting', () => {
   it('is refused for a setting that is not locked', async () => {
     await expect(createReport(lockReview(OWNER, ['category']))).rejects.toThrow();
     expect(reportCreate).not.toHaveBeenCalled();
+  });
+
+  it('is refused for a lock that is not requestable, even alongside one that is', async () => {
+    modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'poi'] });
+
+    await expect(createReport(lockReview(OWNER, ['poi']))).rejects.toThrow();
+    await expect(createReport(lockReview(OWNER, ['nsfw', 'poi']))).rejects.toThrow();
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
+  it('is refused within 30 days of a request closed with its settings still locked', async () => {
+    closedRequestsAre([{ daysAgo: 5, lockedProperties: ['sfwOnly'] }]);
+
+    await expect(createReport(lockReview(OWNER))).rejects.toThrow(/ask again/);
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
+  it('is allowed again once the 30 days are up', async () => {
+    closedRequestsAre([{ daysAgo: 31, lockedProperties: ['sfwOnly'] }]);
+
+    await createReport(lockReview(OWNER));
+    expect(reportCreate).toHaveBeenCalled();
+  });
+
+  it('is allowed again when the closed request led to a lock being lifted', async () => {
+    // The earlier request named a setting that is no longer locked.
+    closedRequestsAre([{ daysAgo: 5, lockedProperties: ['category'] }]);
+
+    await createReport(lockReview(OWNER));
+    expect(reportCreate).toHaveBeenCalled();
   });
 
   it('is refused when it names no setting', async () => {
@@ -80,6 +125,13 @@ describe('a request to review a locked setting', () => {
     });
     const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
     expect(created.data.details).toMatchObject({ lockedProperties: ['sfwOnly'] });
+  });
+
+  it('earns its owner no report reward when actioned', async () => {
+    await createReport(lockReview(OWNER));
+
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.details).toMatchObject({ [NO_REPORT_REWARD_KEY]: true });
   });
 
   it('a second request while one is open returns the open one', async () => {
@@ -105,7 +157,44 @@ describe('a request to review a locked setting', () => {
     const [query] = reportFindFirst.mock.calls[0] as [{ where: MixedObject }];
     expect(query.where.status).toBeUndefined();
     expect(query.where.AND).toBeUndefined();
-    expect(reportCreate).toHaveBeenCalled();
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.details).not.toHaveProperty(NO_REPORT_REWARD_KEY);
+  });
+});
+
+describe('what the owner is offered', () => {
+  it('nothing, for someone else', async () => {
+    expect(await getLockReviewState({ modelId: MODEL, userId: STRANGER })).toBeNull();
+  });
+
+  it('nothing, when the only locks are not requestable', async () => {
+    modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['poi', 'minor'] });
+    expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
+      requestable: [],
+    });
+  });
+
+  it('only the requestable locks, when mixed', async () => {
+    modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['poi', 'nsfw'] });
+    expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
+      requestable: ['nsfw'],
+      pending: false,
+      reopensAt: null,
+    });
+  });
+
+  it('an open request as pending', async () => {
+    openRequest.mockResolvedValue({ id: EXISTING_REPORT });
+    expect(await getLockReviewState({ modelId: MODEL, userId: OWNER })).toMatchObject({
+      pending: true,
+    });
+  });
+
+  it('the date it reopens, during a cooldown', async () => {
+    closedRequestsAre([{ daysAgo: 10, lockedProperties: ['nsfw'] }]);
+    const state = await getLockReviewState({ modelId: MODEL, userId: OWNER });
+    const expected = Date.now() + 20 * DAY;
+    expect(Math.abs((state?.reopensAt?.getTime() ?? 0) - expected)).toBeLessThan(60_000);
   });
 });
 
@@ -132,6 +221,16 @@ describe('the AdminAttention details schema, for a lock review', () => {
       reportAdminAttentionDetailsSchema.safeParse({
         reason: LOCK_REVIEW_REPORT_REASON,
         lockedProperties: ['nsfw'],
+      }).success
+    ).toBe(false);
+  });
+
+  it('refuses a setting that is never requestable', () => {
+    expect(
+      reportAdminAttentionDetailsSchema.safeParse({
+        reason: LOCK_REVIEW_REPORT_REASON,
+        lockedProperties: ['poi'],
+        comment: 'None of the showcase images are mature.',
       }).success
     ).toBe(false);
   });

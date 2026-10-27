@@ -74,6 +74,8 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { assertLockReviewAllowed } from '~/server/services/lock-review.service';
+import { LOCK_REVIEW_REPORT_REASON } from '~/shared/constants/lock-review.constants';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -192,6 +194,26 @@ const reportedMergeSourceFilter = ({
   ];
 };
 
+const isLockReview = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}) =>
+  reportType === ReportEntity.Model &&
+  reason === ReportReason.AdminAttention &&
+  (details as { reason?: unknown } | undefined)?.reason === LOCK_REVIEW_REPORT_REASON;
+
+const reportedLockReviewFilter = (input: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}): Prisma.ReportWhereInput[] =>
+  isLockReview(input) ? [{ details: { path: ['reason'], equals: LOCK_REVIEW_REPORT_REASON } }] : [];
+
 /** The existing report a new one on this entity would be folded into, if any. */
 export const findReportToFoldInto = ({
   reportType,
@@ -223,6 +245,7 @@ export const findReportToFoldInto = ({
     ...(('AND' in placement ? placement.AND : undefined) ?? []),
     ...reportedGameFrameFilter({ reportType, reason, details }),
     ...reportedMergeSourceFilter({ reportType, reason, details }),
+    ...reportedLockReviewFilter({ reportType, reason, details }),
   ];
   return db.report.findFirst({
     where: {
@@ -460,6 +483,14 @@ export const createReport = async ({
   )
     throw throwNotFoundError('That service no longer exists.');
 
+  const lockReview = isLockReview({ reportType: type, reason: data.reason, details: data.details });
+  if (lockReview)
+    await assertLockReviewAllowed({
+      modelId: id,
+      userId,
+      lockedProperties: (data.details as MixedObject).lockedProperties,
+    });
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
@@ -479,7 +510,7 @@ export const createReport = async ({
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
   const details = data.details as MixedObject;
-  if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
+  if (castsNoTagVotes || lockReview) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
@@ -489,7 +520,7 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          pendingOnly: castsNoTagVotes,
+          pendingOnly: castsNoTagVotes || lockReview,
           tx: callerTx,
         })
       : null;

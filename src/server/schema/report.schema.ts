@@ -4,6 +4,10 @@ import {
   parseSourceModelId,
 } from '@civitai/shared/merge-permission';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
+import {
+  isRequestableLock,
+  LOCK_REVIEW_REPORT_REASON,
+} from '~/shared/constants/lock-review.constants';
 import { ExternalModerationType } from '~/server/common/enums';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -68,6 +72,7 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema
     reason: z.string(),
     // Which of the reporter's models the reported merge uses. A link or a bare id; stored as the id.
     sourceModelId: z.preprocess(parseSourceModelId, z.number().int().positive().optional()),
+    lockedProperties: z.string().array().optional(),
   })
   // Moderators judge the merge by this model's permission when the merge was made; without it there
   // is nothing to look up. Enforced here because the form is not the only way a report arrives.
@@ -77,6 +82,19 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema
         code: z.ZodIssueCode.custom,
         path: ['sourceModelId'],
         message: 'Link the model of yours that this merge uses.',
+      });
+    if (details.reason !== LOCK_REVIEW_REPORT_REASON) return;
+    if (!details.lockedProperties?.length || !details.lockedProperties.every(isRequestableLock))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lockedProperties'],
+        message: 'Pick the setting you want reviewed.',
+      });
+    if ((details.comment?.trim().length ?? 0) < 10)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['comment'],
+        message: 'Tell us why the setting should change.',
       });
   });
 
