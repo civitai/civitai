@@ -157,6 +157,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON computes the Flipt-free feature flags once per cohort (the static inputs they read: signed
+  // in or not, moderator, tier, permissions, host, region) and shares the result across users,
+  // evaluating only the Flipt-read flags per user. The merged FeatureAccess is identical to OFF.
+  // Read by `getFeatureFlags` (feature-flags.service.ts) once per whole-result cache miss.
+  // DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized client, which
+  // keeps the per-user computation of every flag. Global boolean, no entity or context.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw (swallowed, uncached) on every cache miss.
+  FEATURE_FLAGS_COHORT_CACHE = 'feature-flags-cohort-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

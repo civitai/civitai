@@ -1073,6 +1073,16 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
   );
 }
 
+/**
+ * Whether `hasFeature` may consult Flipt for `key` — the ONE predicate that splits the registry
+ * into the per-user portion (Flipt evaluates with the user id as entity) and the Flipt-free
+ * portion (decided by static inputs only). `hasFeature` and the cohort cache below both branch on
+ * this, so they cannot disagree about which flags read per-user state.
+ */
+function readsFlipt(key: FeatureFlagKey): boolean {
+  return !!featureFlags[key].fliptKey && !envOverriddenFlags.has(key);
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext,
@@ -1114,7 +1124,7 @@ const hasFeature = (
 
   // Flipt overrides role checks (both enable AND disable) — but not ENV, region, or domain.
   // When Flipt is unavailable, fall through to static evaluation.
-  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
+  if (readsFlipt(key) && _fliptModule) {
     const fliptResult = _fliptModule.isFliptSync(
       feature.fliptKey,
       user ? String(user.id) : 'anonymous',
@@ -1208,6 +1218,122 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
   }, {} as FeatureAccess);
 }
 
+// --------------------------
+// Cohort cache (behind the `feature-flags-cohort-cache` Flipt flag)
+// --------------------------
+// The whole-result cache below is keyed by user id, so every distinct signed-in user misses it
+// and pays for every flag. But the flags `readsFlipt` rejects are decided by static inputs alone,
+// and those inputs are shared by many users. With the flag ON, that Flipt-free portion is computed
+// once per COHORT and reused; only the Flipt-read flags are evaluated per user (through the Flipt
+// client's own per-entity eval cache, as before).
+//
+// KEY COMPLETENESS IS A CORRECTNESS INVARIANT, as for the whole-result key. For a flag that does
+// not read Flipt, `isFeatureFlagKeyPresent` → `hasFeature` reads exactly:
+//   - whether there is a user, `user.isModerator`, `user.tier`;
+//   - `user.permissions` (only for a `granted` flag, by exact key match — the sorted list goes in);
+//   - the host (`ctx.host`, else the request's Host header);
+//   - the region from `getRegion(req)` (all of it; skipped in dev, where region is bypassed);
+//   - module constants: `isDev`, the registry, `envOverriddenFlags`, the color host sets, and the
+//     region restriction config (with the clock, the same staleness the whole-result TTL has).
+// It does NOT read the user id, `isEarlyAdopter`, `appBuilderApproved`, `onboarding` or the Flipt
+// context — those reach only the Flipt branch, which these flags never enter. A new input read by
+// the static branch of `hasFeature` must be added to `cohortKey`, or two users who differ in it
+// would share an entry. The equivalence test (flag ON deep-equals flag OFF over a context matrix)
+// is the guard.
+const STATIC_FLAG_KEYS = (Object.keys(featureFlags) as FeatureFlagKey[]).filter(
+  (key) => !readsFlipt(key)
+);
+// The same staleness bound as the whole-result cache's FEATURE_ACCESS_TTL_MS (declared below).
+const COHORT_TTL_MS = 10_000;
+const COHORT_MAX = 5_000;
+type CohortEntry = { present: ReadonlySet<FeatureFlagKey>; expiresAt: number };
+let cohortCur = new Map<string, CohortEntry>();
+let cohortPrev = new Map<string, CohortEntry>();
+const cohortStats = { hits: 0, misses: 0 };
+
+/** Hit/miss counters of the cohort cache, for tests. */
+export function getFeatureFlagsCohortCacheStats() {
+  return { ...cohortStats };
+}
+
+function cohortKey({ user, req, host = req?.headers.host }: FeatureAccessContext): string {
+  const region = isDev || !req ? null : getRegion(req);
+  return JSON.stringify([
+    user ? 1 : 0,
+    user?.isModerator ? 1 : 0,
+    user?.tier ?? null,
+    user ? (user.permissions ?? []).slice().sort() : null,
+    host ?? null,
+    region,
+  ]);
+}
+
+function getStaticPresence(ctx: FeatureAccessContext): ReadonlySet<FeatureFlagKey> {
+  const now = Date.now();
+  const key = cohortKey(ctx);
+  let entry = cohortCur.get(key);
+  if (entry && entry.expiresAt <= now) {
+    cohortCur.delete(key);
+    entry = undefined;
+  }
+  if (!entry) {
+    const prev = cohortPrev.get(key);
+    cohortPrev.delete(key);
+    if (prev && prev.expiresAt > now) {
+      entry = prev;
+      cohortCur.set(key, prev); // promote so hot cohorts survive rotation
+    }
+  }
+  if (entry) {
+    cohortStats.hits++;
+    return entry.present;
+  }
+
+  cohortStats.misses++;
+  // No Flipt context: `hasFeature` reads it only inside the Flipt branch, which a static key never
+  // enters.
+  const noFliptContext: Record<string, string> = {};
+  const present = new Set<FeatureFlagKey>();
+  for (const flag of STATIC_FLAG_KEYS) {
+    if (isFeatureFlagKeyPresent(flag, ctx, noFliptContext)) present.add(flag);
+  }
+  if (cohortCur.size >= COHORT_MAX) {
+    cohortPrev = cohortCur;
+    cohortCur = new Map();
+  }
+  cohortCur.set(key, { present, expiresAt: now + COHORT_TTL_MS });
+  return present;
+}
+
+/**
+ * Same output as `computeFeatureFlags`, key for key AND in the same key order (registry order, so
+ * a serialized payload is byte-identical): the Flipt-free keys come from the cohort entry, the rest
+ * go through `isFeatureFlagKeyPresent` per user exactly as before.
+ */
+function computeFeatureFlagsByCohort(ctx: FeatureAccessContext): FeatureAccess {
+  const staticPresent = getStaticPresence(ctx);
+  const fliptContext = buildFliptContext(ctx.user);
+  const acc = {} as FeatureAccess;
+  for (const key of Object.keys(featureFlags) as FeatureFlagKey[]) {
+    const present = readsFlipt(key)
+      ? isFeatureFlagKeyPresent(key, ctx, fliptContext)
+      : staticPresent.has(key);
+    if (present) acc[key] = true;
+  }
+  return acc;
+}
+
+/**
+ * The `feature-flags-cohort-cache` kill switch: a global boolean, evaluated with no entity and no
+ * context, once per whole-result cache miss. OFF, unknown to Flipt, or Flipt not loaded ⇒ today's
+ * `computeFeatureFlags`. Read through the lazily loaded client module so this file keeps no value
+ * import of it (it is bundled for the browser too).
+ */
+function isCohortCacheOn(): boolean {
+  const flag = _fliptModule?.FLIPT_FEATURE_FLAGS?.FEATURE_FLAGS_COHORT_CACHE;
+  return !!flag && _fliptModule?.isFliptSync(flag) === true;
+}
+
 // getFeatureFlags is PURE given (user identity, host, region, live Flipt config):
 // same inputs => same FeatureAccess. It runs on every request that touches
 // ctx.features (the image feed does), evaluating ~all flags — each previously
@@ -1228,7 +1354,8 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // — the whole region object is serialized into the key to guarantee that. Live
 // Flipt config changes are bounded by the TTL (same staleness as the per-eval
 // cache in flipt/client.ts). Mutation-safety: the cached object is never handed
-// out — callers always get a shallow copy.
+// out — callers always get a shallow copy. On a miss, with `feature-flags-cohort-cache`
+// on, the Flipt-free flags come from the cohort cache above (its own, narrower key).
 const FEATURE_ACCESS_TTL_MS = 10_000;
 const FEATURE_ACCESS_MAX = 20_000;
 type FeatureAccessEntry = { value: FeatureAccess; expiresAt: number };
@@ -1267,7 +1394,7 @@ export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
     featureAccessPrev.delete(key);
   }
 
-  const value = computeFeatureFlags(ctx);
+  const value = isCohortCacheOn() ? computeFeatureFlagsByCohort(ctx) : computeFeatureFlags(ctx);
   // Generational rotation (bounds memory to ~2x MAX without a full-clear thrash).
   if (featureAccessCur.size >= FEATURE_ACCESS_MAX) {
     featureAccessPrev = featureAccessCur;
