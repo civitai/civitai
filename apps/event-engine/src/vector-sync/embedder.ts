@@ -249,6 +249,11 @@ export type EmbedderOptions = {
   waitSeconds?: number;
   /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
   resubmitDelayMs?: number;
+  /**
+   * Steps submitted per second, across every call on this embedder; 0 or unset is unlimited.
+   * Cache hits create no orchestrator job, so neither job budget bounds them.
+   */
+  maxStepsPerSecond?: number;
   /** No outage re-submit starts this long after a batch's first attempt (see looksLikeOutage). */
   outageRetryForMs?: number;
 };
@@ -259,6 +264,8 @@ type EmbedCall = {
   stamps: Map<'image' | 'video', ModelStamp>;
   /** Checked for every step's stamp before its vector is accepted; throwing rejects the workflow. */
   acceptStamp?: (stamp: ModelStamp) => Promise<void>;
+  /** Given each workflow's accepted vectors as it returns, so they can be stored before the call ends. */
+  onVectors?: (vectors: Map<number, number[]>) => Promise<void>;
 };
 
 /** Takes up to `size` inputs off the front of `queue`, with at most 8 videos. */
@@ -283,6 +290,11 @@ export class Embedder {
   /** The account's in-flight quota, from the orchestrator's RateLimit headers. */
   readonly limits = new RateLimiter(INFLIGHT_POLICY);
   private limitsLogged = false;
+  /** When the next submit may go out, under maxStepsPerSecond. */
+  private nextSubmitAt = 0;
+  /** Runtime limits (setLimits), never above the configured ones. */
+  private inFlightLimit?: number;
+  private stepsPerSecondLimit?: number;
   private readonly fetch: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -325,18 +337,22 @@ export class Embedder {
       batchSize: config.vectorSync.embedBatchSize,
       resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
       outageRetryForMs: config.vectorSync.embedOutageRetrySeconds * 1000,
+      // Backfill and reconcile only: live sync must keep up with uploads, and is bounded by the
+      // event rate rather than a walk over existing images.
+      maxStepsPerSecond: priority === 'low' ? config.vectorSync.embedMaxStepsPerSecond : 0,
       priority,
     });
   }
 
   async embed(
     inputs: EmbedInput[],
-    { acceptStamp }: { acceptStamp?: (stamp: ModelStamp) => Promise<void> } = {}
+    { acceptStamp, onVectors }: Pick<EmbedCall, 'acceptStamp' | 'onVectors'> = {}
   ): Promise<EmbedResult> {
     const call: EmbedCall = {
       result: { vectors: new Map(), failed: [], stamp: null },
       stamps: new Map(),
       acceptStamp,
+      onVectors,
     };
     const queue = [...inputs];
     const running = new Set<Promise<void>>();
@@ -359,12 +375,22 @@ export class Embedder {
           await this.sleep(Math.max(this.limits.waitMs(this.now()), this.limits.minRetryAfterMs));
         continue;
       }
-      const batch = takeBatch(queue, size);
+      // Paced before the batch is taken and the budget held: a batch waiting its turn holds no
+      // jobs, and is sized from what the quota says after the wait, not before it.
+      await this.paceSteps(size);
+      if (call.result.error) break;
+      const fresh = this.limits.allowance(
+        Math.min(this.batchSize, this.budget.capacity),
+        running.size === 0,
+        this.now()
+      );
+      if (fresh === 0) continue;
+      const batch = takeBatch(queue, Math.min(size, fresh));
       const held = await this.budget.acquire(batch.length);
       this.limits.reserve(batch.length);
       const task = (async () => {
         try {
-          await this.embedSplitting(batch, call, 0);
+          await this.embedSplitting(batch, call, 0, 0, this.now(), true);
         } catch (err) {
           call.result.error ??= err;
         } finally {
@@ -387,11 +413,12 @@ export class Embedder {
     call: EmbedCall,
     depth: number,
     outageRetries = 0,
-    started = this.now()
+    started = this.now(),
+    paced = false
   ): Promise<void> {
     let workflow: Workflow;
     try {
-      workflow = await this.runWithRetry(batch);
+      workflow = await this.runWithRetry(batch, paced);
     } catch (err) {
       if (!(err instanceof WorkflowRejectedError)) throw err;
       if (batch.length === 1 || depth >= MAX_SPLIT_DEPTH) {
@@ -478,6 +505,7 @@ export class Embedder {
       this.onProgress?.();
       call.result.stamp ??= accepted[0][2];
       for (const [id, vector] of accepted) call.result.vectors.set(id, vector);
+      await call.onVectors?.(new Map(accepted.map(([id, vector]) => [id, vector])));
     }
     if (retryOutage) {
       await this.sleep(backoff);
@@ -487,11 +515,26 @@ export class Embedder {
     }
   }
 
-  private async runWithRetry(batch: EmbedInput[]): Promise<Workflow> {
+  /** Spaces submits so steps go out at a steady rate, with no burst: each reserves its own slot. */
+  private async paceSteps(steps: number) {
+    const configured = this.opts.maxStepsPerSecond;
+    const limit = this.stepsPerSecondLimit;
+    const rate = limit && configured ? Math.min(limit, configured) : limit ?? configured;
+    if (!rate) return;
+    const now = this.now();
+    const at = Math.max(now, this.nextSubmitAt);
+    this.nextSubmitAt = at + (steps * 1000) / rate;
+    if (at > now) await this.sleep(at - now);
+  }
+
+  /** `paced`: the first attempt already took its step-rate slot (the embed loop's batches). */
+  private async runWithRetry(batch: EmbedInput[], paced = false): Promise<Workflow> {
     let errors = 0;
     let rateLimited = 0;
     const rateLimitedSince = this.now();
-    for (;;) {
+    for (let tries = 0; ; tries++) {
+      if (tries > 0 || !paced) await this.paceSteps(batch.length);
+      // After the pace: a 429 seen meanwhile holds this submit too.
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
@@ -579,13 +622,27 @@ export class Embedder {
     }
   }
 
+  /**
+   * Lowers the configured in-flight cap and step rate at runtime; an unset value restores the
+   * configured one. Neither can be raised above its configured value.
+   */
+  setLimits({ inFlight, stepsPerSecond }: { inFlight?: number; stepsPerSecond?: number }) {
+    this.inFlightLimit = inFlight;
+    this.stepsPerSecondLimit = stepsPerSecond;
+    this.applyCapacity();
+  }
+
+  private applyCapacity() {
+    this.budget.setCapacity(
+      Math.min(this.opts.maxInFlight, this.inFlightLimit ?? Infinity, this.limits.quota ?? Infinity)
+    );
+  }
+
   /** Applies the account quota as the cap, and logs the limits once, from the first response. */
   private observeLimits(headers: Headers) {
     const before = this.limits.quota;
     const seen = this.limits.observe(headers);
-    if (seen.quota !== undefined && seen.quota !== before) {
-      this.budget.setCapacity(Math.min(this.opts.maxInFlight, seen.quota));
-    }
+    if (seen.quota !== undefined && seen.quota !== before) this.applyCapacity();
     if (!this.limitsLogged && (seen.policies.size || seen.states.size)) {
       this.limitsLogged = true;
       logger.info(
