@@ -358,6 +358,13 @@ describe('permaDeleteModelById — legal hold', () => {
         "modelVersionId" int, "collectionId" int, metadata jsonb
       );
       CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
+      CREATE TABLE "Thread" (
+        id serial PRIMARY KEY, "modelId" int, "reviewId" int, "postId" int, "imageId" int,
+        "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
+      CREATE TABLE "Comment" (id serial PRIMARY KEY, "userId" int NOT NULL, "modelId" int, "parentId" int);
+      CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
       CREATE TABLE "CsamReport" (
         id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
         images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'

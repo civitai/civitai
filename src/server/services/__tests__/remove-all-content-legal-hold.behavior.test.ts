@@ -178,9 +178,32 @@ beforeAll(async () => {
       (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
     ).join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
-    -- A review's comment thread, and the comments on it, go with the review.
+    ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
+    ALTER TABLE "Answer" ADD COLUMN "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE;
+    ALTER TABLE "ResourceReview" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE;
+    CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Published', 'Deleted');
+    ALTER TABLE "Model" ADD COLUMN status "ModelStatus" NOT NULL DEFAULT 'Published',
+      ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "updatedAt" timestamp(3);
+    ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
+      ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
+      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3);
+    -- A parent's comment thread, and the comments on it, go with the parent; reply threads with
+    -- their root.
     CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE
+      id serial PRIMARY KEY,
+      "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
+      "postId" int REFERENCES "Post"(id) ON DELETE CASCADE,
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
+      "imageId" int REFERENCES "Image"(id) ON DELETE CASCADE,
+      "articleId" int REFERENCES "Article"(id) ON DELETE CASCADE,
+      "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE,
+      "bountyEntryId" int REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
+      "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE,
+      "answerId" int REFERENCES "Answer"(id) ON DELETE CASCADE,
+      "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
+      "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
+      "commentId" int,
+      metadata jsonb NOT NULL DEFAULT '{}'
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
@@ -744,6 +767,114 @@ function fakeRes() {
   };
   return res;
 }
+
+describe('removeAllContent keeps other people’s comments a held author is part of', () => {
+  const rows = async (sql: string) => (await holder.db.query<Record<string, unknown>>(sql)).rows;
+  const commentIds = async () =>
+    (await rows(`SELECT id FROM "CommentV2" WHERE id >= 5000 ORDER BY id`)).map((r) => r.id);
+
+  /**
+   * A thread on CLEAN's post: BYSTANDER comments, and `replier` answers in a reply thread. The reply
+   * thread hangs off the root thread (both cascade edges) and off BYSTANDER's comment.
+   */
+  async function seedPostThread(replier: number) {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${BYSTANDER}, 5000);
+      INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId")
+        VALUES (5001, 5000, 5000, 5000);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5001, ${replier}, 5001);
+    `);
+  }
+
+  it('keeps the thread, and the unheld reply above the held one, off the deleted post', async () => {
+    await seedPostThread(HELD);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Post" WHERE "userId" = ${CLEAN}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000, 5001]);
+    expect(await rows(`SELECT "postId", metadata FROM "Thread" WHERE id = 5000`)).toEqual([
+      { postId: null, metadata: expect.objectContaining({ detachedFrom: { postId: 1 } }) },
+    ]);
+  });
+
+  it('takes the whole thread with the post when no held author is in it (control)', async () => {
+    await seedPostThread(BYSTANDER);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await commentIds()).toEqual([]);
+  });
+
+  it('keeps a held comment on another user’s review of the deleted model', async () => {
+    await holder.db.exec(`
+      UPDATE "ResourceReview" SET "modelId" = ${MODEL} WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "Thread" (id, "reviewId")
+        SELECT 5000, id FROM "ResourceReview" WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000]);
+  });
+
+  it('keeps a held comment on another user’s entry to the deleted bounty', async () => {
+    await holder.db.exec(`
+      UPDATE "BountyEntry" SET "bountyId" = ${BOUNTY} WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "Thread" (id, "bountyEntryId")
+        SELECT 5000, id FROM "BountyEntry" WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000]);
+  });
+
+  it('takes a model a held author left a legacy comment on off the site instead of deleting it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT status FROM "Model" WHERE id = ${MODEL}`)).toEqual([
+      { status: 'Deleted' },
+    ]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  it('deletes a model whose legacy comments no held author wrote (control)', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${BYSTANDER}, ${MODEL});
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([]);
+  });
+
+  it('keeps, hidden, its own legacy comment a held author replied to', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
+        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000), (5002, ${CLEAN}, NULL, NULL);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(
+      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id >= 5000 ORDER BY id`)
+    ).toEqual([
+      { id: 5000, tosViolation: true },
+      { id: 5001, tosViolation: false },
+    ]);
+  });
+});
 
 describe('/api/mod/remove-all-content', () => {
   const call = async (userId: number, extra: Record<string, string> = {}) => {

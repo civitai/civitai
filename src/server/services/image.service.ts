@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -1014,6 +1016,7 @@ export async function deleteImages(
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
+  const markerView = await holdMarkerViewExists();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1033,9 +1036,14 @@ export async function deleteImages(
         parentId: number | null;
       }[]
     >`
+      WITH doomed AS (
+        SELECT id FROM "Image"
+        WHERE id IN (${Prisma.join(ids)})
+          ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(ids)})
-        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      WHERE id IN (SELECT id FROM doomed)
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);

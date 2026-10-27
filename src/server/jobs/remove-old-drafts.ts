@@ -3,6 +3,11 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
@@ -237,11 +242,19 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       // A held owner's model is kept, the account hold included: a held-for-image owner's model files
       // can be evidence too. The hold is checked in the DELETE itself, so one placed after the replica
       // SELECT still stops it.
+      // A model a held author left a legacy comment on is kept too: those cascade with it and have
+      // no thread to detach. Comment threads holding a held author's comment are detached first.
       const owner = Prisma.raw('m."userId"');
       const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
+        WITH doomed AS (
+          SELECT m.id FROM "Model" m
+          WHERE m.id = ANY(${deletable})
+            AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+            AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
+        ),
+        ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
-        WHERE m.id = ANY(${deletable})
-          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+        WHERE m.id IN (SELECT id FROM doomed)
         RETURNING m.id
       `;
       const deletedSet = new Set(deletedRows.map((r) => r.id));

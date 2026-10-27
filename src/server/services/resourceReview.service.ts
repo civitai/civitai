@@ -1,3 +1,5 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -429,7 +431,13 @@ export const deleteResourceReview = async ({ id }: GetByIdInput) => {
   // Prisma .delete() returns the full deleted row by default — caller in
   // resourceReview.controller.ts already relies on this — so we use modelId
   // and modelVersionId from the returned row rather than pre-fetching.
-  const ret = await dbWrite.resourceReview.delete({ where: { id } });
+  const markerView = await holdMarkerViewExists();
+  const [, ret] = await dbWrite.$transaction([
+    dbWrite.$executeRaw(
+      detachHeldThreadsSql({ reviewId: Prisma.sql`SELECT ${id}::int` }, markerView)
+    ),
+    dbWrite.resourceReview.delete({ where: { id } }),
+  ]);
   void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
@@ -470,9 +478,13 @@ export async function deleteResourceReviews({ ids }: { ids: number[] }) {
     where: { id: { in: ids } },
     select: { modelId: true, modelVersionId: true, userId: true },
   });
-  const result = await dbWrite.resourceReview.deleteMany({
-    where: { id: { in: ids } },
-  });
+  const markerView = await holdMarkerViewExists();
+  const [, result] = await dbWrite.$transaction([
+    dbWrite.$executeRaw(
+      detachHeldThreadsSql({ reviewId: Prisma.sql`SELECT unnest(${ids}::int[])` }, markerView)
+    ),
+    dbWrite.resourceReview.deleteMany({ where: { id: { in: ids } } }),
+  ]);
   void onModelReviewsChanged(affected);
   await bustRatingTotalsForRows(affected).catch();
   return { count: result.count };

@@ -7,6 +7,15 @@ import {
   LegalHoldError,
   LegalHoldStoppedError,
 } from '~/server/services/legal-hold.service';
+import {
+  bountyThreadParents,
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  heldLegacyReplyBelowSql,
+  modelThreadParents,
+  questionThreadParents,
+  type ThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -1566,22 +1575,60 @@ export const removeAllContent = async ({
   const unlessHeld = Prisma.sql`NOT ${held}`;
   let stopped: boolean;
   try {
-    await dbWrite.$executeRaw`
-      DELETE FROM "BountyEntry" be
+    // A parent's delete cascades into its comment threads, other people's comments included; a
+    // thread holding a held author's comment is detached from it first.
+    const detach = (parents: ThreadParents) => detachHeldThreadsCte(parents, markerView);
+    const doomedEntries = Prisma.sql`SELECT be.id FROM "BountyEntry" be
       WHERE be."userId" = ${id}
         AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
         AND ${unlessHeld}`;
     await dbWrite.$executeRaw`
-      DELETE FROM "Bounty"
-      WHERE "userId" = ${id} AND id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
+      WITH ${detach({ bountyEntryId: doomedEntries })}
+      DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
+    const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
+      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach(bountyThreadParents(doomedBounties))}
+      DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
+    const owned = (table: string) =>
+      Prisma.sql`SELECT o.id FROM ${Prisma.raw(
+        `"${table}"`
+      )} o WHERE o."userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ answerId: owned('Answer') })}
+      DELETE FROM "Answer" WHERE id IN (${owned('Answer')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach(questionThreadParents(owned('Question')))}
+      DELETE FROM "Question" WHERE id IN (${owned('Question')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ reviewId: owned('ResourceReview') })}
+      DELETE FROM "ResourceReview" WHERE id IN (${owned('ResourceReview')})`;
     await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // A legacy reply goes with its parent; a comment with a held reply below it is kept, hidden.
+    await dbWrite.$executeRaw`
+      DELETE FROM "Comment" c
+      WHERE c."userId" = ${id} AND ${unlessHeld}
+        AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}`;
+    await dbWrite.$executeRaw`
+      UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ articleId: owned('Article') })}
+      DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ postId: owned('Post') })}
+      DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
+    // The legacy comments cascade with the model and cannot be detached, so a model a held author
+    // commented on is taken off the site instead.
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET status = 'Deleted'::"ModelStatus", "deletedAt" = now(), "updatedAt" = now()
+      WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}`;
+    const doomedModels = Prisma.sql`${owned('Model')}
+      AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach(modelThreadParents(doomedModels))}
+      DELETE FROM "Model" WHERE id IN (${doomedModels})`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
     // Rows, storage objects and caches; then any image uploaded since the list was read.
@@ -1590,7 +1637,9 @@ export const removeAllContent = async ({
       true,
       { onlyWhere: unlessHeld }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ imageId: owned('Image') })}
+      DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.

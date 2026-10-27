@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
@@ -1213,6 +1215,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
+  const markerView = await holdMarkerViewExists();
 
   const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
     async (tx) => {
@@ -1232,14 +1235,20 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       let deletedImages: { id: number; url: string }[] = [];
       if (deletableImages.length) {
+        const imageIds = deletableImages.map((i) => i.id);
         deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+          WITH ${detachHeldThreadsCte(
+            { imageId: Prisma.sql`SELECT unnest(${imageIds}::int[])` },
+            markerView
+          )}
           DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
+          WHERE id IN (${Prisma.join(imageIds)})
           RETURNING id, url
         `;
       }
 
       const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT ${id}::int` }, markerView)}
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"

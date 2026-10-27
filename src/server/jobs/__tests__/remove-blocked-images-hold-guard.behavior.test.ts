@@ -159,6 +159,12 @@ const BASE_SCHEMA = `
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
+    -- The image's comment threads, which an image delete detaches when a held author is in one.
+    CREATE TABLE "Thread" (
+      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
+      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
@@ -236,10 +242,12 @@ beforeEach(async () => {
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
-    strings: TemplateStringsArray,
+    strings: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
   ) => {
-    const flat = Prisma.sql(strings, ...(values as never[]));
+    const flat = Array.isArray(strings)
+      ? Prisma.sql(strings as TemplateStringsArray, ...(values as never[]))
+      : (strings as Prisma.Sql);
     if (!flat.text.includes('DELETE FROM "Image"') && !flat.text.includes('"EvidenceHoldImage"'))
       return [];
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserStoragePurge from '~/server/services/apps/user-storage-purge.service';
 import type { DocStoreDb, DocStoreMaintenance } from '~/server/services/apps/doc-store';
@@ -173,11 +174,11 @@ async function state(app: string) {
 /** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
 const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article', 'Comment'];
 const rawDeleted = (table: string) =>
-  dbMock.dbWrite.$executeRaw.mock.calls.some(
-    ([strings, ...values]) =>
-      (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
-      values.includes(TARGET)
-  );
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) =>
+      Prisma.sql(strings as unknown as TemplateStringsArray, ...(values as never[]))
+    )
+    .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
 
 describe('removeAllContent → document store', () => {
   it('wipes the target account from the store and leaves the bystander alone', async () => {

@@ -44,6 +44,8 @@ import {
   getCommentsThreadDetails2,
   getCommentsInfinite,
   getCommentThreadBounty,
+  isCommentDetached,
+  isThreadDetached,
   getCommentThreadCrucibleId,
   getCommentStorylineId,
   getCommentThreadStorylineId,
@@ -82,6 +84,7 @@ export async function assertCommentEntityVisible(
   const { user } = ctx;
   if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
   if (input.entityType === 'comment') {
+    if (!user?.isModerator && (await isCommentDetached(input.entityId))) throw throwNotFoundError();
     const storylineId = await getCommentStorylineId(input.entityId);
     if (storylineId) return assertStorylineThreadVisible(storylineId, ctx);
   }
@@ -103,6 +106,8 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     if (!ctx.user?.isModerator) {
+      if (await isThreadDetached(comment.threadId))
+        throw throwNotFoundError(`No comment with id ${input.id}`);
       const bounty = await getCommentThreadBounty(comment.threadId);
       if (bounty) await assertBountyVisible(bounty, ctx.user);
       const crucibleId = await getCommentThreadCrucibleId(comment.threadId);

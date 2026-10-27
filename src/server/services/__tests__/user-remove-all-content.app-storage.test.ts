@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -249,6 +250,10 @@ beforeEach(() => {
   dbMock.dbWrite.appListingModerationEvent.update.mockResolvedValue({});
 });
 
+/** A tagged-template `$executeRaw` call as the one statement it sends, nested fragments flattened. */
+const flatten = ([strings, ...values]: unknown[]) =>
+  Prisma.sql(strings as TemplateStringsArray, ...(values as never[]));
+
 describe('removeAllContent → App Blocks per-user storage', () => {
   it('destroys the wiped account rows and leaves every other account alone', async () => {
     await removeAllContent({ id: TARGET, actorUserId: MOD });
@@ -427,11 +432,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     });
     // The evidence deletes are raw, so each can carry the legal hold in its own statement.
     for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
-      const deleted = dbMock.dbWrite.$executeRaw.mock.calls.some(
-        ([strings, ...values]) =>
-          (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
-          values.includes(TARGET)
-      );
+      const deleted = dbMock.dbWrite.$executeRaw.mock.calls
+        .map(flatten)
+        .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
       expect(deleted, table).toBe(true);
     }
   });
@@ -455,13 +458,12 @@ describe('removeAllContent — bounties with a payout in flight', () => {
       })
     );
     expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
-    const calls = dbMock.dbWrite.$executeRaw.mock.calls as [string[], ...unknown[]][];
-    const bountyDelete = calls.findIndex(([strings]) =>
-      strings.join('?').includes('DELETE FROM "Bounty"\n')
-    );
+    const statements = dbMock.dbWrite.$executeRaw.mock.calls.map(flatten);
+    const bountyDelete = statements.findIndex((sql) => sql.text.includes('DELETE FROM "Bounty"'));
     expect(bountyDelete).toBeGreaterThanOrEqual(0);
-    const [, ...values] = calls[bountyDelete];
-    expect(values.slice(0, 2)).toEqual([TARGET, [4]]);
+    const { text, values } = statements[bountyDelete];
+    const match = /b\."userId" = \$(\d+) AND b\.id <> ALL\(\$(\d+)::int\[\]\)/.exec(text);
+    expect([match![1], match![2]].map((n) => values[Number(n) - 1])).toEqual([TARGET, [4]]);
     expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
       dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[bountyDelete]
     );

@@ -19,6 +19,12 @@ import {
   LegalHoldError,
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
+import {
+  detachHeldThreadsCte,
+  detachHeldThreadsSql,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
@@ -2397,28 +2403,46 @@ export const permaDeleteModelById = async ({
           select: { id: true },
         });
 
+        await tx.$executeRaw(
+          detachHeldThreadsSql(
+            { imageId: Prisma.sql`SELECT unnest(${imagesToDelete.map((i) => i.id)}::int[])` },
+            true
+          )
+        );
         await tx.image.deleteMany({
           where: { postId: { in: postIds } },
         });
       }
 
+      await tx.$executeRaw(
+        detachHeldThreadsSql(
+          {
+            postId: Prisma.sql`SELECT p.id FROM "Post" p
+              WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`,
+          },
+          true
+        )
+      );
       await tx.post.deleteMany({
         where: {
           userId: model.userId,
-          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+          modelVersionId: { in: versionIds },
         },
       });
 
       // A held owner's model is refused, and the rollback restores its posts and images. The hold is
       // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
-      // account hold too: its image legs cover the images this deletes.
+      // account hold too: its image legs cover the images this deletes. So is a model a held author
+      // left a legacy comment on: those cascade with it and have no thread to detach.
       const owner = Prisma.raw('m."userId"');
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
+        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
           AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+          AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
       `.catch((e: unknown) => {
         throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });

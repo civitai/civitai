@@ -1,3 +1,4 @@
+import { heldLegacyReplyBelowSql } from '~/server/services/comment-thread-hold';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
@@ -443,14 +444,19 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  const deleted = await dbWrite.comment.delete({ where: { id } });
-  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  // Its replies go with it, so one kept for a held reply below it is hidden instead, as in the
+  // moderator bulk delete.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction((tx) =>
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView)
+  );
+  if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
   if (modelId) await modelMetrics.queueUpdate(modelId);
 
-  return deleted;
+  return { id };
 };
 
 export const updateCommentById = async ({
@@ -590,26 +596,18 @@ export async function bulkDeleteComments({
   };
 }
 
-async function deleteLegacyCommentsUnlessHeld(
+export async function deleteLegacyCommentsUnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
   markerView: boolean
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
-  // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
-  // reply under it, at any depth, is held.
+  // A comment is also kept while any reply under it, at any depth, is held.
   const deleted = await tx.$queryRaw<{ modelId: number }[]>`
     DELETE FROM "Comment" c
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
-          UNION
-          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-        )
-        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
-      )
+      AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}
     RETURNING c."modelId"
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
