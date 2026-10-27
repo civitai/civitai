@@ -47,6 +47,22 @@ function getPresetKey(tokenScope: number): string | null {
   return null;
 }
 
+const gridScopeMask = tokenScopeGrid.reduce<number>(
+  (mask, row) =>
+    mask |
+    ('read' in row ? row.read : 0) |
+    ('write' in row ? row.write : 0) |
+    ('delete' in row ? row.delete : 0),
+  0
+);
+
+// Full carries bits with no checkbox (SocialTip). A toggled scope keeps only what the grid shows,
+// so a custom key holds exactly the boxes ticked, and ticking every box is still Full.
+function toggleGridScope(tokenScope: number, flag: number): number {
+  const newScope = Flags.toggleFlag(tokenScope, flag) & gridScopeMask;
+  return newScope === (TokenScope.Full & gridScopeMask) ? TokenScope.Full : newScope;
+}
+
 const periodOptions = [
   { value: 'day', label: 'Per 24 hours' },
   { value: 'week', label: 'Per 7 days' },
@@ -109,8 +125,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
   };
 
   const handleToggleFlag = (flag: number) => {
-    const newScope = Flags.toggleFlag(tokenScope, flag);
-    updateTokenScope(newScope);
+    updateTokenScope(toggleGridScope(tokenScope, flag));
   };
 
   const handleSaveApiKey = (values: z.infer<typeof schema>) => {
