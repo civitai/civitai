@@ -35,11 +35,13 @@
 // cap it there first. `endpoint`, `result`, and `slot_id` are strictly
 // enumerated (see AppBlockEndpoint / normalizeSlotId / *Result below) so they
 // can never blow up cardinality regardless of client input.
-import client, { type Counter, type Histogram, type Registry } from 'prom-client';
+import client, { type Counter, type Gauge, type Histogram, type Registry } from 'prom-client';
 // The block-scope VOCABULARY, imported only to CLAMP a label. A pure constants module — no
 // server graph — so it costs this metrics module nothing at load time, and it is what keeps
 // `scope` a bounded label rather than a bounded-by-convention one.
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+// Type-only: the document store's closed error-code set, so the `code` label is typed by it.
+import type { StorageApiCode } from '~/server/services/apps/doc-store-api';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -663,6 +665,17 @@ function getOrCreateCounter(
   return new client.Counter({ name, help, labelNames, registers: [reg] });
 }
 
+function getOrCreateGauge(
+  reg: Registry,
+  name: string,
+  help: string,
+  labelNames: string[]
+): Gauge<string> {
+  const existing = reg.getSingleMetric(name) as Gauge<string> | undefined;
+  if (existing) return existing;
+  return new client.Gauge({ name, help, labelNames, registers: [reg] });
+}
+
 function getOrCreateHistogram(
   reg: Registry,
   name: string,
@@ -702,6 +715,8 @@ type Bundle = {
   storageManifestUnparseableTotal: Counter<string>;
   reviewStorageCleanupTotal: Counter<string>;
   reviewStorageSweepTotal: Counter<string>;
+  docStoreErrorsTotal: Counter<string>;
+  docStoreEnabled: Gauge<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1189,6 +1204,29 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['outcome']
   );
 
+  // One increment per error envelope the document-store route sends (apps/doc-store-api.ts),
+  // whichever layer refused: the route itself, the store, or the token middleware's refusal
+  // written in the storage envelope. `code` is the envelope's code, from the closed
+  // `StorageApiCode` set, and `endpoint` is one of the four storage labels. No app label: the
+  // per-app split is `civitai_app_block_requests_total`, and this one multiplies by ~25 codes.
+  const docStoreErrorsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_errors_total',
+    'Document-store error responses by logical endpoint (storage_info|storage_read|storage_write|storage_tally) and the envelope code (the StorageApiCode set in apps/doc-store-api.ts). The server-fault (5xx) codes are published at 0 from the first scrape; a 4xx code appears at its first occurrence, so read those with max_over_time or a > 0 test rather than increase()',
+    ['endpoint', 'code']
+  );
+
+  // 1 once this process has confirmed the store's connection is usable (configured, and its role
+  // is bound by row-level security); 0 otherwise. Labelless, so it reads 0 from the moment the
+  // registry is built, and /api/metrics evaluates it on every scrape (apps/doc-store.instance.ts
+  // `refreshDocStoreEnabled`), so it has a value with no storage traffic at all.
+  const docStoreEnabled = getOrCreateGauge(
+    reg,
+    'civitai_app_block_doc_store_enabled',
+    'Whether this process can serve the App Blocks document store: 1 = its connection is configured and the role check passed; 0 = no connection configured, the role bypasses row-level security (every call answers storage_disabled), or the role has not yet been read successfully. Evaluated on every scrape',
+    []
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1430,6 +1468,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     storageManifestUnparseableTotal,
     reviewStorageCleanupTotal,
     reviewStorageSweepTotal,
+    docStoreErrorsTotal,
+    docStoreEnabled,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1767,11 +1807,94 @@ export function recordReviewStorageCleanup(outcome: ReviewStorageCleanupOutcome)
   }
 }
 
-export function recordReviewStorageSweep(outcome: 'purged' | 'failed'): void {
+export const REVIEW_STORAGE_CLEANUP_OUTCOMES = [
+  'purged',
+  'nothing',
+  'disabled',
+  'failed',
+] as const satisfies readonly ReviewStorageCleanupOutcome[];
+
+export type ReviewStorageSweepOutcome = 'purged' | 'failed';
+export const REVIEW_STORAGE_SWEEP_OUTCOMES = [
+  'purged',
+  'failed',
+] as const satisfies readonly ReviewStorageSweepOutcome[];
+
+export function recordReviewStorageSweep(outcome: ReviewStorageSweepOutcome): void {
   try {
     ensureRegisterAppBlockRuntimeMetrics().reviewStorageSweepTotal.inc({ outcome });
   } catch {
     /* instrument-only — a metrics error must never fail the sweep */
+  }
+}
+
+/** The four document-store endpoint labels (`storageEndpointLabel` in apps/doc-store-api.ts). */
+export const DOC_STORE_ENDPOINTS = [
+  'storage_info',
+  'storage_read',
+  'storage_write',
+  'storage_tally',
+] as const satisfies readonly AppBlockEndpoint[];
+export type DocStoreEndpoint = (typeof DOC_STORE_ENDPOINTS)[number];
+
+/**
+ * The (endpoint, code) error series published at 0: every server-fault (5xx) code, on each
+ * endpoint that can raise it. These are the alertable ones, and a seeded 0 is what lets
+ * `increase()` see the first one. The 4xx codes are not seeded: most are reachable on only some
+ * endpoints, a seeded zero no code path can move reads as "never happens", and each seeded row
+ * is multiplied by every pod. A test pins this set to the 5xx entries of STORAGE_ERROR_STATUS.
+ *
+ * `moderation_unavailable` is raised only by the moderation scan, which runs on a document write
+ * or a counter increment, never on info or a read. `consent_unavailable` is raised only by the
+ * publish-scope check on a create or put; the route's own scope is consent-exempt, so the
+ * middleware's permission-state refusal never reaches it.
+ */
+const DOC_STORE_SEEDED_ERROR_CODES: Partial<Record<StorageApiCode, readonly DocStoreEndpoint[]>> = {
+  storage_disabled: DOC_STORE_ENDPOINTS,
+  consent_unavailable: ['storage_write'],
+  service_unavailable: DOC_STORE_ENDPOINTS,
+  internal_error: DOC_STORE_ENDPOINTS,
+  moderation_unavailable: ['storage_write', 'storage_tally'],
+};
+
+/** One error envelope sent by the document-store route. Total. */
+export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApiCode): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().docStoreErrorsTotal.inc({ endpoint, code });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/** Set the per-process document-store enabled gauge. Total. */
+export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.register): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics(reg).docStoreEnabled.set(enabled ? 1 : 0);
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * Publishes the document-store and review-storage counters at 0, so a series that never fired
+ * is distinguishable from one that is not wired. `inc(…, 0)` leaves an existing count alone, so
+ * this is idempotent; /api/metrics calls it on every scrape.
+ */
+export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): void {
+  try {
+    const { reviewStorageCleanupTotal, reviewStorageSweepTotal, docStoreErrorsTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
+    for (const outcome of REVIEW_STORAGE_CLEANUP_OUTCOMES) {
+      reviewStorageCleanupTotal.inc({ outcome }, 0);
+    }
+    for (const outcome of REVIEW_STORAGE_SWEEP_OUTCOMES) {
+      reviewStorageSweepTotal.inc({ outcome }, 0);
+    }
+    for (const [code, endpoints] of Object.entries(DOC_STORE_SEEDED_ERROR_CODES)) {
+      for (const endpoint of endpoints ?? []) docStoreErrorsTotal.inc({ endpoint, code }, 0);
+    }
+  } catch {
+    // Seeding is a readability nicety; losing it must not cost the scrape.
   }
 }
 
