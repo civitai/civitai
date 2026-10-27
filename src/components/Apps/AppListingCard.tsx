@@ -428,7 +428,8 @@ export function AppListingCard({
               flexShrink: 0,
               marginTop: -LISTING_CARD_ICON_OVERLAP_PX,
               // A ring in the card's own fill, so the icon reads as lifted off the cover.
-              boxShadow: '0 0 0 3px var(--mantine-color-dark-6)',
+              boxShadow:
+                '0 0 0 3px light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
             }}
             data-listing-icon-placeholder={card.iconUrl == null ? '' : undefined}
             styles={{
@@ -470,7 +471,7 @@ export function AppListingCard({
               size="xl"
               fw={700}
               lh={LISTING_CARD_TITLE_LINE_HEIGHT}
-              c="white"
+              c="light-dark(var(--mantine-color-dark-9), var(--mantine-color-white))"
               tooltipLabel={card.name}
             >
               {card.name}
@@ -655,10 +656,10 @@ export function AppListingCard({
               </Group>
             )}
           </Group>
-          {creator && (
+          {creator?.username && (
             <Anchor
               component={Link}
-              href={`/user/${encodeURIComponent(creator.username ?? '')}`}
+              href={`/user/${encodeURIComponent(creator.username)}`}
               underline="hover"
               c="dimmed"
               className="relative z-10"

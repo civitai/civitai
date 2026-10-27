@@ -547,7 +547,10 @@ describe('AppListingCard', () => {
     // fails against a correctly-rendered component.
     expect(style).toContain('--text-fz: var(--mantine-font-size-xl)');
     expect(style).toContain('font-weight: 700');
-    expect(style).toContain('color: var(--mantine-color-white)');
+    // Light theme: white on the light card body is invisible, so the colour is theme-aware.
+    expect(style).toContain(
+      'color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-white))'
+    );
     // 🔴 `lh={1.2}` is load-bearing and easy to delete by accident: without it the
     // title inherits `--mantine-line-height-xl` (1.65), which at 20px is 33px vs
     // 24px — a ~14px card-height swing across a 2-line clamp, and card height is
@@ -1406,6 +1409,13 @@ describe('AppListingCard — card A layout', () => {
     expect(center(testId('apps-listing-card-creator'))?.closest('a')?.getAttribute('href')).toBe(
       '/user/alice'
     );
+  });
+
+  test('🔴 a creator with no username renders no byline link (never a bare /user/ href)', async () => {
+    await renderCard({ creator: { id: 5, username: null, image: null } });
+    expect(document.querySelectorAll('a[href="/user/"]')).toHaveLength(0);
+    expect(testId('apps-listing-card-creator'), 'control: footer must still render').toBeNull();
+    expect(testId('apps-listing-card-footer')).not.toBeNull();
   });
 
   test('🔴 the ⋮ menu sits inside the cover top-right, for the owner', async () => {
