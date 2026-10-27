@@ -1,7 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead } from '~/server/db/client';
-
-type LockReviewDb = Pick<typeof dbRead, 'model' | 'report'>;
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   LOCK_REVIEW_COOLDOWN_DAYS,
@@ -14,6 +12,8 @@ import {
   type RequestableLock,
 } from '~/shared/constants/lock-review.constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+
+type LockReviewDb = Pick<typeof dbRead, 'model' | 'report'>;
 
 export type LockReviewState = {
   requestable: RequestableLock[];
