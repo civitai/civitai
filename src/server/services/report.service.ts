@@ -222,7 +222,7 @@ const reportedLockReviewFilter = (input: {
   isLockReview(input) ? [{ details: { path: ['reason'], equals: LOCK_REVIEW_REPORT_REASON } }] : [];
 
 /** The existing report a new one on this entity would be folded into, if any. */
-export const findReportToFoldInto = ({
+export const findReportToFoldInto = async ({
   reportType,
   entityReportId,
   reason,
@@ -254,16 +254,44 @@ export const findReportToFoldInto = ({
     ...reportedMergeSourceFilter({ reportType, reason, details }),
     ...reportedLockReviewFilter({ reportType, reason, details }),
   ];
-  return db.report.findFirst({
-    where: {
-      reason,
-      [reportType]: { [entityIdField]: entityReportId },
-      ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
-      ...(narrowing.length ? { AND: narrowing } : {}),
-    },
-    orderBy: { id: 'desc' },
-  });
+  const where: Prisma.ReportWhereInput = {
+    reason,
+    [reportType]: { [entityIdField]: entityReportId },
+    ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
+    ...(narrowing.length ? { AND: narrowing } : {}),
+  };
+  const find = (before?: number) =>
+    db.report.findFirst({
+      where: before ? { ...where, id: { lt: before } } : where,
+      orderBy: { id: 'desc' },
+    });
+  if (!isOtherModelAdminAttention({ reportType, reason, details })) return find();
+
+  // Any other AdminAttention report on a model must not land in an owner's lock review request: it
+  // would be shown, closed and rewarded as part of the owner's ask. Skipped in code, not in the
+  // query, because a JSON path NOT also drops rows that have no `reason` at all.
+  let found = await find();
+  for (let skipped = 0; found && isLockReviewDetails(found.details); skipped++) {
+    if (skipped >= MAX_LOCK_REVIEWS_SKIPPED) return null;
+    found = await find(found.id);
+  }
+  return found;
 };
+
+/** Past this many of an owner's requests in a row, a new report gets its own row instead. */
+const MAX_LOCK_REVIEWS_SKIPPED = 10;
+
+const isLockReviewDetails = (details: unknown) =>
+  (details as { reason?: unknown } | null)?.reason === LOCK_REVIEW_REPORT_REASON;
+
+const isOtherModelAdminAttention = (input: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}) =>
+  input.reportType === ReportEntity.Model &&
+  input.reason === ReportReason.AdminAttention &&
+  !isLockReview(input);
 
 const validateReportCreation = async ({
   userId,

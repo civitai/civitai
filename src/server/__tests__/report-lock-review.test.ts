@@ -385,6 +385,79 @@ describe('a request to review a locked setting', () => {
   });
 });
 
+describe("someone else's report on a model with an owner's request", () => {
+  const OTHER_REPORT = 90;
+  const ownerRequest = (id: number) => ({
+    id,
+    userId: OWNER,
+    alsoReportedBy: [],
+    previouslyReviewedCount: 0,
+    status: 'Pending',
+    details: {
+      reason: LOCK_REVIEW_REPORT_REASON,
+      lockedProperties: ['sfwOnly'],
+      noReportReward: true,
+    },
+  });
+  const strangersReport = () =>
+    createReport({
+      userId: STRANGER,
+      id: MODEL,
+      type: ReportEntity.Model,
+      reason: ReportReason.AdminAttention,
+      details: { reason: 'Content that should be reviewed', comment: 'Looks off.' },
+    });
+
+  it('gets its own row instead of joining the request', async () => {
+    reportFindFirst.mockResolvedValueOnce(ownerRequest(EXISTING_REPORT)).mockResolvedValue(null);
+
+    await strangersReport();
+
+    expect(reportUpdate).not.toHaveBeenCalled();
+    expect(reportUpdateMany).not.toHaveBeenCalled();
+    expect(reportCreate).toHaveBeenCalledTimes(1);
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.userId).toBe(STRANGER);
+    expect(created.data.details).not.toHaveProperty('alsoReportedBy');
+    // Looked past the request, at older reports only.
+    const [, second] = reportFindFirst.mock.calls as [unknown, [{ where: MixedObject }]];
+    expect(second[0].where.id).toEqual({ lt: EXISTING_REPORT });
+  });
+
+  it('still joins an older report of its own kind behind the request', async () => {
+    reportFindFirst.mockResolvedValueOnce(ownerRequest(EXISTING_REPORT)).mockResolvedValueOnce({
+      id: OTHER_REPORT,
+      userId: OWNER + 7,
+      alsoReportedBy: [],
+      previouslyReviewedCount: 0,
+      details: { reason: 'Other concern' },
+    });
+
+    await strangersReport();
+
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(reportUpdate).toHaveBeenCalledTimes(1);
+    const [{ where, data }] = reportUpdate.mock.calls[0] as [
+      { where: MixedObject; data: MixedObject }
+    ];
+    expect(where).toEqual({ id: OTHER_REPORT });
+    expect(data.alsoReportedBy).toEqual([STRANGER]);
+  });
+
+  it('gets its own row when only requests come back, however many', async () => {
+    // Capped so a missing skip limit fails on the call count instead of hanging.
+    let id = 500;
+    reportFindFirst.mockImplementation((async () =>
+      id > 450 ? ownerRequest(id--) : null) as never);
+
+    await strangersReport();
+
+    expect(reportUpdate).not.toHaveBeenCalled();
+    expect(reportCreate).toHaveBeenCalledTimes(1);
+    expect(reportFindFirst.mock.calls.length).toBeLessThan(20);
+  });
+});
+
 describe('what the owner is offered', () => {
   it('nothing, for someone else', async () => {
     expect(await getLockReviewState({ modelId: MODEL, userId: STRANGER })).toBeNull();
