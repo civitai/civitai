@@ -94,8 +94,10 @@ vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
 
+import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import {
   isEndedTimedGateResubmitted,
+  updateModelVersionPaidAccess,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
 
@@ -194,6 +196,42 @@ describe('upsertModelVersion on a version whose timed Early Access has ended', (
     await save({ name: 'renamed', paidAccess });
 
     expect(writePaidAccessForModelVersion).toHaveBeenCalledWith(VERSION_ID, paidAccess);
+  });
+});
+
+describe('updateModelVersionPaidAccess on a version whose timed Early Access has ended', () => {
+  it('keeps the gate, records no affirmation and logs no gate change', async () => {
+    seedPublished({ timeframeDays: 7, endsAt: new Date(Date.now() - DAY) });
+    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue({
+      timeframeDays: 7,
+      endsAt: new Date(Date.now() - DAY),
+      terms: { download: { price: 300 } },
+    } as never);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      baseModel: 'SDXL 1.0',
+      usageControl: 'Download',
+      modelId: MODEL_ID,
+      meta: null,
+      model: { userId: OWNER_ID },
+    });
+    vi.mocked(resolveRightsAffirmation).mockResolvedValue({ affirmedAt: 'now' } as never);
+    const tracker = { entityChanges: vi.fn().mockResolvedValue(undefined) };
+
+    await updateModelVersionPaidAccess({
+      id: VERSION_ID,
+      paidAccess: { permanent: false, timeframeDays: 7, terms },
+      rightsAffirmed: true,
+      tracker,
+      actorUserId: OWNER_ID,
+    } as never);
+
+    expect(writePaidAccessForModelVersion).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    const logged = tracker.entityChanges.mock.calls.flatMap(
+      ([rows]) => rows as { field?: string }[]
+    );
+    expect(logged.filter((r) => JSON.stringify(r).includes('paidAccess'))).toEqual([]);
   });
 });
 

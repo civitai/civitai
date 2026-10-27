@@ -625,7 +625,7 @@ describe('assertUserEarlyAccessLimits', () => {
         initialPublishedAt: new Date('2026-01-01T00:00:00Z'),
         status: 'Published',
       });
-      vi.mocked(getPaidAccess).mockResolvedValueOnce(gate ? { 10: gate } : {});
+      mockDbWrite.paidAccess.findUnique.mockResolvedValueOnce(gate);
     };
 
     it('lets an ended window be resubmitted unchanged, without counting it against the caps', async () => {
@@ -635,6 +635,17 @@ describe('assertUserEarlyAccessLimits', () => {
         assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
       ).resolves.toBeUndefined();
       expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('judges the gate from the primary, not a stale cache', async () => {
+      const endsAt = new Date(Date.now() - 86_400_000);
+      // The cache still holds the 7-day window; a moderator has since changed it to 3 days.
+      vi.mocked(getPaidAccess).mockResolvedValue({ 10: { timeframeDays: 7, endsAt } } as never);
+      published({ timeframeDays: 3, endsAt });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+      vi.mocked(getPaidAccess).mockResolvedValue({});
     });
 
     it('refuses restarting an ended window with a different length', async () => {

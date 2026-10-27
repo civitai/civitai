@@ -382,7 +382,12 @@ export async function assertUserEarlyAccessLimits({
       (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
       existing?.status === ModelStatus.Published;
     if (everPublished) {
-      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      // The primary, not getPaidAccess's hour-old cache: writeModelVersionGateAndGoal decides from the
+      // primary whether to rewrite this gate, and the two must agree on which row they are looking at.
+      const gate = await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+        select: { timeframeDays: true, endsAt: true },
+      });
       const hasActiveTimedGate =
         !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
       // writeModelVersionGateAndGoal leaves this gate as it is, so there is no window to cap.
@@ -1422,7 +1427,8 @@ export const updateModelVersionPaidAccess = async ({
   // After the gate write, so a failed write can't leave the version marked as having affirmed a price
   // it never got. Merged in SQL rather than read-modify-write: `meta` is shared with moderation flags
   // (needsReview / declinedReason), and rewriting the whole object would clobber a concurrent change.
-  if (rightsAffirmation)
+  // A kept gate applied no price, so there is nothing affirmed.
+  if (rightsAffirmation && !keptGate)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
       SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
