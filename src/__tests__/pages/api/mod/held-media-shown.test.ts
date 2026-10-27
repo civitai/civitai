@@ -205,6 +205,17 @@ describe('POST /api/mod/held-media/shown', () => {
     expect(await rows()).toEqual([]);
   });
 
+  it.each([
+    ['2 hours 59 minutes', 204, 1],
+    ['3 hours 1 minute', 403, 0],
+  ] as const)('a held video served %s ago answers %s', async (ago, status, written) => {
+    getHeldMedia.mockResolvedValue({ url: 'key', type: 'video', mimeType: 'video/mp4' });
+    await served(501, { ago });
+
+    expect(await post({ ...valid, rendition: 'original' })).toBe(status);
+    expect(await rows()).toHaveLength(written);
+  });
+
   it('refuses a moderator without the CSAM reports flag, and writes nothing', async () => {
     flags.csamReports = false;
     expect(await post(valid)).toBe(403);

@@ -14,10 +14,12 @@ export const POST: RequestHandler = async ({ params, locals, request, url }) => 
   // A body-less POST skips SvelteKit's form-only origin check.
   if (request.headers.get('origin') !== url.origin) error(403, `Send from ${url.origin}.`);
   if ((await request.text()) !== '') error(400, 'This request takes no body.');
-  if (!(await getHeldMedia(imageId))) error(404, 'Not available here.');
+  const media = await getHeldMedia(imageId);
+  if (!media) error(404, 'Not available here.');
 
-  // Only as bytes this moderator was just served, in one statement with the serve read. Throws on a
-  // failed write, unlike recordModActivity: the page should see a row that did not land.
+  // Only as bytes this moderator was just served, in one statement with the serve read: within 30
+  // minutes, or 3 hours for a video (its type from the image row), which plays for longer. Throws on
+  // a failed write, unlike recordModActivity: the page should see a row that did not land.
   const userId = locals.user.id;
   const { rows } = await sql`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
@@ -26,7 +28,8 @@ export const POST: RequestHandler = async ({ params, locals, request, url }) => 
       SELECT 1 FROM "ModActivity"
       WHERE activity = ${SERVED_ACTIVITY}::text AND "entityType" = 'image'
         AND "entityId" = ${imageId}::int AND "userId" = ${userId}::int
-        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - interval '30 minutes'
+        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - CASE WHEN ${media.type === 'video'}::boolean
+          THEN interval '3 hours' ELSE interval '30 minutes' END
     )
     ON CONFLICT DO NOTHING
     RETURNING id

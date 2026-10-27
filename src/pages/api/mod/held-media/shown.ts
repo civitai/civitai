@@ -44,8 +44,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   });
   if (!image) return void res.status(404).json({ error: 'Not on this page' });
   // A held image is shown only from storage, any other only from the CDN.
-  const held = !!(await getHeldMedia(imageId, dbWrite));
-  if ((rendition === 'original') !== held)
+  const media = await getHeldMedia(imageId, dbWrite);
+  if ((rendition === 'original') !== !!media)
     return void res.status(409).json({ error: 'Not shown that way' });
 
   const activity = shownActivity(action, rendition);
@@ -53,7 +53,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     await trackModActivity(user.id, { entityType: 'image', entityId: imageId, activity });
     return void res.status(204).end();
   }
-  // The original only as bytes this moderator was just served, in one statement with the serve read.
+  // The original only as bytes this moderator was just served, in one statement with the serve read:
+  // within 30 minutes, or 3 hours for a video (its type from the image row), which plays for longer.
   const recorded = await dbWrite.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
     SELECT ${user.id}::int, 'image', ${activity}::text, ${imageId}::int
@@ -61,7 +62,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       SELECT 1 FROM "ModActivity"
       WHERE activity = ${SERVED_ACTIVITY}::text AND "entityType" = 'image'
         AND "entityId" = ${imageId}::int AND "userId" = ${user.id}::int
-        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - interval '30 minutes'
+        AND "createdAt" >= (now() AT TIME ZONE 'UTC') - CASE WHEN ${
+          media?.type === 'video'
+        }::boolean
+          THEN interval '3 hours' ELSE interval '30 minutes' END
     )
     ON CONFLICT DO NOTHING
   `;

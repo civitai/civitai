@@ -104,6 +104,15 @@ describe('reportMedia rows', () => {
     expect(rows).toEqual([{ stamped: true }]);
   });
 
+  it('are stamped like the rows recording a serve', async () => {
+    const { rows } = await pg.query<{ stamped: boolean }>(
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
+       VALUES (12, 'image', 'heldMedia:view', 503, '2020-01-01')
+       RETURNING "createdAt" = (now() AT TIME ZONE 'UTC')::timestamp(3) AS stamped`
+    );
+    expect(rows).toEqual([{ stamped: true }]);
+  });
+
   it('a re-run of the migration keeps them guarded', async () => {
     await pg.exec(readFileSync(migration, 'utf8'));
     await expect(pg.query(`DELETE FROM "ModActivity" WHERE id = $1`, [shown])).rejects.toThrow(
@@ -116,7 +125,7 @@ describe('every other row', () => {
   it('keeps the time its insert names', async () => {
     const { rows } = await pg.query<{ createdAt: Date }>(
       `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-       VALUES (12, 'image', 'heldMedia:view', 503, '2020-01-01') RETURNING "createdAt"`
+       VALUES (12, 'image', 'heldMedia:grid', 503, '2020-01-01') RETURNING "createdAt"`
     );
     expect(rows[0].createdAt.toISOString()).toBe('2020-01-01T00:00:00.000Z');
   });

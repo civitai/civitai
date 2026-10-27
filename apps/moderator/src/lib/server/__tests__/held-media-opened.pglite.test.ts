@@ -187,6 +187,17 @@ describe('POST /api/held-media/[imageId]/opened', () => {
     expect(await rows()).toEqual([]);
   });
 
+  it.each([
+    ['2 hours 59 minutes', 204, 1],
+    ['3 hours 1 minute', 403, 0],
+  ] as const)('a held video served %s ago answers %s', async (ago, status, written) => {
+    getHeldMedia.mockResolvedValue({ url: 'key', type: 'video', mimeType: 'video/mp4' });
+    await served(7, { ago });
+
+    expect(await post('7')).toBe(status);
+    expect(await rows()).toHaveLength(written);
+  });
+
   it('refuses a bad image id, and writes nothing', async () => {
     expect(await post('x')).toBe(400);
     expect(await rows()).toEqual([]);
