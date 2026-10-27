@@ -1,7 +1,12 @@
 import { createHash } from 'crypto';
 import type { Session } from '~/types/session';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { createSessionClient, createSessionTokenClient, sessionCookieName } from '@civitai/auth';
+import {
+  createSessionClient,
+  createSessionTokenClient,
+  readSessionToken,
+  type CookieSlot,
+} from '@civitai/auth';
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
@@ -44,8 +49,8 @@ const sessionTokenClient = createSessionTokenClient();
 export async function getHubSession(req: {
   cookies?: Partial<Record<string, string>>;
 }): Promise<Session | null> {
-  // The hub's THIN cookie (`civ-token`, env-derived name), distinct from next-auth's legacy `civitai-token`.
-  const token = req.cookies?.[sessionCookieName()];
+  // The hub's THIN cookie (`civ-token`, either slot), distinct from next-auth's legacy `civitai-token`.
+  const token = readSessionToken(req.cookies)?.value;
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);
   if (!user) return null;
@@ -75,7 +80,8 @@ export async function maybeRollHubCookie(
   token: string,
   deviceCookie: string | undefined,
   res: CookieWritable,
-  host?: string
+  host?: string,
+  slot?: CookieSlot
 ): Promise<void> {
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
@@ -88,7 +94,7 @@ export async function maybeRollHubCookie(
     )?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
-    setSessionCookie(res, fresh, { deviceCookie, host });
+    setSessionCookie(res, fresh, { deviceCookie, host, slot });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
   }

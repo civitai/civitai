@@ -3,14 +3,18 @@ import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
 import {
-  sessionCookieName,
-  deviceCookieName,
   decodeLegacySessionCookie,
   legacySessionCookieName,
+  readDeviceId,
+  readSessionToken,
+  rollSlot,
+  sessionCookieMode,
+  SPOKE_AUTHORIZE_PATH,
 } from '@civitai/auth';
 import { env } from '~/env/server';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { safeInternalPath } from '~/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import { observeLegacyDecode } from './session-metrics';
 import {
@@ -93,9 +97,10 @@ export const getServerAuthSession = async ({
   const hub = await getHubSession(req).catch(() => null);
   if (hub) {
     req.context.session = hub;
-    const civ = req.cookies?.[sessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
-    if (civ) await maybeRollHubCookie(civ, device, res, req.headers.host);
+    const civ = readSessionToken(req.cookies);
+    const slot = civ && rollSlot(civ);
+    const device = readDeviceId(req.cookies)?.value;
+    if (civ && slot) await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot);
     return hub;
   }
 
@@ -110,8 +115,26 @@ export const getServerAuthSession = async ({
     // whether the upgrade-on-read path still matters at all.
     observeLegacyDecode();
     const legacyToken = req.cookies?.[legacySessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
+    const device = readDeviceId(req.cookies)?.value;
     await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
   }
   return legacy;
 };
+
+/**
+ * In host mode, a page navigation that carries the session only in the shared slot is sent through the normal
+ * sync (`/api/auth/authorize`), which lands a host-only cookie. Other requests are served from the shared
+ * token, unrolled. Null in shared mode, and for anything that is not a top-level GET navigation.
+ */
+export function sharedSlotNavigationSyncUrl(req: {
+  method?: string;
+  url?: string;
+  headers: Record<string, string | string[] | undefined>;
+  cookies?: Partial<Record<string, string>>;
+}): string | null {
+  if (sessionCookieMode() !== 'host') return null;
+  if ((req.method ?? 'GET') !== 'GET' || req.headers['sec-fetch-mode'] !== 'navigate') return null;
+  if (readSessionToken(req.cookies)?.slot !== 'shared') return null;
+  const returnUrl = safeInternalPath(req.url, '/');
+  return `${SPOKE_AUTHORIZE_PATH}?returnUrl=${encodeURIComponent(returnUrl)}`;
+}
