@@ -1984,8 +1984,10 @@ export const publishModelVersionById = async ({
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
-      // a takedown can land in between.
-      if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+      // a takedown can land in between. Locked even when not enforced: it takes the model before
+      // the version, and the writes below would otherwise take them the other way round.
+      const downed = await readDownedVersion(tx, id, 'update');
+      if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
 
       let updatedVersion;

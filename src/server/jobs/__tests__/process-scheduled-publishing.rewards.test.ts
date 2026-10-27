@@ -89,7 +89,12 @@ type Chapter = {
 type Follower = { projectId: number; userId: number };
 
 // Read by the default transaction stub, so a test that installs its own keeps it.
-const txPosts: { scheduled: Row[]; flipped: Row[] } = { scheduled: [], flipped: [] };
+const txPosts: { scheduled: Row[]; flipped: Row[]; models: Row[]; versions: Row[] } = {
+  scheduled: [],
+  flipped: [],
+  models: [],
+  versions: [],
+};
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 // `flipped` is the rows the post UPDATE returns; by default every scheduled post publishes.
@@ -110,8 +115,13 @@ const stubReads = ({
   followers?: Follower[];
   flipped?: Row[];
 }) => {
+  // A scheduled post publishes only alongside its version, so posts come with one unless given.
+  if (!versions.length && scheduled.length)
+    versions = [{ id: 1, userId: scheduled[0].userId, extras: { modelId: 1 } }];
   txPosts.scheduled = scheduled;
   txPosts.flipped = flipped ?? scheduled;
+  txPosts.models = models;
+  txPosts.versions = versions;
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const sql = (args[0] as string[]).join(' ');
     // There is no "ComicEngagement" table — prod answers 42P01. Throwing rather than
@@ -152,6 +162,9 @@ beforeEach(() => {
         // Keyed on the RETURNING too: without it Postgres hands back no rows at all.
         if (sql.includes('UPDATE "Post" p') && sql.includes('RETURNING p.id, p."userId"'))
           return txPosts.flipped;
+        if (sql.includes('RETURNING mv.id')) return txPosts.versions.map(({ id }) => ({ id }));
+        if (sql.includes('UPDATE "Model"') && sql.includes('RETURNING id'))
+          return txPosts.models.map(({ id }) => ({ id }));
         return [];
       }),
     })
@@ -214,7 +227,9 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     });
     await runJob().catch(() => undefined);
     // The UPDATE really returned the post inside the transaction, so its absence below is the rollback.
-    expect(flippedInTx).toEqual([{ id: 1, userId: 10 }]);
+    expect((flippedInTx as { flippedPosts: unknown }).flippedPosts).toEqual([
+      { id: 1, userId: 10 },
+    ]);
     expect(mockApply).not.toHaveBeenCalled();
     expect(mockProcessEngagement).not.toHaveBeenCalled();
     expect(mockDbWrite.image.findMany).not.toHaveBeenCalled();
