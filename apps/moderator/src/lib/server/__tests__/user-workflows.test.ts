@@ -203,6 +203,11 @@ describe('getUserGeneratedWorkflows', () => {
         { id: 'blank', tags: [] },
         { id: 'site-blank', tags: ['gen'] },
         { id: 'block-step', tags: ['gen', 'app-block'] },
+        {
+          id: 'block-txt2img',
+          tags: ['gen', 'app-block'],
+          metadata: { params: { prompt: 'x', workflow: 'txt2img' } },
+        },
         { id: 'upscale', tags: ['gen'], metadata: { params: { workflow: 'img-upscale' } } },
         { id: 'comfy', tags: ['civitai-comfy-nodes'] },
         { id: 'enhance', tags: ['prompt-enhancement'] },
@@ -210,10 +215,13 @@ describe('getUserGeneratedWorkflows', () => {
       next: null,
     });
     const page = await getUserGeneratedWorkflows(42);
+    // An app block's own prompt is still shown; only the "no params" claim depends on origin.
+    expect(page.items.find((w) => w.id === 'block-txt2img')?.prompt).toBe('x');
     expect(page.items.map((w) => [w.id, w.paramsMissing])).toEqual([
       ['blank', true],
       ['site-blank', true],
       ['block-step', false],
+      ['block-txt2img', false],
       ['upscale', false],
       ['comfy', false],
       ['enhance', false],

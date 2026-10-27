@@ -161,7 +161,8 @@
               <li class="rounded-md border border-dark-4 p-3">
                 <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
                   <span>{dateTime(workflow.createdAt)}</span>
-                  {#if source === 'all'}
+                  <!-- On a filtered tab, a row from elsewhere (app blocks also tag `gen`) must say so. -->
+                  {#if source === 'all' || workflow.origin !== source}
                     <Badge variant="outline"
                       >{workflow.sourceTag ?? ORIGIN_LABEL[workflow.origin]}</Badge
                     >
