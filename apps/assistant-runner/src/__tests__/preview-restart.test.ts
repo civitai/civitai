@@ -32,7 +32,7 @@ const MANIFEST_BLOCK = 'my-shop-block';
 /** civitai's dev-tunnel endpoints, recording what they were asked. */
 class FakeTunnels implements DevTunnels {
   readonly started: DevTunnelStartInput[] = [];
-  readonly kept: string[] = [];
+  readonly kept: { blockId: string }[] = [];
   readonly stopped: string[] = [];
   startError: unknown = null;
   /** Holds every start until released, so two restarts can overlap. */
@@ -45,8 +45,8 @@ class FakeTunnels implements DevTunnels {
     return { sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
-  async keepalive(sessionId: string) {
-    this.kept.push(sessionId);
+  async keepalive(target: { blockId: string }) {
+    this.kept.push(target);
   }
 
   async stop(sessionId: string) {

@@ -25,11 +25,13 @@ const SESSION = 'bki_TEST_ONLY_session_7f3e9a';
 const HOST = 'dev-0123456789abcdef.civit.ai';
 const HOST_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlySishHostKey';
 const KEEPALIVE_MS = 1_000;
+/** What a run asks civitai to keep alive for the app `my-app` with no manifest: its own key. */
+const MY_APP = { blockId: 'my-app' };
 
 /** civitai's dev-tunnel endpoints as one run sees them, recording what it was asked. */
 class FakeTunnels implements DevTunnels {
   readonly started: DevTunnelStartInput[] = [];
-  readonly kept: string[] = [];
+  readonly kept: { blockId: string }[] = [];
   readonly stopped: string[] = [];
   startError: unknown = null;
   keepaliveError: unknown = null;
@@ -42,8 +44,8 @@ class FakeTunnels implements DevTunnels {
     return { sessionId, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
-  async keepalive(sessionId: string) {
-    this.kept.push(sessionId);
+  async keepalive(target: { blockId: string }) {
+    this.kept.push(target);
     if (this.keepaliveError) throw this.keepaliveError;
   }
 
@@ -268,8 +270,8 @@ describe('keeping the preview alive', () => {
     expect(tunnels.kept).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
-    // The control: alive while the run lives.
-    expect(tunnels.kept).toEqual([SESSION, SESSION, SESSION]);
+    // The control: alive while the run lives, named by its block (the run's user's tunnel of it).
+    expect(tunnels.kept).toEqual([MY_APP, MY_APP, MY_APP]);
 
     // The run ends: the runner closes its tools.
     await tools.close();
@@ -279,15 +281,7 @@ describe('keeping the preview alive', () => {
     expect(tunnels.stopped).toEqual([]);
   });
 
-  it('keeps no preview alive before one is started', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    fake.add('my-app');
-    await open();
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
-    expect(tunnels.kept).toEqual([]);
-  });
-
-  it('gives up on a tunnel civitai no longer has, and asks again after `unavailable`', async () => {
+  it('asks again after `unavailable` and after NOT_FOUND (one may open later), and stops once refused', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     fake.add('my-app');
     const { tools } = await open();
@@ -296,8 +290,79 @@ describe('keeping the preview alive', () => {
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
     expect(tunnels.kept).toHaveLength(2);
     tunnels.keepaliveError = new DevTunnelError('gone', 404, 'NOT_FOUND');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    expect(tunnels.kept).toHaveLength(4);
+    // The run's own tunnel went: a start of the same preview opens a new one, not the old answer.
+    await call(tools.tools, 'start_preview');
+    expect(tunnels.started).toHaveLength(2);
+    tunnels.keepaliveError = new DevTunnelError('no', 403, 'FORBIDDEN');
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
-    expect(tunnels.kept).toHaveLength(3);
+    expect(tunnels.kept).toHaveLength(5);
+  });
+
+  // A preview opened outside the run (the page's Restart preview, or an earlier reply) has no id
+  // here, and a hidden tab sends its tunnel nothing: the run must keep it up all the same.
+  it('keeps alive the app’s preview this run did not open, by the block its manifest names', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    fake.tools.set('dev_server_status', () =>
+      JSON.stringify({ running: true, command: 'cd tip-calc && npm run dev' })
+    );
+    fake.tools.set('read_file', (args) =>
+      args.path === 'tip-calc/block.manifest.json'
+        ? JSON.stringify({
+            path: args.path,
+            content: JSON.stringify({ blockId: 'tip-calc-block' }),
+          })
+        : 'export {}'
+    );
+    const { tools } = await open();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    // Nothing was opened by this run, and its user's tunnel of that block was kept all the same.
+    expect(tunnels.started).toEqual([]);
+    expect(tunnels.kept).toEqual([{ blockId: 'tip-calc-block' }, { blockId: 'tip-calc-block' }]);
+    await tools.close();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toHaveLength(2);
+  });
+
+  it('with no manifest, keeps the app’s own key’s preview alive', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    await open();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    expect(tunnels.kept).toEqual([MY_APP]);
+  });
+
+  it('never keeps another app’s preview alive: once the run opens another app, only that one’s', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    // Control: the first app's preview was kept while it was the open one.
+    expect(tunnels.kept).toEqual([MY_APP]);
+    expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
+      app: 'tip-calculator',
+    });
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    expect(tunnels.kept).toEqual([
+      MY_APP,
+      { blockId: 'tip-calculator' },
+      { blockId: 'tip-calculator' },
+    ]);
+  });
+
+  it('keeps nothing alive after stop_preview, until the next start', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'stop_preview');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    expect(tunnels.kept).toEqual([]);
+    await call(tools.tools, 'start_preview');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    expect(tunnels.kept).toEqual([MY_APP]);
   });
 
   it('is every 5 minutes, well inside civitai’s 30-minute idle window', () => {
@@ -383,7 +448,7 @@ describe('CivitaiDevTunnels', () => {
       host: HOST,
       sshHostPublicKey: HOST_KEY,
     });
-    await run.keepalive(SESSION);
+    await run.keepalive({ blockId: 'my-app' });
     await run.stop(SESSION);
     expect(grants).toBe(3);
     expect(sent.map((s) => s.url)).toEqual(
@@ -393,7 +458,7 @@ describe('CivitaiDevTunnels', () => {
       expect(new Headers(init.headers).get('authorization')).toBe(`Bearer ${SECRET}`);
     expect(sent.map((s) => JSON.parse(String(s.init.body)))).toEqual([
       { grant: GRANT, blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY },
-      { grant: GRANT, sessionId: SESSION },
+      { grant: GRANT, blockId: 'my-app' },
       { grant: GRANT, sessionId: SESSION },
     ]);
   });
@@ -404,7 +469,7 @@ describe('CivitaiDevTunnels', () => {
     );
     const error = await tunnels
       .forRun(async () => GRANT)
-      .keepalive(SESSION)
+      .keepalive({ blockId: 'my-app' })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DevTunnelError);
     expect(error).toMatchObject({ status: 404, code: 'NOT_FOUND' });
@@ -412,7 +477,9 @@ describe('CivitaiDevTunnels', () => {
 
   it('a run with no live grant asks civitai nothing', async () => {
     const { sent, tunnels } = client(() => Response.json({}));
-    await expect(tunnels.forRun(async () => null).keepalive(SESSION)).rejects.toMatchObject({
+    await expect(
+      tunnels.forRun(async () => null).keepalive({ blockId: 'my-app' })
+    ).rejects.toMatchObject({
       code: 'invalid_grant',
     });
     expect(sent).toEqual([]);
@@ -624,7 +691,7 @@ describe('the preview opens by itself once the dev server starts', () => {
     const { tools } = await open();
     await startDevServer(tools.tools);
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toEqual([SESSION, SESSION]);
+    expect(tunnels.kept).toEqual([MY_APP, MY_APP]);
     await tools.close();
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
     expect(tunnels.kept).toHaveLength(2);

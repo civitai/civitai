@@ -47,6 +47,8 @@ vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
 }));
 
 const { AppAssistantPreview } = await import('./AppAssistantPreview');
+// The real error class (the module mock keeps every export but the fetch).
+const { PreviewGoneError } = await import('~/components/Apps/AppAssistant/previewFrame');
 
 const restartButton = () => page.getByRole('button', { name: 'Restart preview' });
 const offer = (error: string | null = null, pending = false) => ({
@@ -113,5 +115,63 @@ describe('AppAssistantPreview — Restart preview on the server runner', () => {
     m.host!.onFallbackChange?.('timeout');
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(restartButton().query()).toBeNull();
+  });
+});
+
+describe('AppAssistantPreview — a shown preview whose tunnel went', () => {
+  const LIVE_CHECK_MS = 40;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, LIVE_CHECK_MS * 5));
+
+  test('turns into “The live preview isn’t running.” with Restart preview once civitai has no tunnel', async () => {
+    let gone = false;
+    m.fetchFrame.mockImplementation(async () => {
+      if (gone) throw new PreviewGoneError('No live preview is running for this app');
+      return FRAME;
+    });
+    const restart = offer();
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={restart}
+        liveCheckMs={LIVE_CHECK_MS}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    // Control: checked while live, and still shown.
+    await settle();
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(1);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+
+    gone = true;
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    expect(page.getByTestId('frame').elements()).toHaveLength(0);
+    await restartButton().click();
+    expect(restart.onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  test('a check that fails for any other reason leaves the preview shown', async () => {
+    let failing = false;
+    m.fetchFrame.mockImplementation(async () => {
+      if (failing) throw new Error('network down');
+      return FRAME;
+    });
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={offer()}
+        liveCheckMs={LIVE_CHECK_MS}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    failing = true;
+    const before = m.fetchFrame.mock.calls.length;
+    await settle();
+    // Control: it was checked meanwhile.
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(before);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
   });
 });
