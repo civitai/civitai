@@ -28,11 +28,19 @@ WORKDIR /app
 COPY apps/assistant-runner ./apps/assistant-runner
 RUN pnpm --filter @civitai/assistant-runner-app build
 
-##### prod-deps — pruned, flattened production node_modules for the runtime ######
+##### prod-deps — the runner's OWN production dependency closure for the runtime ###
+# Non-legacy, as apps/event-engine: a `--legacy` deploy builds its tree from the whole workspace
+# graph and the repo root's version of a shared package wins the top-level link. Through 0.0.12
+# that shipped the root's `@civitai/components-chat` (^0.31.0) while this package pinned 0.25.0,
+# so the image ran a chat package its tests never saw. Non-legacy resolves only this package's
+# closure, at the versions its own package.json and the lockfile name. pnpm 10 gates it behind
+# `inject-workspace-packages`; `@civitai/app-assistant` (bundled by tsup, no dependencies of its
+# own) is the only workspace package it injects.
 FROM deps AS prod-deps
 WORKDIR /app
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm --filter @civitai/assistant-runner-app deploy --prod --legacy --ignore-scripts /app/deploy
+    pnpm --filter @civitai/assistant-runner-app deploy --prod --ignore-scripts \
+    --config.inject-workspace-packages=true /app/deploy
 
 ##### runtime ###################################################################
 FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
