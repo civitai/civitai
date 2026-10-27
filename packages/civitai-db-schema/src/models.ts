@@ -585,6 +585,8 @@ export interface User {
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
   feedbackOwnerStatus?: Feedback[];
+  appAccessRequests?: AppAccessRequest[];
+  appAccessReviewed?: AppAccessRequest[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -2133,6 +2135,18 @@ export interface Feedback {
   ownerStatusBy?: User | null;
   ownerFlaggedAt: Date | null;
   hiddenFromOwnerAt: Date | null;
+}
+
+export interface AppAccessRequest {
+  id: number;
+  userId: number;
+  user?: User;
+  whatToBuild: string;
+  status: string;
+  createdAt: Date;
+  reviewedAt: Date | null;
+  reviewedById: number | null;
+  reviewedBy?: User | null;
 }
 
 export interface ApiKey {

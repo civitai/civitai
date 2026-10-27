@@ -510,28 +510,36 @@ describe('the rail — the getNavSummary query gate stays on appBlocks', () => {
   });
 });
 
-describe('the rail — App Assistant follows canAccessAppAssistant and a signed-in viewer', () => {
-  const AUTHOR_FLAGS = { appBlocks: true, appBlocksAuthor: true };
+/**
+ * Build follows `resolveAppsBuildPageMode` — the page's own gate — now that `/apps/build` also
+ * hosts the App Assistant (`/apps/assistant` 301s there and lost its own row). So the App
+ * Assistant gate ADMITS a non-author to the Build entry, exactly as the page renders the workspace
+ * for them, and a signed-out viewer (whom the page 404s) gets no entry.
+ */
+describe('the rail — Build follows the page mode, App Assistant included', () => {
+  const ASSISTANT_FLAGS = { appBlocks: true, appAssistant: true };
 
   test.each([
-    ['both flags → shown', { ...AUTHOR_FLAGS, appAssistant: true }, true],
-    ['the block runtime without the feature flag → hidden', AUTHOR_FLAGS, false],
+    ['the assistant flags, not an author → Build shown', ASSISTANT_FLAGS, true],
+    ['the block runtime alone, not an author → no Build', { appBlocks: true }, false],
     [
-      'the feature flag without the block runtime → hidden',
-      { appListings: true, appBlocksAuthor: true, appAssistant: true },
+      'the assistant flag without the block runtime → no Build',
+      { appListings: true, appAssistant: true },
       false,
     ],
   ])('signed in with %s', async (_label, flags, shown) => {
     mocks.flags = flags;
+    mocks.user = { id: 21, username: 'palette_maker', isModerator: false };
     await renderRail();
-    await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections().includes('App Assistant')).toBe(shown);
+    expect(renderedSections().includes('Build')).toBe(shown);
+    expect(renderedSections()).not.toContain('App Assistant');
   });
 
-  test('signed out, even with both flags → no App Assistant link anywhere', async () => {
-    mocks.flags = { ...AUTHOR_FLAGS, appAssistant: true };
+  test('signed out with the assistant flags → no Build entry and no App Assistant link', async () => {
+    mocks.flags = ASSISTANT_FLAGS;
     mocks.user = null;
     await renderRail();
-    expect(document.querySelector('a[href="/apps/assistant"]')).toBeNull();
+    expect(renderedSections()).not.toContain('Build');
+    expect(document.querySelector('a[href^="/apps/assistant"]')).toBeNull();
   });
 });

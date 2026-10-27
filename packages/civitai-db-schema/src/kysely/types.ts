@@ -309,6 +309,19 @@ export type ApiKey = {
    */
   workerDeviceId: number | null;
 };
+export type AppAccessRequest = {
+  id: Generated<number>;
+  userId: number;
+  whatToBuild: string;
+  /**
+   * pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
+   * per user: the migration's PARTIAL unique index, which Prisma cannot express.
+   */
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
+  reviewedAt: Timestamp | null;
+  reviewedById: number | null;
+};
 export type AppBlock = {
   id: string;
   app_id: string;
@@ -6222,6 +6235,7 @@ export type DB = {
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
+  AppAccessRequest: AppAccessRequest;
   Appeal: Appeal;
   AppealDecisionRecord: AppealDecisionRecord;
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;

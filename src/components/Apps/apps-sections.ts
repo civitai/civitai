@@ -6,7 +6,6 @@ import {
   IconGavel,
   IconMail,
   IconPlugConnected,
-  IconSparkles,
 } from '@tabler/icons-react';
 
 /**
@@ -25,7 +24,7 @@ import {
  * for a section registry behind a rail, with ONE deliberate omission: there are no
  * `keywords` and no `searchAccountSections` equivalent. That search box exists because
  * eight account sections hide hundreds of individual settings, so a label-only match
- * finds nothing you did not already know the name of. `/apps` has at most SEVEN
+ * finds nothing you did not already know the name of. `/apps` has at most SIX
  * destinations, all of which fit on screen at once; a search box over seven visible links
  * is chrome that answers a question nobody has.
  */
@@ -120,9 +119,10 @@ export type AppsNavContext = {
   isAuthor: boolean;
   /**
    * May load `/apps/build` → show "Build". This is the page's OWN gate turned into a
-   * viewer fact, and it is computed by the SHARED `canAccessAppsBuild` — the
-   * same call `resolveBuildPageAccess` makes in `getServerSideProps`. Not re-derived
-   * here; see that predicate for why one function rather than two spellings.
+   * viewer fact, and it is computed by the SHARED `resolveAppsBuildPageMode` (the build
+   * states or the App Assistant) — the same call `resolveBuildPageAccess` makes in
+   * `getServerSideProps`. Not re-derived here; see that function for why one rule rather
+   * than two spellings.
    */
   canBuild: boolean;
   /**
@@ -139,8 +139,6 @@ export type AppsNavContext = {
    * by leaving an entry pointing at a page that answers `notFound`.
    */
   canSeeStore: boolean;
-  /** May load `/apps/assistant`: the shared `canAccessAppAssistant`, plus being signed in. */
-  canUseAssistant: boolean;
 };
 
 /** No capabilities — the shape a viewer with no flags at all resolves to. */
@@ -148,7 +146,6 @@ export const NO_APPS_NAV_CAPABILITIES: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
-  canUseAssistant: false,
 };
 
 /**
@@ -344,7 +341,9 @@ export const appsSections: AppsSection[] = [
    * stops having a nav entry.
    *
    * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
-   * is `canAccessAppsBuild` verbatim. `hasSubmissions` / `hasEditableApps` are
+   * is `resolveAppsBuildPageMode` verbatim (the build states or the App Assistant).
+   * The App Assistant had its own row pointing at `/apps/assistant`; that route now 301s
+   * here and the page renders the workspace itself, so the row went with it. `hasSubmissions` / `hasEditableApps` are
    * deliberately ABSENT from this predicate even though they decide what the page
    * RENDERS: they come from the client-only `getNavSummary`, and an entry that appeared
    * after mount for an author with apps is the hydration mismatch this surface already
@@ -362,14 +361,6 @@ export const appsSections: AppsSection[] = [
     icon: IconCode,
     group: 'build',
     visible: (_s, c) => c.canBuild,
-  },
-  {
-    id: 'assistant',
-    path: 'assistant',
-    label: 'App Assistant',
-    icon: IconSparkles,
-    group: 'build',
-    visible: (_s, c) => c.canUseAssistant,
   },
   {
     id: 'review',

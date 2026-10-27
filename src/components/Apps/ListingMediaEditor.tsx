@@ -6,6 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -217,7 +218,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
         title: 'Sent for review',
         message: 'Your image changes go live once a moderator re-approves them.',
       });
-      void router.push('/apps/build');
+      void router.push(MY_APPS_HREF);
     } catch (e) {
       const message = (e as { message?: string }).message ?? 'Failed to submit for review.';
       showErrorNotification({ title: 'Could not submit', error: new Error(message) });

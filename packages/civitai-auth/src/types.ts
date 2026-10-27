@@ -38,6 +38,13 @@ export interface SessionUser {
    * as a Flipt targeting property without a per-request DB read.
    */
   isEarlyAdopter?: boolean;
+  /**
+   * The user has an APPROVED App Access Request (`AppAccessRequest.status = 'approved'`), read by
+   * the hub's session producer. Carried on the session so `buildFliptContext` can expose it as the
+   * `appBuilderApproved` targeting property. Server-derived only: no settings key or request input
+   * feeds it.
+   */
+  appBuilderApproved?: boolean;
   // Client-only fields (parity with the main app's ExtendedUser — see src/types/next-auth.d.ts).
   name?: string;
   autoplayGifs?: boolean;

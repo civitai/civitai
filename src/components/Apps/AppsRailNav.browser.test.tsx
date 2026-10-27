@@ -76,7 +76,6 @@ const AUTHOR: AppsNavContext = {
   isAuthor: true,
   canBuild: true,
   canSeeStore: true,
-  canUseAssistant: false,
 };
 /**
  * A store-visible NON-author who may still reach `/apps/build`: `canAccessAppsBuild`'s
@@ -86,7 +85,6 @@ const BUILDER: AppsNavContext = {
   isAuthor: false,
   canBuild: true,
   canSeeStore: true,
-  canUseAssistant: false,
 };
 /**
  * The widened store-visibility tester cohort: sees the store, cannot author and cannot
@@ -97,7 +95,6 @@ const NOT_AUTHOR: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: true,
-  canUseAssistant: false,
 };
 /**
  * No store access at all. `canBuild` is `false` here BY CONSTRUCTION, not by choice:
@@ -108,7 +105,6 @@ const NO_STORE: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
-  canUseAssistant: false,
 };
 
 /**
@@ -442,34 +438,21 @@ describe('Build is gated on canBuild', () => {
   });
 });
 
-describe('App Assistant is gated on canUseAssistant', () => {
-  const ASSISTANT: AppsNavContext = { ...AUTHOR, canUseAssistant: true };
-
-  test('App Assistant is HIDDEN without canUseAssistant, even for a full author', async () => {
+describe('the App Assistant has no row of its own — it lives on Build', () => {
+  test('a full author sees Build and no App Assistant entry, and nothing links to /apps/assistant', async () => {
+    // `/apps/assistant` 301s to `/apps/build`, which renders the workspace itself. A row of its
+    // own would be a link into a redirect.
     await renderNav(ALL, AUTHOR, '/apps');
-    await expect.element(link('Review')).toBeInTheDocument();
-    expect(renderedSections()).not.toContain('App Assistant');
-  });
-
-  test('App Assistant is VISIBLE with canUseAssistant, links to /apps/assistant, and sits after Build', async () => {
-    await renderNav(ALL, ASSISTANT, '/apps');
-    await expect.element(link('App Assistant')).toBeInTheDocument();
-    expect(link('App Assistant').element().getAttribute('href')).toBe('/apps/assistant');
+    await expect.element(link('Build')).toBeInTheDocument();
     expect(renderedSections()).toEqual([
       'Marketplace',
       'Activity',
       'Invites',
       'Revenue',
       'Build',
-      'App Assistant',
       'Review',
     ]);
-  });
-
-  test('App Assistant is lit on its own route', async () => {
-    await renderNav(NONE, ASSISTANT, '/apps/assistant');
-    await expect.element(link('App Assistant')).toBeInTheDocument();
-    expect(link('App Assistant').element().getAttribute('aria-current')).toBe('page');
+    expect(document.querySelector('a[href^="/apps/assistant"]')).toBeNull();
   });
 });
 

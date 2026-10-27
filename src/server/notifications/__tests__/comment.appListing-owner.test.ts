@@ -25,7 +25,7 @@ import {
  *
  * What is asserted here, and why each shape:
  *   - the WHOLE resolved URL, never a substring. The destination is the owner's submissions
- *     view at `OWNER_SUBMISSIONS_URL` (`/apps/build`), NOT the public listing page.
+ *     view at `OWNER_SUBMISSIONS_URL` (`/apps/build?view=apps`), NOT the public listing page.
  *     ⚠️ THE REASON THAT USED TO BE GIVEN HERE IS VOID AND IS NOT REPLACED: it named
  *     `/apps/mine` and argued the public page's `hasAppsStoreAccess` gate excluded owners
  *     the chosen destination admitted. `/apps/mine` is now a 301 and `/apps/build` gates on
@@ -94,7 +94,7 @@ const message = (over: Record<string, unknown> = {}) =>
 
 describe('new-app-listing-comment — the owner finally gets notified', () => {
   it('links to the owner submissions view (WHOLE url)', () => {
-    expect(message()?.url).toBe('/apps/build');
+    expect(message()?.url).toBe('/apps/build?view=apps');
   });
 
   it('names the listing in the copy the owner reads', () => {
@@ -117,7 +117,7 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     // Asserted as a NEGATIVE because the failure mode is "someone helpfully makes the link
     // more specific" — which reads as an improvement in review.
     expect(message()?.url).not.toContain('/apps/store-preview');
-    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/build');
+    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/build?view=apps');
   });
 
   it('shares the destination constant with the other owner-facing listing notifications', () => {
@@ -132,7 +132,7 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     // together and this test still passes (verified). What it proves is only "these two agree" —
     // never "they agree on the RIGHT value".
     //
-    // The three literal `toBe('/apps/build')` assertions above are what pin the value; this pins
+    // The three literal `toBe('/apps/build?view=apps')` assertions above are what pin the value; this pins
     // that the sharing is real and not a coincidence of two matching literals. The PAIR is the
     // guard. Do not "simplify" either half away: drop the literals and a wrong route passes; drop
     // this and a duplicated literal drifts silently.
@@ -144,14 +144,14 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     });
     expect(message()?.url).toBe(sibling?.url);
     // Anchors the shared value, so this test cannot pass while both sides drift.
-    expect(sibling?.url).toBe('/apps/build');
+    expect(sibling?.url).toBe('/apps/build?view=apps');
   });
 
   it('the url is independent of the slug entirely (no slug-shaped failure modes left)', () => {
     // With a static destination there is no `/apps/store-preview/undefined` to render, so the
     // whole class of missing-slug broken links is gone rather than merely guarded.
     for (const appListingSlug of [undefined, null, '', 'a b/c']) {
-      expect(message({ appListingSlug })?.url).toBe('/apps/build');
+      expect(message({ appListingSlug })?.url).toBe('/apps/build?view=apps');
     }
   });
 });
