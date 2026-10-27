@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS "KnightsConfirmItem" (
   "secondAt"    TIMESTAMPTZ(3),
   "pooledAt"    TIMESTAMPTZ(3),
   "expiredAt"   TIMESTAMPTZ(3),
+  "poolAttempts" INTEGER NOT NULL DEFAULT 0,
   "createdAt"   TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
   CHECK (("status" = 'open') = ("secondAt" IS NULL)),
   CHECK ("secondModId" IS NULL OR "secondModId" <> "firstModId"),

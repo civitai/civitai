@@ -36,6 +36,9 @@ function setup({
       order.push(`pooled:${item.id}`);
       return pooledOk;
     }),
+    markPoolFailed: vi.fn(async (ids) => {
+      order.push(`failed:${ids.join(',')}`);
+    }),
     markStale: vi.fn(async () => undefined),
     pooledActive: vi.fn(async () => active),
     markExpired: vi.fn(async (ids) => {
@@ -133,5 +136,56 @@ describe('runConfirmSync', () => {
     expect(pools.remove).toHaveBeenCalledWith([70, 90]);
     expect(order).toEqual(['remove:70,90', 'expired:7,9']);
     expect(result.expired).toBe(2);
+  });
+
+  it('takes an image back out of the pools when its item could not be marked pooled', async () => {
+    const { store, pools, order } = setup({ items: [agreed(1)], pooledOk: false });
+
+    await runConfirmSync({ store, pools, now: NOW });
+
+    expect(store.markPoolFailed).toHaveBeenCalledWith([1]);
+    expect(pools.remove).toHaveBeenCalledWith([10]);
+    expect(order).toEqual(['add:10', 'pooled:1', 'failed:1', 'remove:10']);
+  });
+
+  it('keeps a failed item image in the pools while another active item holds it', async () => {
+    const { store, pools } = setup({
+      items: [agreed(1, { imageId: 10 })],
+      active: [{ id: 5, imageId: 10, secondAt: daysAgo(2) }],
+      pooledOk: false,
+    });
+
+    await runConfirmSync({ store, pools, now: NOW });
+
+    expect(pools.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps an expiring item image in the pools while a newer active item holds it', async () => {
+    const { store, pools } = setup({
+      active: [
+        { id: 7, imageId: 70, secondAt: daysAgo(20) },
+        { id: 8, imageId: 70, secondAt: daysAgo(1) },
+        { id: 9, imageId: 90, secondAt: daysAgo(20) },
+      ],
+    });
+
+    const result = await runConfirmSync({ store, pools, now: NOW });
+
+    expect(pools.remove).toHaveBeenCalledWith([90]);
+    expect(store.markExpired).toHaveBeenCalledWith([7, 9], NOW);
+    expect(result.expired).toBe(2);
+  });
+
+  it('removes a shared image once every item holding it expires', async () => {
+    const { store, pools } = setup({
+      active: [
+        { id: 7, imageId: 70, secondAt: daysAgo(20) },
+        { id: 8, imageId: 70, secondAt: daysAgo(15) },
+      ],
+    });
+
+    await runConfirmSync({ store, pools, now: NOW });
+
+    expect(pools.remove).toHaveBeenCalledWith([70]);
   });
 });

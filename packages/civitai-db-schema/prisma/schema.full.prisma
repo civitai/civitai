@@ -7790,6 +7790,7 @@ model KnightsConfirmItem {
   secondAt    DateTime? @db.Timestamptz(3)
   pooledAt    DateTime? @db.Timestamptz(3)
   expiredAt   DateTime? @db.Timestamptz(3)
+  poolAttempts Int      @default(0)
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([status, createdAt])

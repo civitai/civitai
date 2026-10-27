@@ -1,5 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import {
+  MAX_POOL_ATTEMPTS,
   runConfirmSync,
   type AgreedItem,
   type ConfirmPools,
@@ -76,6 +77,7 @@ export const confirmStore: ConfirmStore = {
       FROM "KnightsConfirmItem" k
       JOIN "Image" img ON img.id = k."imageId"
       WHERE k.status = 'agreed' AND k."pooledAt" IS NULL AND k."expiredAt" IS NULL
+        AND k."poolAttempts" < ${MAX_POOL_ATTEMPTS}
       ORDER BY k."secondAt"
       LIMIT ${BATCH}
     `;
@@ -111,6 +113,13 @@ export const confirmStore: ConfirmStore = {
     } catch {
       return false;
     }
+  },
+
+  async markPoolFailed(ids) {
+    await dbWrite.$executeRaw`
+      UPDATE "KnightsConfirmItem" SET "poolAttempts" = "poolAttempts" + 1
+      WHERE id = ANY(${ids}::int[])
+    `;
   },
 
   async markStale(ids, now) {

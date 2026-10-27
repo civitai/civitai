@@ -4884,6 +4884,7 @@ export interface KnightsConfirmItem {
   secondAt: Date | null;
   pooledAt: Date | null;
   expiredAt: Date | null;
+  poolAttempts: number;
   createdAt: Date;
 }
 

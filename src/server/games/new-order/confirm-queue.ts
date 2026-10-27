@@ -1,5 +1,7 @@
 export const CONFIRM_QUEUE_DEFAULTS = { poolCap: 2000, ttlDays: 14 };
 
+export const MAX_POOL_ATTEMPTS = 5;
+
 export type ConfirmQueueConfig = typeof CONFIRM_QUEUE_DEFAULTS;
 
 export type AgreedItem = {
@@ -20,6 +22,8 @@ export type ConfirmStore = {
   agreedUnpooled(): Promise<AgreedItem[]>;
   /** Records both judgments and the pooling together; false when the labels could not be recorded. */
   markPooled(item: AgreedItem, now: Date): Promise<boolean>;
+  /** Counts a failed pooling attempt; an item stops being offered after MAX_POOL_ATTEMPTS. */
+  markPoolFailed(ids: number[]): Promise<void>;
   markStale(ids: number[], now: Date): Promise<void>;
   pooledActive(): Promise<PooledItem[]>;
   markExpired(ids: number[], now: Date): Promise<void>;
@@ -75,11 +79,16 @@ export async function runConfirmSync({
     result.stale = stale.length;
   }
 
+  const failedItems: AgreedItem[] = [];
   if (current.length) {
     await pools.add(current.map((i) => i.imageId));
     for (const item of current) {
       if (await store.markPooled(item, now)) result.pooled++;
-      else result.failed++;
+      else failedItems.push(item);
+    }
+    result.failed = failedItems.length;
+    if (failedItems.length) {
+      await store.markPoolFailed(failedItems.map((i) => i.id));
     }
   }
 
@@ -88,8 +97,12 @@ export async function runConfirmSync({
     planRotation({ items: active, now, ttlDays: config.ttlDays, cap: config.poolCap })
   );
   const expiring = active.filter((i) => expireIds.has(i.id));
+  const stillPooled = new Set(active.filter((i) => !expireIds.has(i.id)).map((i) => i.imageId));
+  const removeImageIds = [...new Set([...expiring, ...failedItems].map((i) => i.imageId))].filter(
+    (imageId) => !stillPooled.has(imageId)
+  );
+  if (removeImageIds.length) await pools.remove(removeImageIds);
   if (expiring.length) {
-    await pools.remove(expiring.map((i) => i.imageId));
     await store.markExpired(
       expiring.map((i) => i.id),
       now

@@ -3698,6 +3698,7 @@ export type KnightsConfirmItem = {
   secondAt: Timestamp | null;
   pooledAt: Timestamp | null;
   expiredAt: Timestamp | null;
+  poolAttempts: Generated<number>;
   createdAt: Generated<Timestamp>;
 };
 export type Leaderboard = {
