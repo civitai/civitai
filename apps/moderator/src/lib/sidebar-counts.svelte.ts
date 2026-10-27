@@ -34,6 +34,7 @@ const counts = ttlFetched('/api/sidebar-counts', parseSidebarCounts);
 const lastActioned = ttlFetched<Record<string, { at: string; by: string | null }>>(
   '/api/sidebar-last-actioned'
 );
+const queueOldest = ttlFetched<Record<string, string>>('/api/queue-oldest');
 
 const countsView = {
   get value() {
@@ -55,7 +56,14 @@ export function sidebarLastActioned() {
   return lastActioned.store;
 }
 
+/** `countKey` → when its oldest waiting report was filed; absent when nothing is waiting. */
+export function sidebarQueueOldest() {
+  void queueOldest.refresh();
+  return queueOldest.store;
+}
+
 export function refreshSidebarCounts() {
   void counts.refresh();
   void lastActioned.refresh();
+  void queueOldest.refresh();
 }
