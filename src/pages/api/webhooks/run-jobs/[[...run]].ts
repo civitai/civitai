@@ -49,6 +49,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
+import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
@@ -305,6 +306,7 @@ export const jobs: Job[] = [
   processTimedUnmutesJob,
   reconcileNowpaymentsJob,
   notifyStuckCryptoDepositsJob,
+  watchOpenNowpaymentsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
