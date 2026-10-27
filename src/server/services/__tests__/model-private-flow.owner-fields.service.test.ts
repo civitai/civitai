@@ -464,6 +464,34 @@ describe('publishPrivateModel', () => {
     expect(meta).not.toHaveProperty('restoreCannotPromote');
   });
 
+  // What the first read, before the transaction, saw. mockPrivateModel is the row the transaction's
+  // locked re-read sees: a moderator's write landed in between.
+  const firstReadSaw = (meta: Record<string, unknown>) =>
+    mockDbWrite.model.findUnique.mockResolvedValueOnce({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      availability: Availability.Private,
+      status: ModelStatus.Published,
+      meta,
+    });
+
+  it("keeps a moderator's meta change made after it was read", async () => {
+    mockPrivateModel({ meta: { cannotPromote: true, restoreCannotPromote: true, minor: true } });
+    firstReadSaw({ cannotPromote: true, restoreCannotPromote: true });
+
+    await publish(false);
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, minor: true });
+  });
+
+  it('refuses the owner when publishing was blocked after it was read, and writes nothing', async () => {
+    mockPrivateModel({ meta: { cannotPublish: true } });
+    firstReadSaw({});
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   // The checks above run before the write transaction; a takedown can land in between.
   const takenDownMeanwhile = ({ model = false, versions = [{ id: 1 }] }) =>
     mockDbWrite.$queryRaw.mockImplementation((async (strings: string[]) =>
