@@ -225,15 +225,16 @@ describe('a slow orchestrator', () => {
   };
   afterEach(() => vi.restoreAllMocks());
 
-  // One heavy account measured 63-70 s for this call; a 30 s cap made its history unreadable, and
-  // Cloudflare cuts the request at 100 s whatever we allow.
+  // One heavy account measured 63-70 s for this call; a 30 s cap made its history unreadable. Cloudflare
+  // cuts the whole request at 100 s, and the auth hooks and proxy hop need some of that, so above ~95 s
+  // its error page would arrive before our timeout message.
   it('allows a call long enough for the measured account, inside the edge limit', async () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     respond({ items: [] });
     await getUserGeneratedWorkflows(7);
     const ms = timeout.mock.calls[0][0];
     expect(ms).toBeGreaterThan(70_000);
-    expect(ms).toBeLessThan(100_000);
+    expect(ms).toBeLessThanOrEqual(95_000);
   });
 
   it('logs a call over 30 s with how long it took', async () => {
