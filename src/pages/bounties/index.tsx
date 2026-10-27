@@ -35,7 +35,7 @@ function BountiesPage() {
         <Stack gap="xs">
           {query.engagement && (
             <Stack gap="xl" align="flex-start">
-              <Title>My Bounties</Title>
+              <Title>Bounties</Title>
               <SegmentedControl
                 classNames={styles}
                 transitionDuration={0}
