@@ -1,11 +1,9 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 
-export const FILL_HEIGHT_VAR = '--assistant-fill-height';
-
 /**
- * Sizes the element to the space left in its scrolling ancestor below its own top edge and above whatever follows it, so the page
- * does not scroll however tall the title band above it is. Sets `FILL_HEIGHT_VAR` on the element;
- * the stylesheet decides what to do when the variable is absent or too small.
+ * Sizes the element to the space left in its scrolling ancestor, between its own top edge and
+ * whatever follows it, so the page does not scroll however tall the title band above it is.
+ * Writes `--assistant-fill-height` on the element; the stylesheet supplies the fallback.
  */
 export function useFillScrollParent<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -18,21 +16,15 @@ export function useFillScrollParent<T extends HTMLElement>() {
       node.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop;
     const below = Math.max(0, parent.scrollHeight - top - node.offsetHeight);
     const height = Math.floor(parent.clientHeight - top - below);
-    node.style.setProperty(FILL_HEIGHT_VAR, `${height}px`);
+    node.style.setProperty('--assistant-fill-height', `${height}px`);
   };
 
-  // The element mounts late (after the access check), so measure after every render.
+  // The element mounts after the access check, so measure after every render.
   useLayoutEffect(measure);
 
   useEffect(() => {
-    const parent = ref.current?.closest<HTMLElement>('.scroll-area');
     window.addEventListener('resize', measure);
-    const observer = parent ? new ResizeObserver(measure) : null;
-    if (parent) observer?.observe(parent);
-    return () => {
-      window.removeEventListener('resize', measure);
-      observer?.disconnect();
-    };
+    return () => window.removeEventListener('resize', measure);
   }, []);
 
   return ref;
