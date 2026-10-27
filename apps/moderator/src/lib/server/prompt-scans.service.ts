@@ -52,7 +52,11 @@ export async function getPromptScans(
     format: 'JSONEachRow',
     // Every call scans the table, and its time swings with cluster load (8-20 s+ measured); this
     // stays under Cloudflare's 100 s with room for the request around it. A closed tab cancels it.
-    clickhouse_settings: { max_execution_time: PROMPT_SCAN_TIMEOUT_S },
+    clickhouse_settings: {
+      max_execution_time: PROMPT_SCAN_TIMEOUT_S,
+      // Without this ClickHouse keeps running a query whose client went away.
+      cancel_http_readonly_queries_on_client_close: 1,
+    },
     abort_signal: signal,
   });
   const rows = await resp.json<Row>();

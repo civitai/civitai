@@ -94,14 +94,12 @@ describe('/api/user-prompt-scans', () => {
     expect(logToAxiom).not.toHaveBeenCalled();
   });
 
-  it('says the scan timed out, and suggests a shorter window, when ClickHouse cut it off', async () => {
+  it('says the scan timed out when ClickHouse cut it off', async () => {
     getPromptScans.mockRejectedValue(
       Object.assign(new Error('Timeout exceeded'), { code: '159', type: 'TIMEOUT_EXCEEDED' })
     );
     const res = await call();
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toMatch(
-      /took longer than \d+ seconds\. Try a shorter window\./
-    );
+    expect((await res.json()).error).toMatch(/took longer than \d+ seconds/);
   });
 });

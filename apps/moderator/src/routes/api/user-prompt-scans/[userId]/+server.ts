@@ -43,7 +43,7 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
     console.error('[user-prompt-scans] query failed', e);
     // Never 502 or 504: Cloudflare swaps those for its own HTML page.
     const error = isScanTimeout(e)
-      ? `The scan took longer than ${PROMPT_SCAN_TIMEOUT_S} seconds. Try a shorter window.`
+      ? `The scan took longer than ${PROMPT_SCAN_TIMEOUT_S} seconds; the database is busy. Try again in a minute.`
       : 'Could not read the prompt scans.';
     return json({ error }, { status: 503 });
   }

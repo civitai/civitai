@@ -30,6 +30,16 @@ describe('getPromptScans', () => {
     expect(cap).toBeLessThanOrEqual(60);
   });
 
+  // ClickHouse's default keeps a query running after its client disconnects, so a closed tab would
+  // still hold a slot for the full cap.
+  it('asks ClickHouse to cancel the scan when the client goes away', async () => {
+    rows([]);
+    await getPromptScans(1, { days: 30, limit: 100 });
+    expect(
+      query.mock.calls[0][0].clickhouse_settings.cancel_http_readonly_queries_on_client_close
+    ).toBe(1);
+  });
+
   it('reads prompts and scores, an empty negative prompt as none', async () => {
     rows([
       {
