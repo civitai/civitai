@@ -12,9 +12,9 @@
 </script>
 
 <header class="page-header">
-  <h1>Knights review</h1>
+  <h1>Knights of New Order review</h1>
   <p>
-    Groups of Knights accounts that look like one operator. Block holds the group's Knights payouts,
+    Groups of Knights of New Order accounts that look like one operator. Block holds the group's Knights payouts,
     which stay pending; Clear releases them and removes the hold. Holds placed automatically are
     listed under Payouts held and can be cleared on appeal.
   </p>

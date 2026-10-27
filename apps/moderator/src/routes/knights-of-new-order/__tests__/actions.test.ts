@@ -20,11 +20,11 @@ const formEvent = (fields: Record<string, string>) => {
   return {
     request: { formData: async () => data },
     locals: { user: { id: 77 } },
-    url: new URL('http://localhost/knights'),
+    url: new URL('http://localhost/knights-of-new-order'),
   } as never;
 };
 
-describe('knights review actions', () => {
+describe('Knights of New Order review actions', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('rejects a malformed id without calling the service', async () => {
