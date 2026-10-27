@@ -179,10 +179,12 @@ makes, which `WORKFLOW_VERSION` protects.
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell
     the assistant to start the dev server first and to use `sandbox__preview_check` (with
-    `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
-    model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
-    keeps only the text (`mcpResultToText`), so the instructions tell the assistant to go by the
-    text when no image comes back and never to describe a picture it did not receive.
+    `screenshot: true` when the look matters) to see what the user sees. The screenshot reaches the
+    model through the chat package (0.28.0 and later): `extraToolSet` keeps an MCP result's image
+    for `AgentCore`, which shows it once, in a user message right after that step's tool results;
+    the saved conversation keeps only a one-line note in its place. A model that takes no images
+    is asked for that step again without them. The instructions still tell the assistant to go by
+    the text when no image comes back and never to describe a picture it did not receive.
   - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
     run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
     page's word is not taken). Their progress is journaled as `subagent-progress`.
