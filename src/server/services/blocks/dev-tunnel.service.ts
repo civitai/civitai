@@ -1146,6 +1146,31 @@ export async function keepAliveDevTunnel(
   return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
 }
 
+/**
+ * Keep `userId`'s CURRENT tunnel for `blockId` from idling out, whoever opened it: a run, the
+ * page's Restart preview, or the browser. The same stamp as `keepAliveDevTunnel`, for a caller
+ * that does not hold the tunnel's id because it did not open it.
+ *
+ * Ownership comes from `getActiveDevTunnel`, which looks the tunnel up in `userId`'s own index
+ * and re-checks the record's user and block: a caller can never keep another author's tunnel,
+ * or another block's, alive. `not_found` covers no tunnel, a foreign one and one past its hard cap.
+ */
+export async function keepAliveDevTunnelForBlock(
+  userId: number,
+  blockId: string
+): Promise<DevTunnelKeepAlive> {
+  const session = await getActiveDevTunnel(userId, blockId);
+  if (!session) return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
+}
+
 // ---------------------------------------------------------------------------
 // sish authz callback support
 // ---------------------------------------------------------------------------

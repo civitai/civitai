@@ -155,10 +155,14 @@ makes, which `WORKFLOW_VERSION` protects.
        `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
        tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
     3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
-       window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
-       a `NOT_FOUND`, refusal or dead grant stops it. When the run ends it stops keeping the tunnel
-       alive and civitai's normal idle expiry applies, so the user keeps the preview for a while.
-       The 8-hour cap never moves.
+       window is 30; a failed call is retried at the next tick, and each one re-judges the gates)
+       for the open app's preview, whoever opened it: this run, an earlier reply, or the page's
+       Restart preview. It names the block (the one this run opened for the app, else the app's
+       `block.manifest.json`'s, else its key), and civitai keeps the grant's user's current tunnel
+       of that block, never another user's. A `NOT_FOUND` (none live now) is asked again at the
+       next tick; a refusal or dead grant stops it, and so does `stop_preview` until the next
+       start. When the run ends it stops keeping the tunnel alive and civitai's normal idle expiry
+       applies, so the user keeps the preview for a while. The 8-hour cap never moves.
     4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
        (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
        and idles out at civitai.
@@ -367,8 +371,9 @@ Known gaps:
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.
-- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
-  keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
+- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only); it
+  still keeps the app's preview alive by its block, but `stop_preview` then closes only the
+  sandbox's side, and civitai's side idles out.
 
 - A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
   arrives at once (orchestration has no reattach to a stream in flight). One cut before

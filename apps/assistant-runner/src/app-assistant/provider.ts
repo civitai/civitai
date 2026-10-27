@@ -227,7 +227,12 @@ export class AppAssistantTools implements ToolProvider {
           ? { keepaliveMs: this.#options.previewKeepaliveMs }
           : {}),
       });
-      if (this.#options.devTunnels) openPreviewAfterDevServer(sandboxTools, preview, context);
+      if (this.#options.devTunnels) {
+        openPreviewAfterDevServer(sandboxTools, preview, context);
+        // The app's preview stays up while the run works, whoever opened it (this run, the page's
+        // Restart preview): a hidden tab sends the tunnel no activity of its own.
+        preview.keepWhileRunning();
+      }
       // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
       // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
       const livePreview = preview;

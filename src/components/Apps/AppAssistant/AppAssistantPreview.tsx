@@ -4,7 +4,7 @@ import { IconPlayerPlay, IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
-import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import { fetchPreviewFrame, PreviewGoneError } from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
 function EmptyState({ children }: { children: React.ReactNode }) {
@@ -24,6 +24,13 @@ export interface PreviewRestart {
   /** Why the last restart failed, in words for the user. */
   error: string | null;
 }
+
+/**
+ * How often a shown preview on the server runner is checked for still being live (and again when
+ * the tab comes back into view): civitai reaps an idle tunnel, and a frame already loaded never
+ * notices its host is gone.
+ */
+export const PREVIEW_LIVE_CHECK_MS = 60_000;
 
 /** What the pane says when no preview of the open app is live (after a reload, say). */
 export const NO_LIVE_PREVIEW = 'The live preview isn’t running.';
@@ -61,11 +68,14 @@ export function AppAssistantPreview({
   canPreview,
   session,
   restart,
+  liveCheckMs = PREVIEW_LIVE_CHECK_MS,
 }: {
   canPreview: boolean;
   session: PreviewSession | null;
   /** On the server runner: the pane offers it when no preview is live, or the app will not load. */
   restart?: PreviewRestart;
+  /** How often a shown preview is checked for still being live (`PREVIEW_LIVE_CHECK_MS`). */
+  liveCheckMs?: number;
 }) {
   const frame = useQuery({
     // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
@@ -80,6 +90,36 @@ export function AppAssistantPreview({
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
+  // On the server runner, while the frame is up: whether civitai still has a live tunnel for it.
+  // Only its answer that there is none (`PreviewGoneError`) counts; any other failure leaves the
+  // preview shown. Each preview (`view`) is checked afresh, so an old answer never ends a new one.
+  const live = useQuery({
+    queryKey: [
+      'app-assistant',
+      'preview-live',
+      session?.blockId,
+      session?.sessionId,
+      session?.view,
+    ],
+    queryFn: async () => {
+      try {
+        await fetchPreviewFrame((session as PreviewSession).blockId);
+        return true;
+      } catch (error) {
+        if (error instanceof PreviewGoneError) return false;
+        throw error;
+      }
+    },
+    enabled: !!session && !!restart && !!frame.data,
+    // The frame's own fetch just said it is live.
+    initialData: true,
+    staleTime: liveCheckMs,
+    refetchInterval: liveCheckMs,
+    refetchOnWindowFocus: true,
+    gcTime: 0,
+    retry: false,
+  });
+  const gone = !!restart && live.data === false;
 
   if (!canPreview)
     return (
@@ -88,7 +128,7 @@ export function AppAssistantPreview({
         app.
       </EmptyState>
     );
-  if (!session && restart)
+  if ((!session || gone) && restart)
     return (
       <Center className="h-full">
         <RestartPreview restart={restart} reason={NO_LIVE_PREVIEW} />
