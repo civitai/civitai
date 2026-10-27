@@ -22,6 +22,14 @@ describe('describeEvidence', () => {
     expect(lines[2]).toContain('alpha, beta and gamma were created');
   });
 
+  it('pluralises shared addresses', () => {
+    const lines = describeEvidence(
+      { sinks: [], ipLinks: [{ userIds: [1, 2], sharedIps: 2 }], createdTogether: [] },
+      name
+    );
+    expect(lines[0]).toContain('alpha and beta used 2 addresses');
+  });
+
   it('falls back to ids for unknown accounts and tolerates a malformed payload', () => {
     expect(parseLinkEvidence({ sinks: 'nope' })).toEqual({
       sinks: [],

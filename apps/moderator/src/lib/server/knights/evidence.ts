@@ -24,7 +24,8 @@ export const parseLinkEvidence = (value: unknown): LinkEvidence =>
 const list = (names: string[]) =>
   names.length <= 1 ? names[0] ?? '' : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 
-const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n: number, word: string, many = `${word}s`) =>
+  `${n.toLocaleString()} ${n === 1 ? word : many}`;
 
 export function describeEvidence(evidence: LinkEvidence, name: (id: number) => string): string[] {
   const lines: string[] = [];
@@ -43,7 +44,8 @@ export function describeEvidence(evidence: LinkEvidence, name: (id: number) => s
     lines.push(
       `${list(link.userIds.map(name))} used ${plural(
         link.sharedIps,
-        'address'
+        'address',
+        'addresses'
       )} that few other accounts use.`
     );
   }
