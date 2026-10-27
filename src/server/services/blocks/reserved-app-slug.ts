@@ -10,8 +10,7 @@
  *   - `review-` — moderator review previews (`review-<sha16>`, see apps-pipeline.service.ts);
  *   - `www`.
  *
- * The one place this rule lives. The submit gate (BlockManifestValidator) and fork-slug generation
- * call it.
+ * The one place this rule lives. submitVersion, BlockManifestValidator and isValidForkSlug call it.
  */
 
 const RESERVED_PREFIXES: ReadonlyArray<{ prefix: string; usedFor: string }> = [

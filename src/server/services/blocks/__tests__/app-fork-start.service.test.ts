@@ -596,7 +596,8 @@ describe('fork slugs', () => {
     expect(long.length).toBeLessThanOrEqual(40);
     expect(long).toBe(`${'a'.repeat(30)}-fork-1a2b`);
     expect(isValidForkSlug(long)).toBe(true);
-    expect(isValidForkSlug('a--b-fork-0f0f')).toBe(false);
+    // Not 'a--b…': that would also fail as a reserved id, hiding a broken `--` rule.
+    expect(isValidForkSlug('ab--c-fork-0f0f')).toBe(false);
     expect(isValidForkSlug('9app-fork-0f0f')).toBe(false);
   });
 
