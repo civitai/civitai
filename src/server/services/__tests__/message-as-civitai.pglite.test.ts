@@ -114,6 +114,8 @@ beforeEach(async () => {
       ? { id: BANNED, bannedAt: new Date() }
       : [USER, OTHER_USER].includes(where.id)
       ? { id: where.id, bannedAt: null }
+      : where.id === MOD_A
+      ? { id: MOD_A, username: 'mod-a' }
       : null) as never);
   dbMock.dbWrite.chatMember.findFirst.mockImplementation((async ({
     where,
@@ -234,7 +236,7 @@ describe('sendAsCivitai', () => {
   it('refuses while another moderator holds the claim, and allows the holder', async () => {
     const { chatId } = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'one' });
     await expect(sendAsCivitai({ actorId: MOD_B, userId: USER, message: 'two' })).rejects.toThrow(
-      /Another moderator/
+      /mod-a is answering this thread for the next 30 min/
     );
     await expect(sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'two' })).resolves.toEqual(
       expect.objectContaining({ chatId })

@@ -260,12 +260,17 @@ export async function sendAsCivitaiOnce(input: SendAsCivitaiInput & { idempotenc
 
 async function requireClaim(chatId: number, actorId: number) {
   const claim = await claimThread({ chatId, moderatorId: actorId });
-  if (!claim.claimed)
-    throw throwConflictError(
-      `Another moderator (${
-        claim.moderatorId
-      }) is answering this thread until ${claim.expiresAt.toISOString()}.`
-    );
+  if (claim.claimed) return;
+  const holder = await dbWrite.user.findFirst({
+    where: { id: claim.moderatorId },
+    select: { username: true },
+  });
+  const minutes = Math.max(1, Math.ceil((claim.expiresAt.getTime() - Date.now()) / 60_000));
+  throw throwConflictError(
+    `${
+      holder?.username ?? 'Another moderator'
+    } is answering this thread for the next ${minutes} min.`
+  );
 }
 
 // Chat itself reaches nobody whose chat is off or muted, so the tray carries a pointer to the thread.
