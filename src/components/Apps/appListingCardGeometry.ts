@@ -8,7 +8,7 @@
  * a value. `__tests__/appListingCardView.test.ts` enumerates this module's exports
  * and requires the card to read every one, so an unread constant cannot linger.
  *
- * Card A (design pass of 2026-10-27): the icon straddles the cover's bottom edge,
+ * Card A: the icon straddles the cover's bottom edge,
  * the title and the Open button are centred on the ICON's centre, and a footer row
  * (reviews/plays left, creator right) sits under a divider.
  */

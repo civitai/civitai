@@ -579,28 +579,24 @@ describe('the card geometry module', () => {
   });
 
   /**
-   * 🔴 THE AUTHOR CHIP IS GONE FROM THE CARD'S CODE, not merely unrendered.
-   *
-   * The operator dropped the "by {creator}" line from the store card (2026-09-06).
-   * A `CreatorChip` left in the file but uncalled is the shape that gets wired back
-   * in by the next person who wants a byline, so the component was deleted; this
-   * asserts that rather than trusting it.
+   * 🔴 THE CARD RENDERS THE CREATOR INLINE IN ITS FOOTER, linking to their profile.
+   * `CreatorChip` is the detail page's component and must not be imported here.
    *
    * 🔴 READ OFF THE **STRIPPED** SOURCE, and the distinction is load-bearing here
    * more than anywhere else in this file: `AppListingCard.tsx` deliberately keeps a
    * docblock NAMING the retired `CreatorChip` and explaining where attribution went.
    * An unstripped scan would read that prose and report the component present.
    */
-  it('🔴 the card shows its creator in the footer, linking to their profile (reverses the 2026-09-06 removal)', () => {
+  it('🔴 the card shows its creator in the footer, linking to their profile', () => {
     const code = cardCode();
     expect(code, 'the stripper ate the component itself').toContain(
       'export function AppListingCard'
     );
-    // Card A (design pass 2026-10-27): the byline is back, right-aligned in the footer.
+    // The byline is right-aligned in the footer.
     expect(code).toContain('apps-listing-card-creator');
     expect(code).toContain('/user/');
     expect(code).toContain('card.creator');
-    // The retired component name stays retired: the footer renders the creator inline.
+    // The footer renders the creator inline, not through the detail page's chip.
     expect(code).not.toContain('CreatorChip');
   });
 });

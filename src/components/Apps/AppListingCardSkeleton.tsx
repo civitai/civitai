@@ -37,61 +37,37 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * "Zero layout shift" is therefore the wrong claim. "Zero per-card shift" is the
  * right one.
  *
- * 🔴 AND A THIRD: CONTENT VARIANCE — WHICH NOW RUNS IN ONE DIRECTION ONLY. The
- * skeleton reserves cover, icon, the two RESERVED title lines, the 46px action row,
- * and the always-rendered stats line BELOW that row. Three axes move a real card off
- * that, all of them UPWARD:
+ * 🔴 AND A THIRD: CONTENT VARIANCE, WHICH RUNS IN ONE DIRECTION ONLY. The skeleton
+ * reserves the cover, a header row (the icon pulled up over the cover's bottom edge, one
+ * title line and the Open button, both centred on the icon's centre) and a bottom-pinned
+ * footer (a divider, then the reviews/plays line on the left and the creator on the
+ * right). Three axes move a real card off that, all of them UPWARD:
  *   · a conditional tagline (`line-clamp-3`)      → card TALLER
  *   · an author-declared `Beta` badge             → card TALLER
  *   · an owner-only "Incomplete" badge            → card TALLER
+ * A listing with no tagline and no badges is EXACTLY its skeleton's height whether or not
+ * it has a creator, because the footer is reserved either way. The parity fixture is that
+ * listing.
  *
- * 🔴 THE FOURTH AXIS — THE ONLY DOWNWARD ONE — IS GONE, AND THAT IS A REAL
- * IMPROVEMENT RATHER THAN A LINE DELETED FROM A LIST. It read: "NO CREATOR —
- * `ListingCard.creator` is nullable and `CreatorChip` returns `null` for it —
- * → card SHORTER, by the creator line plus the meta stack's gap" (measured at
- * −22.29px on a 1376px grid, −22.30px at 2450px). The store card no longer renders
- * an author chip at all (2026-09-06, operator's call), so this skeleton reserves no
- * creator line and a `creator: null` listing — which this suite's own
- * `keepPreviousData` fixture is — is now EXACTLY its skeleton's height. The geometry
- * suite pins that as an equality where it used to pin the delta.
- *
- * 🔴 SO "THE INVARIANT SHAPE" NO LONGER DEPENDS ON THE CREATOR FIELD. The parity
- * fixture is a listing WITHOUT a tagline and WITHOUT badges; whether it carries a
- * creator is now irrelevant to its height, which is one fewer choice the reservation
- * has to be right about.
- *
- * 🔴 THE STATS LINE IS RESERVED UNCONDITIONALLY, AND THE PLAY COUNT COSTS NOTHING
- * EXTRA. The card renders the recommend rollup and — when `openCount` is not `null`
- * — the play count on ONE flex line (`wrap="nowrap"`), so an off-site listing that
- * omits the play count is the same HEIGHT as an on-site one that shows it. That is
- * what lets this file reserve the line without knowing the listing's kind, which a
- * loading state structurally cannot.
+ * 🔴 THE FOOTER IS RESERVED UNCONDITIONALLY. The card renders the recommend rollup and,
+ * when `openCount` is not `null`, the play count on ONE `wrap="nowrap"` line, so an
+ * off-site listing that omits the play count is the same HEIGHT as an on-site one that
+ * shows it. That is what lets this file reserve the line without knowing the listing's
+ * kind, which a loading state cannot.
  *
  * ── EVERY GEOMETRY NUMBER IS READ, NEVER SPELLED ────────────────────────────
  * 🔴 THIS FILE IMPORTS `appListingCardGeometry.ts` AND SO DOES `AppListingCard`.
- * That module exists for exactly this relationship: a skeleton that hand-copied
- * "16 / 9", 40, 2, 1.2, 10, 36 and 46 would drift from the card the first time
- * one of them moved, silently, with both files individually correct-looking.
- * `__tests__/appListingCardSkeleton.test.ts` enumerates the module's own
- * `Object.keys` and fails if this file stops reading any of them — the same guard
- * `appListingCardView.test.ts` already runs over the card.
+ * A skeleton that hand-copied "16 / 9", 56, 14 or 20 would drift from the card the first
+ * time one of them moved, with both files individually correct-looking.
+ * `__tests__/appListingCardSkeleton.test.ts` enumerates the module's own `Object.keys`
+ * and fails if this file stops reading any of them, bar the ones it lists as not needed
+ * here (the `⋮` menu trigger floats over the cover and adds no height).
  *
- * What is NOT single-sourced is the MARKUP the two files mirror (`gap="sm"` on the
- * outer stack, `gap={2}` on the meta stack, `size="xs"` on the stats line,
- * `padding="md"` on the Card) — plus one deliberate DIVERGENCE: this file adds
- * `flexGrow: 1` to the meta `Stack`, which the card does not have. The card's stack
- * is sized by its real text; this one's content is absolutely-positioned bars over a
- * non-breaking space, so without it the stack shrink-to-fits to almost nothing and
- * the bars (sized in `%`) render as slivers. It changes no height — the title box is
- * `min-height`-pinned and the stats line is single-line — which is why the parity
- * test stays exact. (This sentence used to say "both meta lines are single-line".
- * There is one line now and it is not in the meta block: the creator line is gone
- * and the rollup line moved below the action row.)
- * Those are not in the geometry module — the card spells them too — so the
- * thing that pins them is the MEASURED parity test
- * (`AppListingCardSkeleton.geometry.test.tsx`), which renders both grids and
- * compares boxes. Stated so nobody reads the import list above as covering more
- * than it does.
+ * What is NOT single-sourced is the MARKUP the two files mirror (`gap="xs"` on the
+ * outer stack, `gap="sm"` on the header row, `size="xs"` on the stats line). The thing
+ * that pins those is the MEASURED parity test
+ * (`AppListingCardSkeleton.geometry.test.tsx`), which renders both grids and compares
+ * boxes. Stated so nobody reads the import list above as covering more than it does.
  */
 
 /**
