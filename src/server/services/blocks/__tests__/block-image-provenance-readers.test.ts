@@ -43,7 +43,12 @@ type Role =
    * Reads Image provenance to DISPLAY a "Published with <app>" credit on an image the viewer
    * was already authorised to open. A display read, never an access decision.
    */
-  | 'image-attribution';
+  | 'image-attribution'
+  /**
+   * Selects stamped rows for a one-off admin repair that writes only non-provenance keys
+   * (the blurhash placeholder). Never returns a row to an app, never an access decision.
+   */
+  | 'backfill-selector';
 
 const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_PUBLISHED_APP_ID_META_KEY':
@@ -64,6 +69,7 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/post-intent/post-intent.service.ts#publishIntent': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
   'src/server/services/blocks/image-app-chip.service.ts#readImageAppChip': 'image-attribution',
+  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#selectCandidates': 'backfill-selector',
   // The server-owned key list `createImage` and the image input schemas strip client copies
   // against. It decides what is DROPPED, never what an app may read.
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS': 'declaration',

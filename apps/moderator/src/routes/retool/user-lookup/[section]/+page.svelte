@@ -25,6 +25,7 @@
   import ModerationMemoryPanel from '../ModerationMemoryPanel.svelte';
   import NotificationsPanel from '../NotificationsPanel.svelte';
   import PromptAuditPanel from '../PromptAuditPanel.svelte';
+  import PromptScansPanel from '../PromptScansPanel.svelte';
   import ReactionsPanel from '../ReactionsPanel.svelte';
   import ReportsPanel from '../ReportsPanel.svelte';
   import ReputationPanel from '../ReputationPanel.svelte';
@@ -141,6 +142,10 @@
         </div>
       </div>
     {:else if section === 'prompts'}
+      <PromptScansPanel
+        userId={result.identity.id}
+        canView={!!data.grants['user.generations.view']}
+      />
       <PromptAuditPanel {signals} />
     {:else if section === 'shop'}
       <ShopPanel

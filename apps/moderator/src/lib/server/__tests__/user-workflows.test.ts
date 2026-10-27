@@ -11,6 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 process.env.ORCHESTRATOR_ENDPOINT = 'https://orchestrator.example';
 process.env.ORCHESTRATOR_ACCESS_TOKEN = 'test-token';
 
+const logToAxiom = vi.fn(async (_data: Record<string, unknown>) => undefined);
+vi.mock('../axiom', () => ({ logToAxiom }));
+
 const { getUserGeneratedWorkflows } = await import('../user-workflows.service');
 
 const fetchMock = vi.fn();
@@ -24,6 +27,7 @@ const respond = (body: unknown, ok = true, status = 200) =>
 
 beforeEach(() => {
   fetchMock.mockReset();
+  logToAxiom.mockClear();
   vi.stubGlobal('fetch', fetchMock);
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -206,5 +210,52 @@ describe('getUserGeneratedWorkflows', () => {
     const page = await getUserGeneratedWorkflows(1);
 
     expect(page.items.map((w) => w.id)).toEqual([imageWorkflow.id]);
+  });
+});
+
+describe('a slow orchestrator', () => {
+  /** Makes the call appear to take `ms`: Date.now jumps once the fetch is under way. */
+  const takes = (ms: number, result: () => Promise<unknown>) => {
+    let t = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    fetchMock.mockImplementation(async () => {
+      t += ms;
+      return result();
+    });
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  // One heavy account measured 63-70 s for this call; a 30 s cap made its history unreadable. Cloudflare
+  // cuts the whole request at 100 s, and the auth hooks and proxy hop need some of that, so above ~95 s
+  // its error page would arrive before our timeout message.
+  it('allows a call long enough for the measured account, inside the edge limit', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    respond({ items: [] });
+    await getUserGeneratedWorkflows(7);
+    const ms = timeout.mock.calls[0][0];
+    expect(ms).toBeGreaterThan(70_000);
+    expect(ms).toBeLessThanOrEqual(95_000);
+  });
+
+  it('logs a call over 30 s with how long it took', async () => {
+    takes(45_000, async () => ({ ok: true, status: 200, json: async () => ({ items: [] }) }));
+    await getUserGeneratedWorkflows(7);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'user-workflows-slow', userId: 7, ms: 45_000, outcome: 'ok' })
+    );
+  });
+
+  it('does not log a call that came back quickly', async () => {
+    takes(2_000, async () => ({ ok: true, status: 200, json: async () => ({ items: [] }) }));
+    await getUserGeneratedWorkflows(7);
+    expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('logs a call that ran out the clock as a timeout, and still throws', async () => {
+    takes(90_000, async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    await expect(getUserGeneratedWorkflows(7)).rejects.toThrow(/timeout/);
+    expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'timeout' }));
   });
 });
