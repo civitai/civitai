@@ -548,16 +548,10 @@ export const completeOnboardingHandler = async ({
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
-        // Off the primary row, not `ctx.user`: the session copy can be hours stale, and this
-        // decides a payment.
-        const current = await dbWrite.user.findUnique({
-          where: { id },
-          select: { onboarding: true, meta: true },
-        });
-        const bonusOwed =
-          !!current &&
-          !Flags.hasFlag(current.onboarding, OnboardingSteps.Buzz) &&
-          !isSystemAccountMeta(current.meta);
+        // No "already onboarded" gate: a resubmit is how a failed payment is retried, and the
+        // externalTransactionId below keeps that from paying twice.
+        const current = await dbWrite.user.findUnique({ where: { id }, select: { meta: true } });
+        const bonusOwed = !isSystemAccountMeta(current?.meta);
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {

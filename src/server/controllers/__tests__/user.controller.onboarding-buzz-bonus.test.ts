@@ -20,34 +20,47 @@ import { completeOnboardingHandler } from '~/server/controllers/user.controller'
 
 const USER_ID = 4242;
 
-// The session copy of `onboarding` is deliberately 0 in every case: it can be hours stale, so only
-// the primary row may decide whether the bonus is owed.
 function submitBuzzStep(row: { onboarding: number; meta?: unknown }) {
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: {}, ...row });
   return completeOnboardingHandler({
     input: { step: OnboardingSteps.Buzz, recaptchaToken: 'token' },
-    ctx: { user: { id: USER_ID, onboarding: 0 }, domain: 'blue', ip: '127.0.0.1' },
+    ctx: { user: { id: USER_ID, onboarding: row.onboarding }, domain: 'blue', ip: '127.0.0.1' },
   } as unknown as Parameters<typeof completeOnboardingHandler>[0]);
 }
 
+const paidBonus = () =>
+  expect(createBuzzTransaction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      toAccountId: USER_ID,
+      externalTransactionId: `${USER_ID}-onboarding-bonus`,
+    })
+  );
+
 beforeEach(() => {
-  createBuzzTransaction.mockClear();
+  createBuzzTransaction.mockReset();
+  createBuzzTransaction.mockResolvedValue({});
 });
 
 describe('completeOnboardingHandler, Buzz step bonus', () => {
-  it('pays the bonus the first time the step completes', async () => {
+  it('pays the bonus when the step first completes', async () => {
     await submitBuzzStep({ onboarding: OnboardingSteps.TOS | OnboardingSteps.Profile });
 
-    expect(createBuzzTransaction).toHaveBeenCalledTimes(1);
-    expect(createBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ toAccountId: USER_ID, description: 'Onboarding bonus' })
-    );
+    paidBonus();
   });
 
-  it('does not pay again when the step was already complete', async () => {
-    await submitBuzzStep({ onboarding: OnboardingSteps.TOS | OnboardingSteps.Buzz });
+  // The step bit is committed before the payment, and a payment failure is only logged, so the
+  // resubmit is the retry. The fixed externalTransactionId is what keeps it from paying twice.
+  it('pays on a resubmit after the first payment failed', async () => {
+    createBuzzTransaction.mockRejectedValue(new Error('buzz service unavailable'));
+    await submitBuzzStep({ onboarding: OnboardingSteps.TOS | OnboardingSteps.Profile });
 
-    expect(createBuzzTransaction).not.toHaveBeenCalled();
+    createBuzzTransaction.mockReset();
+    createBuzzTransaction.mockResolvedValue({});
+    await submitBuzzStep({
+      onboarding: OnboardingSteps.TOS | OnboardingSteps.Profile | OnboardingSteps.Buzz,
+    });
+
+    paidBonus();
   });
 
   it('never pays a system account', async () => {
