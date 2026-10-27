@@ -371,12 +371,14 @@ describe('keeping the preview alive', () => {
     expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
       app: 'tip-calculator',
     });
-    await ticks(2);
+    // The first app's tunnel is no longer the open app's: it is left to idle out. (The new app's
+    // sandbox answers this run nothing — its tools come with the next reply — so nothing is kept.)
     fake.tunnelHosts.set(sandboxOf('tip-calculator'), RESTARTED_HOST);
-    await ticks(1);
-    // The first app's tunnel is no longer the open app's: it is left to idle out, and only the
-    // open app's is kept.
-    await keptToBe([CONNECTED, { host: RESTARTED_HOST }]);
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(tunnels.kept).toEqual([CONNECTED]);
   });
 
   it('keeps nothing alive after stop_preview, until the next start', async () => {
