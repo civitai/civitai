@@ -32,9 +32,17 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
       })
     );
   } catch (e) {
-    // The panel reads `body.error` — an uncaught throw here returns an HTML error page, and the
-    // fetch's `r.json()` fails on it before any message reaches the moderator.
     console.error('[user-workflows] query failed', e);
-    return json({ error: 'Could not reach the orchestrator.' }, { status: 502 });
+    const timedOut = e instanceof Error && e.name === 'TimeoutError';
+    // Never 502 or 504: Cloudflare replaces an origin 502/504 with its own HTML page, so the panel
+    // would get `<!DOCTYPE` instead of this message.
+    return json(
+      {
+        error: timedOut
+          ? 'The orchestrator did not answer within 30 seconds.'
+          : 'Could not reach the orchestrator.',
+      },
+      { status: 503 }
+    );
   }
 };
