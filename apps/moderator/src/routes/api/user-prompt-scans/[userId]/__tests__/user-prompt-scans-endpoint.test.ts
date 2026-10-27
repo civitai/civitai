@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromptScans from '$lib/server/prompt-scans.service';
 
 const getPromptScans = vi.fn();
-vi.mock('$lib/server/prompt-scans.service', () => ({ getPromptScans }));
+vi.mock('$lib/server/prompt-scans.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromptScans>()),
+  getPromptScans,
+}));
 const logToAxiom = vi.fn(async (_data: Record<string, unknown>) => undefined);
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 const canAccess = vi.fn((_user: unknown, _path: string) => true);
@@ -25,9 +29,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockImplementation(() => true);
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  getPromptScans.mockResolvedValue([
-    { id: 'h', createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] },
-  ]);
+  getPromptScans.mockResolvedValue({
+    items: [{ id: 'h', createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] }],
+    truncated: true,
+  });
 });
 
 describe('/api/user-prompt-scans', () => {
@@ -50,7 +55,13 @@ describe('/api/user-prompt-scans', () => {
 
   it('records who read whose prompts, over what window, and how many rows', async () => {
     const res = await call('?days=90&limit=250');
-    expect(await res.json()).toMatchObject({ items: [{ id: 'h' }], days: 90, limit: 250 });
+    // The panel's "capped" label reads `truncated`; one row under a limit of 250 is still capped.
+    expect(await res.json()).toMatchObject({
+      items: [{ id: 'h' }],
+      truncated: true,
+      days: 90,
+      limit: 250,
+    });
     expect(getPromptScans).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ days: 90, limit: 250 })
@@ -88,5 +99,14 @@ describe('/api/user-prompt-scans', () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'Could not read the prompt scans.' });
     expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('says the scan timed out when ClickHouse cut it off', async () => {
+    getPromptScans.mockRejectedValue(
+      Object.assign(new Error('Timeout exceeded'), { code: '159', type: 'TIMEOUT_EXCEEDED' })
+    );
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/took longer than \d+ seconds/);
   });
 });

@@ -4,13 +4,15 @@ import { TokenScope } from '@civitai/auth/token-scope';
 
 /**
  * `/api/auth/oauth/authorize` refuses a client_credentials-only scope before the consent check, so a
- * user is never asked for it and an approval never stores it on a consent row.
+ * user is never asked for it and an approval never stores it on a consent row. A registered app staff
+ * marked `skipConsent` goes straight to code issuance with no consent screen.
  */
 
 const h = vi.hoisted(() => ({
   inserts: [] as unknown[],
   authorize: vi.fn(),
   consent: undefined as unknown,
+  skipConsent: false,
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -37,6 +39,7 @@ vi.mock('$lib/server/db/db', () => ({
 vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authorize } }));
 vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
+vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => undefined) }));
 vi.mock('$lib/server/auth/device', () => ({
   getOrCreateDeviceId: () => 'dev',
@@ -55,10 +58,11 @@ vi.mock('$lib/server/oauth/model', () => ({
     redirectUris: ['https://games.example.com/cb'],
     isFirstParty: false,
     accessMode: 'open',
+    skipConsent: h.skipConsent,
   }),
 }));
 
-import { POST } from '../+server';
+import { GET, POST } from '../+server';
 
 function approve(
   scope: number,
@@ -89,21 +93,62 @@ beforeEach(() => {
   h.inserts.length = 0;
   h.authorize.mockReset();
   h.consent = undefined;
+  h.skipConsent = false;
 });
+
+/** A sign-in starting at /authorize (no approval yet). Returns the response, or the redirect it throws. */
+async function start(): Promise<{ status: number; location?: string }> {
+  const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
+  for (const [k, v] of Object.entries({
+    client_id: 'game-frame',
+    redirect_uri: 'https://games.example.com/cb',
+    response_type: 'code',
+    state: 's',
+    code_challenge: 'c',
+    code_challenge_method: 'S256',
+    scope: String(TokenScope.UserRead),
+  }))
+    url.searchParams.set(k, v);
+  try {
+    const res = await GET({
+      request: new Request(url),
+      url,
+      locals: { user: { id: 7 } },
+      getClientAddress: () => '203.0.113.9',
+      cookies: { get: () => undefined, set: () => undefined },
+    } as never);
+    return { status: res.status };
+  } catch (e) {
+    const r = e as { status?: number; location?: string };
+    if (typeof r.status === 'number' && r.location)
+      return { status: r.status, location: r.location };
+    throw e;
+  }
+}
+
+/** The `error` an error redirect back to the client carries (the redirect_uri is verified by then). */
+async function redirectedError(pending: Response | Promise<Response>): Promise<string | null> {
+  const thrown = await Promise.resolve(pending).then(
+    () => null,
+    (e: unknown) => e
+  );
+  const location = (thrown as { location?: string } | null)?.location;
+  return location ? new URL(location).searchParams.get('error') : null;
+}
 
 describe('authorize — client_credentials-only scopes', () => {
   it('refuses AppStoreCatalogWrite before storing any consent or issuing a code', async () => {
-    const res = await approve(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    const error = await redirectedError(
+      approve(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite)
+    );
+    expect(error).toBe('invalid_scope');
     expect(h.inserts).toHaveLength(0);
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
   it('refuses WorkerRegister before storing any consent or issuing a code', async () => {
-    const res = await approve(TokenScope.UserRead | TokenScope.WorkerRegister);
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    const error = await redirectedError(approve(TokenScope.UserRead | TokenScope.WorkerRegister));
+    expect(error).toBe('invalid_scope');
     expect(h.inserts).toHaveLength(0);
     expect(h.authorize).not.toHaveBeenCalled();
   });
@@ -144,5 +189,25 @@ describe('authorize — approval comes from the consent page', () => {
       })
     ).catch(() => undefined);
     expect(h.inserts).toHaveLength(1);
+  });
+});
+
+describe('authorize — consent screen', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('sends a registered app to the consent page by default', async () => {
+    const res = await start();
+    expect(res.status).toBe(303);
+    expect(res.location).toContain('/login/oauth/authorize?');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('skips it for an app staff marked skipConsent, storing no consent row', async () => {
+    h.skipConsent = true;
+    await start().catch(() => undefined);
+    expect(h.authorize).toHaveBeenCalledTimes(1);
+    expect(h.inserts).toHaveLength(0);
   });
 });

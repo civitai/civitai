@@ -130,11 +130,64 @@ const {
     });
     return { sql, strings, values: out };
   };
+  // Postgres's cap on one statement's bind variables. A bound array counts once.
+  const MAX_BIND_VARIABLES = 32767;
+  const tooManyBindVariables = (n: number) =>
+    new Error(
+      `too many bind variables in prepared statement, expected maximum of ${MAX_BIND_VARIABLES}, received ${n}`
+    );
+  // Stand in for the DB actually applying the filters.
+  const queueRows = (
+    where: any,
+    { limit, oldestFirst }: { limit?: number; oldestFirst?: boolean } = {}
+  ) => {
+    const excluded: number[] = where?.entityId?.notIn ?? [];
+    const only: number[] | undefined = where?.entityId?.in;
+    const before: Date | undefined = where?.createdAt?.lte;
+    const rows = [...QUEUE, ...extraQueue].filter(
+      (q) =>
+        where?.type === 'BlockedImageDelete' &&
+        where?.entityType === 'Image' &&
+        !excluded.includes(q.entityId) &&
+        (!only || only.includes(q.entityId)) &&
+        (!before || q.createdAt <= before)
+    );
+    if (oldestFirst) rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    return limit === undefined ? rows : rows.slice(0, limit);
+  };
+  // A raw read of "JobQueue", recorded in `queueWhereLog` in the shape of a Prisma `where`. Each
+  // filter is read off the statement's own text and the value bound at that spot.
+  const queueRead = (sql: string, values: unknown[]) => {
+    const bound = (pattern: string) => {
+      const at = sql.indexOf(pattern);
+      if (at < 0) return undefined;
+      return values[sql.slice(0, at + pattern.length).split('?').length - 2];
+    };
+    const only = bound('"entityId" = ANY(?');
+    const excluded = bound('"entityId" <> ALL(?');
+    const before = bound('"createdAt" <= ?');
+    const where = {
+      type: bound('type = ?'),
+      entityType: bound('"entityType" = ?'),
+      ...(only || excluded ? { entityId: only ? { in: only } : { notIn: excluded } } : {}),
+      ...(before ? { createdAt: { lte: before } } : {}),
+    };
+    queueWhereLog.push(where);
+    const limit = sql.match(/LIMIT (\d+)/);
+    return queueRows(where, {
+      limit: limit ? Number(limit[1]) : undefined,
+      oldestFirst: /ORDER BY "createdAt" ASC/.test(sql),
+    });
+  };
   const queryRaw = async (first: TemplateStringsArray | SqlLike, ...rawValues: unknown[]) => {
     const { sql, values } = isSql(first)
       ? flatten(first.strings, first.values)
       : flatten(first, rawValues);
+    if (values.length > MAX_BIND_VARIABLES) throw tooManyBindVariables(values.length);
     sqlLog.push(sql);
+    // The job's two queue reads; its backlog count reads "JobQueue" too, and falls through.
+    if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"'))
+      return queueRead(sql, values);
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
@@ -200,18 +253,14 @@ const {
     mockEnv,
     mockDbRead: {
       jobQueue: {
+        // The job reads its queue with raw SQL now. Kept so a return to Prisma's `in`/`notIn`
+        // fails here the way it fails in Postgres: one bind variable per listed id.
         findMany: vi.fn(async ({ where }: any) => {
+          const listed =
+            (where?.entityId?.notIn?.length ?? 0) + (where?.entityId?.in?.length ?? 0);
+          if (listed > MAX_BIND_VARIABLES) throw tooManyBindVariables(listed);
           queueWhereLog.push(where);
-          // Stand in for the DB actually applying the filters.
-          const excluded: number[] = where?.entityId?.notIn ?? [];
-          const only: number[] | undefined = where?.entityId?.in;
-          const before: Date | undefined = where?.createdAt?.lte;
-          return [...QUEUE, ...extraQueue].filter(
-            (q) =>
-              !excluded.includes(q.entityId) &&
-              (!only || only.includes(q.entityId)) &&
-              (!before || q.createdAt <= before)
-          );
+          return queueRows(where);
         }),
       },
       $queryRaw: vi.fn(queryRaw),
@@ -599,6 +648,25 @@ describe('remove-blocked-images retention clock', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', error: 'connection reset' })
     );
+  });
+
+  // Every run failed once the held users' Blocked images passed Postgres's 32767 bind variables:
+  // both queue reads listed the held ids one variable each. Each now binds them as one array.
+  it('still runs when more ids are held than one statement can bind one by one', async () => {
+    const HELD_COUNT = 40_000;
+    for (let i = 0; i < HELD_COUNT; i++)
+      extraImages.push({ id: 100_000 + i, userId: HELD_USER, blockedFor: 'CSAM' });
+    const result = await runJob();
+
+    expect(result.skipped).toBeUndefined();
+    expect(result.csamHeld).toBe(HELD_COUNT + 3);
+    expect(deletedIds()).toEqual(expect.arrayContaining([1, 8]));
+    expect(deletedIds()).not.toContain(5);
+    // Both reads still ran, and each named the whole held set.
+    expect(queueWhereLog).toHaveLength(2);
+    expect(queueWhereLog[0].entityId.in).toHaveLength(HELD_COUNT + 3);
+    expect(batchWhere().entityId.notIn.length).toBeGreaterThan(HELD_COUNT);
+    expect(wouldSkipLogs()[0]).toMatchObject({ imageIds: [5, 6], count: 2 });
   });
 
   it('does not constrain the batch when no user is held', async () => {

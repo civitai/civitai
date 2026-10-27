@@ -10,7 +10,12 @@ import type { MoveImagesToPostInput } from '~/server/schema/post.schema';
 import { createImageResources, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
-import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
+import { readDownedVersion } from '~/server/services/model-takedown-lock';
+import {
+  bustCachesForPosts,
+  TAKEN_DOWN_PUBLISH_ERROR,
+  updatePostNsfwLevel,
+} from '~/server/services/post.service';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
@@ -41,6 +46,25 @@ export async function moveImagesToPost({
   });
 
   const { targetPostId, targetModelVersionId } = await dbWrite.$transaction(async (tx) => {
+    // A split publishes a new post on the source's version, so it reads the takedown as createPost
+    // does. Locked before the posts: a takedown locks the version and then its posts.
+    const [splitVersion] = toPostId
+      ? []
+      : await tx.$queryRaw<{ modelVersionId: number; ownsModel: boolean }[]>`
+          SELECT p."modelVersionId", m."userId" = p."userId" AS "ownsModel"
+          FROM "Post" p
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE p.id = ${fromPostId}
+        `;
+    const splitVersionDowned = splitVersion
+      ? await readDownedVersion(
+          tx,
+          splitVersion.modelVersionId,
+          splitVersion.ownsModel ? 'share' : false
+        )
+      : false;
+
     const postIds = toPostId ? [fromPostId, toPostId] : [fromPostId];
     // Locked so concurrent moves into the same post cannot both pass the image cap.
     const posts = await tx.$queryRaw<
@@ -89,6 +113,9 @@ export async function moveImagesToPost({
     if (refusal) throwRefusal(refusal);
     // Narrowed by the refusal check above.
     const sourcePost = source as NonNullable<typeof source> & { publishedAt: Date };
+    if (!toPostId && sourcePost.modelVersionId !== (splitVersion?.modelVersionId ?? null))
+      throw throwBadRequestError('The post changed while moving; try again');
+    if (splitVersionDowned) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
 
     let destination = target;
     if (!destination) {
