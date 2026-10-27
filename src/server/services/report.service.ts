@@ -292,11 +292,15 @@ const validateReportCreation = async ({
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
   // An owner asking again extends their own request rather than joining it as a second reporter.
-  if (existingReport.userId === userId && isLockReview({ reportType, reason, details }))
-    return db.report.update({
-      where: { id },
-      data: { details: mergeOwnLockReview(existingReport.details, details ?? {}) },
+  // Pending is rechecked here: a request closed since the find gets a new row, not the new settings.
+  if (existingReport.userId === userId && isLockReview({ reportType, reason, details })) {
+    const merged = mergeOwnLockReview(existingReport.details, details ?? {});
+    const { count } = await db.report.updateMany({
+      where: { id, status: ReportStatus.Pending },
+      data: { details: merged },
     });
+    return count ? { ...existingReport, details: merged } : null;
+  }
 
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;

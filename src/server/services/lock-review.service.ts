@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   LOCK_REVIEW_COOLDOWN_DAYS,
+  LOCK_REVIEW_MAX_COMMENTS,
   LOCK_REVIEW_REPORT_REASON,
   lockReviewQueueLabel,
   REQUESTABLE_LOCKS,
@@ -111,10 +112,13 @@ export function mergeOwnLockReview(existing: unknown, incoming: MixedObject): Mi
     ...asLocks(incoming.lockedProperties),
   ]);
   const lockedProperties = REQUESTABLE_LOCKS.filter((key) => named.has(key));
-  const comments = [current.comment, incoming.comment].filter(
-    (text, index, all): text is string =>
-      typeof text === 'string' && !!text.trim() && all.indexOf(text) === index
-  );
+  const earlier = typeof current.comment === 'string' ? current.comment.split('\n\n') : [];
+  const comments = [...earlier, incoming.comment]
+    .filter(
+      (text, index, all): text is string =>
+        typeof text === 'string' && !!text.trim() && all.lastIndexOf(text) === index
+    )
+    .slice(-LOCK_REVIEW_MAX_COMMENTS);
   return {
     ...current,
     lockedProperties,

@@ -22,6 +22,7 @@ const reportFindFirst = dbMock.dbWrite.report.findFirst;
 const closedRequests = dbMock.dbRead.report.findMany;
 const openRequest = dbMock.dbRead.report.findFirst;
 const reportUpdate = dbMock.dbWrite.report.update;
+const reportUpdateMany = dbMock.dbWrite.report.updateMany;
 const modelFindUnique = dbMock.dbRead.model.findUnique;
 const reportCreate = vi.fn();
 
@@ -58,6 +59,7 @@ beforeEach(() => {
   reportFindFirst.mockResolvedValue(null);
   reportCreate.mockResolvedValue({ id: 137, details: {} });
   reportUpdate.mockResolvedValue({ id: EXISTING_REPORT });
+  reportUpdateMany.mockReset().mockResolvedValue({ count: 1 });
   modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'sfwOnly'] });
   closedRequests.mockReset().mockResolvedValue([]);
   openRequest.mockReset().mockResolvedValue(null);
@@ -161,7 +163,7 @@ describe('a request to review a locked setting', () => {
     const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
     expect(created.data.details).toMatchObject({
       lockedProperties: ['sfwOnly'],
-      violation: `${LOCK_REVIEW_REPORT_REASON}: sfwOnly`,
+      violation: `${LOCK_REVIEW_REPORT_REASON}: Cannot be used for NSFW generation`,
     });
   });
 
@@ -172,37 +174,73 @@ describe('a request to review a locked setting', () => {
     expect(created.data.details).toMatchObject({ [NO_REPORT_REWARD_KEY]: true });
   });
 
-  it("the owner's second request extends their open one, not as a second reporter", async () => {
+  const ownOpenRequest = (details: MixedObject) =>
     reportFindFirst.mockResolvedValue({
       id: EXISTING_REPORT,
       userId: OWNER,
       alsoReportedBy: [],
       previouslyReviewedCount: 0,
-      details: {
-        reason: LOCK_REVIEW_REPORT_REASON,
-        lockedProperties: ['sfwOnly'],
-        comment: 'First reason.',
-      },
+      details: { reason: LOCK_REVIEW_REPORT_REASON, ...details },
     });
-
-    await createReport({
-      ...lockReview(OWNER, ['nsfw']),
-      details: { ...lockReview(OWNER, ['nsfw']).details, comment: 'Second reason.' },
+  const askAgain = (lockedProperties: string[], comment: string) =>
+    createReport({
+      ...lockReview(OWNER, lockedProperties),
+      details: { ...lockReview(OWNER, lockedProperties).details, comment },
     });
-
-    expect(reportCreate).not.toHaveBeenCalled();
-    expect(reportUpdate).toHaveBeenCalledTimes(1);
-    const [{ where, data }] = reportUpdate.mock.calls[0] as [
+  const mergeWrite = () => {
+    const [{ where, data }] = reportUpdateMany.mock.calls[0] as [
       { where: MixedObject; data: MixedObject }
     ];
-    expect(where).toEqual({ id: EXISTING_REPORT });
+    return { where, data, details: data.details as MixedObject };
+  };
+
+  it("the owner's second request extends their open one, not as a second reporter", async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comment: 'First reason.' });
+
+    await askAgain(['nsfw'], 'Second reason.');
+
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(reportUpdate).not.toHaveBeenCalled();
+    expect(reportUpdateMany).toHaveBeenCalledTimes(1);
+    const { where, data, details } = mergeWrite();
+    expect(where).toEqual({ id: EXISTING_REPORT, status: 'Pending' });
     expect(data).not.toHaveProperty('alsoReportedBy');
-    expect(data.details).not.toHaveProperty('additionalReports');
-    expect(data.details).toMatchObject({
+    expect(details).not.toHaveProperty('additionalReports');
+    expect(details).toMatchObject({
       lockedProperties: ['nsfw', 'sfwOnly'],
-      violation: `${LOCK_REVIEW_REPORT_REASON}: nsfw, sfwOnly`,
+      violation: `${LOCK_REVIEW_REPORT_REASON}: Is intended to produce mature themes, Cannot be used for NSFW generation`,
       comment: 'First reason.\n\nSecond reason.',
     });
+  });
+
+  it('files a new request when the open one was closed before the merge landed', async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comment: 'First reason.' });
+    reportUpdateMany.mockResolvedValue({ count: 0 });
+
+    await askAgain(['nsfw'], 'Second reason.');
+
+    expect(reportCreate).toHaveBeenCalledTimes(1);
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.details).toMatchObject({
+      lockedProperties: ['nsfw'],
+      comment: 'Second reason.',
+    });
+  });
+
+  it('keeps only the most recent reasons when the owner asks again and again', async () => {
+    ownOpenRequest({ lockedProperties: ['sfwOnly'], comment: 'One.\n\nTwo.\n\nThree.' });
+
+    await askAgain(['sfwOnly'], 'Four.');
+
+    expect(mergeWrite().details.comment).toBe('Two.\n\nThree.\n\nFour.');
+  });
+
+  it('never carries a setting that cannot be requested into the merged request', async () => {
+    ownOpenRequest({ lockedProperties: ['poi', 'sfwOnly', 'minor'] });
+
+    await askAgain(['nsfw'], 'Second reason.');
+
+    expect(mergeWrite().details.lockedProperties).toEqual(['nsfw', 'sfwOnly']);
   });
 
   it('control: any other AdminAttention report on a model dedupes as before', async () => {

@@ -26,4 +26,9 @@ export const requestableLocks = (lockedProperties?: (string | null)[] | null): R
 
 /** What the moderator queue shows as the report's reason: the sub-reason and the settings named. */
 export const lockReviewQueueLabel = (locks: string[]) =>
-  `${LOCK_REVIEW_REPORT_REASON}: ${locks.join(', ')}`;
+  `${LOCK_REVIEW_REPORT_REASON}: ${locks
+    .map((key) => (isRequestableLock(key) ? requestableLockLabels[key] : key))
+    .join(', ')}`;
+
+/** An owner's repeat requests keep only their most recent reasons. */
+export const LOCK_REVIEW_MAX_COMMENTS = 3;
