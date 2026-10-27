@@ -271,6 +271,22 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     expect(pageProps.hasAuthCookie).toBe(false);
   });
 
+  // `sessionCookie` (diagnostics only) reports the cookie as the request carried it, where
+  // `hasAuthCookie` is cleared by the lookup's answer: the login-gate diagnostic needs exactly the
+  // case the two disagree on.
+  it.each([
+    ['a cookie the lookup answered signed out', { [AUTH_COOKIE]: 'token-value' }, true, false],
+    ['no cookie', {}, false, false],
+  ])('sessionCookie reports %s as read', async (_, jar, sessionCookie, hasAuthCookie) => {
+    h.jar = jar;
+    answer({ session: null, settings: { features: {} } });
+
+    const { pageProps } = await getInitialProps(makeCtx());
+
+    expect(pageProps.sessionCookie).toBe(sessionCookie);
+    expect(pageProps.hasAuthCookie).toBe(hasAuthCookie);
+  });
+
   // The LEGACY family is the only population the cookie behaviour ever reached — the
   // delete removed here named `civitai-token`, never `civ-token`. Without this case,
   // dropping `|| x.endsWith('civitai-token')` from the matcher passes the whole file:

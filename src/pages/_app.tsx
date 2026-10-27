@@ -158,6 +158,9 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
+  /** Full render only, diagnostics only: the request carried a session cookie, whatever the session
+   *  lookup made of it (`hasAuthCookie` is narrower). Read by SessionProvider at mount. */
+  sessionCookie?: boolean;
   region?: RegionInfo;
   domain: ColorDomain;
   host: string;
@@ -188,6 +191,7 @@ function MyApp(props: CustomAppProps) {
       seed = Date.now(),
       canIndex,
       hasAuthCookie: pageHasAuthCookie,
+      sessionCookie: pageSessionCookie,
       settings,
       browsingSettingsAddons,
       liveNow = false,
@@ -310,6 +314,7 @@ function MyApp(props: CustomAppProps) {
           <SessionProvider
             session={session ? session : !hasAuthCookie ? null : undefined}
             seed={sessionSeed}
+            sessionCookie={pageSessionCookie}
             refetchOnWindowFocus={false}
             refetchWhenOffline={false}
           >
@@ -498,6 +503,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
   let hasAuthCookie = hasSessionCookie(cookies);
+  // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
+  const sessionCookie = hasAuthCookie;
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
@@ -805,6 +812,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       following,
       seed: Date.now(),
       hasAuthCookie,
+      sessionCookie,
       region,
       domain,
       serverDomains,

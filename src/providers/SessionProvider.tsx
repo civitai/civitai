@@ -18,15 +18,58 @@ import {
 
 type SessionStatus = 'authenticated' | 'unauthenticated' | 'loading';
 
+/** Why a session fetch ran. Callers of `update` may name `refresh-signal`; anything else is `update`. */
+export type SessionFetchTrigger = 'mount' | 'focus' | 'interval' | 'update' | 'refresh-signal';
+
 interface SessionContextValue {
   /** `undefined` while loading, `null` when signed out, the Session when signed in (mirrors next-auth). */
   data: Session | null | undefined;
   status: SessionStatus;
-  /** Re-fetch /api/auth/session and update the context. Returns the fresh session (or null). */
-  update: () => Promise<Session | null>;
+  /** Re-fetch /api/auth/session and update the context. Returns the fresh session (or null). The
+   *  argument only labels the fetch in `SessionDiagnostics`. */
+  update: (trigger?: SessionFetchTrigger) => Promise<Session | null>;
 }
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
+
+/**
+ * How this document's session got to its current value — read by the login-gate diagnostic
+ * (`~/utils/faro/loginGate`). A mutable record kept in a ref: writing it renders nothing and changes
+ * no behaviour. Literal values only; never the session itself.
+ */
+export type SessionDiagnostics = {
+  /** What the provider was mounted with: a server-rendered session, a server-rendered "signed
+   *  out", an unknown (fetch on mount), or a shell page waiting for its page data. */
+  boot: 'ssr-session' | 'ssr-null' | 'ssr-unknown' | 'shell';
+  /** Whether the hard load's request carried a session cookie, as the server saw it (`_app`'s
+   *  `sessionCookie` page prop); `undefined` when not told (a shell render reads no viewer cookie). */
+  sessionCookie: boolean | undefined;
+  /** True when the hard load was made with a session cookie: told so, a server-rendered session,
+   *  an unknown session (`_app` passes that only with a cookie), or a shell (served only with one). */
+  authCookieAtLoad: boolean;
+  /** Distinct consecutive statuses since mount, oldest first (capped). */
+  history: SessionStatus[];
+  /** What produced the current value: the mount props, the shell seed, or a fetch (by trigger;
+   *  `:undetermined` when a fetch that could not decide resolved a still-loading state). */
+  source:
+    | 'ssr'
+    | 'shell-seed'
+    | `fetch:${SessionFetchTrigger}`
+    | `fetch:${SessionFetchTrigger}:undetermined`;
+  /** The shell seed's session, once adopted. */
+  seedSession?: 'present' | 'null';
+  fetchCount: number;
+  /** The last completed `/api/auth/session` fetch. `httpStatus` 0 = network error. */
+  lastFetch?: {
+    trigger: SessionFetchTrigger;
+    outcome: 'ok-session' | 'ok-null' | 'undetermined';
+    httpStatus: number;
+  };
+};
+
+const SESSION_HISTORY_CAP = 12;
+
+const SessionDiagnosticsContext = createContext<SessionDiagnostics | undefined>(undefined);
 
 /**
  * GET /api/auth/session. Three-valued so a transient blip can't flash the user signed-out (next-auth is
@@ -35,14 +78,17 @@ const SessionContext = createContext<SessionContextValue | undefined>(undefined)
  *   - `null`      — 200 with `{}` (AUTHORITATIVELY signed out)
  *   - `undefined` — non-2xx / network error (couldn't determine; caller keeps the current value)
  */
-async function fetchSession(): Promise<Session | null | undefined> {
+async function fetchSession(): Promise<{
+  session: Session | null | undefined;
+  httpStatus: number;
+}> {
   try {
     const res = await fetch('/api/auth/session', { headers: { accept: 'application/json' } });
-    if (!res.ok) return undefined;
+    if (!res.ok) return { session: undefined, httpStatus: res.status };
     const json = (await res.json().catch(() => null)) as Partial<Session> | null;
-    return json?.user ? (json as Session) : null;
+    return { session: json?.user ? (json as Session) : null, httpStatus: res.status };
   } catch {
-    return undefined;
+    return { session: undefined, httpStatus: 0 };
   }
 }
 
@@ -72,6 +118,7 @@ export function SessionProvider({
   refetchOnWindowFocus = true,
   // Accepted for next-auth API compatibility (call sites pass them); intervals/offline are no-ops here.
   refetchInterval,
+  sessionCookie,
 }: {
   children: ReactNode;
   /** SSR seed: a Session when known-authed, `null` when known-unauthed (skip the fetch), `undefined` when
@@ -82,6 +129,9 @@ export function SessionProvider({
   refetchOnWindowFocus?: boolean;
   refetchWhenOffline?: boolean;
   refetchInterval?: number;
+  /** Diagnostics only (`SessionDiagnostics.sessionCookie`): whether the hard load's request carried
+   *  a session cookie. Read once, at mount. */
+  sessionCookie?: boolean;
 }) {
   // `data` IS the loading state: `undefined` = not yet resolved (loading), `null` = resolved signed-out,
   // `Session` = signed-in. So there's no separate loading flag — and a background refetch (focus / interval /
@@ -97,11 +147,35 @@ export function SessionProvider({
   const seedPending = useRef(seed === null);
   seedPending.current = seed === null;
 
+  const diagnostics = useRef<SessionDiagnostics | null>(null);
+  if (!diagnostics.current) {
+    const boot =
+      seed === null
+        ? 'shell'
+        : initial === undefined
+        ? 'ssr-unknown'
+        : initial
+        ? 'ssr-session'
+        : 'ssr-null';
+    diagnostics.current = {
+      boot,
+      sessionCookie,
+      authCookieAtLoad: sessionCookie === true || boot !== 'ssr-null',
+      history: [],
+      source: 'ssr',
+      fetchCount: 0,
+    };
+  }
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
   // Adopted while rendering, so the providers below see the session in the same render as the
   // rest of the seed (the per-user flag overlay query is enabled by it).
   const [seedAdopted, setSeedAdopted] = useState(false);
   if (seed && !seedAdopted) {
     setSeedAdopted(true);
+    diagnostics.current.seedSession = seed.session ? 'present' : 'null';
+    if (data === undefined) diagnostics.current.source = 'shell-seed';
     setData((prev) => (prev === undefined ? seed.session : prev));
   }
 
@@ -112,9 +186,26 @@ export function SessionProvider({
   // Fetches still running, so an undetermined answer can tell whether another one may yet decide.
   const inflight = useRef(0);
 
-  const update = useCallback(async () => {
+  const update = useCallback(async (trigger?: SessionFetchTrigger) => {
+    // Untyped callers (`refresh: update` handed on as an event handler) can pass anything.
+    const label: SessionFetchTrigger =
+      trigger === 'mount' ||
+      trigger === 'focus' ||
+      trigger === 'interval' ||
+      trigger === 'refresh-signal'
+        ? trigger
+        : 'update';
     inflight.current++;
-    const next = await fetchSession().finally(() => inflight.current--);
+    const { session: next, httpStatus } = await fetchSession().finally(() => inflight.current--);
+    const diag = diagnostics.current;
+    if (diag) {
+      diag.fetchCount++;
+      diag.lastFetch = {
+        trigger: label,
+        outcome: next === undefined ? 'undetermined' : next ? 'ok-session' : 'ok-null',
+        httpStatus,
+      };
+    }
     if (next === null && hadSession.current && !reloadedForLostSession.current) {
       reloadedForLostSession.current = true;
       reloadForLostSession();
@@ -127,6 +218,10 @@ export function SessionProvider({
     }
     // `undefined` = couldn't determine: keep the current session, but resolve a still-loading state to
     // signed-out so we never hang on 'loading'. `null`/Session are authoritative.
+    if (diag) {
+      if (next !== undefined) diag.source = `fetch:${label}`;
+      else if (dataRef.current === undefined) diag.source = `fetch:${label}:undetermined`;
+    }
     setData((prev) => (next !== undefined ? next : prev ?? null));
     resolved.current = true;
     return next ?? null;
@@ -135,24 +230,28 @@ export function SessionProvider({
   // Initial fetch only when the seed was `undefined` (unknown) and no later seed is coming.
   useEffect(() => {
     if (seed) resolved.current = true;
-    if (!resolved.current && seed !== null) void update();
+    if (!resolved.current && seed !== null) void update('mount');
   }, [update, seed]);
 
   useEffect(() => {
     if (!refetchOnWindowFocus) return;
-    const onFocus = () => void update();
+    const onFocus = () => void update('focus');
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [refetchOnWindowFocus, update]);
 
   useEffect(() => {
     if (!refetchInterval) return;
-    const id = setInterval(() => void update(), refetchInterval * 1000);
+    const id = setInterval(() => void update('interval'), refetchInterval * 1000);
     return () => clearInterval(id);
   }, [refetchInterval, update]);
 
   const status: SessionStatus =
     data === undefined ? 'loading' : data?.user ? 'authenticated' : 'unauthenticated';
+  // Idempotent (only a change appends), so a discarded or repeated render records nothing extra.
+  const history = diagnostics.current.history;
+  if (history[history.length - 1] !== status && history.length < SESSION_HISTORY_CAP)
+    history.push(status);
 
   // Memoize so the ~13 useSession consumers re-render only when the session actually changes — not on every
   // _app re-render (e.g. each route change), which a fresh value object would otherwise force.
@@ -161,7 +260,17 @@ export function SessionProvider({
     [data, status, update]
   );
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  return (
+    <SessionDiagnosticsContext.Provider value={diagnostics.current}>
+      <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
+    </SessionDiagnosticsContext.Provider>
+  );
+}
+
+/** The provider's `SessionDiagnostics` record (`undefined` outside a provider). Read it in an effect
+ *  or handler: it changes without re-rendering anyone. */
+export function useSessionDiagnostics(): SessionDiagnostics | undefined {
+  return useContext(SessionDiagnosticsContext);
 }
 
 /** Drop-in for next-auth/react's `useSession()` — `{ data, status, update }`. Outside a provider it reports

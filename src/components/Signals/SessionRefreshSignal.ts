@@ -22,7 +22,7 @@ export const useSessionRefreshSignal = () => {
       return;
     }
     // 'refresh' (or unknown): pull fresh session data into the client cookie.
-    updateRef.current?.();
+    updateRef.current?.('refresh-signal');
   }, []);
 
   useSignalConnection(SignalMessages.SessionRefresh, onSessionRefresh);
