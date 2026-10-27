@@ -34,14 +34,36 @@ Local dev against a local hub: point the two URLs at `http://localhost:5173`. Se
 ## Use — spoke guard (gate a first-party app)
 
 ```ts
-import { createSpokeGuard } from '@civitai/auth';
+import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import { logToAxiom, safeError } from './axiom'; // the app's Axiom logger
+import { getSysRedis } from './redis';
 
-export const guard = createSpokeGuard({ require: (u) => u.isModerator === true });
-// guard.check(cookieHeader, returnUrl) -> { status: 'ok'|'login'|'forbidden', ... }
+// A sign-out, ban or force-logout written anywhere ends the session here. When the store can't be reached the
+// check allows the request, so log each time it does.
+export const isRevoked = createRevocationCheck({
+  redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+  onError: (err) => {
+    logToAxiom({
+      ...safeError(err),
+      name: 'sysredis-fail-open',
+      type: 'warning',
+      subtype: 'read-degraded',
+      fn: 'spoke isRevoked',
+    }).catch(() => undefined);
+  },
+});
+
+export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
+// guard.check(cookieHeader, returnUrl, { navigation }) -> { status: 'ok'|'login'|'reauth'|'forbidden', ... }
 ```
 
+`isRevoked` is required: `createSpokeGuard` throws without it. `apps/moderator/src/lib/server/auth.ts` is the
+reference wiring.
+
 Then a tiny framework adapter (SvelteKit `hooks.server.ts` / Next `proxy.ts`) acts on the result:
-`login` → redirect to hub, `forbidden` → 403 or app-specific redirect, `ok` → set `locals.user`.
+`login` → redirect, `reauth` → `spokeReauthResponse(result.authorize)` (a 401 carrying the sign-in URL),
+`forbidden` → 403 or app-specific redirect, `ok` → set `locals.user` and pass `result.setCookies` to
+`withSetCookies`.
 
 Other exports: `createSessionClient` (token→user, invalidate/refresh), `createAuthVerifier`,
 `createDeviceAccountClient` (account switching), `createImpersonationClient`, `hubLoginUrl`/`hubLogoutUrl`,
@@ -53,9 +75,9 @@ and the `SessionUser` / `SessionClaims` types. Browser-safe constants are under 
   and **fails open** to a hub identity fetch when redis is absent. But if you set `REDIS_URL` you must also
   set `REDIS_SYS_URL` — `@civitai/redis`'s env load requires both (a partial config throws, caught as
   fail-open, so you silently lose the cache). See [@civitai/redis](../civitai-redis/README.md).
-- **No revocation without redis**: omitting the `isRevoked` injection makes the gate signature+expiry only
-  (a logged-out/banned token still resolves until expiry). Wire a redis client + `isRevoked` for real-time
-  revocation.
+- **Revocation needs the shared sys redis**: `createSpokeGuard` requires `isRevoked`
+  (`createRevocationCheck` over the sys redis). The check allows the request when the store can't be
+  reached, so pass `onError` and log it, as above.
 - Same registrable domain (`*.civitai.com`) → the session cookie is shared automatically; no login UI,
   no OAuth bridge, no cookie-domain config needed in a spoke.
 
