@@ -446,6 +446,24 @@ describe('stageIntent: one manifest, one key', () => {
     expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-1'], {});
   });
 
+  it('refuses when a concurrent staging won with a claim that has already lapsed', async () => {
+    serve({ headers: { 'content-type': 'application/json' }, body: manifestJson() }, { body: PNG });
+    dbMock.dbWrite.postIntentManifest.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' })
+    );
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 4,
+      userId: 7,
+      postedAt: null,
+      claimExpiresAt: new Date(now.getTime() - 1),
+      manifest: JSON.parse(manifestJson()),
+      staged: [],
+    });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'claimed',
+    });
+  });
+
   it('refuses HEIC with a message that names the format', async () => {
     const HEIC = Buffer.from([0, 0, 0, 0x18, ...Buffer.from('ftypheic'), ...new Array(16).fill(0)]);
     serve(
@@ -608,6 +626,102 @@ describe('publishIntent', () => {
     });
     expect(result.returnUrl).toBeUndefined();
     expect(dbMock.dbWrite.post.create.mock.calls[0][0].data.publishedAt).toBeNull();
+  });
+});
+
+describe('item: the app sub-listing a share names', () => {
+  const SUB_LISTINGS = [
+    { id: 'asl_FAKEFUL', parentListingId: 'apl_games', itemKey: 'fakeful', status: 'approved' },
+    { id: 'asl_PENDING', parentListingId: 'apl_games', itemKey: 'unreviewed', status: 'pending' },
+    { id: 'asl_HIDDEN', parentListingId: 'apl_games', itemKey: 'hidden', status: 'hidden' },
+    { id: 'asl_OTHER', parentListingId: 'apl_other_app', itemKey: 'elsewhere', status: 'approved' },
+  ];
+
+  /** Matches every `where` field against the rows, so a dropped condition admits a row. */
+  function serveSubListings() {
+    dbMock.dbRead.appSubListing.findFirst.mockImplementation((async ({
+      where,
+    }: {
+      where: Record<string, unknown>;
+    }) => {
+      const row = SUB_LISTINGS.find((r) =>
+        Object.entries(where).every(([k, v]) => r[k as keyof typeof r] === v)
+      );
+      return row ? { id: row.id, title: `Title of ${row.itemKey}` } : null;
+    }) as never);
+  }
+
+  const publishWith = async (item: unknown) => {
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValue({
+      id: 1,
+      manifestUrl: MANIFEST_URL,
+      appId: APP_ID,
+      userId: 7,
+      postedAt: null,
+      claimExpiresAt: new Date(now.getTime() + 60_000),
+      manifest: JSON.parse(manifestJson(item === undefined ? {} : { item })),
+      staged: [
+        { key: 'key-1', sourceUrl: MEDIA_URL, type: 'image', mimeType: 'image/png', size: 24 },
+      ],
+    });
+    await publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now });
+    return dbMock.dbWrite.post.create.mock.calls[0][0].data.metadata;
+  };
+
+  beforeEach(() => {
+    serveSubListings();
+    dbMock.dbWrite.post.create.mockResolvedValue({ id: 9001 });
+    dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('credits an approved item under the app', async () => {
+    expect(await publishWith('fakeful')).toEqual({
+      blockPublishedAppId: APP_ID,
+      blockPublishedSubListingId: 'asl_FAKEFUL',
+    });
+  });
+
+  it.each([
+    ['pending review', 'unreviewed'],
+    ['hidden by a moderator', 'hidden'],
+    ["approved under another app's listing", 'elsewhere'],
+    ['unknown', 'nosuchgame'],
+  ])('credits only the app for an item %s', async (_, item) => {
+    expect(await publishWith(item)).toEqual({ blockPublishedAppId: APP_ID });
+  });
+
+  it('leaves a share without an item unchanged', async () => {
+    expect(await publishWith(undefined)).toEqual({ blockPublishedAppId: APP_ID });
+    expect(dbMock.dbRead.appSubListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('still posts, credited to the app, when the item lookup fails', async () => {
+    dbMock.dbRead.appSubListing.findFirst.mockRejectedValue(new Error('replica down'));
+    expect(await publishWith('fakeful')).toEqual({ blockPublishedAppId: APP_ID });
+  });
+
+  const stageWith = async (item: string) => {
+    serve(
+      { headers: { 'content-type': 'application/json' }, body: manifestJson({ item }) },
+      { headers: { 'content-type': 'image/png' }, body: PNG }
+    );
+    return (await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).app;
+  };
+
+  it('names an approved item on the compose sheet', async () => {
+    expect(await stageWith('fakeful')).toEqual({
+      name: 'Civitai Games',
+      host: 'games.civitai.com',
+      itemName: 'Title of fakeful',
+    });
+  });
+
+  it("does not name another app's item on the compose sheet", async () => {
+    expect(await stageWith('elsewhere')).toEqual({
+      name: 'Civitai Games',
+      host: 'games.civitai.com',
+    });
   });
 });
 

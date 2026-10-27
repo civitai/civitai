@@ -4,7 +4,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
+import {
+  BLOCK_POST_APP_ID_META_KEY,
+  BLOCK_POST_SUB_LISTING_ID_META_KEY,
+} from '~/server/services/blocks/block-post.logic';
 import type {
   AppPostIntentRecord,
   PostIntentManifest,
@@ -59,7 +62,7 @@ export type StagedIntentMedia = {
 
 export type StagedIntent = {
   manifestUrl: string;
-  app: { name: string; host: string };
+  app: { name: string; host: string; itemName?: string };
   title?: string;
   description?: string;
   tags: string[];
@@ -104,6 +107,25 @@ export async function resolveAppForManifestUrl(
   const appId = listing?.connectClientId ?? listing?.appBlock?.appId;
   if (!listing || !appId) return null;
   return { ...match, listingName: listing.name, appId };
+}
+
+/**
+ * The approved sub-listing `item` names under the app's own listing, or null. Never throws: an
+ * item that does not resolve leaves the post credited to the app alone.
+ */
+export async function resolveIntentItem(
+  record: Pick<AppPostIntentRecord, 'listingId'>,
+  item: string | undefined
+): Promise<{ id: string; title: string } | null> {
+  if (!item) return null;
+  try {
+    return await dbRead.appSubListing.findFirst({
+      where: { parentListingId: record.listingId, itemKey: item, status: APPROVED },
+      select: { id: true, title: true },
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function checkStageRateLimit(key: string, limit: { max: number; windowSeconds: number }) {
@@ -243,15 +265,16 @@ async function stageMediaItem(
   return staged;
 }
 
-function toStagedIntent(
+async function toStagedIntent(
   manifestUrl: string,
-  record: Pick<AppPostIntentRecord, 'listingName' | 'host'>,
+  record: Pick<AppPostIntentRecord, 'listingId' | 'listingName' | 'host'>,
   manifest: PostIntentManifest,
   staged: StagedIntentMedia[]
-): StagedIntent {
+): Promise<StagedIntent> {
+  const item = await resolveIntentItem(record, manifest.item);
   return {
     manifestUrl,
-    app: { name: record.listingName, host: record.host },
+    app: { name: record.listingName, host: record.host, ...(item && { itemName: item.title }) },
     title: manifest.title,
     description: manifest.description,
     tags: manifest.tags ?? [],
@@ -280,7 +303,7 @@ export async function stageIntent({
 
   const existing = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
   if (existing) {
-    const resumed = resumeClaim(existing, manifestUrl, userId, now, record);
+    const resumed = await resumeClaim(existing, manifestUrl, userId, now, record);
     if (resumed) return resumed;
     if (!(await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]))) {
       const after = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
@@ -316,13 +339,13 @@ type ManifestRow = {
 };
 
 /** The staged intent to hand back when `userId` reopens a live claim of their own. */
-function resumeClaim(
+async function resumeClaim(
   row: ManifestRow,
   manifestUrl: string,
   userId: number,
   now: Date,
   record: AppPostIntentRecord
-): StagedIntent | null {
+): Promise<StagedIntent | null> {
   if (row.postedAt)
     throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
   const live = row.claimExpiresAt.getTime() > now.getTime();
@@ -378,7 +401,7 @@ async function fetchAndStage({
     await deleteStagedObjects(staged);
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       const winner = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
-      const resumed = winner && resumeClaim(winner, manifestUrl, userId, now, record);
+      const resumed = winner && (await resumeClaim(winner, manifestUrl, userId, now, record));
       if (resumed) return resumed;
       throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
     }
@@ -445,6 +468,7 @@ export async function publishIntent({
   const staged = claim.staged as StagedIntentMedia[];
   const external = buildIntentExternalMeta(manifest, record);
   const toolId = await resolveToolId(record);
+  const item = await resolveIntentItem(record, manifest.item);
   const tagIds = tags?.length
     ? Object.values(await findOrCreateTagsByName(tags)).filter((t): t is number => t !== undefined)
     : [];
@@ -477,7 +501,10 @@ export async function publishIntent({
           title: title || null,
           detail,
           publishedAt,
-          metadata: { [BLOCK_POST_APP_ID_META_KEY]: record.appId },
+          metadata: {
+            [BLOCK_POST_APP_ID_META_KEY]: record.appId,
+            ...(item && { [BLOCK_POST_SUB_LISTING_ID_META_KEY]: item.id }),
+          },
           tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
         },
         select: { id: true },

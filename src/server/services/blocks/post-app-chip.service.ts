@@ -34,11 +34,17 @@ import {
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import type { PostAppChip, PostAppChipRow } from '~/server/services/blocks/post-app-chip.logic';
+import type {
+  PostAppChip,
+  PostAppChipItemRow,
+  PostAppChipRow,
+} from '~/server/services/blocks/post-app-chip.logic';
 import {
+  postAppChipItemQuery,
   postAppChipQuery,
   postAppMarkerQuery,
   readBlockPublishedAppId,
+  readBlockPublishedSubListingId,
   resolveAppChip,
 } from '~/server/services/blocks/post-app-chip.logic';
 import type { SessionUser } from '~/types/session';
@@ -93,6 +99,7 @@ export async function readPostAppChip({
    */
   viewerBrowsingLevel?: number | null;
 }): Promise<PostAppChip | null> {
+  let subListingId: string | null = null;
   return readAppChip({
     surface: 'post',
     entrypoint: 'post-detail',
@@ -118,8 +125,15 @@ export async function readPostAppChip({
       // above.
       const db = await getDbWithoutLag('post', postId);
       const row = await db.post.findUnique(postAppMarkerQuery(postId));
+      subListingId = readBlockPublishedSubListingId(row?.metadata ?? null);
       return readBlockPublishedAppId(row?.metadata ?? null);
     },
+    readItem: async (listingId) =>
+      subListingId
+        ? ((await dbRead.appSubListing.findFirst(
+            postAppChipItemQuery(subListingId, listingId)
+          )) as PostAppChipItemRow | null)
+        : null,
   });
 }
 
@@ -142,6 +156,7 @@ export async function readAppChip({
   host,
   viewerBrowsingLevel,
   readMarker,
+  readItem,
 }: {
   surface: AppChipSurface;
   entrypoint: StoreScopeEntrypoint;
@@ -149,6 +164,8 @@ export async function readAppChip({
   host: string;
   viewerBrowsingLevel?: number | null;
   readMarker: () => Promise<string | null>;
+  /** See `resolveAppChip`. */
+  readItem?: (viewableListingId: string) => Promise<PostAppChipItemRow | null>;
 }): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see
@@ -183,6 +200,7 @@ export async function readAppChip({
       host,
       viewerBrowsingLevel,
       readMarker,
+      readItem,
       // The plain replica, deliberately: unlike the marker, this row is not
       // written inside the entity's own transaction — an
       // `OauthClient`/`AppBlock`/`AppListing` is approved long before anything is
