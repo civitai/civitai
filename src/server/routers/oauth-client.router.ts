@@ -42,6 +42,28 @@ function rejectAppBlockClient(clientId: string): void {
   }
 }
 
+/** The civitai system account (User id -1) owns system OAuth apps, which only the hub admin page manages. */
+const SYSTEM_USER_ID = -1;
+
+function rejectSystemAccount(userId: number): void {
+  if (userId === SYSTEM_USER_ID) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'System apps are managed from the hub admin page',
+    });
+  }
+}
+
+/** The caller's own client, or NOT_FOUND. A system app is a miss here, as is any client of someone else. */
+async function findOwnedClient(
+  userId: number,
+  where: Pick<Prisma.OauthClientWhereInput, 'id' | 'isConfidential'>
+) {
+  const client = await dbWrite.oauthClient.findFirst({ where: { ...where, userId } });
+  if (!client || client.userId === SYSTEM_USER_ID) throw new TRPCError({ code: 'NOT_FOUND' });
+  return client;
+}
+
 export const oauthClientRouter = router({
   // Public: get client info by ID (used by consent page)
   getById: publicProcedure
@@ -67,6 +89,7 @@ export const oauthClientRouter = router({
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
+    if (ctx.user.id === SYSTEM_USER_ID) return [];
     return dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
@@ -110,6 +133,7 @@ export const oauthClientRouter = router({
       let where: Prisma.OauthClientWhereInput;
       if (query.length === 0) {
         // Default (empty search): the mod's OWN clients, same as the non-mod picker.
+        if (ctx.user.id === SYSTEM_USER_ID) return { items: [], nextCursor: undefined };
         where = { AND: [{ userId: ctx.user.id }, excludeAppBlocks] };
       } else {
         // Global search: app name OR author username (both case-insensitive ILIKE) OR,
@@ -160,6 +184,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(createOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectSystemAccount(ctx.user.id);
       // Shown to other users on the consent screen.
       await throwOnBlockedUserContent([input.name, input.description], {
         isModerator: ctx.user.isModerator,
@@ -206,10 +231,7 @@ export const oauthClientRouter = router({
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
-      });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+      const client = await findOwnedClient(ctx.user.id, { id: input.id });
       await throwOnBlockedUserContent([input.name, input.description], {
         isModerator: ctx.user.isModerator,
         surface: 'oauth-client',
@@ -237,10 +259,7 @@ export const oauthClientRouter = router({
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id, isConfidential: true },
-      });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+      await findOwnedClient(ctx.user.id, { id: input.id, isConfidential: true });
 
       const newSecret = generateKey(48);
       const hashedSecret = generateSecretHash(newSecret);
@@ -261,10 +280,7 @@ export const oauthClientRouter = router({
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
-      });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+      await findOwnedClient(ctx.user.id, { id: input.id });
 
       // Collect every user who holds a token under this client BEFORE the
       // cascade wipes the rows — we need their ids to expire the orchestrator's

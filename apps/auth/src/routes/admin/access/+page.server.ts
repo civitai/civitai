@@ -3,7 +3,9 @@ import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import type { AccessMode } from '$lib/server/oauth/access';
+import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
+import { isSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 import {
   SYSTEM_APP_SCOPE_OPTIONS,
   SYSTEM_USER_ID,
@@ -106,8 +108,9 @@ export const actions: Actions = {
     return { action: 'setMode', success: true, id, accessMode };
   },
 
-  // Let signed-in users through /authorize with no consent screen. Confidential system apps only.
-  setSkipConsent: async ({ request }) => {
+  // Let signed-in users through /authorize with no consent screen. Confidential system apps only, and only
+  // when every registered redirect URI is https off loopback.
+  setSkipConsent: async ({ request, locals }) => {
     const data = await request.formData();
     const id = String(data.get('id') ?? '');
     const value = String(data.get('skipConsent') ?? '');
@@ -116,16 +119,39 @@ export const actions: Actions = {
       return fail(400, { action: 'setSkipConsent', id, error: 'Invalid value.' });
     }
     const skipConsent = value === 'true';
-    // Turning it off is always allowed; turning it on needs a confidential app.
+    // Turning it off is always allowed; turning it on needs a confidential app with only https, non-loopback
+    // redirect URIs.
+    if (skipConsent) {
+      const client = await db
+        .selectFrom('OauthClient')
+        .select('redirectUris')
+        .where('id', '=', id)
+        .where('userId', '=', SYSTEM_USER_ID)
+        .executeTakeFirst();
+      const refused = client?.redirectUris.find((uri) => !isSkipConsentRedirectUri(uri));
+      if (refused) {
+        return fail(400, {
+          action: 'setSkipConsent',
+          id,
+          error: `Skipping consent needs every redirect URI to be https and not localhost. Remove ${refused} first.`,
+        });
+      }
+    }
     const scope = skipConsent ? 'confidential-system' : 'system';
     const missing = await updateClient('setSkipConsent', id, { skipConsent }, scope);
     if (missing) return missing;
+    logOAuthEvent({
+      type: 'client.updated',
+      userId: locals.user!.id,
+      clientId: id,
+      metadata: { owner: 'system', skipConsent },
+    });
     return { action: 'setSkipConsent', success: true, id, skipConsent };
   },
 
   // Set the app's own /oauth/token limit per minute, or clear it (blank) for the per-IP limit only.
   // Confidential system apps only: the limit applies once a client proves its secret.
-  setTokenRateLimit: async ({ request }) => {
+  setTokenRateLimit: async ({ request, locals }) => {
     const data = await request.formData();
     const id = String(data.get('id') ?? '');
     const raw = String(data.get('tokenRateLimit') ?? '').trim();
@@ -146,6 +172,12 @@ export const actions: Actions = {
     const scope = tokenRateLimit === null ? 'system' : 'confidential-system';
     const missing = await updateClient('setTokenRateLimit', id, { tokenRateLimit }, scope);
     if (missing) return missing;
+    logOAuthEvent({
+      type: 'client.updated',
+      userId: locals.user!.id,
+      clientId: id,
+      metadata: { owner: 'system', tokenRateLimit },
+    });
     return { action: 'setTokenRateLimit', success: true, id, tokenRateLimit };
   },
 

@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   authorize: vi.fn(),
   consent: undefined as unknown,
   skipConsent: false,
+  isFirstParty: false,
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -55,8 +56,8 @@ vi.mock('$lib/server/oauth/model', () => ({
   resolveClientLite: async () => ({
     id: 'game-frame',
     grants: ['authorization_code', 'client_credentials'],
-    redirectUris: ['https://games.example.com/cb'],
-    isFirstParty: false,
+    redirectUris: ['https://games.example.com/cb', 'http://localhost:18188/cb'],
+    isFirstParty: h.isFirstParty,
     accessMode: 'open',
     skipConsent: h.skipConsent,
   }),
@@ -94,10 +95,13 @@ beforeEach(() => {
   h.authorize.mockReset();
   h.consent = undefined;
   h.skipConsent = false;
+  h.isFirstParty = false;
 });
 
 /** A sign-in starting at /authorize (no approval yet). Returns the response, or the redirect it throws. */
-async function start(): Promise<{ status: number; location?: string }> {
+async function start(
+  overrides: Record<string, string> = {}
+): Promise<{ status: number; location?: string }> {
   const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
   for (const [k, v] of Object.entries({
     client_id: 'game-frame',
@@ -107,6 +111,7 @@ async function start(): Promise<{ status: number; location?: string }> {
     code_challenge: 'c',
     code_challenge_method: 'S256',
     scope: String(TokenScope.UserRead),
+    ...overrides,
   }))
     url.searchParams.set(k, v);
   try {
@@ -209,5 +214,67 @@ describe('authorize — consent screen', () => {
     await start().catch(() => undefined);
     expect(h.authorize).toHaveBeenCalledTimes(1);
     expect(h.inserts).toHaveLength(0);
+  });
+});
+
+describe('authorize — skipConsent needs the exact registered redirect', () => {
+  const consentPage = (res: { location?: string }) =>
+    res.location?.includes('/login/oauth/authorize?') ?? false;
+
+  beforeEach(() => {
+    h.skipConsent = true;
+    h.authorize.mockResolvedValue({ authorizationCode: 'the-code' });
+  });
+
+  it('issues a code with no consent screen for an exact match', async () => {
+    const res = await start();
+    expect(res.location).toBe('https://games.example.com/cb?code=the-code&state=s');
+  });
+
+  it.each([
+    ['a loopback port variant', 'http://localhost:9999/cb'],
+    ['an added query string', 'http://localhost:18188/cb?next=1'],
+  ])('shows the consent page for %s', async (_, redirect_uri) => {
+    const res = await start({ redirect_uri });
+    expect(consentPage(res)).toBe(true);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('shows the consent page for prompt=consent', async () => {
+    const res = await start({ prompt: 'consent' });
+    expect(consentPage(res)).toBe(true);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('still skips for a first-party client, port variant and prompt=consent included', async () => {
+    h.isFirstParty = true;
+    const res = await start({ redirect_uri: 'http://localhost:9999/cb', prompt: 'consent' });
+    expect(res.location).toBe('http://localhost:9999/cb?code=the-code&state=s');
+  });
+});
+
+describe('authorize — scope in a JSON body', () => {
+  it.each([[['ModelsRead']], [5]])('answers invalid_scope for %j', async (scope) => {
+    const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
+    const pending = POST({
+      request: new Request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          client_id: 'game-frame',
+          redirect_uri: 'https://games.example.com/cb',
+          response_type: 'code',
+          state: 's',
+          code_challenge: 'c',
+          code_challenge_method: 'S256',
+          scope,
+        }),
+      }),
+      url,
+      locals: { user: { id: 7 } },
+      getClientAddress: () => '203.0.113.9',
+      cookies: { get: () => undefined, set: () => undefined },
+    } as never);
+    expect(await redirectedError(pending)).toBe('invalid_scope');
   });
 });
