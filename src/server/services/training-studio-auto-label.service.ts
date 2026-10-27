@@ -14,7 +14,11 @@ import type {
 } from '~/server/schema/training-studio-auto-label.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { assertSafeMediaUrls, toOrchestratorError } from '~/server/services/training.service';
+import {
+  assertCivitaiMediaUrls,
+  assertSafeMediaUrls,
+  toOrchestratorError,
+} from '~/server/services/training.service';
 import {
   throwBadRequestError,
   throwNotFoundError,
@@ -53,6 +57,7 @@ export async function submitStudioAutoLabel({
   items,
 }: StudioAutoLabelSubmitInput & { userId: number }) {
   assertSafeMediaUrls(items.map((i) => i.mediaUrl));
+  assertCivitaiMediaUrls(items.map((i) => i.mediaUrl));
   const release = await reserveDailyItems(userId, items.length);
 
   const steps: WorkflowStepTemplate[] = items.map((item, i) => {
