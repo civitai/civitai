@@ -46,7 +46,7 @@ export const actions: Actions = {
     if (typeof input === 'string') return threadFail(input);
     const result = await sendAsCivitai(input);
     if (!result.ok) return threadFail(result.error);
-    return { success: true, chatId: result.value.chatId };
+    return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
   }),
 
   claim: requiresGrant('user.message.asCivitai', async ({ request }) => {

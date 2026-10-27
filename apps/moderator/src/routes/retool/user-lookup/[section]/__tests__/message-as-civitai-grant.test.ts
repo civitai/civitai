@@ -50,7 +50,7 @@ describe('messageAsCivitai action', () => {
         { userId: String(TARGET), message: ' hi ', idempotencyKey: KEY }
       )
     );
-    expect(result).toEqual({ success: true, chatId: 41 });
+    expect(result).toEqual({ success: true, chatId: 41, deduped: false });
     expect(sendAsCivitai).toHaveBeenCalledWith({ userId: TARGET, message: 'hi', idempotencyKey: KEY });
   });
 

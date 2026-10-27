@@ -35,6 +35,16 @@ describe('admitsModerator', () => {
     expect(logged).not.toHaveBeenCalled();
   });
 
+  it('refuses the account by username when this app has no usable id', () => {
+    for (const configured of [undefined, 'not-a-number']) {
+      if (configured === undefined) delete process.env.CIVITAI_MODERATION_USER_ID;
+      else process.env.CIVITAI_MODERATION_USER_ID = configured;
+      expect(admitsModerator({ id: 900, username: 'CivitaiModeration', isModerator: true })).toBe(
+        false
+      );
+    }
+  });
+
   it('refuses non-moderators', () => {
     expect(admitsModerator({ id: 7, isModerator: false })).toBe(false);
   });

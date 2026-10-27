@@ -15,9 +15,14 @@ import {
   throwServiceUnavailableError,
 } from '~/server/utils/errorHandling';
 import { NotificationCategory } from '~/server/common/enums';
-import { ChatMessageType } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 
 export const MESSAGE_AS_CIVITAI_ACTIVITY = 'message-as-civitai';
+const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+// Long enough for any send to finish; a crash mid-send frees the key after this rather than after a day.
+const PENDING_TTL_SECONDS = 5 * 60;
+const SEND_LOCK_SECONDS = 30;
+const PENDING = 'pending';
 
 function requireModerationAccountId(): number {
   const id = getModerationAccountId();
@@ -130,14 +135,40 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
   if (target.bannedAt)
     throw throwBadRequestError('This account is banned; it answers through the appeal flow.');
 
+  // One send per target at a time: the cap is a count followed by an insert, and a first message creates
+  // the thread, so two concurrent sends would each pass the count or race to create it.
+  const lockKey = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
+  if ((await sysRedis.set(lockKey, '1', { NX: true, EX: SEND_LOCK_SECONDS })) === null)
+    throw throwConflictError('Another message to this user is being sent; retry in a moment.');
+  try {
+    return await sendLocked({ actorId, userId, message, context, moderationId });
+  } finally {
+    await sysRedis.del(lockKey).catch(() => undefined);
+  }
+}
+
+async function sendLocked({
+  actorId,
+  userId,
+  message,
+  context,
+  moderationId,
+}: SendAsCivitaiInput & { moderationId: number }) {
   let chatId = await findThreadChatId(moderationId, userId);
   if (chatId !== null) {
-    await requireClaim(chatId, actorId);
+    const member = await dbWrite.chatMember.findFirst({
+      where: { chatId, userId },
+      select: { status: true },
+    });
+    if (member?.status !== ChatMemberStatus.Joined && member?.status !== ChatMemberStatus.Invited)
+      throw throwBadRequestError('This user is no longer in the Civitai Moderation thread.');
+    // Checked before claiming, so a refused send does not lock other moderators out of the thread.
     const unanswered = await countUnansweredMessages({ chatId, moderationId, userId });
     if (unanswered >= env.MESSAGE_AS_CIVITAI_DAILY_CAP)
       throw throwRateLimitError(
         `This user already has ${unanswered} unanswered messages from Civitai Moderation in the last 24 hours.`
       );
+    await requireClaim(chatId, actorId);
   } else {
     const chat = await upsertChat({
       userIds: [userId],
@@ -158,45 +189,47 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
   });
 
   // The message is already delivered, so a failed audit write must not turn into a retry that sends it
-  // twice; the error log carries what is needed to write the row by hand.
-  await dbWrite.$executeRaw`
-    INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    VALUES (${actorId}, 'chatMessage', ${MESSAGE_AS_CIVITAI_ACTIVITY}, ${sent.id})${
-    context?.reportId
-      ? Prisma.sql`, (${actorId}, 'report', ${MESSAGE_AS_CIVITAI_ACTIVITY}, ${context.reportId})`
-      : Prisma.empty
-  }
-  `.catch((e: Error) =>
-    logToAxiom({
-      type: 'error',
-      name: 'message-as-civitai-audit-failed',
-      actorId,
-      chatMessageId: sent.id,
-      message: e.message,
-    }).catch(() => undefined)
-  );
+  // twice; the error log carries what is needed to write the row by hand. Two statements, so the
+  // report link failing cannot take the author record with it.
+  const audit = (entityType: 'chatMessage' | 'report', entityId: number) =>
+    dbWrite.$executeRaw`
+      INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+      VALUES (${actorId}, ${entityType}, ${MESSAGE_AS_CIVITAI_ACTIVITY}, ${entityId})
+    `.catch((e: Error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'message-as-civitai-audit-failed',
+        actorId,
+        chatMessageId: sent.id,
+        entityType,
+        entityId,
+        message: e.message,
+      }).catch(() => undefined)
+    );
+  await audit('chatMessage', sent.id);
+  if (context?.reportId) await audit('report', context.reportId);
   await nudge({ userId, chatId, messageId: sent.id });
 
   return { chatId, messageId: sent.id };
 }
-
-const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
-const PENDING = 'pending';
 
 /**
  * `sendAsCivitai`, at most once per key. Without a key, one identical message per actor, target and
  * minute, so a double submit sends once.
  */
 export async function sendAsCivitaiOnce(input: SendAsCivitaiInput & { idempotencyKey?: string }) {
-  const scope =
-    input.idempotencyKey ??
-    `auto:${input.userId}:${Math.floor(Date.now() / 60_000)}:${createHash('sha256')
-      .update(input.message)
-      .digest('hex')
-      .slice(0, 16)}`;
+  // Bound to the target and the text: a reused key with a different user or edited text is a new
+  // message, not a repeat of the first.
+  const content = createHash('sha256')
+    .update(`${input.userId}:${input.message}`)
+    .digest('hex')
+    .slice(0, 16);
+  const scope = input.idempotencyKey
+    ? `${input.idempotencyKey}:${content}`
+    : `auto:${Math.floor(Date.now() / 60_000)}:${content}`;
   const key = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.IDEMPOTENCY}:${input.actorId}:${scope}` as const;
 
-  const fresh = await sysRedis.set(key, PENDING, { NX: true, EX: IDEMPOTENCY_TTL_SECONDS });
+  const fresh = await sysRedis.set(key, PENDING, { NX: true, EX: PENDING_TTL_SECONDS });
   if (fresh === null) {
     const stored = await sysRedis.get(key);
     if (!stored || stored === PENDING)
@@ -211,8 +244,7 @@ export async function sendAsCivitaiOnce(input: SendAsCivitaiInput & { idempotenc
     await sysRedis.del(key).catch(() => undefined);
     throw e;
   }
-  // Sent: a failure to store the result leaves the key pending, which refuses a retry rather than
-  // sending twice.
+  // Sent: if storing the result fails, the pending key still refuses a retry until it lapses.
   await sysRedis
     .set(key, JSON.stringify(result), { EX: IDEMPOTENCY_TTL_SECONDS })
     .catch(() => undefined);

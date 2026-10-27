@@ -221,7 +221,7 @@ export function reportModerationActions(pagePath: string) {
       const { reportId, ...rest } = input;
       const result = await sendAsCivitai({ ...rest, context: reportId ? { reportId } : undefined });
       if (!result.ok) return scopedFail('message', result.error);
-      return { success: true, chatId: result.value.chatId };
+      return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
     },
   } satisfies Actions;
 }

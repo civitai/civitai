@@ -55,7 +55,10 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "Chat" (id int PRIMARY KEY, hash text UNIQUE, "isGroup" boolean NOT NULL DEFAULT false);
-    CREATE TABLE "ChatMember" (id serial PRIMARY KEY, "chatId" int NOT NULL, "userId" int NOT NULL);
+    CREATE TABLE "ChatMember" (
+      id serial PRIMARY KEY, "chatId" int NOT NULL, "userId" int NOT NULL,
+      status text NOT NULL DEFAULT 'Joined'
+    );
     CREATE TABLE "ChatMessage" (
       id int PRIMARY KEY, "chatId" int NOT NULL, "userId" int NOT NULL, content text NOT NULL,
       "contentType" text NOT NULL DEFAULT 'Markdown',
@@ -64,7 +67,8 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "ModActivity" (
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
-      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      CHECK ("entityType" <> 'report' OR "entityId" < 1000)
     );
     CREATE TABLE "ModThreadClaim" (
       "chatId" int PRIMARY KEY, "moderatorId" int NOT NULL,
@@ -111,6 +115,17 @@ beforeEach(async () => {
       : [USER, OTHER_USER].includes(where.id)
       ? { id: where.id, bannedAt: null }
       : null) as never);
+  dbMock.dbWrite.chatMember.findFirst.mockImplementation((async ({
+    where,
+  }: {
+    where: { chatId: number; userId: number };
+  }) => {
+    const { rows } = await db.query(
+      `SELECT status FROM "ChatMember" WHERE "chatId" = $1 AND "userId" = $2`,
+      [where.chatId, where.userId]
+    );
+    return rows[0] ?? null;
+  }) as never);
   dbMock.dbWrite.chat.findFirst.mockImplementation((async ({
     where,
   }: {
@@ -243,6 +258,53 @@ describe('sendAsCivitai', () => {
   });
 });
 
+describe('sendAsCivitai refusals that must not take the thread', () => {
+  it('refuses a user who has left the thread', async () => {
+    const { chatId } = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'one' });
+    await db.query(
+      `UPDATE "ChatMember" SET status = 'Left' WHERE "chatId" = $1 AND "userId" = $2`,
+      [chatId, USER]
+    );
+    await expect(sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'two' })).rejects.toThrow(
+      /no longer in/
+    );
+    expect(h.createMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses at the cap without claiming the thread', async () => {
+    const { chatId } = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: '1' });
+    await sendAsCivitai({ actorId: MOD_A, userId: USER, message: '2' });
+    await sendAsCivitai({ actorId: MOD_A, userId: USER, message: '3' });
+    await releaseThread({ chatId, moderatorId: MOD_A });
+    await expect(sendAsCivitai({ actorId: MOD_B, userId: USER, message: '4' })).rejects.toThrow(
+      /unanswered/
+    );
+    const { rows } = await db.query(`SELECT 1 FROM "ModThreadClaim" WHERE "chatId" = $1`, [chatId]);
+    expect(rows).toEqual([]);
+  });
+
+  it('refuses while another send to the same user is in flight, and frees the lock after', async () => {
+    redisStore.set(`message-as-civitai:send-lock:${USER}`, '1');
+    await expect(sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'x' })).rejects.toThrow(
+      /being sent/
+    );
+    redisStore.clear();
+    await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'x' });
+    expect([...redisStore.keys()].filter((k) => k.includes('send-lock'))).toEqual([]);
+  });
+
+  it('keeps the author record when the report link cannot be written', async () => {
+    const { messageId } = await sendAsCivitai({
+      actorId: MOD_A,
+      userId: USER,
+      message: 'x',
+      context: { reportId: 5000 },
+    });
+    const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
+    expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
+  });
+});
+
 describe('sendAsCivitaiOnce', () => {
   it('sends once per idempotency key and returns the first result on a repeat', async () => {
     const input = { actorId: MOD_A, userId: USER, message: 'hi', idempotencyKey: 'key-0001' };
@@ -251,6 +313,30 @@ describe('sendAsCivitaiOnce', () => {
     expect(first.deduped).toBe(false);
     expect(repeat).toEqual({ ...first, deduped: true });
     expect(h.createMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a reused key with edited text, or for another user, as a new message', async () => {
+    const key = 'key-0003';
+    await sendAsCivitaiOnce({
+      actorId: MOD_A,
+      userId: USER,
+      message: 'first',
+      idempotencyKey: key,
+    });
+    const edited = await sendAsCivitaiOnce({
+      actorId: MOD_A,
+      userId: USER,
+      message: 'edited',
+      idempotencyKey: key,
+    });
+    const other = await sendAsCivitaiOnce({
+      actorId: MOD_A,
+      userId: OTHER_USER,
+      message: 'first',
+      idempotencyKey: key,
+    });
+    expect([edited.deduped, other.deduped]).toEqual([false, false]);
+    expect(h.createMessage).toHaveBeenCalledTimes(3);
   });
 
   it('frees the key when the send fails, so a retry can succeed', async () => {
@@ -313,6 +399,14 @@ describe('inbox and thread', () => {
       USER,
       OTHER_USER,
     ]);
+  });
+
+  it('lists the longest-waiting thread first', async () => {
+    const older = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'hello' });
+    const newer = await sendAsCivitai({ actorId: MOD_A, userId: OTHER_USER, message: 'hello' });
+    await postAs(newer.chatId, OTHER_USER, 'recent reply', 1);
+    await postAs(older.chatId, USER, 'old reply', 30);
+    expect((await getInbox()).map((t) => t.userId)).toEqual([USER, OTHER_USER]);
   });
 
   it('shows which moderator wrote each Civitai Moderation message', async () => {

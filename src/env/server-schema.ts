@@ -422,7 +422,7 @@ export const serverSchema = z
     GF_REPORT_TOKEN: z.string().optional(),
     GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
     // The shared "Civitai Moderation" account that moderators message users as. Unset or '' turns the
-    // feature off. The account never signs in, so every session resolver refuses it.
+    // feature off.
     CIVITAI_MODERATION_USER_ID: z
       .union([z.coerce.number().int().positive(), z.literal('')])
       .optional(),

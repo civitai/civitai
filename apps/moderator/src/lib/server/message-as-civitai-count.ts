@@ -9,6 +9,7 @@ export async function countAwaitingReply(): Promise<number> {
   const { rows } = await sql<{ count: number }>`
     SELECT count(*)::int AS count
     FROM "ChatMember" sm
+    JOIN "Chat" c ON c.id = sm."chatId" AND c."isGroup" = false
     JOIN LATERAL (
       SELECT m."userId" FROM "ChatMessage" m
       WHERE m."chatId" = sm."chatId" AND m."deletedAt" IS NULL AND m."userId" <> -1

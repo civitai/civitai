@@ -2843,6 +2843,7 @@ export const REDIS_SYS_KEYS = {
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
+    SEND_LOCK: 'message-as-civitai:send-lock',
   },
   CRUCIBLE: {
     ELO: 'crucible:elo',

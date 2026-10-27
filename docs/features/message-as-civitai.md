@@ -9,13 +9,13 @@ it.
 
 - **One thread per user.** It is an ordinary 1:1 chat between the user and the shared account, so it
   shows in the user's chat list, follows normal chat retention, and the user can clear their own view.
-- **Reply-only.** The shared account's DM policy is `nobody`, so users cannot start a thread with it;
-  they can only answer one a moderator started. A banned user cannot post in chat at all and uses the
-  appeal flow instead.
+- **Reply-only.** Users can answer a thread a moderator started, but cannot start one with the account.
+  A banned user cannot post in chat at all and uses the appeal flow instead.
 - **A tray notification** points at the thread with every message (`/?chat=<id>` opens it), because
   chat alone does not reach someone whose chat is muted or switched off.
 - **Claims.** Sending claims the thread for 30 minutes and renews the claim. While another moderator
-  holds an unexpired claim, sending is refused. Claims are held in `ModThreadClaim`.
+  holds an unexpired claim, sending is refused. Claims are held in `ModThreadClaim`. One send per user
+  runs at a time.
 - **Per-user cap.** Messages the user has not answered within the last 24 hours are capped across all
   moderators (`MESSAGE_AS_CIVITAI_DAILY_CAP`, default 5). A reply from the user resets the count.
 - **Attribution.** Each message writes a `ModActivity` row (`entityType` `chatMessage`, activity
@@ -41,8 +41,6 @@ app's `/admin`. Reaching `/messages` also needs its page grant.
 
 ## Setup
 
-- `CIVITAI_MODERATION_USER_ID` on the main app and the moderator app: the shared account's user id. Unset
-  turns the feature off.
-- The shared account is a moderator account with DM policy `nobody`. It cannot sign in or act; an
-  attempt is logged as an error.
+- `CIVITAI_MODERATION_USER_ID` on the main app, the moderator app and the auth hub: the shared account's
+  user id. Unset turns the feature off.
 - Migration `20261209000000_mod_thread_claim` (applied by hand).

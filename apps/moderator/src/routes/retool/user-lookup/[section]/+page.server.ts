@@ -400,7 +400,7 @@ export const actions: Actions = {
     if (typeof input === 'string') return messageFail(input);
     const result = await sendAsCivitai(input);
     if (!result.ok) return messageFail(result.error);
-    return { success: true, chatId: result.value.chatId };
+    return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
   }),
 
   refundPurchase: async ({ request, locals }) => {

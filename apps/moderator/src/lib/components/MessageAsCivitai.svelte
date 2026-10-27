@@ -25,12 +25,14 @@
 
   let composing = $state(false);
   let sentChatId = $state<number | null>(null);
+  let deduped = $state(false);
   // One key per composed message: a double submit or a retry after a lost response sends it once.
   let idempotencyKey = $state(crypto.randomUUID());
 
   const form = new FormState({
     onSuccess: (data) => {
       sentChatId = typeof data?.chatId === 'number' ? data.chatId : null;
+      deduped = data?.deduped === true;
       idempotencyKey = crypto.randomUUID();
       composing = false;
       onSent?.();
@@ -56,7 +58,8 @@
   {/if}
   {#if sentChatId !== null && !composing}
     <p class="mb-3 text-sm text-green-300">
-      Sent. <a class="underline" href={`/messages/${userId}`}>Open the thread</a>
+      {deduped ? 'Already sent; not sent again.' : 'Sent.'}
+      <a class="underline" href={`/messages/${userId}`}>Open the thread</a>
     </p>
   {/if}
 

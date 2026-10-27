@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
-import { getSigner, SESSION_COOKIE } from '$lib/server/auth/session';
+import { getSigner, refuseModerationAccount, SESSION_COOKIE } from '$lib/server/auth/session';
 import { sessions } from '$lib/server/auth/registry';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { bearerToken } from '$lib/server/auth/request';
@@ -23,6 +23,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   const userId = Number(claims?.sub);
   const jti = claims?.jti;
   if (!claims || !Number.isFinite(userId) || !jti) error(401, 'unauthorized');
+  refuseModerationAccount({ id: userId }, 'refresh');
 
   const fresh = await getSigner().mintSessionToken(
     {

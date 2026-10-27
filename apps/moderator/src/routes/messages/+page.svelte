@@ -3,6 +3,7 @@
   import { userLookupUrl } from '$lib/entity-url';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { INBOX_LIMIT } from '$lib/message-as-civitai';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -36,7 +37,7 @@
   </p>
 {:else}
   <p class="mb-2 text-xs text-dark-2">
-    {data.threads.length} thread{data.threads.length === 1 ? '' : 's'}{data.awaitingOnly
+    {data.threads.length === INBOX_LIMIT ? `First ${INBOX_LIMIT} threads` : `${data.threads.length} thread${data.threads.length === 1 ? '' : 's'}`}{data.awaitingOnly
       ? ', oldest first'
       : ', newest first'}.
   </p>
