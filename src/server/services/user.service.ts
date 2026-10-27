@@ -1421,11 +1421,11 @@ async function unindexDeleted(
   }
 }
 
-// `modelIds` alone when it could not be read which models went: some may still hold live bids, so
-// it names no versions to refund.
+// With `modelIds` when it could not be read which models went: its versions are candidates to
+// check, since a model a hold kept still holds live bids.
 type BidRefundFailure =
   | { versionIds: number[]; transactionIds?: string[]; error?: string }
-  | { modelIds: number[]; error: string };
+  | { modelIds: number[]; versionIds: number[]; error: string };
 
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
@@ -1463,7 +1463,13 @@ async function refundEachDeletedModel(
       )
     );
   } catch (e) {
-    return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
+    return [
+      {
+        modelIds: models.map((m) => m.id),
+        versionIds: models.flatMap(versionIdsOf),
+        error: (e as Error).message,
+      },
+    ];
   }
   const failures: BidRefundFailure[] = [];
   for (const m of models) {
@@ -1509,7 +1515,8 @@ export const removeAllContent = async ({
   const { markerView } = await assertAccountNotUnderLegalHold(id);
   const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
 
-  const models = await dbRead.model.findMany({
+  // The primary, as the delete below: a model the replica has not seen yet still has bids to refund.
+  const models = await dbWrite.model.findMany({
     where: { userId: id },
     select: { id: true, name: true, modelVersions: { select: { id: true } } },
   });
