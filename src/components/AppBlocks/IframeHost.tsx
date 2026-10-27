@@ -642,7 +642,9 @@ export function AppBlockChrome({
           the app's own owner — which the ledger guard's own message warns against.
           So it is repointed, keeping the label ("My apps" still names what an owner
           arrives at: state C is their app list) and taking the subnav's glyph for
-          the row it now shares, `IconCode`.
+          the row it now shares, `IconCode`. It carries `?view=apps` (`MY_APPS_HREF`,
+          spelled literally because the chrome-nav ledger parses literal hrefs): an author
+          who also holds the App Assistant would otherwise land on the assistant.
 
           🔴 WHAT THAT DOES *NOT* DO IS DEFEAT A KILL SWITCH — and the previous
           version of this note is why the question has to be asked. `/apps/build`
@@ -671,7 +673,10 @@ export function AppBlockChrome({
       >
         App activity
       </ChromeSurfaceItem>
-      <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
+      <ChromeSurfaceItem
+        href="/apps/build?view=apps"
+        leftSection={<IconCode size={14} stroke={1.5} />}
+      >
         My apps
       </ChromeSurfaceItem>
       {isModerator && (

@@ -309,6 +309,19 @@ export type ApiKey = {
    */
   workerDeviceId: number | null;
 };
+export type AppAccessRequest = {
+  id: Generated<number>;
+  userId: number;
+  whatToBuild: string;
+  /**
+   * pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
+   * per user: the migration's PARTIAL unique index, which Prisma cannot express.
+   */
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
+  reviewedAt: Timestamp | null;
+  reviewedById: number | null;
+};
 export type AppBlock = {
   id: string;
   app_id: string;
@@ -659,6 +672,15 @@ export type AppPageAccess = {
   roles: string[];
   updatedById: number | null;
   updatedAt: Generated<Timestamp>;
+};
+export type AppPostIntent = {
+  listing_id: string;
+  host: string;
+  path_prefix: string;
+  enabled: Generated<boolean>;
+  reviewed_by_id: number | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -3137,6 +3159,9 @@ export type EvidenceHoldImage = {
   userId: number;
   postId: number | null;
   keptAt: Generated<Timestamp>;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 };
 export type EvidenceHoldPost = {
   postId: number;
@@ -3732,6 +3757,7 @@ export type ModActivity = {
   entityType: string | null;
   entityId: number | null;
   createdAt: Generated<Timestamp>;
+  host: string | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -4240,6 +4266,16 @@ export type OauthClient = {
    * Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
    */
   accessMode: Generated<string>;
+  /**
+   * Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+   * /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+   */
+  skipConsent: Generated<boolean>;
+  /**
+   * Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+   * is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+   */
+  tokenRateLimit: number | null;
   userId: number;
   isVerified: Generated<boolean>;
   createdAt: Generated<Timestamp>;
@@ -4488,6 +4524,19 @@ export type PostHelper = {
 export type PostImageTag = {
   postId: number;
   tagId: number;
+};
+export type PostIntentManifest = {
+  id: Generated<number>;
+  manifest_url: string;
+  app_id: string;
+  listing_id: string;
+  user_id: number;
+  manifest: unknown;
+  staged: Generated<unknown>;
+  claim_expires_at: Timestamp;
+  post_id: number | null;
+  posted_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
 };
 export type PostMetric = {
   postId: number;
@@ -5224,6 +5273,30 @@ export type ServiceDealTransaction = {
   attempts: Generated<number>;
   lastAttemptAt: Timestamp | null;
   lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDisputeReview = {
+  id: Generated<number>;
+  dealId: number;
+  /**
+   * Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
+   */
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  /**
+   * The evidence bundle the review read, as submitted.
+   */
+  evidence: unknown;
+  agentVersion: string;
+  /**
+   * Allowed values: DISPUTE_REVIEW_MODES in the same file.
+   */
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceOffering = {
@@ -6191,10 +6264,12 @@ export type DB = {
   app_listings: AppListing;
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
+  app_post_intents: AppPostIntent;
   app_review_agent_reports: AppReviewAgentReport;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
+  AppAccessRequest: AppAccessRequest;
   Appeal: Appeal;
   AppealDecisionRecord: AppealDecisionRecord;
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
@@ -6444,6 +6519,7 @@ export type DB = {
   PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
+  post_intent_manifests: PostIntentManifest;
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;
   PostMetric: PostMetric;
@@ -6502,6 +6578,7 @@ export type DB = {
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
+  ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;
   ServiceOfferingReport: ServiceOfferingReport;
   Session: Session;

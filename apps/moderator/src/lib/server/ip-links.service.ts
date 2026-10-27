@@ -163,17 +163,34 @@ export async function getLinkedAccounts(
 /** Everyone on one address, for "who else is on this IP". */
 export async function getAccountsOnAddress(
   address: string,
-  { days = DEFAULT_REACTION_DAYS, limit = 100, offset = 0 } = {}
+  options: { days?: number; limit?: number; offset?: number } = {}
 ): Promise<LinkedAccounts | null> {
-  const cluster = isClusterKey(address) ? address : ipCluster(address);
-  if (!cluster) return null;
-  const own: OwnAddress[] = (['login', 'reaction'] as const).map((source) => ({
-    cluster,
-    ips: cluster === address ? [] : [address],
-    last: '',
-    source,
-  }));
-  return linkAccounts(own, { days, limit, offset, exclude: [] });
+  const { linked } = await getAccountsOnAddresses([address], options);
+  return linked;
+}
+
+/**
+ * Every account seen on any of these addresses, in one list: an account on several of them appears
+ * once, with each address it was seen on. `invalid` names what was not an IP address; `linked` is null
+ * when nothing was.
+ */
+export async function getAccountsOnAddresses(
+  addresses: string[],
+  { days = DEFAULT_REACTION_DAYS, limit = 100, offset = 0 } = {}
+): Promise<{ linked: LinkedAccounts | null; invalid: string[] }> {
+  const own: OwnAddress[] = [];
+  const invalid: string[] = [];
+  for (const address of addresses) {
+    const cluster = isClusterKey(address) ? address : ipCluster(address);
+    if (!cluster) {
+      invalid.push(address);
+      continue;
+    }
+    for (const source of ['login', 'reaction'] as const)
+      own.push({ cluster, ips: cluster === address ? [] : [address], last: '', source });
+  }
+  if (!own.length) return { linked: null, invalid };
+  return { linked: await linkAccounts(own, { days, limit, offset, exclude: [] }), invalid };
 }
 
 async function linkAccounts(

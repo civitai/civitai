@@ -41,6 +41,8 @@ import {
   keepPendingAppealFlags,
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
@@ -899,6 +901,35 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
     else throw throwDbError(error);
   }
 };
+
+/**
+ * The image detail page's "Published with <app>" credit, for THIS viewer.
+ *
+ * A query of its own rather than a field on `image.get`, because the image page
+ * renders from whichever payload brought the image there (a feed page, a post's
+ * image list, or `image.get`), so no one image read reaches the sidebar on every
+ * path. The visibility check, the media rule and the fail-open all live in
+ * `readImageAppChip`; this handler only threads the request through. Its answer
+ * varies by viewer, so it must never be edge-cached per URL for a signed-in user
+ * (the default context already sets no edge TTL for one; an anonymous viewer is
+ * always gated to `null`).
+ */
+export const getImagePublishedWithAppHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) =>
+  readImageAppChip({
+    imageId: input.id,
+    ctx,
+    // Fail-closed on absence: a missing host refuses a mature app.
+    host: ctx.req?.headers?.host ?? '',
+    // Computed outside the resolver's try, as on the post page: a pure read of
+    // `ctx.features` and `ctx.user`.
+    viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+  });
 
 export type ImageResourceModel = AsyncReturnType<typeof getImageResourcesHandler>[0];
 export const getImageResourcesHandler = async ({

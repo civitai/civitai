@@ -35,6 +35,7 @@ export const FEEDBACK_AREAS = [
   'site-bug-report',
   'app-block',
   'apps-platform',
+  'semantic-image-search',
 ] as const;
 
 /**

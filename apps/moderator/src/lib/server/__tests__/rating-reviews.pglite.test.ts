@@ -151,6 +151,23 @@ describe('resolveRatingReview', () => {
     });
   });
 
+  it('writes resolvedAt as a database-side now(), not a JS Date serialised in the host zone', async () => {
+    const id = await fileReview(
+      'Bounty',
+      await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
+    );
+    // pglite serialises a Date as UTC; the production driver uses the host zone into a zoneless column.
+    // So the bound parameters are what has to be pinned.
+    const bound: unknown[] = [];
+    dbHandle.current = ratingReviewKysely(db, (e) => {
+      if (e.level === 'query' && /update "RatingReview"/i.test(e.query.sql))
+        bound.push(...e.query.parameters);
+    });
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+    expect(bound.length).toBeGreaterThan(0);
+    expect(bound.some((p) => p instanceof Date)).toBe(false);
+  });
+
   it('lets only the first of two resolutions write', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
     const id = await fileReview('Post', postId);
@@ -823,26 +840,27 @@ describe('rating review images', () => {
       await fileReview(type, id);
 
     const items = await listPending();
-    const cover = (type: string, id: number) =>
-      items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl;
+    // Only an article's cover is computed here; the others are the first image of their preview.
+    const cover = async (type: Parameters<typeof service.getRatingReviewImages>[0], id: number) =>
+      type === 'Article'
+        ? items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl
+        : (await service.getRatingReviewImages(type, id)).images[0]?.url;
 
-    expect(cover('Post', postId)).toBe('post-first');
-    expect(cover('Model', modelId)).toBe('model-cover');
-    expect(cover('Article', articleId)).toBe('article-cover');
-    expect(cover('Bounty', bountyId)).toBe('bounty-b');
-    expect(cover('BountyEntry', entryId)).toBe('entry-a');
-    expect(cover('Challenge', challengeId)).toBe('challenge-cover');
-    expect(cover('Crucible', crucibleId)).toBe('crucible-cover');
-    expect(cover('Crucible', heroOnlyId)).toBe('crucible-hero');
-    expect(cover('Collection', collectionId)).toBe('collection-cover');
+    expect(await cover('Post', postId)).toBe('post-first');
+    expect(await cover('Model', modelId)).toBe('model-cover');
+    expect(await cover('Article', articleId)).toBe('article-cover');
+    expect(await cover('Bounty', bountyId)).toBe('bounty-b');
+    expect(await cover('BountyEntry', entryId)).toBe('entry-a');
+    expect(await cover('Challenge', challengeId)).toBe('challenge-cover');
+    expect(await cover('Crucible', crucibleId)).toBe('crucible-cover');
+    expect(await cover('Crucible', heroOnlyId)).toBe('crucible-hero');
+    expect(await cover('Collection', collectionId)).toBe('collection-cover');
     expect(items.find((i) => i.entityType === 'Article')?.entity?.coverType).toBe('video');
   });
 
-  it('leaves the cover empty for an entity with no image', async () => {
+  it('previews nothing for an entity with no image', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner });
-    await fileReview('Post', postId);
-    const items = await listPending();
-    expect(items[0].entity?.coverUrl).toBeNull();
+    expect(await service.getRatingReviewImages('Post', postId)).toEqual({ total: 0, images: [] });
   });
 
   it('shows a model its owner’s images in the CSAM-queue order: published first, then version, post, image index', async () => {
@@ -858,9 +876,6 @@ describe('rating review images', () => {
     // Another account's post never feeds the model's gallery.
     await seedImage({ url: 'foreign', postId: await post(first, { userId: mod }), index: 0 });
     await fileReview('Model', modelId);
-
-    const items = await listPending();
-    expect(items[0].entity?.coverUrl).toBe('first-a');
 
     const preview = await service.getRatingReviewImages('Model', modelId, 10);
     expect(preview.images.map((i) => i.url)).toEqual([
@@ -883,7 +898,6 @@ describe('rating review images', () => {
     });
     await fileReview('Model', modelId);
 
-    expect((await listPending())[0].entity?.coverUrl).toBe('only-unpublished');
     const preview = await service.getRatingReviewImages('Model', modelId);
     expect(preview.images.map((i) => i.url)).toEqual(['only-unpublished']);
     expect(preview.total).toBe(1);

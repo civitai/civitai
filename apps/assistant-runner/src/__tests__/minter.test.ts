@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { RunCredentials } from '../credentials';
-import { withRequestGrant } from '../grants';
+import { withRequestGrant } from '../core/request-grant';
 import { MintRefusedError, TokenMinter, type TokenPurpose } from '../minter';
 
 const SECRET = 'test-only-runner-secret';

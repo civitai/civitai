@@ -117,7 +117,48 @@ describe('StartStorylineModal', () => {
     const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
     openStartStorylineModal();
 
-    expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal });
+    expect(trigger).toHaveBeenCalledWith({
+      component: StartStorylineModal,
+      props: { post: undefined },
+    });
     trigger.mockRestore();
+  });
+
+  describe('from a published post', () => {
+    const post = { id: 41, title: 'Cat patch', nsfwLevel: NsfwLevel.R, publishedAt: new Date() };
+
+    test('makes the post chapter 1, at a ceiling it fits, and opens the new storyline', async () => {
+      renderWithProviders(<StartStorylineModal post={post} />);
+
+      await expect.element(page.getByRole('textbox', { name: 'Title' })).toHaveValue('Cat patch');
+      // Below the post's rating cannot be picked; the first that fits is the default.
+      await expect.element(page.getByRole('radio', { name: 'PG-13', exact: true })).toBeDisabled();
+      await expect.element(page.getByRole('radio', { name: 'R', exact: true })).toBeChecked();
+      await page.getByRole('button', { name: 'Start storyline' }).click();
+
+      expect(mocks.mutate).toHaveBeenCalledWith({
+        postId: 41,
+        title: 'Cat patch',
+        maxNsfwLevel: NsfwLevel.R,
+        whoCanContinue: 'Anyone',
+      });
+      await mocks.options.onSuccess?.({ id: 9 });
+      expect(useRouter().push).toHaveBeenCalledWith('/storylines/9');
+    });
+
+    test('an unrated post cannot start one yet', async () => {
+      renderWithProviders(<StartStorylineModal post={{ ...post, nsfwLevel: 0 }} />);
+
+      await expect.element(page.getByText(/hasn.t been rated yet/)).toBeVisible();
+      expect(page.getByRole('button', { name: 'Start storyline' }).elements()).toHaveLength(0);
+    });
+
+    test('the opener passes the post through', () => {
+      const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+      openStartStorylineModal(post);
+
+      expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal, props: { post } });
+      trigger.mockRestore();
+    });
   });
 });

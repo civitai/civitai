@@ -13,6 +13,10 @@ import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrato
 export const UNRATED_RETRY_MIN_MS = 2000;
 export const UNRATED_RETRY_MAX_MS = 60_000;
 export const UNRATED_GIVE_UP_MS = 10 * 60_000;
+// A given-up output is watched once more after this long (an outage can outlast one watch), then
+// left alone until the page is reloaded.
+export const UNRATED_GIVE_UP_COOLDOWN_MS = 10 * 60_000;
+const UNRATED_MAX_GIVE_UPS = 2;
 
 export function unratedRetryDelay(attempt: number) {
   return Math.min(UNRATED_RETRY_MIN_MS * 2 ** attempt, UNRATED_RETRY_MAX_MS);
@@ -69,6 +73,19 @@ export function createUnratedOutputWatcher({
   refetch: (workflowIds: string[]) => Promise<unknown>;
 }) {
   const watching = new Set<string>();
+  // `watch()` runs on every cache change, including the refetch's own, so a released output whose
+  // workflow still reads unrated would otherwise restart at once, for as long as the tab is open.
+  // Blocked verdicts that had their one workflow re-read are settled for good; give-ups wait out a
+  // cooldown, and are settled for good after the last one.
+  const settled = new Set<string>();
+  const gaveUp = new Map<string, { at: number; times: number }>();
+
+  function isResting(outputId: string) {
+    if (settled.has(outputId)) return true;
+    const last = gaveUp.get(outputId);
+    if (!last) return false;
+    return last.times >= UNRATED_MAX_GIVE_UPS || Date.now() - last.at < UNRATED_GIVE_UP_COOLDOWN_MS;
+  }
   // Outputs of one workflow share a single refetch.
   const refetching = new Map<string, Promise<unknown>>();
 
@@ -94,8 +111,10 @@ export function createUnratedOutputWatcher({
         const verdict = await readVerdict(url).catch(() => null);
         if (verdict) {
           // The output's blocked state comes from the workflow, which a header can't reproduce.
-          if (verdict.blockedReason || !verdict.nsfwLevel) await refetch([workflowId]);
-          else applyRating(outputId, verdict.nsfwLevel);
+          if (verdict.blockedReason || !verdict.nsfwLevel) {
+            settled.add(outputId);
+            await refetch([workflowId]);
+          } else applyRating(outputId, verdict.nsfwLevel);
           return;
         }
         // A long wait cut off (an API pod shutting down in a deploy) is not a run of failures.
@@ -106,6 +125,7 @@ export function createUnratedOutputWatcher({
         }
         if (Date.now() - watchedAt >= UNRATED_GIVE_UP_MS) {
           console.warn('[generation] gave up waiting for an output rating', outputId);
+          gaveUp.set(outputId, { at: Date.now(), times: (gaveUp.get(outputId)?.times ?? 0) + 1 });
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, unratedRetryDelay(failures++)));
@@ -120,7 +140,7 @@ export function createUnratedOutputWatcher({
 
   return function watch() {
     for (const [outputId, output] of selectUnratedOutputs(readWorkflows())) {
-      if (watching.has(outputId)) continue;
+      if (watching.has(outputId) || isResting(outputId)) continue;
       watching.add(outputId);
       void follow(outputId, output);
     }

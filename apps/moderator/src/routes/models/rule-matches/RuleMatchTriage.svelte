@@ -2,6 +2,7 @@
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
+  import { modelRuleCategoryLabel, type ModelRuleCategory } from '@civitai/moderation/model-rules';
   import { IconFileText } from '@tabler/icons-svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import OwnerGroupChip from '$lib/components/model-rule-holds/OwnerGroupChip.svelte';
@@ -102,6 +103,9 @@
       ? ''
       : `${MODEL_RULE_HOLD_STATUS_LABELS[data.holdFilters.status].toLowerCase()} `
   );
+  const categoriesOf = (rules: { category?: ModelRuleCategory }[]) => [
+    ...new Set(rules.flatMap((rule) => (rule.category ? [rule.category] : []))),
+  ];
   const subjectsOf = (rules: { subject: string }[]) =>
     rules.map((rule) => rule.subject).join(', ') || 'no rule stored';
 </script>
@@ -190,6 +194,9 @@
       {/snippet}
       {#snippet badges()}
         <span class="block w-full truncate text-xs text-dark-0">{subjectsOf(row.rules)}</span>
+        {#each categoriesOf(row.rules) as category (category)}
+          <MetaChip>{modelRuleCategoryLabel(category)}</MetaChip>
+        {/each}
         <MetaChip tone={row.mode === 'active' ? 'amber' : 'blue'}>{modeLabel(row.mode)}</MetaChip>
         {#if row.applied}<MetaChip tone="red">applied</MetaChip>{/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
@@ -211,6 +218,7 @@
     <RuleMatchDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       {canStrike}
       verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}

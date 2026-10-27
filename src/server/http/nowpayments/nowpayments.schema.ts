@@ -224,6 +224,7 @@ export namespace NOWPayments {
     price_amount: z.number().nullish(),
     price_currency: z.string().nullish(),
     purchase_id: z.string().nullish(),
+    created_at: z.coerce.date().nullish(),
     updated_at: z.coerce.date().nullish(),
   });
 }

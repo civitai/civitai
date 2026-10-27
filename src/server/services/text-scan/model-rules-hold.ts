@@ -81,11 +81,13 @@ export async function detectModelRulesLiteral({
       ),
       fields: stored.fields.map((f) => ({ heading: f.heading, text: f.text ?? '' })),
       matches,
-      rules: matched.map(({ id, subject: name, description, aliases }) => ({
+      rules: matched.map(({ id, subject: name, description, aliases, category, references }) => ({
         id,
         subject: name,
         description,
         aliases,
+        ...(category ? { category } : {}),
+        references: references ?? [],
       })),
       mode,
       applied: false,

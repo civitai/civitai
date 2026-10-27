@@ -13,7 +13,7 @@ import {
   IconUserCheck,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,7 +22,9 @@ import {
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { useSession } from '~/providers/SessionProvider';
+import { useSession, useSessionDiagnostics } from '~/providers/SessionProvider';
+import { shellPageDataStatus } from '~/components/Shell/shell-page-data';
+import { reportLoginGateWithAuthCookie, type LoginGateSignal } from '~/utils/faro/loginGate';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { ownDomainCanonical } from '~/components/Meta/canonical';
@@ -44,7 +46,7 @@ const PAYWALL_HAS_PART = {
 /**
  * Which view `Gated` will render given the current request.
  *
- *   - `loading`  — session is still resolving for non-safe content; render nothing yet
+ *   - `loading`  — session is still resolving for above-PG content; render nothing yet
  *   - `page`     — full content visible (children render). May be a verified-bot
  *                  bypass of an otherwise-gated page; check `isPaywalled` to know
  *   - `unrated`  — content hasn't been moderation-rated yet (SFW site only)
@@ -84,8 +86,10 @@ export function useGated({
   const { data, status } = useSession();
   const verifiedBot = useAppContext().verifiedBot;
 
-  // Defer the decision while session is loading and we have no cached data.
-  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
+  // Defer the decision while session is loading and we have no cached data — for anything a
+  // signed-out viewer could be gated from, i.e. everything above PG. PG13 included: deciding it
+  // while loading is `login` on either site, shown to a viewer who may well be signed in.
+  if (!hasPublicBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
     return { state: 'loading', isPaywalled: false };
   }
 
@@ -128,6 +132,36 @@ export function useGated({
   return { state: 'page', isPaywalled: false };
 }
 
+// Faro may initialise after the first login render (its flag can arrive with a shell's page data).
+const LOGIN_GATE_REPORT_RETRY_MS = 5000;
+
+/**
+ * Diagnostic only (`~/utils/faro/loginGate`): when the gate shows the login card to a viewer whose
+ * hard load carried a session cookie, report how the session got there — once per page load.
+ * Renders nothing and changes nothing.
+ */
+export function useLoginGateDiagnostic(state: GatedState, contentNsfwLevel: number) {
+  const diagnostics = useSessionDiagnostics();
+  useEffect(() => {
+    if (state !== 'login' || !diagnostics?.authCookieAtLoad) return;
+    // Snapshot now: a retry must describe the moment the gate showed, not a later one.
+    const signal: LoginGateSignal = {
+      diagnostics: {
+        ...diagnostics,
+        history: [...diagnostics.history],
+        lastFetch: diagnostics.lastFetch && { ...diagnostics.lastFetch },
+      },
+      contentNsfwLevel,
+      shellPageDataStatus: shellPageDataStatus(),
+      msSinceNavStart: performance.now(),
+    };
+    if (reportLoginGateWithAuthCookie(signal) !== 'no-faro') return;
+    // Not cleared on unmount or a state change: a gate that showed is worth reporting even once
+    // it has gone, and the report touches no component state.
+    setTimeout(() => reportLoginGateWithAuthCookie(signal), LOGIN_GATE_REPORT_RETRY_MS);
+  }, [state, contentNsfwLevel, diagnostics]);
+}
+
 type GatedProps<TImage extends { nsfwLevel: number; url: string; type?: MediaType }> = {
   contentNsfwLevel: number;
   nsfw?: boolean;
@@ -167,6 +201,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   children,
 }: GatedProps<TImage>) {
   const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
+  useLoginGateDiagnostic(state, contentNsfwLevel);
   const { allowMatureContent, domain, serverDomains } = useAppContext();
 
   // Rating, not `state` — a PG13 page still serves ads while showing a login gate.

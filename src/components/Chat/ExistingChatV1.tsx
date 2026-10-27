@@ -45,6 +45,7 @@ import { ChatActionsV1 as ChatActions } from '~/components/Chat/ChatActionsV1';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import {
   getLinkHref,
+  isExternalChatLink,
   linkifyOptions,
   loadMotion,
   showsChatModeratorMark,
@@ -58,7 +59,6 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
@@ -835,7 +835,7 @@ function ChatInputBox({
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
   if (!href) return <Title order={6}>{title}</Title>;
 
-  if (constants.chat.externalRegex.test(href)) {
+  if (isExternalChatLink(href)) {
     return (
       <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
         <Title order={6}>{title}</Title>

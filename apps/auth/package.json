@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.46",
+  "version": "0.1.50",
   "private": true,
   "type": "module",
   "scripts": {
@@ -31,6 +31,7 @@
     "prom-client": "^14.2.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.4.6",
     "@sveltejs/adapter-node": "^5.3.2",
     "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",

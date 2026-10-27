@@ -1,11 +1,20 @@
 import { createHash } from 'crypto';
 import type { Session } from '~/types/session';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { createSessionClient, createSessionTokenClient, sessionCookieName } from '@civitai/auth';
+import {
+  createSessionClient,
+  createSessionTokenClient,
+  readSessionToken,
+  type CookieSlot,
+} from '@civitai/auth';
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
-import { observeSessionLeg, observeLegacyUpgrade } from './session-metrics';
+import {
+  observeSessionLeg,
+  observeLegacyUpgrade,
+  observeSessionRollFailed,
+} from './session-metrics';
 import { logToAxiom } from '~/server/logging/client';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
@@ -40,8 +49,8 @@ const sessionTokenClient = createSessionTokenClient();
 export async function getHubSession(req: {
   cookies?: Partial<Record<string, string>>;
 }): Promise<Session | null> {
-  // The hub's THIN cookie (`civ-token`, env-derived name), distinct from next-auth's legacy `civitai-token`.
-  const token = req.cookies?.[sessionCookieName()];
+  // The hub's THIN cookie (`civ-token`, either slot), distinct from next-auth's legacy `civitai-token`.
+  const token = readSessionToken(req.cookies)?.value;
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);
   if (!user) return null;
@@ -71,7 +80,9 @@ export async function maybeRollHubCookie(
   token: string,
   deviceCookie: string | undefined,
   res: CookieWritable,
-  host?: string
+  host?: string,
+  slot?: CookieSlot,
+  requestCookies?: Partial<Record<string, string | undefined>>
 ): Promise<void> {
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
@@ -79,10 +90,12 @@ export async function maybeRollHubCookie(
 
   try {
     // Only the hub can mint — the package helper forwards the bearer token (+ device cookie) and times out.
-    const fresh = (await sessionTokenClient.refresh(token, { deviceCookie }))?.token;
+    const fresh = (
+      await sessionTokenClient.refresh(token, { deviceCookie, onFailure: observeSessionRollFailed })
+    )?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
-    setSessionCookie(res, fresh, { deviceCookie, host });
+    setSessionCookie(res, fresh, { deviceCookie, host, slot, requestCookies });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
   }
@@ -127,7 +140,8 @@ export async function maybeUpgradeLegacySession(
   legacyToken: string | undefined,
   deviceCookie: string | undefined,
   res: CookieWritable,
-  host?: string
+  host?: string,
+  requestCookies?: Partial<Record<string, string | undefined>>
 ): Promise<void> {
   if (!HUB_ORIGIN || !legacyToken || typeof res.setHeader !== 'function') return;
   if (!(await claimLegacyUpgrade(legacyToken))) {
@@ -154,7 +168,7 @@ export async function maybeUpgradeLegacySession(
     ).catch(() => undefined);
     // Set the civ-token + the device cookie (the hub's reused-or-minted device id) in lockstep — this also
     // clears the legacy SESSION cookie.
-    setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId });
+    setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId, requestCookies });
     // … then de-crud every legacy next-auth cookie on the same response — the SESSION cookie (so the hybrid
     // fallback can't re-resolve the stale legacy identity) AND the ancillary cruft (CSRF / callback-url /
     // state / PKCE). setSessionCookie no longer clears the session cookie itself.

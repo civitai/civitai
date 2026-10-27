@@ -518,8 +518,8 @@ importers:
         specifier: 16.4.3
         version: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       nodemailer:
-        specifier: ^6.8.0
-        version: 6.10.1
+        specifier: ^7.0.11
+        version: 7.0.13
       obscenity:
         specifier: ^0.4.5
         version: 0.4.5
@@ -1030,6 +1030,9 @@ importers:
         specifier: ^14.2.0
         version: 14.2.0
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.4.6
+        version: 0.4.6
       '@sveltejs/adapter-node':
         specifier: ^5.3.2
         version: 5.5.4(@sveltejs/kit@2.70.3(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.3(@typescript-eslint/types@8.60.1))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)))(svelte@5.56.3(@typescript-eslint/types@8.60.1))(typescript@5.9.2)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)))
@@ -1692,6 +1695,9 @@ importers:
         specifier: ^4.6.6
         version: 4.6.7
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.4.6
+        version: 0.4.6
       '@types/pg':
         specifier: ^8.11.10
         version: 8.15.5
@@ -10007,8 +10013,8 @@ packages:
     resolution: {integrity: sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w==}
     engines: {node: '>=20.0.0'}
 
-  nodemailer@6.10.1:
-    resolution: {integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==}
+  nodemailer@7.0.13:
+    resolution: {integrity: sha512-PNDFSJdP+KFgdsG3ZzMXCgquO7I6McjY2vlqILjtJd0hy8wEvtugS9xKRF2NWlPNGxvLCXlTNIae4serI7dinw==}
     engines: {node: '>=6.0.0'}
 
   nopt@1.0.10:
@@ -23155,7 +23161,7 @@ snapshots:
 
   nodemailer@10.2.1: {}
 
-  nodemailer@6.10.1: {}
+  nodemailer@7.0.13: {}
 
   nopt@1.0.10:
     dependencies:

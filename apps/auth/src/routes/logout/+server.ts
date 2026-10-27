@@ -59,8 +59,8 @@ export const POST: RequestHandler = async ({ cookies, locals, url }) => {
   if (locals.tokenId) {
     await sessions.invalidateToken(locals.tokenId, locals.user?.id).catch(() => {});
   }
-  // Clear the hub's `.civitai.com` session AND device cookies (the seamless-switch account set must not survive
-  // logout on a shared machine — mirrors the spoke's buildLogoutCookies). Also clear any leftover LEGACY
+  // Clear the hub's session AND device cookies under every name, `.civitai.com` and host-only (the
+  // seamless-switch account set must not survive logout on a shared machine). Also clear any leftover LEGACY
   // next-auth cookies on `.civitai.com` — the main app's hybrid fallback still honors the legacy session cookie,
   // so leaving it would silently re-authenticate the user after a cross-domain logout.
   clearSession(cookies);

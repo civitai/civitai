@@ -46,6 +46,7 @@ import {
   getEntitiesCoverImageHandler,
   getImageContestCollectionDetailsHandler,
   getImageHandler,
+  getImagePublishedWithAppHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
@@ -126,6 +127,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getImageSchema)
     .query(getImageHandler),
+  // The image page's "Published with <app>" credit. Per viewer (store-scope gated), so
+  // deliberately NO `edgeCacheIt` — see `getImagePublishedWithAppHandler`.
+  getPublishedWithApp: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(getImagePublishedWithAppHandler),
   getResources: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

@@ -1,4 +1,4 @@
-import type { ModelCallLedger, ModelCallScope } from '../interfaces';
+import type { ModelCallLedger, ModelCallScope } from '../model-calls';
 
 export interface ModelCallRow {
   runId: string;

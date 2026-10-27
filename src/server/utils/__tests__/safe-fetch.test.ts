@@ -30,9 +30,7 @@ type FakeInit = { status?: number; headers?: Record<string, string>; chunks?: st
 
 /** A minimal IncomingMessage stand-in: a real Readable + statusCode/headers. */
 function fakeResponse({ status = 200, headers = {}, chunks = [] as string[] }: FakeInit) {
-  const lower = Object.fromEntries(
-    Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])
-  );
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
   const stream = Readable.from(chunks.map((c) => Buffer.from(c)));
   return Object.assign(stream, { statusCode: status, headers: lower });
 }
@@ -151,9 +149,7 @@ describe('safeFetch — DNS-resolve guard', () => {
 describe('safeFetch — connection pinning (DNS-rebinding TOCTOU fix)', () => {
   it('pins the outbound socket to the validated IP; SNI/Host keep the hostname', async () => {
     lookupMock.mockResolvedValue([{ address: '203.0.113.7', family: 4 }] as never);
-    primeTransport(
-      fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['ok'] })
-    );
+    primeTransport(fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['ok'] }));
     await safeFetch('https://vendor.example.com/app', HTML);
 
     const opts = capturedOptions[0];
@@ -168,9 +164,7 @@ describe('safeFetch — connection pinning (DNS-rebinding TOCTOU fix)', () => {
   it('a public-then-private rebind cannot make the connect target the private IP', async () => {
     // Validation time: the authoritative server answers PUBLIC.
     lookupMock.mockResolvedValue([{ address: '198.51.100.9', family: 4 }] as never);
-    primeTransport(
-      fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['ok'] })
-    );
+    primeTransport(fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['ok'] }));
     await safeFetch('https://rebind.example.com', HTML);
 
     const opts = capturedOptions[0];
@@ -186,7 +180,10 @@ describe('safeFetch — connection pinning (DNS-rebinding TOCTOU fix)', () => {
 describe('safeFetch — response controls', () => {
   it('returns bytes + content-type + finalUrl on a good response', async () => {
     primeTransport(
-      fakeResponse({ headers: { 'content-type': 'text/html; charset=utf-8' }, chunks: ['<html>hi'] })
+      fakeResponse({
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+        chunks: ['<html>hi'],
+      })
     );
     const r = await safeFetch('https://example.com/page', HTML);
     expect(r.contentType).toBe('text/html');
@@ -195,7 +192,9 @@ describe('safeFetch — response controls', () => {
   });
 
   it('rejects a disallowed content-type', async () => {
-    primeTransport(fakeResponse({ headers: { 'content-type': 'application/json' }, chunks: ['{}'] }));
+    primeTransport(
+      fakeResponse({ headers: { 'content-type': 'application/json' }, chunks: ['{}'] })
+    );
     expect(await code(safeFetch('https://example.com', HTML))).toBe('content_type');
   });
 
@@ -218,12 +217,26 @@ describe('safeFetch — response controls', () => {
     primeTransport(
       fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['abcd', 'efgh', 'ijkl'] })
     );
-    expect(await code(safeFetch('https://example.com', { ...HTML, maxBytes: 5 }))).toBe('too_large');
+    expect(await code(safeFetch('https://example.com', { ...HTML, maxBytes: 5 }))).toBe(
+      'too_large'
+    );
+  });
+
+  it('applies a tighter cap chosen from the first bytes as the body streams', async () => {
+    primeTransport(
+      fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['abcd', 'efgh', 'ijkl'] })
+    );
+    const capFromHead = { headBytes: 4, maxBytes: (head: Buffer) => (head[0] === 0x61 ? 6 : 100) };
+    expect(
+      await code(safeFetch('https://example.com', { ...HTML, maxBytes: 100, capFromHead }))
+    ).toBe('too_large');
   });
 
   it('maps a request timeout (abort deadline) to timeout', async () => {
     primeTransport('hang');
-    expect(await code(safeFetch('https://example.com', { ...HTML, timeoutMs: 20 }))).toBe('timeout');
+    expect(await code(safeFetch('https://example.com', { ...HTML, timeoutMs: 20 }))).toBe(
+      'timeout'
+    );
   });
 
   it('maps a transport error to network', async () => {
@@ -262,9 +275,15 @@ describe('safeFetch — redirects (re-validated + re-pinned per hop)', () => {
     expect(r.bytes.toString('utf8')).toBe('final');
     // Hop 1 pinned the origin IP; hop 2 re-pinned to the redirect target's IP.
     expect(capturedOptions[0].hostname).toBe('example.com');
-    expect(invokeLookup(capturedOptions[0].lookup, false)).toEqual({ address: '203.0.113.5', family: 4 });
+    expect(invokeLookup(capturedOptions[0].lookup, false)).toEqual({
+      address: '203.0.113.5',
+      family: 4,
+    });
     expect(capturedOptions[1].hostname).toBe('www.example.com');
-    expect(invokeLookup(capturedOptions[1].lookup, false)).toEqual({ address: '198.51.100.20', family: 4 });
+    expect(invokeLookup(capturedOptions[1].lookup, false)).toEqual({
+      address: '198.51.100.20',
+      family: 4,
+    });
   });
 
   it('caps the redirect chain', async () => {

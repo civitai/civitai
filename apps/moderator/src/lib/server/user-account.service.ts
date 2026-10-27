@@ -7,7 +7,7 @@ import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
-import { usersByIds } from './users.service';
+import { MAX_INT4, usersByIds } from './users.service';
 import {
   RATING_ACTIVITIES,
   activityGroup,
@@ -37,56 +37,150 @@ const capped = <T>(rows: T[], limit: number): Capped<T> => ({
   truncated: rows.length > limit,
 });
 
-// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
-//
-// Retool paired these lists with bulk delete / ToS actions. Those are NOT ported: they are destructive,
-// and the delete path carries side effects (search-index sync, cache busting) that the spoke does not own
-// yet — see the account-actions note in the migration tracker.
+// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments). Reads only; the bulk actions are
+// `bulkReviewAction` / `bulkCommentAction` in user-actions.service.ts.
 export type UserReview = {
   id: number;
   createdAt: Date;
   rating: number | null;
   modelId: number | null;
+  modelName: string | null;
   tosViolation: boolean | null;
   exclude: boolean | null;
   nsfw: boolean | null;
   /** The review TEXT. Retool's pane searched it, and deleting a review on rating and date alone is
    *  deciding without reading it. */
   details: string | null;
+  modelCreatorId: number;
   modelCreator: string | null;
 };
 
-const REVIEWS_LIMIT = 100;
+const REVIEWS_PER_PAGE = 50;
 
-export async function getReviews(
-  userId: number,
-  limit = REVIEWS_LIMIT
-): Promise<Capped<UserReview>> {
-  return dbRead
+/** The panel's page and filters. The filters run here rather than in the browser so they cover every
+ *  review, not just the page on screen — "every review on this owner's models" is the question. */
+export type ReviewQuery = {
+  page: number;
+  owner?: number;
+  rating?: number;
+  tos?: boolean;
+  nsfw?: boolean;
+  exclude?: boolean;
+  q?: string;
+};
+
+export type ReviewOwner = { id: number; username: string | null; count: number };
+
+export type ReviewPage = {
+  items: UserReview[];
+  perPage: number;
+  /** Matching the filters. */
+  total: number;
+  /** Every review this user wrote, unfiltered. */
+  all: number;
+  /** Most-reviewed first, across every review — the top entry is the boosting or bombing target. */
+  owners: ReviewOwner[];
+};
+
+const OWNER_OPTIONS = 200;
+
+const positiveInt = (raw: string | null) => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= MAX_INT4 ? n : undefined;
+};
+const yesNo = (raw: string | null) => (raw === 'yes' ? true : raw === 'no' ? false : undefined);
+
+/** A malformed value is no filter rather than a 400, which would render as a panel that never loads. */
+export function parseReviewQuery(params: URLSearchParams): ReviewQuery {
+  const rating = positiveInt(params.get('rating'));
+  return {
+    page: positiveInt(params.get('page')) ?? 1,
+    owner: positiveInt(params.get('owner')),
+    rating: rating && rating <= 5 ? rating : undefined,
+    tos: yesNo(params.get('tos')),
+    nsfw: yesNo(params.get('nsfw')),
+    exclude: yesNo(params.get('exclude')),
+    q: params.get('q')?.trim() || undefined,
+  };
+}
+
+// A null flag counts as "no", as the panel has always shown it.
+const flag = (column: 'tosViolation' | 'nsfw' | 'exclude', value: boolean) =>
+  sql<boolean>`coalesce(${sql.ref(`rr.${column}`)}, false) = ${value}`;
+
+// Shared by the list, its total and the image counts, so all three see the same rows.
+const filteredReviews = (userId: number, f: ReviewQuery) =>
+  dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
-    .select([
-      'rr.id',
-      'rr.createdAt',
-      'rr.rating',
-      'rr.modelId',
-      'rr.tosViolation',
-      'rr.exclude',
-      'rr.nsfw',
-      'rr.details',
-      'u.username as modelCreator',
-    ])
     .where('rr.userId', '=', userId)
+    .$if(f.owner !== undefined, (qb) => qb.where('m.userId', '=', f.owner!))
+    .$if(f.rating !== undefined, (qb) => qb.where('rr.rating', '=', f.rating!))
+    .$if(f.tos !== undefined, (qb) => qb.where(flag('tosViolation', f.tos!)))
+    .$if(f.nsfw !== undefined, (qb) => qb.where(flag('nsfw', f.nsfw!)))
+    .$if(f.exclude !== undefined, (qb) => qb.where(flag('exclude', f.exclude!)))
+    .$if(!!f.q, (qb) => qb.where(reviewPlainText, 'ilike', `%${escapeLike(f.q!)}%`));
+
+// `plainText` from `$lib/format`, step for step and in the same order, so a search matches the text
+// the panel shows. Change one, change both.
+const reviewPlainText = sql<string>`regexp_replace(
+  replace(replace(replace(replace(replace(replace(
+    regexp_replace(coalesce(rr.details, ''), '<[^>]*>', ' ', 'g'),
+  '&nbsp;', ' '), '&amp;', '&'), '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#39;', ''''),
+  '\\s+', ' ', 'g')`;
+
+// `id` breaks a `createdAt` tie, which the two page queries would otherwise resolve differently.
+const reviewPage = (userId: number, query: ReviewQuery) =>
+  filteredReviews(userId, query)
     .orderBy('rr.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) => capped(rows, limit));
+    .orderBy('rr.id', 'desc')
+    .limit(REVIEWS_PER_PAGE)
+    .offset((query.page - 1) * REVIEWS_PER_PAGE);
+
+export async function getReviews(userId: number, query: ReviewQuery): Promise<ReviewPage> {
+  const [items, matched, owners] = await Promise.all([
+    reviewPage(userId, query)
+      .select([
+        'rr.id',
+        'rr.createdAt',
+        'rr.rating',
+        'rr.modelId',
+        'm.name as modelName',
+        'rr.tosViolation',
+        'rr.exclude',
+        'rr.nsfw',
+        'rr.details',
+        'm.userId as modelCreatorId',
+        'u.username as modelCreator',
+      ])
+      .execute(),
+    filteredReviews(userId, query)
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirstOrThrow(),
+    dbRead
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .leftJoin('User as u', 'u.id', 'm.userId')
+      .where('rr.userId', '=', userId)
+      .groupBy(['m.userId', 'u.username'])
+      .select((eb) => ['m.userId as id', 'u.username', eb.fn.countAll<string>().as('count')])
+      .orderBy('count', 'desc')
+      .execute(),
+  ]);
+  const counted = owners.map((o) => ({ ...o, count: Number(o.count) }));
+  return {
+    items,
+    perPage: REVIEWS_PER_PAGE,
+    total: Number(matched.n),
+    all: counted.reduce((sum, o) => sum + o.count, 0),
+    owners: counted.slice(0, OWNER_OPTIONS),
+  };
 }
 
 /**
- * Review id → how many of the reviewer's own images use the reviewed version, for the same reviews
- * `getReviews` lists. Retool's SubmittedReviewImageCount.
+ * Review id → how many of the reviewer's own images use the reviewed version, for the page and filters
+ * in `query`. Retool's SubmittedReviewImageCount.
  *
  * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
  * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
@@ -98,13 +192,9 @@ export async function getReviews(
  */
 export async function getReviewImageCounts(
   userId: number,
-  limit = REVIEWS_LIMIT
+  query: ReviewQuery
 ): Promise<Record<number, number>> {
-  // The same joins as `getReviews`, so the limit lands on the same rows.
-  const rows = await dbRead
-    .selectFrom('ResourceReview as rr')
-    .innerJoin('Model as m', 'm.id', 'rr.modelId')
-    .innerJoin('User as u', 'u.id', 'm.userId')
+  const rows = await reviewPage(userId, query)
     .select((eb) => [
       'rr.id',
       eb
@@ -116,9 +206,6 @@ export async function getReviewImageCounts(
         .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
         .as('imageCount'),
     ])
-    .where('rr.userId', '=', userId)
-    .orderBy('rr.createdAt', 'desc')
-    .limit(limit)
     .execute();
   return Object.fromEntries(rows.map((row) => [row.id, Number(row.imageCount ?? 0)]));
 }

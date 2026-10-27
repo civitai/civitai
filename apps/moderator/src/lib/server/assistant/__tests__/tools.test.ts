@@ -31,9 +31,14 @@ const linked = {
     },
   ],
 };
+const getAccountsOnAddresses = vi.fn(async (_addresses: string[], _opts?: unknown) => ({
+  linked: linked as never,
+  invalid: [] as string[],
+}));
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
   getLinkedAccounts: vi.fn(async () => linked),
+  getAccountsOnAddresses,
   getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
 }));
 
@@ -202,6 +207,68 @@ describe('reads User Lookup gates beyond the page', () => {
     expect(out.data).toMatchObject({ found: false });
     await run('find_user', { query: 'someone@example.com' }, ['/retool/user-lookup']);
     expect(resolveUserId).toHaveBeenCalledWith('someone@example.com');
+  });
+});
+
+describe('accounts_on_address', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  const ask = async (args: unknown) =>
+    (await run('accounts_on_address', args, [LOOKUP_PAGE])).data as Record<string, unknown>;
+  beforeEach(() => {
+    getAccountsOnAddresses.mockClear();
+  });
+
+  it('reads a list of addresses in one call', async () => {
+    await ask({ addresses: ['192.0.2.1', '198.51.100.7'] });
+    expect(getAccountsOnAddresses).toHaveBeenCalledTimes(1);
+    expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1', '198.51.100.7']);
+  });
+
+  it('still takes one address as before, and says when it is not one', async () => {
+    await ask({ address: '192.0.2.1' });
+    expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1']);
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['nope'] });
+    expect(await ask({ address: 'nope' })).toEqual({ error: 'Not an IP address.' });
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['a', 'b'] });
+    expect(await ask({ addresses: ['aaa', 'bbb'] })).toEqual({
+      error: 'None of these is an IP address.',
+    });
+  });
+
+  it('passes the window and the page through, so a later page is not page one again', async () => {
+    await ask({ addresses: ['192.0.2.1'], days: 7, offset: 100, limit: 50 });
+    expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
+  });
+
+  it('names every address it was given when it times out', () => {
+    const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
+    expect(tool.timeoutMs).toBeGreaterThan(45_000);
+    expect(
+      (tool.onTimeout as (args: unknown) => Record<string, unknown>)(
+        tool.input.parse({ addresses: ['192.0.2.1'], address: '198.51.100.7' })
+      )
+    ).toMatchObject({
+      notChecked: ['192.0.2.1', '198.51.100.7'],
+      note: expect.stringContaining('were checked'),
+    });
+  });
+
+  it('names back what was not an address, so it is not read as an empty one', async () => {
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: linked as never, invalid: ['nope'] });
+    expect(await ask({ addresses: ['192.0.2.1', 'nope'] })).toMatchObject({
+      notAddresses: ['nope'],
+    });
+  });
+
+  it('refuses a call with no address, or more than twenty-five, without reading anything', async () => {
+    expect(await ask({})).toMatchObject({ error: expect.any(String) });
+    const many = Array.from({ length: 25 }, (_, i) => `192.0.2.${i + 1}`);
+    expect(await ask({ addresses: many, address: '198.51.100.7' })).toMatchObject({
+      error: expect.any(String),
+    });
+    expect(getAccountsOnAddresses).not.toHaveBeenCalled();
+    const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
+    expect(tool.input.safeParse({ addresses: [...many, '198.51.100.8'] }).success).toBe(false);
   });
 });
 

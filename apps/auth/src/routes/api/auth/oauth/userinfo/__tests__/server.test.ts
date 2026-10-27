@@ -22,7 +22,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => ({ id, username: 'owner', isModerator: true }),
 }));
 
-import { GET } from '../+server';
+import { GET, POST } from '../+server';
 
 function userinfo() {
   return GET({
@@ -49,5 +49,17 @@ describe('oauth/userinfo', () => {
     const res = await userinfo();
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ sub: '1', username: 'owner' });
+  });
+
+  it('answers a POST the same way (OIDC Core §5.3.1)', async () => {
+    h.apiKey = { userId: 1, tokenScope: TokenScope.UserRead };
+    const res = await POST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/userinfo', {
+        method: 'POST',
+        headers: { authorization: 'Bearer civitai_x' },
+      }),
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ sub: '1' });
   });
 });

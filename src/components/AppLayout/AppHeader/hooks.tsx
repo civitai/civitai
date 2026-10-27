@@ -37,6 +37,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import { myShopNavVisible } from '~/components/AppLayout/AppHeader/myShopNavVisibility';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
@@ -45,10 +46,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { OnboardingSteps } from '~/server/common/enums';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
-import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
@@ -144,13 +143,11 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           id: 'my-shop',
           href: `/user/${currentUser?.username as string}/shop`,
-          // Only Creator Program members qualify to run a shop.
-          visible:
-            features.creatorShop &&
-            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
+          // Same rule as the shop itself (`creatorShopProcedure`): the `creatorShop` flag.
+          visible: myShopNavVisible(features),
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Shop',
+          label: 'Shop',
         },
         {
           id: 'service-requests',
@@ -160,7 +157,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: !!currentUser && features.creatorServices,
           icon: IconBriefcase,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My service requests',
+          label: 'Service Requests',
         },
         {
           id: 'placements',
@@ -200,7 +197,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           href: `/collections`,
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Collections',
+          label: 'Collections',
           badge: pendingCollectionReviews,
         },
         {
@@ -225,7 +222,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Bounties',
+          label: 'Bounties',
         },
         {
           id: 'challenges',
@@ -233,7 +230,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Your Challenges',
+          label: 'Challenges',
           newUntil: new Date('2026-08-15'),
         },
         {
@@ -270,7 +267,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.vault,
           icon: IconCloudLock,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Vault',
+          label: 'Vault',
         },
         {
           id: 'referrals',

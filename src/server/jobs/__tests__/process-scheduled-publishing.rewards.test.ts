@@ -392,6 +392,17 @@ describe('processScheduledPublishing :: comic chapter notifications', () => {
     );
   });
 
+  // The comics Newest feed orders by project updatedAt; without the bump a project
+  // that already has chapters never resurfaces when a scheduled one goes live.
+  it('bumps the project updatedAt when a scheduled chapter goes live', async () => {
+    stubReads({ chapters: [chapter, { ...chapter, position: 3 }] });
+    await runJob();
+    expect(mockDbWrite.comicProject.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [5] } },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
+
   // The follower read sits ahead of every publish side effect and outside the
   // transaction, so a failure there takes down the whole run — after the chapters
   // have already flipped to Published, which is what makes the loss permanent.

@@ -7,6 +7,7 @@ import { AppTransferOffers } from '~/components/Apps/AppTransferOffers';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -57,7 +58,7 @@ export default function AppInvitesPage() {
           <AppTransferOffers />
           <AppInvitesBody />
           <Text size="sm" c="dimmed">
-            Once you accept, the app appears in <Link href="/apps/build">My apps</Link>.
+            Once you accept, the app appears in <Link href={MY_APPS_HREF}>My apps</Link>.
           </Text>
         </Stack>
       </AppsPageLayout>

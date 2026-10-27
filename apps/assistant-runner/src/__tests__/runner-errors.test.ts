@@ -1,7 +1,7 @@
 import { Error as DBOSErrors } from '@dbos-inc/dbos-sdk';
 import { describe, expect, it } from 'vitest';
 
-import { endedElsewhere, writesFailedEnd } from '../runner';
+import { endedElsewhere, writesFailedEnd } from '../core/runner';
 
 /**
  * A reply whose workflow threw has its end written by the runner (and its grant forgotten) only

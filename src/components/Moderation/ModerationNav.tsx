@@ -22,6 +22,7 @@ export function ModerationNav() {
         },
         { label: 'Models', href: '/moderator/models' },
         { label: 'HuggingFace Import', href: '/moderator/huggingface-import' },
+        { label: 'App Access Requests', href: '/moderator/app-access-requests' },
         { label: 'Training Models', href: '/moderator/training-models' },
         { label: 'Training Data Review', href: '/moderator/review/training-data' },
         // Migrated to the moderator app — the /moderator/* route redirects there (see the moderator

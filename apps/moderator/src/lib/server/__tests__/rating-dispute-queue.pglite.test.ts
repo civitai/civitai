@@ -507,6 +507,26 @@ describe('ratingDisputeTriageLoad rows', () => {
     expect(data.pinned?.preview).toEqual(await service.getRatingReviewImages('Article', articleId));
     expect(data.pinned?.preview.total).toBe(1);
   });
+
+  it('takes a cover from the first preview image, except an article, whose cover stays its own', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: alice });
+    await seedImage({ url: 'p2', postId, index: 2 });
+    await seedImage({ url: 'p1', postId, index: 1 });
+    const articleId = await seedEntity(db, 'Article', { userId: alice });
+    await connect(await seedImage({ url: 'body' }), 'Article', articleId);
+    const onPage = await fileReview({ entityType: 'Post', entityId: postId });
+    const articleReview = await fileReview({ entityType: 'Article', entityId: articleId });
+
+    const data = await load(`?selected=${articleReview}`);
+
+    expect(data.items.find((i) => i.id === onPage)?.entity).toMatchObject({
+      coverUrl: 'p1',
+      coverType: 'image',
+    });
+    // Connected body images preview, but never stand in as the article's cover.
+    expect(data.pinned?.preview.images).toHaveLength(1);
+    expect(data.pinned?.entity?.coverUrl).toBeNull();
+  });
 });
 
 describe('getRatingReviewImagesBatch', () => {

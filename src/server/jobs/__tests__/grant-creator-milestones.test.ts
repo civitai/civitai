@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   runActivityGroup: vi.fn(),
   loadStoredMilestoneGroups: vi.fn(),
   clickhouseQuery: vi.fn(),
+  isCreatorJourneyPublic: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -17,6 +18,11 @@ vi.mock('~/server/services/creator-milestone-stored', async (importOriginal) => 
   loadStoredMilestoneGroups: mocks.loadStoredMilestoneGroups,
 }));
 
+vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FlagService>()),
+  isCreatorJourneyPublic: mocks.isCreatorJourneyPublic,
+}));
+
 vi.mock('~/server/services/creator-milestone-activity.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ActivityService>()),
   runActivityGroup: mocks.runActivityGroup,
@@ -26,6 +32,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ActivityService from '~/server/services/creator-milestone-activity.service';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import type * as FlagService from '~/server/services/creator-journey-flag.service';
 import type * as StoredService from '~/server/services/creator-milestone-stored';
 import { StoredMilestoneSkip } from '~/server/services/creator-milestone-stored';
 import {
@@ -51,6 +58,7 @@ beforeEach(() => {
   mocks.kv.clear();
   mocks.runActivityGroup.mockReset();
   mocks.loadStoredMilestoneGroups.mockReset().mockResolvedValue([]);
+  mocks.isCreatorJourneyPublic.mockReset().mockResolvedValue(false);
   loggingMock.logToAxiom.mockClear();
   dbMock.dbWrite.keyValue.findUnique.mockImplementation(
     async ({ where }: { where: { key: string } }) =>
@@ -120,6 +128,29 @@ describe('grant-creator-milestones', () => {
 
   const run = () =>
     grantCreatorMilestones.run({} as never).result as Promise<Record<string, unknown> | undefined>;
+
+  // runActivityGroup records `gated` on the watermark, and a gated watermark silences untimed groups.
+  const gatedPassed = () =>
+    new Set(
+      mocks.runActivityGroup.mock.calls.map(([, deps]) => (deps as { gated: boolean }).gated)
+    );
+
+  it('runs ungated once the flag is public, so untimed groups can announce again', async () => {
+    mocks.isCreatorJourneyPublic.mockResolvedValue(true);
+    mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
+    await run();
+    expect(gatedPassed()).toEqual(new Set([false]));
+  });
+
+  it.each([
+    ['not public', () => mocks.isCreatorJourneyPublic.mockResolvedValue(false)],
+    ['unreadable', () => mocks.isCreatorJourneyPublic.mockRejectedValue(new Error('flipt down'))],
+  ])('stays gated while the flag is %s', async (_, arrange) => {
+    arrange();
+    mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
+    await run();
+    expect(gatedPassed()).toEqual(new Set([true]));
+  });
 
   it('runs every group even when one fails, then fails the run naming it', async () => {
     const groups = codeGroups();

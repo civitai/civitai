@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_UPSCALER } from '~/shared/constants/basemodel.constants';
 import { defineGraph } from 'form-graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { imagesDef, resourceSchema, resourceInputSchema, type ResourceData } from '../defs';
@@ -110,7 +111,7 @@ const upscaleSelectionSchema = z.discriminatedUnion('type', [
 const UPSCALER = {
   input: resourceInputSchema.optional(),
   output: resourceSchema,
-  default: { id: 164821, model: { type: 'Upscaler' } } as ResourceData,
+  default: { id: DEFAULT_UPSCALER.versionId, model: { type: 'Upscaler' } } as ResourceData,
   meta: (value: ResourceData | undefined) => ({
     options: {
       canGenerate: true,

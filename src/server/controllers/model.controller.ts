@@ -26,6 +26,16 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  countSuggestedResourcesViaKysely,
+  countSuggestedResourcesViaPrisma,
+  readModelPagePostsViaKysely,
+  readModelPagePostsViaPrisma,
+  readOwnerSettingsViaKysely,
+  readOwnerSettingsViaPrisma,
+} from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
@@ -273,22 +283,29 @@ export const getModelHandler = async ({
       })
     );
     const modelVersionIds = filteredVersions.map((version) => version.id);
-    const posts = await dbRead.post.findMany({
-      where: {
-        modelVersionId: { in: modelVersionIds },
-        userId: model.user.id,
-      },
-      select: { id: true, modelVersionId: true },
-      orderBy: { id: 'asc' },
-    });
+    // `kysely-hot-reads-3`, evaluated once for this request: the posts, the suggested-resource count
+    // and the owner's settings below read through Kysely on the replica, as they read `dbRead`.
+    const kyselyRead = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
+      ? (await loadKyselyDb()).kyselyRead
+      : null;
+    const postsInput = { modelVersionIds, userId: model.user.id };
+    // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets
+    // `posts: []` on every version without the read — every reader of the field is owner/mod-only.
+    const skipOwnerPosts =
+      !isOwner && (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_GETBYID_SKIP_OWNER_POSTS));
+    const posts: Awaited<ReturnType<typeof readModelPagePostsViaKysely>> = skipOwnerPosts
+      ? []
+      : kyselyRead
+      ? await readModelPagePostsViaKysely(kyselyRead, postsInput)
+      : await readModelPagePostsViaPrisma(dbRead, postsInput);
     const tagsOnModels = await modelTagCache.fetch(model.id);
 
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
       (settings as LinkedComponentSettings)?.isLinkedComponent === true;
 
-    const suggestedResources = await dbRead.modelAssociations.count({
-      where: { fromModelId: model.id, type: 'Suggested' },
-    });
+    const suggestedResources = kyselyRead
+      ? await countSuggestedResourcesViaKysely(kyselyRead, model.id)
+      : await countSuggestedResourcesViaPrisma(dbRead, model.id);
 
     const modelCategories = await getCategoryTags('model');
 
@@ -389,11 +406,9 @@ export const getModelHandler = async ({
     let ownerSettings: unknown = null;
     let ownerHasMembership = false;
     if (metricPrivacyEnabled && !isOwner) {
-      const owner = await dbRead.user.findUnique({
-        where: { id: model.user.id },
-        select: { settings: true },
-      });
-      ownerSettings = owner?.settings ?? null;
+      ownerSettings = kyselyRead
+        ? await readOwnerSettingsViaKysely(kyselyRead, model.user.id)
+        : await readOwnerSettingsViaPrisma(dbRead, model.user.id);
       // Only resolve CP membership when the owner actually hides something (model meta,
       // any version meta, or a user default). When nothing is hidden, resolveModel/Version
       // return NONE regardless of membership, so the cached membership read (and the
@@ -667,6 +682,7 @@ export const getModelsInfiniteHandler = async ({
       metricPrivacyEnabled,
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
       eventDecorationViewer: ctx.user,
+      coverage: await coverageAudience(ctx.user ?? undefined),
     };
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are

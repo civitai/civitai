@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import RuleReferences from '$lib/components/model-rule-holds/RuleReferences.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { LINK_CLASS, dateTime, shortAge, type Jsonified } from '$lib/format';
   import { heldOutcome, modeLabel } from '$lib/model-rule-holds';
@@ -38,9 +39,14 @@
                   : heldOutcome({ status: entry.status, decision: entry.decision, mode: entry.mode, clearsRules: entry.clearsRules })}
               </MetaChip>
               <MetaChip>{modeLabel(entry.mode)}</MetaChip>
-              <span>
-                {entry.subjects.join(', ') || 'no rule stored'}
-              </span>
+              {#each entry.rules as rule, i (rule.id)}
+                <span class="inline-flex flex-wrap items-center gap-x-1.5">
+                  <span>{rule.subject}{i < entry.rules.length - 1 ? ',' : ''}</span>
+                  <RuleReferences category={rule.category} references={rule.references} />
+                </span>
+              {:else}
+                <span>no rule stored</span>
+              {/each}
             </span>
             <span class="block text-[11px] text-dark-2" title={dateTime(entry.createdAt)}>
               held {shortAge(entry.createdAt)} ago{entry.decidedAt

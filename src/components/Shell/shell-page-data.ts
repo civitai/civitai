@@ -96,6 +96,15 @@ export function shellPageDataPrefetchScript(): string {
   );
 }
 
+// Diagnostics only (`~/utils/faro/loginGate`): this document's page-data answer, once read.
+let pageDataStatus: number | undefined;
+
+/** This document's page-data HTTP status (200 = adopted; 0 = network error; 500 also = an
+ *  unusable body), or `undefined` while unread or on a page that is not a shell. */
+export function shellPageDataStatus(): number | undefined {
+  return pageDataStatus;
+}
+
 /** The in-flight `window.__civShell` request, or a new one if the inline script did not start it. */
 export function adoptShellPageData(): Promise<ShellPageDataResult> {
   const pending = (window.__civShell ??= fetch(
@@ -104,7 +113,10 @@ export function adoptShellPageData(): Promise<ShellPageDataResult> {
   ));
   let result = results.get(pending);
   if (!result) {
-    result = readShellResponse(pending);
+    result = readShellResponse(pending).then((r) => {
+      pageDataStatus = r.ok ? 200 : r.status;
+      return r;
+    });
     results.set(pending, result);
   }
   return result;

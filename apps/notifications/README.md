@@ -25,6 +25,12 @@ One process owns the whole notification write side:
   It also hands the newly delivered recipients to the push dispatcher (`worker/push.ts`) and the
   email dispatcher (`worker/email.ts`, gated on `emailNotificationTypes`; see
   docs/features/notifications.md "Web push" and "Email").
+- **System notices** — `POST /notifications/notices` (+ `/notifications/notices/get`). Sends one
+  `system-message` or `system-announcement` to up to 50,000 users per call, with `{placeholder}` text
+  filled per recipient. Dry run by default; each recipient gets a given `sendId` at most once; every
+  `sendId` keeps an audit row (`NoticeSend`, `NoticeSendCall`: `containers/notification-db/docker-init/02_notice_send.sql`).
+  A dry run already pins the `sendId` to its type, message and url, so fixing a typo needs a new `sendId`.
+  TypeScript callers use `sendSystemNotices()` from `@civitai/notifications`.
 - **Ops routes** — `GET /health` (liveness; touches no dependency, but returns 503 on a worker pod whose
   redis commands have all failed for 60s or whose poll loop has stalled for 10 min), `GET /pool-stats`
   (notif pool snapshots), `GET /metrics` (Prometheus, private-by-XFF).

@@ -16,7 +16,7 @@ import { trpc } from '~/utils/trpc';
  *
  * Clicking it calls `appListings.startFork` (which re-checks EVERY gate below on the server, plus
  * the rate limit and the parent's approved commit) and then opens App Assistant on the new fork
- * (`/apps/assistant?fork=<slug>`), where the page creates the user's copy and offers to set it up.
+ * (`/apps/build?fork=<slug>`), where the page creates the user's copy and offers to set it up.
  *
  * 🔴 THE GATES HERE DECIDE AN AFFORDANCE, NEVER AN ENTITLEMENT. They exist so the button is not
  * offered to a viewer the server would refuse; each one only ever HIDES.
@@ -68,7 +68,7 @@ export const FORK_HOST_SURFACES: Record<BlockHostSurface, boolean> = {
 
 /** The App Assistant URL for a fork. */
 export function forkAssistantHref(forkSlug: string): string {
-  return `/apps/assistant?${FORK_QUERY_PARAM}=${encodeURIComponent(forkSlug)}`;
+  return `/apps/build?${FORK_QUERY_PARAM}=${encodeURIComponent(forkSlug)}`;
 }
 
 /** Start a fork of a listing and open App Assistant on it. */

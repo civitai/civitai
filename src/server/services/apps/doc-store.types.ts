@@ -152,7 +152,10 @@ export type DocStoreErrorCode =
   | 'moderation_unavailable'
   /** The viewer's consent state could not be read; retryable (raised by the route layer). */
   | 'consent_unavailable'
-  /** A dependency of the token check could not be read; retryable (raised by the route layer). */
+  /**
+   * Retryable: a dependency of the token check could not be read (raised by the route layer), or
+   * the store's database could not be reached or dropped the connection (raised by the store).
+   */
   | 'service_unavailable';
 
 export type QuotaCeiling = 'app' | 'viewer' | 'author';

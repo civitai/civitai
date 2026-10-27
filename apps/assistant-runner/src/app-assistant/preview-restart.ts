@@ -7,7 +7,7 @@ import {
   type SandboxClient,
 } from '@civitai/app-assistant';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { DevServerNotRunningError, DevServerStartError, RunnerPreview } from './preview';

@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { CacheTTL } from '~/server/common/constants';
 import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -484,6 +485,7 @@ export const getHomeBlockData = async ({
   user,
   input,
   homeBlock,
+  coverage,
 }: {
   homeBlock: {
     id: number;
@@ -512,6 +514,8 @@ export const getHomeBlockData = async ({
   // poisoning a shared cache entry and leaking one user's view to everyone else. If a
   // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
+  /** See `getModelsRaw`; the same never-from-the-shared-entry rule as `user`. */
+  coverage?: CoverageAudience;
 }): Promise<HomeBlockWithData | null> => {
   const metadata = await resolveHomeBlockMetadata(homeBlock);
 
@@ -645,6 +649,7 @@ export const getHomeBlockData = async ({
           baseModels,
         },
         user,
+        coverage,
         domain: input.domain,
         ...slimModelImages,
       });
@@ -759,6 +764,7 @@ export const getHomeBlockData = async ({
           ? (
               await getModelsWithImagesAndModelVersions({
                 user,
+                coverage,
                 input: {
                   ids: featured.map((f) => f.modelId),
                   limit: featured.length,

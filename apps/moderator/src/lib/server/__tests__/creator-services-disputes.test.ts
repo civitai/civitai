@@ -182,7 +182,7 @@ describe('listDealFiles', () => {
   });
 
   it('makes no call for an empty page', async () => {
-    expect(await listDealFiles([])).toEqual({ ok: true, files: [] });
+    expect(await listDealFiles([])).toEqual({ ok: true, files: [], accessRecordedSince: null });
     expect(calls).toHaveLength(0);
   });
 });

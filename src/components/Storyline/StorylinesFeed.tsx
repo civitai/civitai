@@ -1,5 +1,15 @@
-import { Alert, Button, Center, Group, Loader, Skeleton, Text } from '@mantine/core';
-import { IconBook2, IconUsers } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Skeleton,
+  Text,
+} from '@mantine/core';
+import { IconBook2, IconSettings, IconUsers } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -7,6 +17,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
+import { openStorylineFirstChapterModal } from '~/components/Storyline/openStorylineFirstChapterModal';
 import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
@@ -149,15 +161,33 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
           <Text size="sm" c="dimmed">
             No chapter 1 yet
           </Text>
-          <Button
-            component={Link}
-            href={storylineWriteChapterUrl(storyline.id)}
-            color="violet"
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              component={Link}
+              href={storylineWriteChapterUrl(storyline.id)}
+              color="violet"
+              size="xs"
+              className="flex-1"
+            >
+              Write chapter 1
+            </Button>
+            <ActionIcon
+              variant="default"
+              size={30}
+              aria-label="Manage"
+              onClick={() => openStorylineManageModal({ storylineId: storyline.id })}
+            >
+              <IconSettings size={16} />
+            </ActionIcon>
+          </Group>
+          <Anchor
+            component="button"
+            type="button"
             size="xs"
-            fullWidth
+            onClick={() => openStorylineFirstChapterModal({ storylineId: storyline.id })}
           >
-            Write chapter 1
-          </Button>
+            Use a post you&apos;ve published
+          </Anchor>
         </div>
       </div>
     );

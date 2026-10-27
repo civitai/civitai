@@ -47,6 +47,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   deleteObject,
@@ -644,7 +645,7 @@ type AutoLabelStepMetadata = {
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
 // canonical helper makes the same call for App Blocks manifests, so the two now agree.
-function assertSafeMediaUrls(urls: string[]) {
+export function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
     try {
@@ -664,6 +665,29 @@ function assertSafeMediaUrls(urls: string[]) {
     if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
+  }
+}
+
+// For submits on the system orchestrator token: only media on Civitai's orchestrator, where uploads
+// land. The raw string is forwarded, so it must already be canonical (which also refuses the
+// backslash and control bytes WHATWG rewrites); the host judged here is then the host any parser
+// sees. `@` is refused anywhere: a parser splitting the authority on the last `@` would read the
+// host from the query. Both host comparisons include the port.
+export function assertCivitaiMediaUrls(urls: string[]) {
+  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  for (const raw of urls) {
+    const parsed = URL.canParse(raw) ? new URL(raw) : null;
+    const ok =
+      parsed &&
+      parsed.href === raw &&
+      !parsed.hash &&
+      !raw.includes('@') &&
+      (isTrustedOrchestratorUrl(raw) ||
+        (parsed.protocol === 'https:' && parsed.host === publicHost));
+    if (!ok)
+      throw throwBadRequestError(
+        'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
+      );
   }
 }
 

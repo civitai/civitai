@@ -3,6 +3,7 @@ import type { Cookies } from '@sveltejs/kit';
 import {
   isSecureCookie,
   maybeCreateSessionSigner,
+  SESSION_COOKIE_BASE,
   sessionCookieName,
   SPOKE_AUTHORIZE_PATH,
   type SessionSigner,
@@ -10,7 +11,7 @@ import {
 } from '@civitai/auth';
 import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount } from './device';
-import { cookieDomain } from './cookie';
+import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
@@ -237,4 +238,5 @@ export function clearSession(cookies: Cookies): void {
   // would shadow the cleared domain cookie and keep the session alive after logout.
   cookies.delete(SESSION_COOKIE, { path: '/', secure, domain });
   if (domain) cookies.delete(SESSION_COOKIE, { path: '/', secure });
+  clearOtherCookieNames(cookies, SESSION_COOKIE_BASE, SESSION_COOKIE);
 }

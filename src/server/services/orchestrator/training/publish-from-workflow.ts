@@ -425,7 +425,8 @@ export async function createDraftModelFromWorkflow({
     trainingDetails,
   });
 
-  // Not a dataset (the studio uploads blobs, never a zip): this row only carries the run's results
+  // A placeholder until the archive-studio-training-datasets job replaces its url and size with the
+  // run's dataset zip (the studio uploads blobs, never a zip). Meanwhile it carries the run's results
   // for the epoch picker and training readers. Private keeps it off the public files list. The url is
   // the run's own epoch, chosen here, so the client url bound (assertClientFileUrlAllowed) does not apply.
   const placeholder = await createFile({

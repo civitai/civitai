@@ -1,6 +1,19 @@
-import { createSpokeGuard } from '@civitai/auth';
+import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import { logToAxiom, safeError } from './axiom';
+import { getSysRedis } from './redis';
 
-// No redis client here, so token revocation is NOT checked — a signature-only gate. OK because the token is
-// short-lived relative to ban-response needs, and mutations still re-check server-side. For real-time
-// revocation, give this app a @civitai/redis client and pass `isRevoked`.
-export const guard = createSpokeGuard({ require: (user) => user.isModerator === true });
+// Same event shape as the main app's logSysRedisFailOpen, so its sysredis-fail-open alerts also see this app.
+export const isRevoked = createRevocationCheck({
+  redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+  onError: (err) => {
+    logToAxiom({
+      ...safeError(err),
+      name: 'sysredis-fail-open',
+      type: 'warning',
+      subtype: 'read-degraded',
+      fn: 'spoke isRevoked',
+    }).catch(() => undefined);
+  },
+});
+
+export const guard = createSpokeGuard({ require: (user) => user.isModerator === true, isRevoked });

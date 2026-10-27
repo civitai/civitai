@@ -36,6 +36,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AppListingAuthoringContext } from '~/server/services/blocks/app-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -234,7 +235,7 @@ export default function AppListingEditPage() {
             component="button"
             type="button"
             size="sm"
-            onClick={() => goBackOrFallback(router, '/apps/build')}
+            onClick={() => goBackOrFallback(router, MY_APPS_HREF)}
             data-testid="apps-edit-back"
           >
             <Group gap={4}>

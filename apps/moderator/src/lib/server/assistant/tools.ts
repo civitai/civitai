@@ -7,7 +7,7 @@ import { getDossier } from '../dossier.service';
 import {
   DEFAULT_REACTION_DAYS,
   MAX_REACTION_DAYS,
-  getAccountsOnAddress,
+  getAccountsOnAddresses,
   getLinkedAccounts,
   getReactionBreadth,
   getSetLinks,
@@ -76,6 +76,8 @@ type Tool<S extends z.ZodType> = {
   /** Any one of these pages opens the data. `null`: every assistant user. */
   requires: string[] | null;
   run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolResult>;
+  timeoutMs?: number;
+  onTimeout?: (args: z.output<S>) => Record<string, unknown>;
 };
 
 const tool = <S extends z.ZodType>(t: Tool<S>) => t;
@@ -120,6 +122,13 @@ const ACCOUNT_FIELDS = [
   'email',
   'normalizedEmail',
 ] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
+
+/** Addresses per accounts_on_address call: the most measured on prod (25 took 13.8 s on 2026-10-26,
+ *  flat from 1 address up), within half of `ACCOUNTS_ON_ADDRESS_TIMEOUT_MS`. Past 50, raise
+ *  `groupUniqArray(50)` in ip-links.service.ts too, or an account's address list is cut short. */
+const MAX_BATCH_ADDRESSES = 25;
+/** Each call scans the reaction and login tables by address: 10-45 s on prod, so the default is short. */
+const ACCOUNTS_ON_ADDRESS_TIMEOUT_MS = 90_000;
 
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
@@ -442,20 +451,42 @@ export const TOOLS = [
   tool({
     name: 'accounts_on_address',
     description:
-      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact. ' +
+      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Page with offset; totals are exact. ` +
       EMAILS_NOTE,
     input: z.object({
-      address: z.string().min(3).max(60),
+      address: z.string().min(3).max(60).optional(),
+      addresses: z.array(z.string().min(3).max(60)).min(1).max(MAX_BATCH_ADDRESSES).optional(),
       days: reactionDays,
       offset: z.number().int().min(0).max(10_000).default(0),
       limit: z.number().int().min(1).max(MAX_ACCOUNTS).default(100),
     }),
     requires: [LOOKUP],
-    run: async ({ address, days, offset, limit }, ctx) => {
-      const linked = await getAccountsOnAddress(address, { days, offset, limit });
+    timeoutMs: ACCOUNTS_ON_ADDRESS_TIMEOUT_MS,
+    onTimeout: ({ address, addresses }) => ({
+      notChecked: [...(addresses ?? []), ...(address ? [address] : [])],
+      note: 'None of these addresses were checked: the lookup ran out of time. Say so in your answer, naming them, and offer to try again later.',
+    }),
+    run: async ({ address, addresses, days, offset, limit }, ctx) => {
+      const asked = [...(addresses ?? []), ...(address ? [address] : [])];
+      const refuse = (error: string) => ({
+        data: { error },
+        rows: 0,
+        truncated: false,
+        sources: [],
+      });
+      if (!asked.length) return refuse('Give an address, or a list as addresses.');
+      if (asked.length > MAX_BATCH_ADDRESSES)
+        return refuse(`At most ${MAX_BATCH_ADDRESSES} addresses in one call.`);
+      const { linked, invalid } = await getAccountsOnAddresses(asked, { days, offset, limit });
       if (!linked)
-        return { data: { error: 'Not an IP address.' }, rows: 0, truncated: false, sources: [] };
-      return linkedOut(linked, ctx, null);
+        return refuse(
+          asked.length === 1 ? 'Not an IP address.' : 'None of these is an IP address.'
+        );
+      const out = await linkedOut(linked, ctx, null);
+      // Named back, so a skipped entry is never read as an address with no accounts on it.
+      return invalid.length
+        ? { ...out, data: { ...(out.data as object), notAddresses: invalid } }
+        : out;
     },
   }),
 

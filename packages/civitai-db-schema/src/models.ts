@@ -585,6 +585,8 @@ export interface User {
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
   feedbackOwnerStatus?: Feedback[];
+  appAccessRequests?: AppAccessRequest[];
+  appAccessReviewed?: AppAccessRequest[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1357,6 +1359,7 @@ export interface ModActivity {
   entityType: string | null;
   entityId: number | null;
   createdAt: Date;
+  host: string | null;
 }
 
 export interface Report {
@@ -2134,6 +2137,18 @@ export interface Feedback {
   hiddenFromOwnerAt: Date | null;
 }
 
+export interface AppAccessRequest {
+  id: number;
+  userId: number;
+  user?: User;
+  whatToBuild: string;
+  status: string;
+  createdAt: Date;
+  reviewedAt: Date | null;
+  reviewedById: number | null;
+  reviewedBy?: User | null;
+}
+
 export interface ApiKey {
   id: number;
   key: string;
@@ -2164,6 +2179,8 @@ export interface OauthClient {
   allowedScopes: number;
   isConfidential: boolean;
   accessMode: string;
+  skipConsent: boolean;
+  tokenRateLimit: number | null;
   userId: number;
   user?: User;
   isVerified: boolean;
@@ -2414,6 +2431,30 @@ export interface AppListing {
   subListings?: AppSubListing[];
   subListingParent?: AppSubListingParent | null;
   feedback?: Feedback[];
+}
+
+export interface AppPostIntent {
+  listingId: string;
+  host: string;
+  pathPrefix: string;
+  enabled: boolean;
+  reviewedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PostIntentManifest {
+  id: number;
+  manifestUrl: string;
+  appId: string;
+  listingId: string;
+  userId: number;
+  manifest: JsonValue;
+  staged: JsonValue;
+  claimExpiresAt: Date;
+  postId: number | null;
+  postedAt: Date | null;
+  createdAt: Date;
 }
 
 export interface AppListingScreenshot {
@@ -4137,6 +4178,9 @@ export interface EvidenceHoldImage {
   userId: number;
   postId: number | null;
   keptAt: Date;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 }
 
 export interface EvidenceHoldPost {
@@ -6727,6 +6771,24 @@ export interface ServiceDeal {
   events?: ServiceDealEvent[];
   files?: ServiceDealFile[];
   transactions?: ServiceDealTransaction[];
+  disputeReviews?: ServiceDisputeReview[];
+}
+
+export interface ServiceDisputeReview {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  evidence: JsonValue;
+  agentVersion: string;
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
+  createdAt: Date;
 }
 
 export interface ServiceDealEvent {

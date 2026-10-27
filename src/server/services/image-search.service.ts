@@ -7,6 +7,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
+import { isMeiliOff } from '~/server/services/feed-primary.service';
 import {
   getAllImages,
   getImagesFromFeedSearch,
@@ -194,7 +195,12 @@ export async function runImageSearch(
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
 
-  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, !!feedService);
+  // Under FEED_SERVICE_MEILI_OFF every caller takes the feed service, opted in or not.
+  const meiliOff =
+    !useLegacyMethod &&
+    (await isMeiliOff({ currentUserId: user?.id, isModerator: user?.isModerator }));
+  const viaFeedService = !!feedService || meiliOff;
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, viaFeedService);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -288,10 +294,11 @@ export async function runImageSearch(
   // pages don't write the per-image caches; first pages, which pollers repeat, still do.
   const cacheWriteBack = parseFeedCursor(cursor) === undefined;
   const fromFeedService =
-    feedService && !useLegacyMethod
+    viaFeedService && !useLegacyMethod
       ? await getImagesFromFeedServiceForRest(
           { ...searchQuery, headers: { src: '/api/v1/images' } },
-          { ...dbQuery, cacheWriteBack }
+          { ...dbQuery, cacheWriteBack },
+          { meiliOff }
         )
       : undefined;
   const { items, nextCursor } = useLegacyMethod

@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { denied } from '$lib/server/access';
+import { canViewTrainingData, denied } from '$lib/server/access';
 import {
   BATCH_MAX,
   MODEL_RULE_HOLD_DECISIONS,
@@ -45,7 +45,7 @@ const NO_FACTS: HoldModelFacts = {
   tagCount: 0,
 };
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { limit, page, status, mode, sort, rule, q, owner } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
   const filters: ModelRuleHoldFilters = { status, mode, sort, rule: rule ?? null };
@@ -94,6 +94,7 @@ export const load: PageServerLoad = async ({ url }) => {
     rules,
     items,
     hasMore: queue.hasMore,
+    canViewTrainingData: canViewTrainingData(locals.user),
     fullBleed: true,
     headerInline: true,
   };

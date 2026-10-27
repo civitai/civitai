@@ -81,7 +81,7 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
-const SETTLE_FALLBACK_MS = 800;
+export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
   images,
@@ -107,10 +107,6 @@ export function ImageDetailCarousel({
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   const emblaRef = useRef<EmblaCarouselType | null>(null);
-  const handleSetEmbla = (api: EmblaCarouselType) => {
-    emblaRef.current = api;
-    setEmbla(api);
-  };
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
   // it back in as `startIndex` would reInit the engine on every navigation,
@@ -147,12 +143,28 @@ export function ImageDetailCarousel({
     if (!syncingRef.current) navigate?.(slideIndex);
   };
 
-  useEffect(() => {
-    if (!embla || embla.selectedScrollSnap() === index) return;
+  const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    embla.scrollTo(index);
+    // A slide added in the same commit as the index that names it is not embla's yet, and its
+    // own reinit would announce the old slide and write it back through `navigate`.
+    if (index >= api.slideNodes().length && index < images.length)
+      api.reInit({ startIndex: index });
+    else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
-  }, [embla, index]);
+  };
+
+  // The provider announces embla's start slide right after handing it over, so an index that moved
+  // after mount (a cached branch) has to be followed first, or that announcement writes the old one back.
+  const handleSetEmbla = (api: EmblaCarouselType) => {
+    emblaRef.current = api;
+    followIndex(api);
+    setEmbla(api);
+  };
+
+  useEffect(() => {
+    if (embla) followIndex(embla);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- not on every render
+  }, [embla, index, images.length]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is

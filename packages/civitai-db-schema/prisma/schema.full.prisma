@@ -473,6 +473,8 @@ model User {
   feedback             Feedback[]
   feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
   feedbackOwnerStatus  Feedback[]                 @relation("FeedbackOwnerStatusBy")
+  appAccessRequests    AppAccessRequest[]         @relation("AppAccessRequestUser")
+  appAccessReviewed    AppAccessRequest[]         @relation("AppAccessRequestReviewedBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -1667,6 +1669,7 @@ model ModActivity {
   entityType String?
   entityId   Int?
   createdAt  DateTime @default(now())
+  host       String?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
@@ -2819,6 +2822,26 @@ model Feedback {
   @@index([appListingId, createdAt(sort: Desc)], map: "Feedback_appListingId_createdAt_idx")
 }
 
+/// A request to build apps on Civitai, sent from the `/apps/build` pitch and reviewed by a moderator.
+/// An `approved` row is the grant: the auth hub projects it onto the session as `appBuilderApproved`,
+/// which Flipt's `app-builder-approved` segment matches. Declining an approved row revokes it.
+model AppAccessRequest {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  user         User      @relation("AppAccessRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  whatToBuild  String
+  /// pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
+  /// per user: the migration's PARTIAL unique index, which Prisma cannot express.
+  status       String    @default("pending")
+  createdAt    DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedById Int?
+  reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+}
+
 enum ApiKeyType {
   System
   User
@@ -2863,6 +2886,12 @@ model OauthClient {
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
   accessMode     String         @default("open")
+  /// Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+  /// /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+  skipConsent    Boolean        @default(false)
+  /// Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+  /// is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+  tokenRateLimit Int?
   userId         Int
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   isVerified     Boolean        @default(false)
@@ -3565,6 +3594,39 @@ model AppListing {
   // idempotent-reuse handling in beginListingRevision.
   @@index([revisionOfId], map: "app_listings_revision_of_id_key")
   @@map("app_listings")
+}
+
+/// Post intent app mode: the host and path prefix a reviewer approved for an app's share manifests.
+model AppPostIntent {
+  listingId    String   @id @map("listing_id")
+  host         String
+  pathPrefix   String   @map("path_prefix")
+  enabled      Boolean  @default(true)
+  reviewedById Int?     @map("reviewed_by_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([host, pathPrefix], map: "app_post_intents_host_path_prefix_key")
+  @@map("app_post_intents")
+}
+
+/// One row per app manifest URL opened on /intent/post. A posted row is kept so the URL cannot post twice.
+model PostIntentManifest {
+  id             Int       @id @default(autoincrement())
+  manifestUrl    String    @unique @map("manifest_url")
+  appId          String    @map("app_id")
+  listingId      String    @map("listing_id")
+  userId         Int       @map("user_id")
+  manifest       Json
+  staged         Json      @default("[]")
+  claimExpiresAt DateTime  @map("claim_expires_at") @db.Timestamptz(6)
+  postId         Int?      @map("post_id")
+  postedAt       DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([claimExpiresAt], map: "post_intent_manifests_claim_expires_at_idx")
+  @@index([userId], map: "post_intent_manifests_user_id_idx")
+  @@map("post_intent_manifests")
 }
 
 /// Ordered + captioned screenshot rows for a listing (NOT a Json blob) so the
@@ -6730,12 +6792,16 @@ model EvidenceHold {
 }
 
 /// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. Purged once no hold covers the owner.
+/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
+/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
 model EvidenceHoldImage {
-  imageId Int      @id
-  userId  Int
-  postId  Int?
-  keptAt  DateTime @default(now())
+  imageId         Int      @id
+  userId          Int
+  postId          Int?
+  keptAt          DateTime @default(now())
+  priorIngestion  String?
+  priorBlockedFor String?
+  priorNsfwLevel  Int?
 }
 
 /// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
@@ -10644,6 +10710,7 @@ model ServiceDeal {
   events                    ServiceDealEvent[]
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
+  disputeReviews            ServiceDisputeReview[]
 
   /// Target of the receipt's composite FK that pins each leg to the deal's Buzz type.
   @@unique([id, buzzType])
@@ -10658,6 +10725,30 @@ model ServiceDeal {
   @@index([status, dueAt])
   @@index([status, releaseAt])
   @@index([status, closedAt])
+}
+
+/// One review of a Disputed deal by the dispute agent. `proposal` null means it escalated to a human.
+/// The human* columns are filled on the latest row when a moderator resolves the deal.
+model ServiceDisputeReview {
+  id           Int                       @id @default(autoincrement())
+  dealId       Int
+  deal         ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  /// Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
+  class        String
+  proposal     ServiceDisputeResolution?
+  confidence   Float?
+  rationale    String
+  /// The evidence bundle the review read, as submitted.
+  evidence     Json
+  agentVersion String
+  /// Allowed values: DISPUTE_REVIEW_MODES in the same file.
+  mode         String
+  humanRuling  ServiceDisputeResolution?
+  humanId      Int?
+  agreed       Boolean?
+  createdAt    DateTime                  @default(now())
+
+  @@index([dealId])
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.

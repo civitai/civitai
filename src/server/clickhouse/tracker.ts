@@ -249,6 +249,9 @@ export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
 export type BountyBenefactorActivity = 'Create';
 
 export type FileActivity = 'Download';
+export type ServiceDealAccessRole = 'Buyer' | 'Seller' | 'Moderator';
+/** `ModeratorFetch` is the moderator dispute tool: it never counts as a party's `Download`. */
+export type ServiceDealAccessKind = 'Download' | 'ModeratorFetch';
 export type ModelFileActivity = 'Create' | 'Delete' | 'Update';
 
 export const ActionType = [
@@ -995,6 +998,25 @@ export class Tracker {
 
   public file(values: { type: FileActivity; entityType: string; entityId: number }) {
     return this.track('files', values);
+  }
+
+  // `userId` is the caller's: a moderator-app request carries no site session to stamp it from.
+  // `time` is stamped here: a row buffered in the tracker must not land after the dispute it predates.
+  public serviceDealFileAccess(
+    values: {
+      dealId: number;
+      fileId: number;
+      userId: number;
+      role: ServiceDealAccessRole;
+      kind: ServiceDealAccessKind;
+    },
+    options?: TrackDelivery
+  ) {
+    return this.track(
+      'serviceDealFileAccess',
+      { ...values, time: new Date() },
+      { skipActorMeta: true, ...options }
+    );
   }
 
   public search(values: { query: string; index: string; filters?: any }) {
