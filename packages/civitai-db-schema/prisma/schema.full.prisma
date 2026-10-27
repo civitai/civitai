@@ -3568,6 +3568,39 @@ model AppListing {
   @@map("app_listings")
 }
 
+/// Post intent app mode: the host and path prefix a reviewer approved for an app's share manifests.
+model AppPostIntent {
+  listingId    String   @id @map("listing_id")
+  host         String
+  pathPrefix   String   @map("path_prefix")
+  enabled      Boolean  @default(true)
+  reviewedById Int?     @map("reviewed_by_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([host, pathPrefix], map: "app_post_intents_host_path_prefix_key")
+  @@map("app_post_intents")
+}
+
+/// One row per app manifest URL opened on /intent/post. A posted row is kept so the URL cannot post twice.
+model PostIntentManifest {
+  id             Int       @id @default(autoincrement())
+  manifestUrl    String    @unique @map("manifest_url")
+  appId          String    @map("app_id")
+  listingId      String    @map("listing_id")
+  userId         Int       @map("user_id")
+  manifest       Json
+  staged         Json      @default("[]")
+  claimExpiresAt DateTime  @map("claim_expires_at") @db.Timestamptz(6)
+  postId         Int?      @map("post_id")
+  postedAt       DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([claimExpiresAt], map: "post_intent_manifests_claim_expires_at_idx")
+  @@index([userId], map: "post_intent_manifests_user_id_idx")
+  @@map("post_intent_manifests")
+}
+
 /// Ordered + captioned screenshot rows for a listing (NOT a Json blob) so the
 /// creator can reorder/caption for both kinds. Table CREATED in P0; POPULATED
 /// in P1 (the asset pipeline). imageId is NULLABLE in P0.

@@ -66,6 +66,7 @@ export const appRouter = router({
   storyline: lazy(() => import('./storyline.router').then((m) => m.storylineRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
+  postIntent: lazy(() => import('./post-intent.router').then((m) => m.postIntentRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),

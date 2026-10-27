@@ -23,6 +23,7 @@ import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { postIntentClaimSweep } from '~/server/jobs/post-intent-claim-sweep';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
@@ -183,6 +184,7 @@ export const jobs: Job[] = [
   removeOldDrafts,
   resetToDraftWithoutRequirements,
   applyContestTags,
+  postIntentClaimSweep,
   ...applyDiscordRoles,
   userDeletedCleanup,
   removeDeletedUserImages,
