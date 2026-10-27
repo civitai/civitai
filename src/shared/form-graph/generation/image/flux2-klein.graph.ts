@@ -69,7 +69,9 @@ const modes = branch('flux2KleinMode', (ext: FamilyExt) => ecosystemToMode[ext.e
 });
 
 export const flux2Klein = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('images', img2imgImages({ max: 7 }))
+  .field('images', (bag) =>
+    img2imgImages({ max: bag._ext.ecosystem === 'Flux2Klein_9B' ? 4 : 7 })(bag)
+  )
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
