@@ -8,6 +8,7 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import type { JobContext } from '~/server/jobs/job';
 import { getJobDate } from '~/server/jobs/job';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
@@ -129,7 +130,7 @@ export function createMetricProcessor({
         jobContext,
       };
       if ('refresh' in rank) await rank.refresh(ctx);
-      else await recreateRankTable(rank.table, rank.primaryKey, rank.indexes);
+      else await syncRankTable(rank.table, rank.primaryKey);
 
       await setLastUpdate();
     },
@@ -142,41 +143,58 @@ export function createMetricProcessor({
   };
 }
 
-async function recreateRankTable(rankTable: string, primaryKey: string, indexes: string[] = []) {
-  await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}_New";`);
-  await dbWrite.$executeRawUnsafe(
-    `CREATE TABLE "${rankTable}_New" AS
-    SELECT *
-    FROM "${rankTable}_Live";`
-  );
-  await dbWrite.$executeRawUnsafe(
-    `ALTER TABLE "${rankTable}_New"
-      ADD CONSTRAINT "pk_${rankTable}_New" PRIMARY KEY ("${primaryKey}")`
-  );
-  await dbWrite.$executeRawUnsafe(
-    `CREATE INDEX "${rankTable}_New_idx" ON "${rankTable}_New" ("${primaryKey}")`
-  );
-  for (const index of indexes) {
-    await dbWrite.$executeRawUnsafe(
-      `CREATE INDEX "${rankTable}_New_${index}_idx" ON "${rankTable}_New" ("${index}")`
-    );
-  }
+const RANK_SYNC_TIMEOUT = 5 * 60 * 1000;
 
-  await dbWrite.$transaction([
-    dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}";`),
-    dbWrite.$executeRawUnsafe(`ALTER TABLE "${rankTable}_New"
-      RENAME TO "${rankTable}";`),
-    dbWrite.$executeRawUnsafe(
-      `ALTER TABLE "${rankTable}"
-        RENAME CONSTRAINT "pk_${rankTable}_New" TO "pk_${rankTable}";`
-    ),
-    dbWrite.$executeRawUnsafe(`ALTER INDEX "${rankTable}_New_idx" RENAME TO "${rankTable}_idx";`),
-    ...indexes.map((index) =>
-      dbWrite.$executeRawUnsafe(
-        `ALTER INDEX "${rankTable}_New_${index}_idx" RENAME TO "${rankTable}_${index}_idx";`
-      )
-    ),
-  ]);
+// Syncs the rank table from its `_Live` view in place, in one transaction. Dropping and
+// recreating it made a new table owned by whichever role ran the job, which lost every grant
+// on it. Only ROW EXCLUSIVE is taken, so readers keep the old rows until commit.
+async function syncRankTable(rankTable: string, primaryKey: string) {
+  const stage = `${rankTable}_Stage`;
+  const pk = `"${primaryKey}"`;
+  try {
+    await dbWrite.$transaction(
+      async (tx) => {
+        // The table's columns, not the view's: a column the view adds is ignored.
+        const columns = (
+          await tx.$queryRawUnsafe<{ name: string }[]>(
+            `SELECT attname AS name FROM pg_attribute
+            WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped
+            ORDER BY attnum`,
+            `"${rankTable}"`
+          )
+        ).map((c) => `"${c.name}"`);
+        const cols = columns.join(', ');
+        const values = columns.filter((c) => c !== pk);
+
+        await tx.$executeRawUnsafe(
+          `CREATE TEMP TABLE "${stage}" ON COMMIT DROP AS SELECT ${cols} FROM "${rankTable}_Live"`
+        );
+        await tx.$executeRawUnsafe(`ALTER TABLE "${stage}" ADD PRIMARY KEY (${pk})`);
+        await tx.$executeRawUnsafe(`ANALYZE "${stage}"`);
+        await tx.$executeRawUnsafe(
+          `DELETE FROM "${rankTable}" r
+          WHERE NOT EXISTS (SELECT 1 FROM "${stage}" s WHERE s.${pk} = r.${pk})`
+        );
+        // Rows whose ranks did not move are left alone, so each run churns only what changed.
+        await tx.$executeRawUnsafe(
+          `INSERT INTO "${rankTable}" (${cols})
+          SELECT ${cols} FROM "${stage}"
+          ON CONFLICT (${pk}) DO UPDATE SET ${values.map((c) => `${c} = EXCLUDED.${c}`).join(', ')}
+          WHERE (${values.map((c) => `"${rankTable}".${c}`).join(', ')})
+            IS DISTINCT FROM (${values.map((c) => `EXCLUDED.${c}`).join(', ')})`
+        );
+      },
+      { timeout: RANK_SYNC_TIMEOUT }
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'metric-rank-sync-failed',
+      message: `Rank table ${rankTable} failed to sync; it keeps its previous rows`,
+      details: { table: rankTable, error: (error as Error)?.message },
+    }).catch();
+    throw error;
+  }
 }
 
 export type RankProcessorRunContext = {
@@ -202,7 +220,6 @@ type MetricRankOptions =
   | {
       table: string;
       primaryKey: string;
-      indexes?: string[];
       refreshInterval?: number;
     }
   | {
