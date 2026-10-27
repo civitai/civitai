@@ -11,7 +11,7 @@ import { cycleContaining, importGraph } from './import-graph.harness';
  * Only imports that load with the module count: a call-site `await import()` is how a cycle edge
  * is cut without moving code.
  */
-const MAX_CYCLE = 28;
+const MAX_CYCLE = 27;
 
 const IMAGE_SERVICE = 'src/server/services/image.service.ts';
 const graph = importGraph([IMAGE_SERVICE], { followDynamic: false });

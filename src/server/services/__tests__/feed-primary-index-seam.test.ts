@@ -39,18 +39,12 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-const primaryOn = vi.fn(() => false);
-const hubsOn = vi.fn(() => false);
 const newCreatorIds = vi.fn((): number[] => []);
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    getFliptBoolean: vi.fn(async (flag: string) => {
-      if (flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY) return primaryOn();
-      if (flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS) return hubsOn();
-      return false;
-    }),
+    getFliptBoolean: vi.fn(async () => false),
   };
 });
 const resolveHubSources = vi.fn();
@@ -88,36 +82,20 @@ const request = () =>
     user: { id: 42, isModerator: false },
   } as unknown as Parameters<typeof getAllImagesIndex>[0]);
 
-describe('getAllImagesIndex with feed-service-primary', () => {
+describe('getAllImagesIndex on the feed service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('does not ask the feed when the flag is off', async () => {
-    primaryOn.mockReturnValue(false);
-    await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).not.toHaveBeenCalled();
-  });
-
-  it('asks the feed once and falls through to the search path when hydration yields nothing', async () => {
-    primaryOn.mockReturnValue(true);
-    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
-    const r = await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.source).not.toBe('feed');
-    expect(r.nextCursor).toBeUndefined();
-  });
-
-  it('asks the feed once and falls through when the feed itself fails', async () => {
-    primaryOn.mockReturnValue(true);
+  it('answers a feed timeout with a retryable SERVICE_UNAVAILABLE', async () => {
     fetchFeedPrimary.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
-    const r = await getAllImagesIndex(request());
+    await expect(getAllImagesIndex(request())).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.items).toEqual([]);
   });
 
   it('scopes the feed to the creator a profile page names by username', async () => {
-    primaryOn.mockReturnValue(true);
     dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({
@@ -133,7 +111,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a page past the offset cap instead of answering it from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     await expect(
       getAllImagesIndex({ ...request(), sort: 'Newest', cursor: '30000|1788000000000' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -141,7 +118,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('hides challenge entries in the feed by excluding the challenge tag', async () => {
-    primaryOn.mockReturnValue(true);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), hideChallenges: true });
     const query = new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
@@ -149,7 +125,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a cursor it cannot read instead of restarting the page from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     for (const cursor of ['feed', -1]) {
       await expect(getAllImagesIndex({ ...request(), cursor })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
@@ -159,7 +134,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('scopes the feed to the new-creator board', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), newCreators: true });
@@ -172,7 +146,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   // The home block's follower cap rides on the input. If a route drops it, that route serves the
   // uncapped board and the 1k+ creators come back to the homepage shelf.
   it('resolves the follower-capped board when the caller asks for one', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), newCreators: true, newCreatorsMaxFollowers: 500 });
@@ -183,7 +156,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('serves an unpopulated new-creator board as an empty feed', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([]);
     const r = await getAllImagesIndex({ ...request(), newCreators: true });
     expect(r).toMatchObject({ items: [], source: 'feed' });
@@ -195,8 +167,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     const sentQuery = () => new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
 
     beforeEach(() => {
-      primaryOn.mockReturnValue(true);
-      hubsOn.mockReturnValue(true);
       fetchFeedPrimary.mockResolvedValue({
         status: 200,
         ms: 3,
@@ -204,14 +174,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
         nextCursor: undefined,
         route: 'union-walk',
       });
-    });
-
-    it('leaves a hub on the search index until hubs are switched over', async () => {
-      hubsOn.mockReturnValue(false);
-      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7] }));
-      const r = await getAllImagesIndex(hub());
-      expect(fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(r.source).not.toBe('feed');
     });
 
     it('asks the feed for the hub as resolved for this viewer', async () => {
