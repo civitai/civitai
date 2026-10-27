@@ -150,9 +150,10 @@ export function ImageDetailCarousel({
   useEffect(() => {
     if (!embla) return;
     syncingRef.current = true;
-    // Slides added in the same commit as the index that names one are not embla's yet, and its
+    // A slide added in the same commit as the index that names it is not embla's yet, and its
     // own reinit would announce the old slide and write it back through `navigate`.
-    if (embla.slideNodes().length !== images.length) embla.reInit({ startIndex: index });
+    if (index >= embla.slideNodes().length && index < images.length)
+      embla.reInit({ startIndex: index });
     else if (embla.selectedScrollSnap() !== index) embla.scrollTo(index);
     syncingRef.current = false;
   }, [embla, index, images.length]);
