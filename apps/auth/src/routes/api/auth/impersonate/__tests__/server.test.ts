@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   mintUserSession: vi.fn(),
   setSessionCookie: vi.fn(),
   trackImpersonation: vi.fn(),
+  isSystemAccountUser: vi.fn(),
 }));
 
 vi.mock('$app/environment', () => ({ dev: false }));
@@ -18,6 +19,7 @@ vi.mock('$lib/server/auth/session', () => ({
   mintUserSession: h.mintUserSession,
   setSessionCookie: h.setSessionCookie,
 }));
+vi.mock('$lib/server/auth/users', () => ({ isSystemAccountUser: h.isSystemAccountUser }));
 vi.mock('$lib/server/auth/mod-activity', () => ({
   trackImpersonation: h.trackImpersonation,
 }));
@@ -53,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.getOrProduceSessionUser.mockResolvedValue({ id: TARGET });
   h.mintUserSession.mockResolvedValue('imp-token');
+  h.isSystemAccountUser.mockResolvedValue(false);
 });
 
 describe('POST /api/auth/impersonate — moderator account state', () => {
@@ -94,5 +97,18 @@ describe('POST /api/auth/impersonate — target', () => {
     expect(h.getOrProduceSessionUser).not.toHaveBeenCalled();
     expect(h.mintUserSession).not.toHaveBeenCalled();
     expect(h.trackImpersonation).not.toHaveBeenCalled();
+  });
+
+  it('403s for an account marked as a system account and mints no session', async () => {
+    h.isSystemAccountUser.mockImplementation(async (id: number) => id === TARGET);
+    expect(await statusOf(makeEvent(activeMod))).toBe(403);
+    expect(h.isSystemAccountUser).toHaveBeenCalledWith(TARGET);
+    expect(h.getOrProduceSessionUser).not.toHaveBeenCalled();
+    expect(h.mintUserSession).not.toHaveBeenCalled();
+  });
+
+  it('still lets a moderator impersonate an ordinary user', async () => {
+    expect(await statusOf(makeEvent(activeMod))).toBe(200);
+    expect(h.mintUserSession).toHaveBeenCalledTimes(1);
   });
 });

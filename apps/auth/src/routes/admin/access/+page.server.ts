@@ -193,6 +193,13 @@ export const actions: Actions = {
     } catch {
       return fail(500, { action: 'moveToSystem', id, error: NO_SYSTEM_ACCOUNT });
     }
+    if (moved && 'refusedRedirectUri' in moved) {
+      return fail(400, {
+        action: 'moveToSystem',
+        id,
+        error: `This app skips the consent screen, so every redirect URI must be https and not localhost. Remove ${moved.refusedRedirectUri} first.`,
+      });
+    }
     if (!moved) {
       return fail(404, {
         action: 'moveToSystem',

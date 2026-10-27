@@ -240,6 +240,12 @@ describe('authorize — skipConsent needs the exact registered redirect', () => 
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
+  it('shows the consent page for an exact match on a registered http://localhost redirect', async () => {
+    const res = await start({ redirect_uri: 'http://localhost:18188/cb' });
+    expect(consentPage(res)).toBe(true);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
   it('shows the consent page for prompt=consent', async () => {
     const res = await start({ prompt: 'consent' });
     expect(consentPage(res)).toBe(true);

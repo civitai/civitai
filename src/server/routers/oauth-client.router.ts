@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
+import { isSystemAccountMeta } from '@civitai/auth';
 import { v4 as uuidv4 } from 'uuid';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
@@ -12,6 +14,7 @@ import {
   createOauthClientSchema,
   deleteOauthClientSchema,
   deriveAllowedOriginsFromRedirectUris,
+  isSkipConsentRedirectUri,
   getOauthClientByIdSchema,
   rotateOauthClientSecretSchema,
   searchOauthClientsForModeratorSchema,
@@ -42,25 +45,33 @@ function rejectAppBlockClient(clientId: string): void {
   }
 }
 
-/** The civitai system account (User id -1) owns system OAuth apps, which only the hub admin page manages. */
-const SYSTEM_USER_ID = -1;
+/**
+ * System accounts own no OAuth apps here: User -1's system apps are managed from the hub admin page, and
+ * an account marked as a system account in its meta is API-key only.
+ */
+async function isSystemAccount(userId: number): Promise<boolean> {
+  if (userId === constants.system.user.id) return true;
+  const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
+  return isSystemAccountMeta(user?.meta);
+}
 
-function rejectSystemAccount(userId: number): void {
-  if (userId === SYSTEM_USER_ID) {
+async function rejectSystemAccount(userId: number): Promise<void> {
+  if (await isSystemAccount(userId)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'System apps are managed from the hub admin page',
+      message: 'System accounts cannot register OAuth apps',
     });
   }
 }
 
-/** The caller's own client, or NOT_FOUND. A system app is a miss here, as is any client of someone else. */
+/** The caller's own client, or NOT_FOUND. A system account owns none here, so it gets the same answer. */
 async function findOwnedClient(
   userId: number,
   where: Pick<Prisma.OauthClientWhereInput, 'id' | 'isConfidential'>
 ) {
+  if (await isSystemAccount(userId)) throw new TRPCError({ code: 'NOT_FOUND' });
   const client = await dbWrite.oauthClient.findFirst({ where: { ...where, userId } });
-  if (!client || client.userId === SYSTEM_USER_ID) throw new TRPCError({ code: 'NOT_FOUND' });
+  if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
   return client;
 }
 
@@ -89,7 +100,7 @@ export const oauthClientRouter = router({
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
-    if (ctx.user.id === SYSTEM_USER_ID) return [];
+    if (ctx.user.id === constants.system.user.id) return [];
     return dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
@@ -133,7 +144,7 @@ export const oauthClientRouter = router({
       let where: Prisma.OauthClientWhereInput;
       if (query.length === 0) {
         // Default (empty search): the mod's OWN clients, same as the non-mod picker.
-        if (ctx.user.id === SYSTEM_USER_ID) return { items: [], nextCursor: undefined };
+        if (ctx.user.id === constants.system.user.id) return { items: [], nextCursor: undefined };
         where = { AND: [{ userId: ctx.user.id }, excludeAppBlocks] };
       } else {
         // Global search: app name OR author username (both case-insensitive ILIKE) OR,
@@ -184,7 +195,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(createOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
-      rejectSystemAccount(ctx.user.id);
+      await rejectSystemAccount(ctx.user.id);
       // Shown to other users on the consent screen.
       await throwOnBlockedUserContent([input.name, input.description], {
         isModerator: ctx.user.isModerator,
@@ -232,6 +243,15 @@ export const oauthClientRouter = router({
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
       const client = await findOwnedClient(ctx.user.id, { id: input.id });
+      // An app that skips the consent screen keeps only https, non-loopback redirects.
+      const refused =
+        client.skipConsent && input.redirectUris?.find((uri) => !isSkipConsentRedirectUri(uri));
+      if (refused) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `This app skips the consent screen, so every redirect URI must be https and not localhost: ${refused}`,
+        });
+      }
       await throwOnBlockedUserContent([input.name, input.description], {
         isModerator: ctx.user.isModerator,
         surface: 'oauth-client',

@@ -8,7 +8,11 @@ import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { clientErrorUrl, redirectUriMatches } from '$lib/server/oauth/redirect-uri';
+import {
+  clientErrorUrl,
+  isSkipConsentRedirectUri,
+  redirectUriMatches,
+} from '$lib/server/oauth/redirect-uri';
 import { carriesNonUserScope, hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
@@ -228,13 +232,14 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // NOT the redirect origin — so a registered third-party client can't skip consent by claiming an owned
   // redirect host (it has a DB row → isFirstParty=false). See resolveClientLite.
   // A registered app staff marked `skipConsent` (one Civitai runs; set on /admin/access) skips it the same way,
-  // but only for a redirect_uri exactly as registered (no loopback port variant), and never when the request
-  // asks for the consent screen (prompt=consent or select_account). Otherwise it gets the usual consent flow.
+  // but only for an https, non-loopback redirect_uri exactly as registered, and never when the request asks
+  // for the consent screen (prompt=consent or select_account). Otherwise it gets the usual consent flow.
   const isFirstParty = client.isFirstParty;
   const skipsConsent = isFirstParty
     ? client.skipConsent
     : client.skipConsent &&
       client.redirectUris.includes(redirectUri) &&
+      isSkipConsentRedirectUri(redirectUri) &&
       !prompt.has('consent') &&
       !prompt.has('select_account');
   const existingConsent = skipsConsent

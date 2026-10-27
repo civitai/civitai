@@ -5,7 +5,7 @@ import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { readUserId } from '$lib/server/auth/request';
 import { trackImpersonation } from '$lib/server/auth/mod-activity';
-import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
+import { isSystemAccountUser } from '$lib/server/auth/users';
 
 // POST /api/auth/impersonate — moderator impersonation. The hub owns the WHOLE flow: the authorization gate, the
 // mint (stamped `impersonatedBy = the moderator`), and the ModActivity audit. Callers (the main app's same-origin
@@ -29,8 +29,11 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 
   const userId = await readUserId(request);
   if (userId === mod.id) error(400, 'cannot impersonate self');
-  // The system account (and any non-positive id) owns system OAuth apps; no one signs in as it.
-  if (userId <= 0 || userId === SYSTEM_USER_ID) error(403, 'cannot impersonate the system account');
+  // System accounts never get a session: User -1 (which owns system OAuth apps, and carries no marker) and
+  // any account marked as one in its meta.
+  if (userId <= 0 || (await isSystemAccountUser(userId))) {
+    error(403, 'cannot impersonate a system account');
+  }
 
   const target = await getOrProduceSessionUser(userId);
   if (!target) error(404, 'no such user');

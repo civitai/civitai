@@ -158,6 +158,24 @@ describe('moveClientToSystem', () => {
     expect(h.writes).toHaveLength(0);
   });
 
+  it('refuses to move an app that skips consent while it has an http or loopback redirect', async () => {
+    h.client = {
+      isConfidential: true,
+      grants: ['authorization_code'],
+      skipConsent: true,
+      redirectUris: ['https://app.example/cb', 'http://localhost:3000/cb'],
+    };
+    expect(await moveClientToSystem('c1', 1)).toEqual({
+      refusedRedirectUri: 'http://localhost:3000/cb',
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('moves an app that skips consent when every redirect is https off loopback', async () => {
+    h.client = { ...(h.client as object), skipConsent: true };
+    expect(await moveClientToSystem('c1', 1)).toEqual({ clientSecret: 'the-secret' });
+  });
+
   it('never moves an App-Block client', async () => {
     expect(await moveClientToSystem('appblk-game', 1)).toBeNull();
     expect(h.writes).toHaveLength(0);
@@ -231,6 +249,20 @@ describe('/admin/access actions', () => {
     expect(await run('setSkipConsent', { id: 'c1', skipConsent: 'true' })).toMatchObject({
       status: 400,
       data: { error: expect.stringContaining(uri) },
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('shows which redirect blocks moving an app that skips consent', async () => {
+    h.client = {
+      isConfidential: true,
+      grants: [],
+      skipConsent: true,
+      redirectUris: ['http://a.example/cb'],
+    };
+    expect(await run('moveToSystem', { id: 'c1' })).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('http://a.example/cb') },
     });
     expect(h.writes).toHaveLength(0);
   });
