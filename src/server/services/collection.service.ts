@@ -4,6 +4,7 @@ import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
@@ -1864,6 +1865,7 @@ export const getCollectionItemsByCollectionId = async ({
   input,
   user,
   imagesAsPublicCatalog = false,
+  coverage,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -1874,6 +1876,8 @@ export const getCollectionItemsByCollectionId = async ({
    * collection permission check above still uses `user`.
    */
   imagesAsPublicCatalog?: boolean;
+  /** See `getModelsRaw`. */
+  coverage?: CoverageAudience;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2160,6 +2164,7 @@ export const getCollectionItemsByCollectionId = async ({
           await modelService()
         ).getModelsWithImagesAndModelVersions({
           user,
+          coverage,
           input: {
             limit: modelIds.length,
             sort: ModelSort.Newest,

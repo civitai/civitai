@@ -258,9 +258,11 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Every eligible checkpoint can be generated with, so winning no longer unlocks
-                  that. A winning checkpoint is marked for priority when the generator has to
-                  download it.
+                  Members can already generate with every eligible checkpoint, so winning adds
+                  nothing there. For free accounts, a winning checkpoint can be generated with even
+                  when it isn&apos;t loaded on the generator. Outside of winners and the week&apos;s
+                  top 20 earning checkpoints, free accounts can only use checkpoints that are
+                  already loaded.
                 </Text>
               </Stack>
             </Stack>
