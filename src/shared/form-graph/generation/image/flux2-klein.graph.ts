@@ -1,15 +1,8 @@
+import type { ComfySampler, ComfyScheduler } from '@civitai/orchestration-client';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { img2imgImages, SDXL_FULL_AR, SEED, selectDef, sliderDef } from '../defs';
 import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../shared';
-
-/**
- * Flux.2 Klein (9B / 9B Base / 4B / 4B Base). Four ECOSYSTEMS share this graph;
- * the mode derives
- * from the ecosystem, not the model. Distilled variants (9B/4B) hide
- * cfg/sampler/scheduler; Base variants expose the full sd.cpp controls.
- * Negative prompt is supported everywhere.
- */
 
 export type Flux2KleinMode = '9b' | '9b-base' | '4b' | '4b-base';
 
@@ -27,18 +20,21 @@ const flux2KleinModeVersionOptions = [
   { label: '4B Base', value: flux2KleinVersionIds['4b-base'] },
 ];
 
-/** sd.cpp sampler/scheduler options. */
 const flux2KleinSamplers = [
   'euler',
   'heun',
-  'dpm++2s_a',
-  'dpm++2m',
-  'dpm++2mv2',
+  'dpmpp_2s_ancestral',
+  'dpmpp_2m',
   'ipndm',
   'ipndm_v',
   'lcm',
-];
-const flux2KleinSchedules = ['simple', 'discrete', 'karras', 'exponential'];
+] satisfies ComfySampler[];
+const flux2KleinSchedules = [
+  'simple',
+  'normal',
+  'karras',
+  'exponential',
+] satisfies ComfyScheduler[];
 
 const ecosystemToMode: Record<string, Flux2KleinMode> = {
   Flux2Klein_9B: '9b',
