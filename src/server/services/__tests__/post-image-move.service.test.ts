@@ -73,7 +73,6 @@ const imageRow = (id: number) => ({
 
 const db = dbMock.dbWrite;
 
-// The account check is the first raw query; the locked post rows are every one after it.
 const accountRow = (over: Record<string, unknown> = {}) => ({
   report: false,
   'image-review': false,
@@ -83,8 +82,32 @@ const accountRow = (over: Record<string, unknown> = {}) => ({
   markerTable: false,
   ...over,
 });
-function mockPosts(...rows: ReturnType<typeof postRow>[]) {
-  db.$queryRaw.mockResolvedValueOnce([accountRow()]).mockResolvedValue(rows);
+// Nested Prisma.sql fragments (the lock clause) are values of the tagged call, so inline them.
+const rawSql = ([strings, ...values]: unknown[]) =>
+  (strings as TemplateStringsArray).reduce((sql, part, i) => {
+    const value = values[i - 1] as { sql?: string } | undefined;
+    return sql + (typeof value?.sql === 'string' ? value.sql : '?') + part;
+  });
+const isPostLock = (sql: string) => sql.includes('FOR UPDATE OF p');
+const isVersionLock = (sql: string) => sql.includes('"ModelVersion"') && sql.includes('AS downed');
+
+// Routed by statement: the account check, the split's version read and takedown lock, the posts.
+function mockPosts(
+  ...rows: (ReturnType<typeof postRow> | { downed?: boolean; ownsModel?: boolean })[]
+) {
+  const posts = rows.filter((r): r is ReturnType<typeof postRow> => 'id' in r);
+  const { downed = false, ownsModel = true } = rows.find((r) => !('id' in r)) ?? {};
+  const source = posts[0];
+  db.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (isPostLock(sql)) return Promise.resolve(posts);
+    if (sql.includes('"ownsModel"'))
+      return Promise.resolve(
+        source?.modelVersionId ? [{ modelVersionId: source.modelVersionId, ownsModel }] : []
+      );
+    if (sql.includes('AS downed')) return Promise.resolve([{ downed }]);
+    return Promise.resolve([accountRow()]);
+  }) as never);
 }
 
 function expectNothingWritten() {
@@ -201,6 +224,26 @@ describe('moveImagesToPost', () => {
       expect.objectContaining({ data: expect.objectContaining({ modelVersionId: 55 }) })
     );
     expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('locks the source version before the posts when it splits', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }));
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    const sql = db.$queryRaw.mock.calls.map(rawSql);
+    const versionLock = sql.findIndex((q: string) => isVersionLock(q) && q.includes('FOR SHARE'));
+    expect(versionLock).toBeGreaterThanOrEqual(0);
+    expect(versionLock).toBeLessThan(sql.findIndex(isPostLock));
+  });
+
+  it('refuses to split onto a taken-down version and writes nothing', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { downed: true });
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/taken down/);
+    expectNothingWritten();
   });
 
   it.each([
