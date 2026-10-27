@@ -66,7 +66,7 @@ const shown = () => {
   if (!viewer) return null;
   return {
     media: viewer.querySelector('[data-src]')?.getAttribute('data-src'),
-    position: viewer.querySelector('p')?.textContent,
+    position: document.querySelector('[data-testid="crucible-entry-position"]')?.textContent,
   };
 };
 const button = (label: string) => {

@@ -49,61 +49,72 @@ export function CrucibleEntryMediaViewer({
   );
 
   return (
-    <Modal
+    <Modal.Root
       opened={opened}
       onClose={onClose}
       fullScreen
-      withOverlay={false}
-      title="Entry"
-      closeButtonProps={{ 'aria-label': 'Close entry viewer' }}
       styles={{
         inner: { position: 'absolute' },
         content: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
         body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 16 },
       }}
     >
-      {item && index !== null && (
-        <div data-testid="crucible-entry-media-viewer" className="flex min-h-0 flex-1 flex-col">
-          <Text size="sm" c="dimmed" mb="xs">
-            {index + 1} / {media.length}
-            {hasMore && '+'}
-          </Text>
-          <div className="relative flex min-h-0 flex-1 items-center justify-center">
-            <EdgeMedia2
-              key={item.entryId}
-              src={item.url}
-              name={item.name}
-              type={item.type}
-              metadata={item.metadata}
-              html5Controls
-              muted
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-              wrapperProps={{ className: 'flex size-full items-center justify-center' }}
-              // Autoplay explicitly: EdgeVideo's in-view check watches the page scroller, which
-              // a portalled modal is outside of, so it would never start.
-              videoProps={{ autoPlay: true, hoverPlay: false }}
-            />
-            <CrucibleReportButton imageId={item.imageId} className="absolute right-2 top-2 z-10" />
-            <NavButton
-              label="Previous entry"
-              disabled={prev === undefined}
-              onClick={() => prev !== undefined && onIndexChange(prev)}
-              className="left-2"
-            >
-              <IconChevronLeft size={24} />
-            </NavButton>
-            <NavButton
-              label="Next entry"
-              disabled={next === undefined}
-              onClick={() => next !== undefined && onIndexChange(next)}
-              className="right-2"
-            >
-              <IconChevronRight size={24} />
-            </NavButton>
+      <Modal.Content>
+        <Modal.Header>
+          <Modal.Title className="flex items-baseline gap-3">
+            Entry
+            {index !== null && (
+              <Text component="span" size="sm" c="dimmed" data-testid="crucible-entry-position">
+                {index + 1} / {media.length}
+                {hasMore && '+'}
+              </Text>
+            )}
+          </Modal.Title>
+          <div className="flex items-center gap-3">
+            {item && <CrucibleReportButton imageId={item.imageId} />}
+            <Modal.CloseButton aria-label="Close entry viewer" />
           </div>
-        </div>
-      )}
-    </Modal>
+        </Modal.Header>
+        <Modal.Body>
+          {item && index !== null && (
+            <div data-testid="crucible-entry-media-viewer" className="flex min-h-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 items-center justify-center">
+                <EdgeMedia2
+                  key={item.entryId}
+                  src={item.url}
+                  name={item.name}
+                  type={item.type}
+                  metadata={item.metadata}
+                  html5Controls
+                  muted
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  wrapperProps={{ className: 'flex size-full items-center justify-center' }}
+                  // Autoplay explicitly: EdgeVideo's in-view check watches the page scroller, which
+                  // a portalled modal is outside of, so it would never start.
+                  videoProps={{ autoPlay: true, hoverPlay: false }}
+                />
+                <NavButton
+                  label="Previous entry"
+                  disabled={prev === undefined}
+                  onClick={() => prev !== undefined && onIndexChange(prev)}
+                  className="left-2"
+                >
+                  <IconChevronLeft size={24} />
+                </NavButton>
+                <NavButton
+                  label="Next entry"
+                  disabled={next === undefined}
+                  onClick={() => next !== undefined && onIndexChange(next)}
+                  className="right-2"
+                >
+                  <IconChevronRight size={24} />
+                </NavButton>
+              </div>
+            </div>
+          )}
+        </Modal.Body>
+      </Modal.Content>
+    </Modal.Root>
   );
 }
 
