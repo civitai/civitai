@@ -289,3 +289,82 @@ describe('the CSAM queue filtered to one user', () => {
     expect(items.map((i) => i.id)).toEqual([3, 2, 1]);
   });
 });
+
+describe('images set aside from the CSAM queue', () => {
+  // 301: dismissed 364 days ago (61), dismissed 366 days ago (62), set aside after a report with no
+  // hold (63), and one with no row (64). 302 is under a hold: dismissed 366 days ago (65) and set
+  // aside after a report (66).
+  beforeAll(async () => {
+    await db.exec(`
+      CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
+      CREATE TABLE "CsamQueueSetAside" (
+        "imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL,
+        "outcome" "CsamQueueSetAsideOutcome" NOT NULL, "csamReportId" INTEGER,
+        "moderatorId" INTEGER NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL
+      );
+      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
+      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
+      INSERT INTO "EvidenceHold" ("userId") VALUES (302);
+      INSERT INTO "User" ("id", "username") VALUES (301, 's'), (302, 't');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (61, 301, 'csam', 'Blocked'), (62, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'),
+        (64, 301, 'csam', 'Blocked'), (65, 302, 'csam', 'Blocked'), (66, 302, 'csam', 'Blocked');
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt") VALUES
+        (61, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '364 days'),
+        (62, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '366 days'),
+        (63, 301, 'AfterReport', 1, now() AT TIME ZONE 'UTC'),
+        (65, 302, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '366 days'),
+        (66, 302, 'AfterReport', 1, now() AT TIME ZONE 'UTC');
+    `);
+  });
+
+  afterAll(async () => {
+    await db.exec(`
+      DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
+      DROP TABLE "CsamQueueSetAside"; DROP TYPE "CsamQueueSetAsideOutcome";
+      DELETE FROM "Image" WHERE "userId" IN (301, 302); DELETE FROM "User" WHERE id IN (301, 302);
+    `);
+  });
+
+  const pendingOf = async (userId: number) =>
+    (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find((u) => u.userId === userId)
+      ?.pending;
+  const listed = async (userId: number) =>
+    (
+      await getImageReviewQueue({
+        needsReview: 'csam',
+        browsingLevel: ALL_LEVELS,
+        userId,
+        limit: 50,
+      })
+    ).items.map((i) => i.id);
+
+  it('counts a dismissal for a year when no hold dates the owner, and nothing else without one', async () => {
+    expect(await pendingOf(301)).toBe(3);
+    expect(await listed(301)).toEqual([64, 63, 62]);
+  });
+
+  it('counts every set-aside image while the owner is held, past a dismissal’s year', async () => {
+    expect(await pendingOf(302)).toBe(0);
+    expect(await listed(302)).toEqual([]);
+  });
+
+  it('badges what the by-user page shows as pending', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    const pending = users.reduce((n, u) => n + u.pending, 0);
+    expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
+  });
+
+  it('counts no set-aside row at all while the marker view is missing', async () => {
+    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
+    try {
+      expect(await pendingOf(301)).toBe(4);
+      expect(await pendingOf(302)).toBe(2);
+      expect(await listed(302)).toEqual([66, 65]);
+    } finally {
+      await db.exec(
+        `CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId"`
+      );
+    }
+  });
+});

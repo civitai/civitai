@@ -55,7 +55,7 @@
     <form method="POST" action="?/dismissFlag" use:enhance={submit}>
       <input type="hidden" name="imageId" value={item.id} />
       <Button type="submit" variant="outline" size="sm" class="text-amber-400 hover:text-amber-300">
-        Dismiss flag, keep removed
+        Dismiss, keep removed
       </Button>
     </form>
   {:else if selected.has(reportId ?? item.id)}

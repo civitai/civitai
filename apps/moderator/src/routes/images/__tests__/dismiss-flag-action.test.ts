@@ -3,17 +3,17 @@ import type * as ImageModeration from '$lib/server/image-moderation.service';
 
 /**
  * Every image queue posts to the same `[slug]` route, and the page gate is decided per path. So the
- * action itself must refuse to clear the review flag from any queue but that flag's own.
+ * action itself must refuse to dismiss from any queue but the CSAM one.
  */
 
-const { dismissReviewFlag } = vi.hoisted(() => ({ dismissReviewFlag: vi.fn() }));
+const { dismissFromCsamQueue } = vi.hoisted(() => ({ dismissFromCsamQueue: vi.fn() }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 // Pulls in `$app/server`, which only resolves inside a SvelteKit build.
 vi.mock('$lib/server/user-actions.service', () => ({ setImageFlag: vi.fn() }));
 vi.mock('$lib/server/image-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageModeration>()),
-  dismissReviewFlag,
+  dismissFromCsamQueue,
 }));
 
 const { actions } = await import('../[slug]/+page.server');
@@ -36,7 +36,7 @@ const dismiss = (slug: string) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
-  dismissReviewFlag.mockResolvedValue(true);
+  dismissFromCsamQueue.mockResolvedValue(true);
 });
 
 describe('dismissFlag', () => {
@@ -44,18 +44,18 @@ describe('dismissFlag', () => {
     const result = await dismiss('minor');
 
     expect(result).toMatchObject({ status: 403 });
-    expect(dismissReviewFlag).not.toHaveBeenCalled();
+    expect(dismissFromCsamQueue).not.toHaveBeenCalled();
   });
 
-  it('clears the flag from its own queue, as the acting moderator', async () => {
+  it('dismisses from its own queue, as the acting moderator', async () => {
     const result = await dismiss('csam');
 
     expect(result).toEqual({ success: true, imageId: 52 });
-    expect(dismissReviewFlag).toHaveBeenCalledWith({ imageId: 52, userId: 7 });
+    expect(dismissFromCsamQueue).toHaveBeenCalledWith({ imageId: 52, userId: 7 });
   });
 
-  it('says so when there was nothing to clear', async () => {
-    dismissReviewFlag.mockResolvedValue(false);
+  it('says so when there was nothing to dismiss', async () => {
+    dismissFromCsamQueue.mockResolvedValue(false);
 
     const result = await dismiss('csam');
 

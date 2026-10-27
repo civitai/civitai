@@ -32,7 +32,7 @@
 
   const queueHref = (userId: number) => `/images/csam?userId=${userId}&level=${data.level}`;
 
-  // Users whose every flagged image a sent report covers are done; they stay listed, apart.
+  // Users with nothing pending (reported or dismissed) stay listed, apart.
   const open = $derived(data.users.filter((u) => u.pending > 0));
   const reported = $derived(data.users.filter((u) => u.pending === 0));
 
@@ -147,12 +147,12 @@
   {#if open.length}
     {@render userTable(open)}
   {:else}
-    <p class="text-sm text-dark-2">Every user here has a sent CSAM report covering their images.</p>
+    <p class="text-sm text-dark-2">No user here has an image left to review.</p>
   {/if}
   {#if reported.length}
     <details class="mt-6">
       <summary class="cursor-pointer text-sm text-dark-2">
-        Reported ({num(reported.length)}): covered by a sent CSAM report
+        Nothing pending ({num(reported.length)}): reported or dismissed
       </summary>
       <div class="mt-2">{@render userTable(reported)}</div>
     </details>

@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ModActivity from '../mod-activity';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -53,10 +54,14 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity }));
+// The single-row log is a spy; the in-transaction insert runs for real, so its row is read back below.
+vi.mock('../mod-activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModActivity>()),
+  recordModActivity,
+}));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { acceptImage, blockImage, dismissReviewFlag, FlagOnlyRemovedError, resolveImageAppeal } =
+const { acceptImage, blockImage, dismissFromCsamQueue, FlagOnlyRemovedError, resolveImageAppeal } =
   await import('../image-moderation.service');
 
 const SCHEMA = `
@@ -94,6 +99,19 @@ CREATE TABLE "Appeal" (
 );
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
+CREATE TABLE "CsamQueueSetAside" (
+  "imageId" INTEGER PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "outcome" "CsamQueueSetAsideOutcome" NOT NULL,
+  "csamReportId" INTEGER,
+  "moderatorId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
+  "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
+);
 `;
 
 const FLAGGED = 51;
@@ -113,7 +131,7 @@ beforeEach(async () => {
   recordModActivity.mockClear();
   applyBlockSideEffects.mockClear();
   trackImageRestore.mockClear();
-  await db.exec(`TRUNCATE "Image", "Appeal", "User"`);
+  await db.exec(`TRUNCATE "Image", "Appeal", "User", "CsamQueueSetAside", "ModActivity"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
       ($1, 7, 'csam', NULL, 'Scanned', 4),
@@ -203,41 +221,82 @@ describe('an image removed with only the review flag left', () => {
   });
 });
 
-describe('dismissReviewFlag', () => {
-  it('clears the flag and leaves the image removed', async () => {
-    expect(await dismissReviewFlag({ imageId: FLAGGED_REMOVED, userId: 2 })).toBe(true);
+describe('dismissFromCsamQueue', () => {
+  const setAside = async () =>
+    (
+      await db.query(
+        'SELECT "imageId", "userId", "outcome", "moderatorId" FROM "CsamQueueSetAside" ORDER BY "imageId"'
+      )
+    ).rows;
+  const activity = async () =>
+    (await db.query('SELECT "userId", "activity", "entityType", "entityId" FROM "ModActivity"'))
+      .rows;
 
-    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  it('takes the image out as dismissed and leaves it flagged and removed', async () => {
+    expect(await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 })).toBe(true);
+
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await setAside()).toEqual([
+      { imageId: FLAGGED_REMOVED, userId: 8, outcome: 'Dismissed', moderatorId: 2 },
+    ]);
   });
 
   // The purge reads `review`/`bulkRemove` rows as a moderator's takedown of the image; a dismissal
   // recorded as either would license destroying its stored bytes.
   it('records its own activity, not a takedown', async () => {
-    await dismissReviewFlag({ imageId: FLAGGED_REMOVED, userId: 2 });
+    await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 });
 
-    expect(recordModActivity).toHaveBeenCalledTimes(1);
-    expect(recordModActivity).toHaveBeenCalledWith({
-      userId: 2,
-      entityType: 'image',
-      entityId: FLAGGED_REMOVED,
-      activity: 'dismissReviewFlag',
-    });
+    expect(await activity()).toEqual([
+      {
+        userId: 2,
+        activity: 'dismissFromCsamQueue',
+        entityType: 'image',
+        entityId: FLAGGED_REMOVED,
+      },
+    ]);
   });
 
-  it('refuses an image that is not removed, which would otherwise go live', async () => {
-    expect(await dismissReviewFlag({ imageId: FLAGGED, userId: 2 })).toBe(false);
+  it('leaves no dismissal behind when its activity row cannot be written', async () => {
+    await db.exec(`
+      CREATE FUNCTION refuse_activity() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'refused'; END $$;
+      CREATE TRIGGER refuse_activity BEFORE INSERT ON "ModActivity"
+        FOR EACH ROW EXECUTE FUNCTION refuse_activity();
+    `);
+    try {
+      await expect(dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toThrow();
+      expect(await setAside()).toEqual([]);
+    } finally {
+      await db.exec(
+        'DROP TRIGGER refuse_activity ON "ModActivity"; DROP FUNCTION refuse_activity()'
+      );
+    }
+  });
+
+  it('is a no-op the second time', async () => {
+    await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 });
+    expect(await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 3 })).toBe(false);
+
+    expect(await setAside()).toHaveLength(1);
+    expect(await activity()).toHaveLength(1);
+  });
+
+  it('refuses an image that is not removed', async () => {
+    expect(await dismissFromCsamQueue({ imageId: FLAGGED, userId: 2 })).toBe(false);
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Scanned' });
-    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(await setAside()).toEqual([]);
+    expect(await activity()).toEqual([]);
   });
 
   it('refuses any other flag', async () => {
-    expect(await dismissReviewFlag({ imageId: OTHER_FLAG_REMOVED, userId: 2 })).toBe(false);
+    expect(await dismissFromCsamQueue({ imageId: OTHER_FLAG_REMOVED, userId: 2 })).toBe(false);
 
     expect(await imageRow(OTHER_FLAG_REMOVED)).toEqual({
       needsReview: 'appeal',
       ingestion: 'Blocked',
     });
+    expect(await setAside()).toEqual([]);
   });
 });
 

@@ -13,7 +13,7 @@ import {
   acceptImage,
   blockImage,
   closedAppellants,
-  dismissReviewFlag,
+  dismissFromCsamQueue,
   FlagOnlyRemovedError,
   resolveImageAppeal,
   sendBulkAppealEmails,
@@ -274,10 +274,10 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
-    const dismissed = await dismissReviewFlag({ imageId, userId: locals.user.id });
+    const dismissed = await dismissFromCsamQueue({ imageId, userId: locals.user.id });
     if (!dismissed)
       return fail(409, {
-        error: 'This image is no longer flagged or no longer removed. Reload.',
+        error: 'This image is no longer in this queue. Reload.',
         imageId,
       });
     return { success: true, imageId };

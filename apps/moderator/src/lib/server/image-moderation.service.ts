@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
-import { recordModActivity } from './mod-activity';
+import { insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
 import {
@@ -288,34 +288,51 @@ export async function blockImage({
 }
 
 /**
- * Clears the moderator-only review flag from an image that stays Blocked: no unblock, no notice to
- * the uploader. False when there was nothing to clear, e.g. another moderator got there first.
+ * Takes a removed image out of the CSAM review queue as dismissed, leaving the image itself as it is:
+ * flag, block and uploader untouched. False when it is not a removed, flagged image or was already
+ * taken out, e.g. another moderator got there first.
  */
-export async function dismissReviewFlag({
+export async function dismissFromCsamQueue({
   imageId,
   userId,
 }: {
   imageId: number;
   userId: number;
 }): Promise<boolean> {
-  const { numUpdatedRows } = await dbWrite
-    .updateTable('Image')
-    .set({ needsReview: null })
-    .where('id', '=', imageId)
-    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
-    .where('ingestion', '=', 'Blocked')
-    .executeTakeFirst();
-  if (!numUpdatedRows) return false;
+  return dbWrite.transaction().execute(async (tx) => {
+    const image = await tx
+      .selectFrom('Image')
+      .select('userId')
+      .where('id', '=', imageId)
+      .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+      .where('ingestion', '=', 'Blocked')
+      .forUpdate()
+      .executeTakeFirst();
+    if (!image) return false;
 
-  // Never one of the main app's MODERATOR_TAKEDOWN_ACTIVITIES: clearing a flag is not a decision to
-  // destroy the image, and those values license exactly that.
-  await recordModActivity({
-    userId,
-    entityType: 'image',
-    entityId: imageId,
-    activity: 'dismissReviewFlag',
+    const { numInsertedOrUpdatedRows } = await tx
+      .insertInto('CsamQueueSetAside')
+      .values({
+        imageId,
+        userId: image.userId,
+        outcome: 'Dismissed',
+        moderatorId: userId,
+        createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
+      })
+      .onConflict((oc) => oc.column('imageId').doNothing())
+      .executeTakeFirst();
+    if (!Number(numInsertedOrUpdatedRows)) return false;
+
+    // In the same transaction, so the dismissal cannot exist without its row. Never one of the main
+    // app's MODERATOR_TAKEDOWN_ACTIVITIES, which license destroying the image.
+    await insertModActivityBatch(tx, {
+      userId,
+      entityType: 'image',
+      entityIds: [imageId],
+      activity: 'dismissFromCsamQueue',
+    });
+    return true;
   });
-  return true;
 }
 
 /**

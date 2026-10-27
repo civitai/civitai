@@ -87,6 +87,7 @@ import type {
   BountyEntryMode,
   BountyEngagementType,
   CsamReportType,
+  CsamQueueSetAsideOutcome,
   Availability,
   PaidAccessEntityType,
   SaleDiscountType,
@@ -2937,6 +2938,17 @@ export type CsamFlagRelease = {
    */
   overriddenLegs: unknown;
   imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
+export type CsamQueueSetAside = {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  /**
+   * The report an `AfterReport` row follows.
+   */
+  csamReportId: number | null;
+  moderatorId: number;
   createdAt: Generated<Timestamp>;
 };
 export type CsamReport = {
@@ -6405,6 +6417,7 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamFlagRelease: CsamFlagRelease;
+  CsamQueueSetAside: CsamQueueSetAside;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;

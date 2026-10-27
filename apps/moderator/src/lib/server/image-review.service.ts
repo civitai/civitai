@@ -3,6 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
+import { setAsideCounts, setAsideReadable } from './csam-queue-set-aside';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -60,6 +61,7 @@ export async function getImageReviewQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
+  const setAside = needsReview === FLAG_KEPT_THROUGH_BLOCK && (await setAsideReadable(dbRead));
   const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
@@ -127,6 +129,7 @@ export async function getImageReviewQueue({
       )
     )
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
+    .$if(setAside, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i')}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -219,6 +222,14 @@ function coveredBySentCsamReport(image: string) {
   )`;
 }
 
+/** Out of the CSAM queue's pending count: covered by a sent report, or set aside. `setAside` is what
+ *  `setAsideReadable` returned. */
+function outOfPending(image: string, setAside: boolean) {
+  return setAside
+    ? sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image)})`
+    : coveredBySentCsamReport(image);
+}
+
 /** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
  *  the status is unknown rather than that this user is on a hold. */
 export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
@@ -227,7 +238,7 @@ export type CsamQueueUser = {
   userId: number;
   username: string | null;
   flagged: number;
-  /** Flagged and not yet covered by a sent CSAM report: the user's share of the queue's badge. */
+  /** Flagged and neither covered by a sent CSAM report nor set aside: the user's share of the badge. */
   pending: number;
   /** Flagged and already removed, at any browsing level: what a bulk clear would clear. */
   removed: number;
@@ -240,19 +251,20 @@ export type CsamQueueUser = {
   heldBy: CsamQueueHoldReason[];
 };
 
-/** The CSAM review queue as one row per owning user, most flagged first. Same rows and browsing-level
- *  filter as `getImageReviewQueue` for that queue. */
+/** The CSAM review queue as one row per owning user, most pending first. The browsing-level filter of
+ *  `getImageReviewQueue` for that queue; `flagged` also counts the set-aside images it leaves out. */
 export async function getCsamQueueByUser({
   browsingLevel,
 }: {
   browsingLevel: number;
 }): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
+  const setAside = await setAsideReadable(dbRead);
   const groups = await dbRead
     .selectFrom('Image as i')
     .select([
       'i.userId',
       sql<number>`count(*)::int`.as('flagged'),
-      sql<number>`(count(*) filter (where not ${coveredBySentCsamReport('i')}))::int`.as('pending'),
+      sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
@@ -315,7 +327,7 @@ export async function getCsamQueueByUser({
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
-  const covered = coveredBySentCsamReport('Image');
+  const covered = outOfPending('Image', await setAsideReadable(dbRead));
   const rows = await dbRead
     .selectFrom('Image')
     .select('needsReview')
