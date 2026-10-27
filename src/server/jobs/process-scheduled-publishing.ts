@@ -195,15 +195,33 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    // The scheduled posts the UPDATE below actually published, with their owner as of the write: it
-    // re-checks each one, so a post taken down or moved since the select drops out, and must get
-    // none of the side effects. Returned rather than assigned out, so a rollback yields none.
-    const flippedPosts = await dbWrite.$transaction(
+    // What the UPDATEs below actually published, with each post's owner as of the write: they
+    // re-check every row, so one taken down or moved since the selects drops out, and must get none
+    // of the side effects. Returned rather than assigned out, so a rollback yields none.
+    const { flippedPosts, publishedModelIds, publishedVersionIds } = await dbWrite.$transaction(
       async (tx) => {
         let flipped: ScheduledEntity[] = [];
+        let publishedModels = new Set<number>();
+        let publishedVersions = new Set<number>();
         const modelsToUpdate = [
           ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
         ];
+
+        // Models, then versions, each by id: the order the model publish and takedown paths take
+        // them, which lock their one model first. Without it this crosses them and either side can
+        // be picked as the deadlock victim.
+        const lockModelIds = uniq([...scheduledModels.map(({ id }) => id), ...modelsToUpdate]);
+        if (lockModelIds.length)
+          await tx.$queryRaw`
+            SELECT id FROM "Model" WHERE id IN (${Prisma.join(lockModelIds)})
+            ORDER BY id FOR NO KEY UPDATE
+          `;
+        const scheduledVersionIds = scheduledModelVersions.map(({ id }) => id);
+        if (scheduledVersionIds.length)
+          await tx.$queryRaw`
+            SELECT id FROM "ModelVersion" WHERE id IN (${Prisma.join(scheduledVersionIds)})
+            ORDER BY id FOR NO KEY UPDATE
+          `;
 
         if (modelsToUpdate.length) {
           // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
@@ -218,32 +236,20 @@ export const processScheduledPublishing = createJob(
           `;
         }
 
-        if (scheduledModels.length) {
-          const scheduledModelIds = scheduledModels.map(({ id }) => id);
-
-          await tx.$executeRaw`
-          -- Make scheduled models published
-          UPDATE "Model" 
-          SET status = 'Published'
-          WHERE id IN (${Prisma.join(scheduledModelIds)})
-            AND status = 'Scheduled'
-            AND "publishedAt" <= ${now}
-            AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
-        `;
-        }
-
-        if (scheduledPosts.length) {
+        if (scheduledPosts.length && scheduledVersionIds.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
-          // Lock the posts' versions, then the posts, in the order a moderator's version takedown
-          // takes them before unpublishing its owner's live posts, which these are not yet: unlocked,
-          // a takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
-          // Only the (post, version) pairs locked here are published: a post moved to another
-          // version while this waited has that version unlocked, so it waits for the next run.
+          // Lock the posts after their versions, in the order a moderator's version takedown takes
+          // them before unpublishing its owner's live posts, which these are not yet: unlocked, a
+          // takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
+          // Only the (post, version) pairs locked here are published, and only onto a version this
+          // run publishes, so a post never goes live ahead of its version: one whose version the
+          // select above skipped, or that moved to another version meanwhile, waits for a later run.
           const locked = await tx.$queryRaw<{ postId: number; versionId: number }[]>`
             SELECT p.id AS "postId", mv.id AS "versionId" FROM "ModelVersion" mv
             JOIN "Post" p ON p."modelVersionId" = mv.id
             WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+              AND mv.id IN (${Prisma.join(scheduledVersionIds)})
             FOR NO KEY UPDATE OF mv, p
           `;
 
@@ -285,7 +291,7 @@ export const processScheduledPublishing = createJob(
             UPDATE "ModelVersion" mv 
             SET status = 'Published', availability = 'Public'
             FROM "Model" m
-            WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
+            WHERE mv.id IN (${Prisma.join(scheduledVersionIds)})
               AND mv."modelId" = m.id
               AND mv.status = 'Scheduled'
               AND mv."publishedAt" <= ${now}
@@ -295,8 +301,8 @@ export const processScheduledPublishing = createJob(
           // Only what that statement published: it re-checks the status, so a version a moderator
           // took down after the select above drops out here, and the early-access publish, which
           // writes by id, never sees it.
-          const publishedIds = new Set(published.map(({ id }) => id));
-          const earlyAccessPublished = earlyAccess.filter((id) => publishedIds.has(id));
+          publishedVersions = new Set(published.map(({ id }) => id));
+          const earlyAccessPublished = earlyAccess.filter((id) => publishedVersions.has(id));
 
           if (earlyAccessPublished.length) {
             // The only downside to this failing is that the model version will be published with no early access.
@@ -309,7 +315,33 @@ export const processScheduledPublishing = createJob(
           }
         }
 
-        return flipped;
+        if (scheduledModels.length) {
+          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+
+          const published = await tx.$queryRaw<{ id: number }[]>`
+          -- Make scheduled models published
+          UPDATE "Model"
+          SET status = 'Published'
+          WHERE id IN (${Prisma.join(scheduledModelIds)})
+            AND status = 'Scheduled'
+            AND "publishedAt" <= ${now}
+            AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+            -- After the version UPDATE, so a version it just published counts. A model whose
+            -- versions all wait on their files stays Scheduled with them.
+            AND EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              WHERE mv."modelId" = "Model".id AND mv.status = 'Published'
+            )
+          RETURNING id;
+        `;
+          publishedModels = new Set(published.map(({ id }) => id));
+        }
+
+        return {
+          flippedPosts: flipped,
+          publishedModelIds: publishedModels,
+          publishedVersionIds: publishedVersions,
+        };
       },
       { timeout: 30000 }
     );
@@ -339,6 +371,7 @@ export const processScheduledPublishing = createJob(
 
     // Process event engagements
     for (const model of scheduledModels) {
+      if (!publishedModelIds.has(model.id)) continue;
       await eventEngine.processEngagement({
         userId: model.userId,
         type: 'published',
@@ -347,6 +380,7 @@ export const processScheduledPublishing = createJob(
       });
     }
     for (const modelVersion of scheduledModelVersions) {
+      if (!publishedVersionIds.has(modelVersion.id)) continue;
       await eventEngine.processEngagement({
         userId: modelVersion.userId,
         type: 'published',
