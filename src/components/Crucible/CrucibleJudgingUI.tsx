@@ -29,6 +29,7 @@ import {
   JudgeReactionBar,
   type JudgeReactionBarProps,
 } from '~/components/Crucible/JudgeReactionBar';
+import { JudgeReportButton } from '~/components/Crucible/JudgeReportButton';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasCoarsePointer } from '~/hooks/useIsMobile';
@@ -664,6 +665,15 @@ function ImageCard({
           // Desktop video shows native controls along the bottom edge, so the pill sits above them.
           className={clsx(
             'absolute right-2.5 z-10',
+            isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
+          )}
+        />
+
+        <JudgeReportButton
+          imageId={entry.image.id}
+          side={position}
+          className={clsx(
+            'absolute left-2.5 z-10',
             isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
           )}
         />
