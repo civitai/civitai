@@ -538,12 +538,12 @@ describe('paidToUsersSql', () => {
 describe('generationTipsPaidSql', () => {
   // Pinned whole: the currency gate is what keeps Blue and unknown-currency tips from lowering
   // bankable, and a wrong one still returns a plausible number.
-  it('nets per-job creator tips only on days whose generation charges were all Yellow and none refunded', () => {
+  it('nets per-job creator tips, less workflow refunds, only on days whose generation charges were all Yellow', () => {
     const near =
       'arrayDistinct([toDate(date - INTERVAL 1 HOUR), toDate(date), toDate(date + INTERVAL 1 HOUR)])';
     const ledgerWindow = `date >= toDateTime('2026-11-01 00:00:00', 'UTC') - INTERVAL 1 HOUR AND date < toDateTime('2026-12-01 00:00:00', 'UTC') + INTERVAL 1 HOUR`;
     expect(squash(generationTipsPaidSql(42, closedWindow))).toBe(
-      squash(`SELECT toInt64(floor(tips)) AS amount
+      squash(`SELECT toInt64(floor(greatest(0, tips - refunded))) AS amount
       FROM (
         SELECT toDate(createdAt) AS day, sum(creatorsTip) AS tips
         FROM (
@@ -556,20 +556,20 @@ describe('generationTipsPaidSql', () => {
         GROUP BY day
       ) AS tipped
       INNER JOIN (
-        SELECT day FROM (
-          SELECT arrayJoin(${near}) AS day, fromAccountType = 'yellow' AS yellow, 0 AS refunded
+        SELECT day, sum(refundedAmount) AS refunded FROM (
+          SELECT arrayJoin(${near}) AS day, 1 AS isCharge, fromAccountType = 'yellow' AS yellow, toInt64(0) AS refundedAmount
           FROM buzzTransactions
           WHERE type = 'generation' AND fromAccountId = 42
             AND ${ledgerWindow}
           UNION ALL
-          SELECT arrayJoin(${near}) AS day, 0 AS yellow, 1 AS refunded
+          SELECT arrayJoin(${near}) AS day, 0 AS isCharge, 1 AS yellow, toInt64(amount) AS refundedAmount
           FROM buzzTransactions
           WHERE type = 'refund' AND toAccountId = 42
             AND JSONExtractString(details, 'workflowId') != ''
             AND ${ledgerWindow}
         )
         GROUP BY day
-        HAVING min(yellow) = 1 AND max(refunded) = 0
+        HAVING max(isCharge) = 1 AND min(yellow) = 1
       ) AS yellowOnly USING (day)`)
     );
   });

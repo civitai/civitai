@@ -244,9 +244,10 @@ const CHARGE_TO_JOB_SLACK = 'INTERVAL 1 HOUR';
  * Generation tips `userId` paid in a window, one row per UTC day (`amount`). The ledger cannot tell
  * a tip from the price (one `generation` charge to account 0), so this reads the orchestrator's
  * per-job `creatorsTip`, which carries no currency. A day is netted only when every generation
- * charge within an hour of it was Yellow and none was refunded: Blue tips are not bankable for the
- * owner, and netting a tip of unknown currency would lower bankable for Buzz that never became
- * bankable. Under-netting is the safe failure here.
+ * charge within an hour of it was Yellow: Blue tips are not bankable for the owner, and netting a
+ * tip of unknown currency would lower bankable for Buzz that never became bankable. Workflow refunds
+ * near the day come off its tips whole, since a refund returns at most the charge with its tip.
+ * Under-netting is the safe failure here.
  */
 export function generationTipsPaidSql(userId: number, { from, to }: { from: Date; to?: Date }) {
   const jobsTo = to ? ` AND createdAt < ${clickhouseDateTime(to)}` : '';
@@ -266,7 +267,7 @@ export function generationTipsPaidSql(userId: number, { from, to }: { from: Date
   const daysNear = `arrayDistinct([toDate(date - ${CHARGE_TO_JOB_SLACK}), toDate(date), toDate(date + ${CHARGE_TO_JOB_SLACK})])`;
   // Charges and refunds are two scans: one OR across them defeats the pruning of each.
   return `
-    SELECT toInt64(floor(tips)) AS amount
+    SELECT toInt64(floor(greatest(0, tips - refunded))) AS amount
     FROM (
       SELECT toDate(createdAt) AS day, sum(creatorsTip) AS tips
       FROM (
@@ -279,20 +280,22 @@ export function generationTipsPaidSql(userId: number, { from, to }: { from: Date
       GROUP BY day
     ) AS tipped
     INNER JOIN (
-      SELECT day FROM (
-        SELECT arrayJoin(${daysNear}) AS day, fromAccountType = ${yellowSql} AS yellow, 0 AS refunded
+      SELECT day, sum(refundedAmount) AS refunded FROM (
+        SELECT arrayJoin(${daysNear}) AS day, 1 AS isCharge, fromAccountType = ${yellowSql} AS yellow,
+          toInt64(0) AS refundedAmount
         FROM buzzTransactions
         WHERE type = 'generation' AND fromAccountId = ${userId}
           AND date >= ${ledgerFrom}${ledgerTo}
         UNION ALL
-        SELECT arrayJoin(${daysNear}) AS day, 0 AS yellow, 1 AS refunded
+        SELECT arrayJoin(${daysNear}) AS day, 0 AS isCharge, 1 AS yellow,
+          toInt64(amount) AS refundedAmount
         FROM buzzTransactions
         WHERE type = 'refund' AND toAccountId = ${userId}
           AND JSONExtractString(details, 'workflowId') != ''
           AND date >= ${ledgerFrom}${ledgerTo}
       )
       GROUP BY day
-      HAVING min(yellow) = 1 AND max(refunded) = 0
+      HAVING max(isCharge) = 1 AND min(yellow) = 1
     ) AS yellowOnly USING (day)
   `;
 }
