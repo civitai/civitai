@@ -157,7 +157,10 @@ describe('SessionDiagnostics', () => {
       })
     );
     await render({ session: undefined });
-    await vi.waitFor(() => expect(diagnostics?.fetchCount).toBe(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(diagnostics?.fetchCount).toBe(1);
     expect(diagnostics).toMatchObject({
       history: ['loading', 'unauthenticated'],
       source: 'fetch:mount:undetermined',
