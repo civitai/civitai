@@ -50,73 +50,32 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * App Store Listings (W13) — P2b unified store CARD, over BOTH kinds.
+ * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
  *
- * Renders one `ListingCard` (from `appListings.listAvailable`): cover + app icon
- * + name + tagline + a kind-aware CTA (Open / View details / Visit ↗) + a stats
- * line BELOW that CTA carrying the Steam-style recommend rollup and, for a
- * measurable listing, the play count. Mirrors the visual language of the live
- * `AppBlockCard` (Mantine Card + category-glyph cover placeholder) so listings
- * feel native.
+ * Renders one `ListingCard` (from `appListings.listAvailable`) as card A: a cover with
+ * the `⋮` menu over its top-right; a header row of the app icon (straddling the cover's
+ * bottom edge), a one-line title and the kind-aware CTA (Open / View details / Visit ↗),
+ * the title and CTA centred on the icon's centre; badges and the tagline; and, under a
+ * divider, a footer with the recommend rollup and play count on the left and the creator on
+ * the right. The whole card is one click target: the title link is stretched over it
+ * (`after:inset-0`) and every other control sits above that layer (`relative z-10`).
  *
- * 🔴 THERE IS NO AUTHOR CHIP ON THIS CARD. A "by {creator}" line used to sit
- * under the title; the operator dropped it from the store card (2026-09-06) —
- * a grid of ~24 tiles is a browsing surface, and the byline competed with the
- * title for the one line a shopper actually reads. Attribution is NOT lost: the
- * DETAIL surfaces carry it independently and are untouched by that decision —
- * `AppDetailsModal`, `appDetailAuthorView` and `AppListingDetailBody` (which has
- * its own, separate `CreatorChip`). `ListingCard.creator` is still on the DTO and
- * still read here for the owner test (`isOwner`), so this is a rendering change,
- * not a schema one.
+ * 🔴 THE CREATOR BYLINE IS BACK. The operator dropped it from the store card on 2026-09-06
+ * (a grid of ~24 tiles is a browsing surface); the design pass of 2026-10-27 reversed that.
+ * A creator without a username renders no byline link. The detail page has its own
+ * `CreatorChip`.
  *
- * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from
- * `appListingCardGeometry.ts`: cover ratio, icon size, reserved title lines and
- * line-height, action-row height / padding / gap / control size. The reason is a
- * relationship this file cannot enforce on its own: `AppListingCardSkeleton` must
- * reserve EXACTLY this geometry or the grid reflows when the query resolves, and
- * two hand-copied numbers is how that drifts. Do not re-literalise a value below
- * "for readability" — the literal is the bug.
+ * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from `appListingCardGeometry.ts`
+ * (cover ratio, icon size and overlap, title font and line-height, CTA/menu/footer/avatar
+ * sizes). `AppListingCardSkeleton` must reserve EXACTLY this geometry or the grid reflows
+ * when the query resolves. `__tests__/appListingCardView.test.ts` enumerates the module's
+ * exports and requires both files to read every one. Do not re-literalise a value below.
  *
- * 🔴 AND "READS THEM" MEANS ALL OF THEM, WHICH IS NOW MACHINE-CHECKED AGAINST THE
- * MODULE'S EXPORTS. This header claimed the action-row HEIGHT among them while
- * nothing here consumed it; the row's `mih` is that consumer, and
- * `__tests__/appListingCardView.test.ts` enumerates the module's `Object.keys`
- * rather than a hand-maintained list, so the claim cannot quietly outgrow the code
- * again.
+ * 🔴 THE PLAY COUNT RENDERS ONLY FOR A COUNT OF ONE OR MORE. Both `openCount === null`
+ * (off-site, unmeasurable) and `0` (measured, empty) render nothing: an OPERATOR OVERRIDE
+ * (2026-09-06, "dont show 0 plays"). The DTO keeps them apart (see `cardOpenCount`); the
+ * rule is in `getPlayCountLabel`, not here.
  *
- * 🔴 THE RECOMMEND ROLLUP IS IN NEITHER THE META BLOCK NOR THE ACTION ROW — IT IS
- * A LINE OF ITS OWN, BELOW THE ROW. Its history is two moves, and both are worth
- * knowing because each deleted apparatus that must not come back:
- *   1. It first sat OPPOSITE the CTA inside the action row under
- *      `justify="space-between"`, which cost an enforced `min-width` floor, a
- *      `@container` breakpoint that hid it entirely below 264px, and a derived
- *      threshold constant with its own drift guard. All of that is deleted.
- *   2. It then sat in the META BLOCK, under the author chip. The operator moved
- *      it below the CTA (2026-09-06), in the same pass that dropped the author.
- * What it keeps from move 1 is the property that mattered: it does not share a
- * flex line with the CTA, so it needs no floor, no breakpoint and no threshold —
- * the action row still holds exactly the CTA + the `⋮` trigger. Whether a viewer
- * gets a `⋮` still has no geometry consequence beyond the trigger's own 36px, so
- * the card still does not compute that predicate.
- *
- * 🔴 THE PLAY COUNT SITS BESIDE THE ROLLUP, AND IT RENDERS ONLY FOR A COUNT OF ONE
- * OR MORE. Both `openCount === null` and `openCount === 0` render NOTHING AT ALL.
- * That is an OPERATOR OVERRIDE recorded as a decision, not a formatting derivation
- * — and the two inputs reach the same pixels for DIFFERENT reasons:
- *   · `null` is STRUCTURALLY UNMEASURABLE (an off-site CTA is a third-party
- *     `target="_blank"` anchor; nothing on-platform observes the click);
- *   · `0` is MEASURED AND EMPTY (an on-site app nobody has opened yet).
- * The DTO keeps those apart deliberately — see `app-listing-read.schema.ts`'s
- * `openCount` and `app-listing.service.ts`'s `cardOpenCount`, whose "do not
- * over-null" paragraph must keep holding — and this card is where the operator's
- * choice to render them IDENTICALLY lives. The rule itself is in
- * `getPlayCountLabel`, not here.
- *
- * ⚠️ THE ZERO HALF REVERSES THE FIRST ROUND OF THIS PR, which rendered "0 plays"
- * and argued that it must. Operator, 2026-09-06: "dont show 0 plays (just show
- * nothing)". Flagged rather than quietly rewritten, because the earlier argument
- * (a zero is a measurement, not an absence) is still right about the DATA and was
- * only ever wrong about the SCREEN.
  *
  * 🔴 THERE IS NO KIND BADGE ON THIS CARD. This line used to claim "a kind badge
  * (App / Connect app / Off-site)" — doubly wrong: two of those labels no longer
@@ -252,26 +211,6 @@ export function ListingCover({
   );
 }
 
-/**
- * ── WHERE THE AUTHOR CHIP WENT ──────────────────────────────────────────────
- *
- * A `CreatorChip` used to live here: a 20px avatar plus a dimmed "by {username}"
- * `TruncatedText`, linking to `/user/<username>`. It is DELETED rather than left
- * unreferenced, because an exported-but-uncalled component is the shape that gets
- * wired back in by the next person who wants a byline.
- *
- * 🔴 IT WAS NOT A SHARED COMPONENT, so nothing else broke: the name is spelled in
- * four places in this codebase and they are four INDEPENDENT things —
- * `AppListingDetailBody` declares its own local `CreatorChip` over
- * `ListingDetail['creator']`, and `AppDetailsModal` / `appDetailAuthorView` only
- * MENTION the name in prose while rendering their own attribution. Checked by
- * grep before deleting, not assumed.
- *
- * The detail surfaces are deliberately untouched: dropping the byline is a
- * decision about a DENSE BROWSING GRID, not about attribution, and an app's
- * author is still one click away on every card (the title links to the detail).
- */
-
 export interface AppListingCardProps {
   card: ListingCard;
   /**
@@ -341,18 +280,6 @@ export function AppListingCard({
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
   const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
 
-  // 🔴 `@container` IS GONE, AND SO IS THE `hasMenu` PREDICATE THAT DROVE IT.
-  // The card declared itself a query container for exactly ONE consumer: the
-  // recommend rollup's `hidden @[264px]:flex`. With the rollup on a line of its
-  // own below the action row there is no container query left on this card, so keeping
-  // `container-type: inline-size` would be an unread containment declaration
-  // that a later reader has to prove unused before touching. Nothing else on the
-  // card is size-queried; re-add it WITH its consumer if that changes.
-  // (`useAppListingActionsMenuVisible` went with it. That hook is now DELETED, not
-  // merely uncalled: it existed solely so this card could lay out around the
-  // trigger, so once the layout stopped depending on the answer it had no consumer
-  // anywhere — and an exported hook with no consumer is the same shape as an unread
-  // containment declaration, i.e. the thing that gets wired back in later.)
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
   // load-bearing. Measured against a `/models` card in the same session (dark),
   // and re-measured at 394px mobile where all four values are identical:
@@ -369,19 +296,12 @@ export function AppListingCard({
   // exactly how this drifted. Taking it from the Tailwind scale pins it to the same
   // token the rest of the site's cards use.
   //
-  // 🔴 PADDING STAYS 16px. The review's "zero padding" is about the MEDIA, and the
-  // cover is already full-bleed via `<Card.Section>`. Unlike `/models`, this card's
-  // text sits BELOW the media rather than overlaid on it, so the body needs padding.
-  //
   // Losing the border is safe at 1-per-row mobile, where the card is effectively
   // full-bleed: the card's own fill (rgb(37,38,43)) separates it from the page
   // (rgb(26,27,30)) with every ancestor transparent — the same separation `/models`
   // already relies on at `border: 0`. Measured, not assumed.
   // The whole card is one click target: the title link is stretched over it (`after:inset-0`),
   // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
-  // 🔴 THE CREATOR BYLINE IS BACK, in the footer, right-aligned. It was dropped from this card on
-  // 2026-09-06 ("a grid of ~24 tiles is a browsing surface, and the byline competed with the
-  // title"); the design pass of 2026-10-27 (card A, approved by the operator) reverses that.
   const creator = card.creator;
   return (
     <Card padding={0} radius={0} className="h-full rounded-md">
