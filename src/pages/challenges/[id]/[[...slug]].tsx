@@ -424,7 +424,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     const canSubmit =
       challenge.status === ChallengeStatus.Active &&
       !!challenge.collectionId &&
-      !currentUser?.muted;
+      !currentUser?.muted &&
+      !currentUser?.meta?.contestBanDetails;
     if (wantsSubmit && canSubmit && challenge.collectionId)
       dialogStore.trigger({
         component: ChallengeSubmitModal,
@@ -432,7 +433,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       });
 
     return abortScroll;
-  }, [challenge, router, currentUser?.muted]);
+  }, [challenge, router, currentUser?.muted, currentUser?.meta?.contestBanDetails]);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -1872,12 +1873,15 @@ function SubmitEntryButton({
   size?: MantineSize;
   fullWidth?: boolean;
 }) {
+  const currentUser = useCurrentUser();
+  const isContestBanned = !!currentUser?.meta?.contestBanDetails;
+  const blocked = isOwner || isContestBanned;
   const button = (
     <Button
       // `data-disabled` instead of `disabled` so the tooltip still receives hover events.
-      data-disabled={isOwner || undefined}
-      aria-disabled={isOwner || undefined}
-      onClick={isOwner ? (e: MouseEvent) => e.preventDefault() : onClick}
+      data-disabled={blocked || undefined}
+      aria-disabled={blocked || undefined}
+      onClick={blocked ? (e: MouseEvent) => e.preventDefault() : onClick}
       leftSection={<IconPhoto size={16} />}
       variant="light"
       color="blue"
@@ -1888,9 +1892,16 @@ function SubmitEntryButton({
     </Button>
   );
 
-  if (isOwner)
+  if (blocked)
     return (
-      <Tooltip label="You can't submit entries to your own challenge" withArrow>
+      <Tooltip
+        label={
+          isOwner
+            ? "You can't submit entries to your own challenge"
+            : 'You are banned from participating in contests'
+        }
+        withArrow
+      >
         {button}
       </Tooltip>
     );
