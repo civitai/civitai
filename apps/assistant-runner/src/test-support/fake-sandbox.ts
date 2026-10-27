@@ -28,8 +28,8 @@ export interface FakeSandboxRecord {
 export type FakeToolBody = (
   args: Record<string, unknown>,
   signal: AbortSignal,
-  /** The sandbox (its name) the call was made in. */
-  sandbox: string
+  /** The sandbox (its name) the call was made in; a body that wraps another may leave it out. */
+  sandbox?: string
 ) => Promise<string> | string;
 
 /** The public half of the single-use key the fake sandbox's `tunnel_key` makes (TEST-ONLY, not a real key). */
@@ -102,15 +102,15 @@ export class FakeSandboxService {
       JSON.stringify({ publicKey: FAKE_TUNNEL_PUBLIC_KEY, stoppedTunnel: false })
     );
     this.tools.set('tunnel_connect', (args, _signal, sandbox) => {
-      this.tunnelHosts.set(sandbox, String(args.host));
+      this.tunnelHosts.set(String(sandbox), String(args.host));
       return JSON.stringify({ running: true, host: args.host, localPort: 5173 });
     });
     this.tools.set('tunnel_disconnect', (_args, _signal, sandbox) => {
-      this.tunnelHosts.delete(sandbox);
+      this.tunnelHosts.delete(String(sandbox));
       return JSON.stringify({ stopped: true });
     });
     this.tools.set('tunnel_status', (_args, _signal, sandbox) => {
-      const host = this.tunnelHosts.get(sandbox);
+      const host = this.tunnelHosts.get(String(sandbox));
       return JSON.stringify(host ? { running: true, host } : { running: false, host: null });
     });
     this.tools.set('run_command', async (args, signal) => {
