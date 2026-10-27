@@ -1,0 +1,72 @@
+import { getClickhouse } from './clickhouse';
+import { clickhouseDate } from './clickhouse-date';
+import type { PromptScan, PromptScanDays, PromptScanLimit } from '$lib/prompt-scans';
+
+/**
+ * The orchestrator's XGuard verdict on generator prompts an account submitted, read from
+ * `orchestration.xguardPromptResults` (the orchestrator's table). It is not a complete history, so the
+ * panel must never present a missing prompt as one the account did not send.
+ *
+ * Read with FINAL so each row is read once, in its current state.
+ *
+ * Label names and any thresholds are deliberately absent from this file: the panel renders whatever
+ * keys the scan wrote, and the moderator picks the cutoff.
+ */
+
+export const PROMPT_SCAN_TIMEOUT_S = 45;
+
+/** ClickHouse's TIMEOUT_EXCEEDED: the scan outran `max_execution_time`. */
+export const isScanTimeout = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && String((e as { code?: unknown }).code) === '159';
+
+type Row = {
+  promptHash: string;
+  createdAt: string;
+  positivePrompt: string;
+  negativePrompt: string;
+  scores: Record<string, number>;
+};
+
+/** `__`-prefixed keys are bookkeeping the scan writes beside its labels, not scores. */
+export function readScores(raw: Record<string, number> | null | undefined) {
+  return Object.entries(raw ?? {})
+    .filter(([label, score]) => !label.startsWith('__') && Number.isFinite(score))
+    .map(([label, score]) => ({ label, score }))
+    .sort((a, b) => b.score - a.score);
+}
+
+export async function getPromptScans(
+  userId: number,
+  { days, limit, signal }: { days: PromptScanDays; limit: PromptScanLimit; signal?: AbortSignal }
+): Promise<PromptScan[]> {
+  const resp = await getClickhouse().query({
+    query: `
+      SELECT toString(promptHash) AS promptHash, createdAt, positivePrompt, negativePrompt, scores
+      FROM orchestration.xguardPromptResults FINAL
+      WHERE userId = {userId:Int32}
+        AND createdAt >= now() - toIntervalDay({days:UInt32})
+      ORDER BY createdAt DESC
+      LIMIT {limit:UInt32}
+    `,
+    query_params: { userId, days, limit },
+    format: 'JSONEachRow',
+    // Every call scans the table, and its time swings with cluster load (8-20 s+ measured); this
+    // stays under Cloudflare's 100 s with room for the request around it. A closed tab cancels it.
+    clickhouse_settings: {
+      max_execution_time: PROMPT_SCAN_TIMEOUT_S,
+      // ClickHouse keeps running a query whose HTTP client went away unless the query is readonly and
+      // asks to be cancelled; the app's user also writes, so this read marks itself readonly.
+      readonly: '2',
+      cancel_http_readonly_queries_on_client_close: 1,
+    },
+    abort_signal: signal,
+  });
+  const rows = await resp.json<Row>();
+  return rows.map((r) => ({
+    id: r.promptHash,
+    createdAt: clickhouseDate(r.createdAt),
+    prompt: r.positivePrompt,
+    negativePrompt: r.negativePrompt || null,
+    scores: readScores(r.scores),
+  }));
+}

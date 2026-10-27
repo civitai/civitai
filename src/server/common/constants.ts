@@ -34,6 +34,20 @@ function getCommentMaxDepth(entityType: string) {
   return wideCommentSurfaces.has(entityType) ? 10 : 5;
 }
 
+/** civitai.com and the deployment's own host, each with its `image.` subdomain. */
+function chatCivHosts() {
+  let baseHost = 'civitai.com';
+  const base = env.NEXT_PUBLIC_BASE_URL;
+  if (base) {
+    try {
+      baseHost = new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`).hostname;
+    } catch {
+      // unparseable: civitai.com only
+    }
+  }
+  return [...new Set([baseHost, 'civitai.com'])].flatMap((host) => [host, `image.${host}`]);
+}
+
 /**
  * Reply levels a surface opens up front, where it differs from "as deep as it holds" on a wide
  * surface or "none" elsewhere. A challenge puts its entry gallery *underneath* the discussion,
@@ -500,14 +514,17 @@ export const constants = {
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
-    // TODO disable just "image.civitai.com" with nothing else
-    civRegex: new RegExp(
-      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
-        .replace(/^https?:\/\//, '')
-        .replace(/\./g, '\\.')}|civitai\\.com)`
-    ),
-    externalRegex:
-      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|civitai\.red(?=[/:?#]|$))/,
+    // Hosts a chat link may point at, matched exactly against the parsed hostname
+    // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
+    civHosts: chatCivHosts(),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
+    externalHosts: [
+      'github.com',
+      'twitter.com',
+      'x.com',
+      'civitai.red',
+      'education.civitai.com',
+    ].flatMap((host) => [host, `www.${host}`]),
   },
   entityCollaborators: {
     maxCollaborators: 15,

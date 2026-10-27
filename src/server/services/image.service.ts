@@ -35,11 +35,13 @@ import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   countFeedPrimary,
+  countMeiliOff,
   feedFliptContext,
   feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   hydrateWithReadRescue,
+  isMeiliOff,
   serveFromFeed,
   type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
@@ -3208,7 +3210,8 @@ export async function getPostImageCounts({
 async function serveImagesFromFeedService(
   searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
-  route: FeedPrimaryRoute
+  route: FeedPrimaryRoute,
+  meiliOff = false
 ) {
   const started = Date.now();
   const { currentUserId } = searchInput;
@@ -3221,7 +3224,7 @@ async function serveImagesFromFeedService(
           maxFollowers: searchInput.newCreatorsMaxFollowers,
         })
       : undefined,
-    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
+    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId, meiliOff) : undefined,
   ]);
   const served = await withSpan('image:feedPrimary', () =>
     serveFromFeed(
@@ -3254,6 +3257,54 @@ const isTransientFeedReason = (reason: string) =>
   ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
 
 /**
+ * Filters the feed has no dimension for, dropped when Meilisearch is off rather than sent there.
+ * The remix filters were decided against. The resource flags narrow a version's gallery to the
+ * images posted to it or attributed by hand; the feed's mirror does not split those, so it serves
+ * the version's whole gallery.
+ */
+const withoutMeiliOnlyFilters = <T extends object>(input: T): T => ({
+  ...input,
+  remixesOnly: undefined,
+  nonRemixesOnly: undefined,
+  hideAutoResources: undefined,
+  hideManualResources: undefined,
+});
+
+/**
+ * The answer to a request the feed service did not serve, when Meilisearch is off: a transient
+ * failure is a retryable 503, a sort the feed does not have and a cursor it cannot continue are a
+ * 400, and every other shape it cannot express is an empty page.
+ */
+function answerWithoutMeili(
+  served: { reason: string; nextCursor?: string },
+  route: FeedPrimaryRoute
+): GetAllImagesIndexResult {
+  const { reason } = served;
+  if (reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
+  if (isTransientFeedReason(reason)) {
+    countMeiliOff('unavailable', reason, route);
+    throw new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Image search is temporarily overloaded — please retry.',
+    });
+  }
+  if (reason.startsWith('sort:')) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError(`Sort "${reason.slice('sort:'.length)}" is not supported`);
+  }
+  if (reason === DEEP_OFFSET) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
+  }
+  if (reason === CURSOR_UNPARSED) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
+  }
+  countMeiliOff('empty', reason, route);
+  return { items: [], nextCursor: undefined };
+}
+
+/**
  * The public REST images endpoint's feed-service branch. `undefined` means the feed service did
  * not serve the request and the caller answers it from the search path, unchanged.
  *
@@ -3262,7 +3313,8 @@ const isTransientFeedReason = (reason: string) =>
  */
 export async function getImagesFromFeedServiceForRest(
   searchInput: ImageSearchInput & { headers?: Record<string, string> },
-  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0]
+  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
+  opts: { meiliOff?: boolean } = {}
 ): Promise<GetAllImagesIndexResult | undefined> {
   const fallBack = (reason: string) => {
     countFeedPrimary('unmapped', reason, 'rest');
@@ -3275,7 +3327,11 @@ export async function getImagesFromFeedServiceForRest(
       throw throwBadRequestError('This cursor can no longer be continued; start again without it');
     return undefined;
   }
-  if (!feedCursor) {
+  // Under FEED_SERVICE_MEILI_OFF this never returns undefined, which would send the caller to the
+  // search index.
+  const meiliOff = opts.meiliOff ?? (await isMeiliOff(searchInput));
+  if (meiliOff && searchInput.limit < 1) return { items: [], nextCursor: undefined };
+  if (!feedCursor && !meiliOff) {
     const enabled = await withSpan('image:flipt:feedRestImages', () =>
       getFliptBoolean(
         FLIPT_FEATURE_FLAGS.FEED_SERVICE_REST_IMAGES,
@@ -3293,7 +3349,7 @@ export async function getImagesFromFeedServiceForRest(
     if (searchInput.limit < 1) return fallBack('limit:0');
   }
 
-  const input = { ...searchInput };
+  const input = meiliOff ? withoutMeiliOnlyFilters(searchInput) : { ...searchInput };
   const prepared = await prepareImageFeedRequest(input, {
     id: input.currentUserId,
     isModerator: input.isModerator,
@@ -3312,7 +3368,8 @@ export async function getImagesFromFeedServiceForRest(
       tags: input.tags,
       excludedTagIds: input.excludedTagIds,
     },
-    'rest'
+    'rest',
+    meiliOff
   );
   if (served.ok)
     return {
@@ -3321,9 +3378,10 @@ export async function getImagesFromFeedServiceForRest(
       items: served.page.data.map((image) => ({ ...image, createdAt: image.sortAt })),
       nextCursor: served.page.nextCursor,
     };
+  // The hydrate filtered out every row of that page; the scroll steps past it, or ends. The search
+  // index cannot return those rows either.
+  if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
   if (feedCursor) {
-    // The hydrate filtered out every row of that page; the scroll steps past it, or ends.
-    if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
     if (isTransientFeedReason(served.reason))
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
@@ -3331,6 +3389,7 @@ export async function getImagesFromFeedServiceForRest(
       });
     throw throwBadRequestError('This cursor cannot be continued with these filters');
   }
+  if (meiliOff) return answerWithoutMeili(served, 'rest');
   return undefined;
 }
 
@@ -3410,22 +3469,36 @@ export const getAllImagesIndex = async (
   };
   // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
   // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
+  // Under FEED_SERVICE_MEILI_OFF nothing goes to Meilisearch; see answerWithoutMeili.
   if (feedPrimaryAvailable()) {
-    const feedPrimary = await withSpan('image:flipt:feedPrimary', () =>
-      getFliptBoolean(
-        FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
-        currentUserId?.toString() || 'anonymous',
-        feedFliptContext(searchInput)
-      )
-    );
+    const meiliOff = await isMeiliOff(searchInput);
+    const feedPrimary =
+      meiliOff ||
+      (await withSpan('image:flipt:feedPrimary', () =>
+        getFliptBoolean(
+          FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+          currentUserId?.toString() || 'anonymous',
+          feedFliptContext(searchInput)
+        )
+      ));
     if (feedPrimary) {
-      const served = await serveImagesFromFeedService(searchInput, input, 'website');
+      const served = await serveImagesFromFeedService(
+        meiliOff ? withoutMeiliOnlyFilters(searchInput) : searchInput,
+        input,
+        'website',
+        meiliOff
+      );
       if (served.ok)
         return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
       if (served.reason === DEEP_OFFSET)
         throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
       if (served.reason === CURSOR_UNPARSED)
         throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
+      // Every row of the page was filtered out at hydrate. The search index cannot return those
+      // rows either, so the scroll steps past the page on the feed's cursor.
+      if (served.reason === 'hydrate:empty')
+        return { items: [], nextCursor: served.nextCursor, source: 'feed' };
+      if (meiliOff) return { ...answerWithoutMeili(served, 'website'), source: 'feed' };
     }
   }
 
@@ -4095,15 +4168,21 @@ async function resolvedHubSources(input: ImageSearchInput) {
  * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
  * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
  * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
- * are empty on both paths. Undefined while hubs are not switched over: the hub is then not
- * servable by the feed and the request takes the index path.
+ * are empty on both paths. Undefined while hubs are not switched over (and Meilisearch is on): the
+ * hub is then not servable by the feed and the request takes the index path.
  */
-async function resolveHubForFeed(searchInput: CapturableSearchInput, viewerId: number | undefined) {
-  const enabled = await getFliptBoolean(
-    FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
-    viewerId?.toString() || 'anonymous',
-    feedFliptContext(searchInput)
-  );
+async function resolveHubForFeed(
+  searchInput: CapturableSearchInput,
+  viewerId: number | undefined,
+  meiliOff = false
+) {
+  const enabled =
+    meiliOff ||
+    (await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
+      viewerId?.toString() || 'anonymous',
+      feedFliptContext(searchInput)
+    ));
   if (!enabled) return undefined;
   const input = searchInput as ImageSearchInput;
   const sources = await resolvedHubSources(input);

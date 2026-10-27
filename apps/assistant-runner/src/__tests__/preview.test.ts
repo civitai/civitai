@@ -16,7 +16,7 @@ import {
   AppAssistantTools,
   autoPreviewFailed,
 } from '../app-assistant/provider';
-import type { OpenTools } from '../interfaces';
+import type { OpenTools } from '../core/interfaces';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };

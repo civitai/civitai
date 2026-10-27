@@ -21,6 +21,7 @@ import {
   type BuzzSpendType,
 } from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -699,6 +700,18 @@ export const purchaseMembershipWithBuzz = async ({
   };
 };
 
+const liveBuzzMembershipWhere = (userId: number) => ({
+  userId,
+  buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  status: { notIn: ['canceled', 'incomplete_expired'] },
+});
+const endedSubscriptionData = (now: Date) => ({
+  status: 'canceled',
+  canceledAt: now,
+  endedAt: now,
+  updatedAt: now,
+});
+
 /**
  * Ends a Buzz-purchased membership because the user now has a real one.
  *
@@ -717,12 +730,8 @@ export const supersedeBuzzMembershipForPaidSubscription = async ({
 }) => {
   const now = new Date();
   const { count } = await dbWrite.customerSubscription.updateMany({
-    where: {
-      userId,
-      buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-      status: { notIn: ['canceled', 'incomplete_expired'] },
-    },
-    data: { status: 'canceled', canceledAt: now, endedAt: now, updatedAt: now },
+    where: liveBuzzMembershipWhere(userId),
+    data: endedSubscriptionData(now),
   });
 
   if (!count) return { superseded: 0 };
@@ -731,6 +740,65 @@ export const supersedeBuzzMembershipForPaidSubscription = async ({
   await invalidateSubscriptionCaches(userId);
 
   return { superseded: count };
+};
+
+/**
+ * Ends a Buzz-purchased membership on a moderator's behalf, e.g. after support refunds the Buzz.
+ *
+ * Moves no Buzz: refunding the purchase and clawing back any membership Buzz are separate steps.
+ * Cancelled rather than deleted, like `supersedeBuzzMembershipForPaidSubscription`.
+ */
+export const endBuzzMembership = async ({
+  userId,
+  moderatorId,
+}: {
+  userId: number;
+  moderatorId: number;
+}) => {
+  const { trackModActivity } = await import('~/server/services/moderator.service');
+
+  const now = new Date();
+  const ended = await dbWrite.$transaction(async (tx) => {
+    const row = await tx.customerSubscription.findFirst({
+      where: liveBuzzMembershipWhere(userId),
+      select: {
+        id: true,
+        status: true,
+        productId: true,
+        currentPeriodEnd: true,
+      },
+    });
+    if (!row) throw throwNotFoundError('This account has no Buzz-purchased membership to end.');
+
+    await tx.customerSubscription.update({
+      where: { id: row.id },
+      data: endedSubscriptionData(now),
+    });
+    await trackModActivity(
+      moderatorId,
+      { entityType: 'user', entityId: userId, activity: `endBuzzMembership:${row.productId}` },
+      tx
+    );
+
+    return row;
+  });
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+  // The row is already committed: a Freshdesk failure must not report the end as failed.
+  const freshdeskSynced = await syncFreshdeskMembership({ userId }).then(
+    () => true,
+    () => false
+  );
+
+  return {
+    subscriptionId: ended.id,
+    productId: ended.productId,
+    previousStatus: ended.status,
+    currentPeriodEnd: ended.currentPeriodEnd,
+    endedAt: now,
+    freshdeskSynced,
+  };
 };
 
 export const claimPrepaidToken = async ({

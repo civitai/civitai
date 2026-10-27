@@ -11,7 +11,7 @@ import {
 // The post-login and logout API routes each redirect to a caller-supplied path. These pin that the
 // value reaching `res.redirect` is the shared same-origin rule's output, end to end through each handler.
 
-// No hub configured: logout takes its same-site branch and redirects straight to the callback path.
+// No hub configured: logout redirects straight to the callback path.
 const { BASE_URL } = vi.hoisted(() => {
   delete process.env.AUTH_JWT_ISSUER;
   return { BASE_URL: 'https://civitai.example' };

@@ -5,16 +5,16 @@ import { contentRestriction } from '~/server/common/content-restriction';
 import { createNotification } from '~/server/services/notification.service';
 import {
   checkStorylineContinuationAtPublish,
-  continuationPostSelect,
-  continuationReadiness,
   createStorylinePlacement,
   isRefusal,
 } from '~/server/services/storyline-placement.service';
 import {
   assertCanContinueStoryline,
   assertPostCanBeChapter,
+  continuationPostSelect,
+  continuationReadiness,
   createRootChapter,
-  firstChapterFloor,
+  firstChapterMaxNsfwLevel,
   isUniqueViolation,
   storylineCeilingSql,
   writeOwnerChapter,
@@ -22,7 +22,6 @@ import {
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
-  isStorylineCeilingLevel,
   STORYLINE_MINOR_CEILING,
   storylineCeiling,
   storylineLevelAllowed,
@@ -278,23 +277,10 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
       let ceilingRaisedTo: number | undefined;
       if (link.parentChapterId == null) {
         if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-        let { maxNsfwLevel } = storyline;
-        if (
-          !storylineLevelAllowed({
-            postLevel: post.nsfwLevel,
-            maxNsfwLevel: storylineCeiling(storyline),
-          })
-        ) {
-          const needed = firstChapterFloor(post);
-          const fits =
-            needed !== null &&
-            isStorylineCeilingLevel(needed) &&
-            storylineLevelAllowed({
-              postLevel: post.nsfwLevel,
-              maxNsfwLevel: storylineCeiling({ ...storyline, maxNsfwLevel: needed }),
-            });
-          if (!fits) return { status: 'waiting', reason: 'aboveRating' };
-          maxNsfwLevel = ceilingRaisedTo = needed;
+        const maxNsfwLevel = firstChapterMaxNsfwLevel(storyline, post);
+        if (maxNsfwLevel === null) return { status: 'waiting', reason: 'aboveRating' };
+        if (maxNsfwLevel !== storyline.maxNsfwLevel) {
+          ceilingRaisedTo = maxNsfwLevel;
           await tx.storyline.update({ where: { id: link.storylineId }, data: { maxNsfwLevel } });
         }
         await assertPostCanBeChapter(tx, {

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
-import { Kysely } from 'kysely';
+import { Kysely, type KyselyConfig } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -66,8 +66,8 @@ export async function freshRatingReviewDb(): Promise<PGlite> {
   return db;
 }
 
-export const ratingReviewKysely = (db: PGlite): Kysely<DB> =>
-  new Kysely<DB>({ dialect: pgliteDialect(db) });
+export const ratingReviewKysely = (db: PGlite, log?: KyselyConfig['log']): Kysely<DB> =>
+  new Kysely<DB>({ dialect: pgliteDialect(db), log });
 
 export async function rows<T>(db: PGlite, text: string, params: unknown[] = []): Promise<T[]> {
   return (await db.query<T>(text, params)).rows;

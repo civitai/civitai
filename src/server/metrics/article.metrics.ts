@@ -106,7 +106,6 @@ export const articleMetrics = createMetricProcessor({
   rank: {
     table: 'ArticleRank',
     primaryKey: 'articleId',
-    indexes: ['reactionCountMonthRank'],
   },
 });
 

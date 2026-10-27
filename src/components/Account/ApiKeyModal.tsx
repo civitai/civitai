@@ -25,6 +25,7 @@ import {
   TokenScopePresets,
   tokenScopePresetLabels,
   tokenScopeGrid,
+  toggleGridScope,
 } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification } from '~/utils/notifications';
@@ -109,8 +110,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
   };
 
   const handleToggleFlag = (flag: number) => {
-    const newScope = Flags.toggleFlag(tokenScope, flag);
-    updateTokenScope(newScope);
+    updateTokenScope(toggleGridScope(tokenScope, flag));
   };
 
   const handleSaveApiKey = (values: z.infer<typeof schema>) => {

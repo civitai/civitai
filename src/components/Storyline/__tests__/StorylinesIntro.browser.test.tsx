@@ -121,7 +121,10 @@ describe('StorylinesIntro', () => {
     renderWithProviders(<StorylinesIntro />);
 
     await page.getByRole('button', { name: 'Start a storyline' }).click();
-    expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal });
+    expect(trigger).toHaveBeenCalledWith({
+      component: StartStorylineModal,
+      props: { post: undefined },
+    });
     expect(page.getByTestId('login-redirect').elements()).toHaveLength(0);
     // A button that opens the sheet, not a link that leaves the page.
     expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);

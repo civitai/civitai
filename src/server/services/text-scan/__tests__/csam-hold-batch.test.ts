@@ -102,8 +102,11 @@ describe('resolveCsamHoldInput', () => {
   const hold = (holdId: number) => ({ holdId, textHash: `h${holdId}` });
 
   it('keeps the single-hold shape', () => {
+    expect(
+      resolveCsamHoldInput.safeParse({ holdId: 1, textHash: 'h1', decision: 'remove_ban' }).success
+    ).toBe(true);
     expect(resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban' }).success).toBe(
-      true
+      false
     );
   });
 

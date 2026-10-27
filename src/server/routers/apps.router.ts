@@ -13,6 +13,7 @@ import {
   listAppStorageKeys,
   setAppStorageValue,
 } from '~/server/services/apps/app-storage.service';
+import { assertLegacyStoreAvailable } from '~/server/services/apps/legacy-store-shutdown';
 import { middleware, publicProcedure, router } from '~/server/trpc';
 
 /**
@@ -95,7 +96,12 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
  * Measured before this: dropping the gate from `set` alone was green across every suite that
  * names this router.
  */
-const appStorageProcedure = publicProcedure.use(enforceAppBlocksFlag);
+const appStorageProcedure = publicProcedure.use(enforceAppBlocksFlag).use(
+  middleware(async ({ next }) => {
+    await assertLegacyStoreAvailable('app');
+    return next();
+  })
+);
 
 /**
  * `blockToken` rides INSIDE the input on this transport; on REST it rides in the

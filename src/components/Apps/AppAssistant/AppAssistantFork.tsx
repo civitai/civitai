@@ -28,7 +28,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * FORKABLE APPS — the App Assistant side of a fork (`/apps/assistant?fork=<slug>`).
+ * FORKABLE APPS — the App Assistant side of a fork (`/apps/build?fork=<slug>`).
  *
  *   1. Read the caller's fork session (`appListings.getForkSession`): the parent's name and the
  *      seed `appListings.startFork` built.

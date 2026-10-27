@@ -251,6 +251,51 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
 
+/** What the refusals and the readiness check read off a continuation post. */
+export const continuationPostSelect = {
+  userId: true,
+  publishedAt: true,
+  nsfwLevel: true,
+  tosViolation: true,
+  storylineChapter: { select: { id: true } },
+  images: {
+    select: { ingestion: true, tosViolation: true, minor: true, poi: true, needsReview: true },
+  },
+} satisfies Prisma.PostSelect;
+
+type ContinuationPost = Prisma.PostGetPayload<{ select: typeof continuationPostSelect }>;
+
+/**
+ * Where a continuation post stands.
+ *
+ * `doomed` is a moderation verdict on the post or any image in it and never
+ * passes by waiting. `pending` is a state that resolves on its own: not
+ * published, scheduled for later, an image still scanning, or no rating yet.
+ * `inReview` is a scanned image a moderator has to look at.
+ */
+export function continuationReadiness(
+  post: Pick<ContinuationPost, 'publishedAt' | 'nsfwLevel' | 'tosViolation' | 'images'>,
+  now = new Date()
+): 'doomed' | 'pending' | 'inReview' | 'ready' {
+  if (
+    post.tosViolation ||
+    post.images.some(
+      (image) => image.tosViolation || image.minor || image.poi || image.ingestion === 'Blocked'
+    )
+  )
+    return 'doomed';
+  if (
+    !post.publishedAt ||
+    post.publishedAt > now ||
+    !post.images.length ||
+    post.images.some((image) => image.ingestion !== 'Scanned') ||
+    !post.nsfwLevel
+  )
+    return 'pending';
+  if (post.images.some((image) => image.needsReview != null)) return 'inReview';
+  return 'ready';
+}
+
 /**
  * Shared by every path that adds a chapter, so the rules cannot drift between them.
  */
@@ -521,6 +566,8 @@ export async function linkPendingChapter(
     linkedStorylineId = parent.storylineId;
   } else {
     if (!storylineId) throw throwBadRequestError('Name the storyline this post starts');
+    // Waits out a `setFirstChapter`, so its chapter 1 is seen below rather than orphaning this draft.
+    await db.$queryRaw`SELECT 1 FROM "Storyline" WHERE id = ${storylineId} FOR SHARE`;
     const storyline = await db.storyline.findUnique({
       where: { id: storylineId },
       select: {
@@ -758,6 +805,132 @@ export async function updateStoryline({
   if (title !== undefined && title !== current.title)
     scanEntityInBackground({ entityType: 'Storyline', entityId: id });
   return updated;
+}
+
+/**
+ * Deletes a storyline that has never had a chapter, for its owner only. Chapter rows are never
+ * deleted (a removed or post-deleted chapter stays as a tombstone), so "no rows" means no chapter
+ * in any state, and with it no continuation placement or Buzz: every placement targets a chapter's
+ * post. A chapter-1 draft is unlinked by the cascade and stays an ordinary draft.
+ */
+export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
+  await dbWrite.$transaction(async (tx) => {
+    // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
+    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    `;
+    if (!owned) throw throwNotFoundError('Storyline not found');
+    if (owned.userId !== userId)
+      throw throwAuthorizationError('Only the owner can delete this storyline');
+    // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
+    // below would otherwise deadlock against a chapter-1 draft going live.
+    await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
+    // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
+    // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
+    // key takes KEY SHARE. Whatever committed first, the count below sees it.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
+      SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Storyline not found');
+    // Kept for moderation: deleting would drop the takedown and any appeal with it.
+    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+    const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${id}) AS "hasChapter"
+    `;
+    if (hasChapter) throw throwBadRequestError('Only a storyline with no chapters can be deleted');
+    // No foreign key: the owner's continuation price for this storyline would outlive it.
+    await tx.$executeRaw`
+      DELETE FROM "PlacementSpace"
+      WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
+    `;
+    await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+  });
+  return { id };
+}
+
+/**
+ * Makes a post its owner has already published chapter 1 of their empty storyline. The post is
+ * held to `createStoryline`'s rules and, like a chapter-1 draft going live (`promotePendingChapter`),
+ * must be scanned and out of review, and raises the ceiling to fit it.
+ */
+export async function setFirstChapter({
+  storylineId,
+  postId,
+  userId,
+}: {
+  storylineId: number;
+  postId: number;
+  userId: number;
+}) {
+  try {
+    return await dbWrite.$transaction(async (tx) => {
+      const [owned] = await tx.$queryRaw<{ userId: number }[]>`
+        SELECT "userId" FROM "Storyline" WHERE id = ${storylineId}
+      `;
+      if (!owned) throw throwNotFoundError('Storyline not found');
+      if (owned.userId !== userId)
+        throw throwAuthorizationError("Only the storyline's creator can choose its first chapter");
+      // `deleteStoryline`'s order, drafts then the storyline. NO KEY UPDATE rather than an add's
+      // SHARE: the ceiling update below would otherwise have two of these deadlock upgrading.
+      await tx.$queryRaw`
+        SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${storylineId} FOR UPDATE
+      `;
+      const [storyline] = await tx.$queryRaw<
+        { maxNsfwLevel: number; minorByScan: boolean; tosViolation: boolean }[]
+      >`
+        SELECT "maxNsfwLevel", "minorByScan", "tosViolation" FROM "Storyline"
+        WHERE id = ${storylineId}
+        FOR NO KEY UPDATE
+      `;
+      if (!storyline) throw throwNotFoundError('Storyline not found');
+      if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      // Read after the storyline lock, which `linkPendingChapter` waits on: a draft linked while
+      // this waited is seen here, not missed by the draft lock above.
+      const [{ hasChapter, hasDraft }] = await tx.$queryRaw<
+        { hasChapter: boolean; hasDraft: boolean }[]
+      >`
+        SELECT
+          EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${storylineId}) AS "hasChapter",
+          EXISTS (
+            SELECT 1 FROM "StorylinePendingChapter"
+            WHERE "storylineId" = ${storylineId} AND "parentChapterId" IS NULL
+          ) AS "hasDraft"
+      `;
+      if (hasChapter) throw throwBadRequestError('This storyline already has its first chapter');
+      if (hasDraft)
+        throw throwBadRequestError('This storyline already has a draft of its first chapter');
+
+      const post = await tx.post.findUnique({
+        where: { id: postId },
+        select: continuationPostSelect,
+      });
+      // Nothing fits: judged at the current ceiling, so the refusal is the usual one.
+      const maxNsfwLevel =
+        (post && firstChapterMaxNsfwLevel(storyline, post)) ?? storyline.maxNsfwLevel;
+      await assertPostCanBeChapter(tx, {
+        postId,
+        authorId: userId,
+        maxNsfwLevel: storylineCeiling({ ...storyline, maxNsfwLevel }),
+      });
+      // Its rating may still change while an image is scanning or in review.
+      const readiness = post ? continuationReadiness(post) : 'doomed';
+      if (readiness === 'doomed')
+        throw throwBadRequestError('This post cannot be added to a storyline');
+      if (readiness !== 'ready')
+        throw throwBadRequestError(
+          "This post's images are still being checked. Try again once they are"
+        );
+      const raised = maxNsfwLevel !== storyline.maxNsfwLevel;
+      if (raised) await tx.storyline.update({ where: { id: storylineId }, data: { maxNsfwLevel } });
+      const { id: chapterId } = await createRootChapter(tx, { storylineId, postId, userId });
+      return { storylineId, chapterId, ceilingRaisedTo: raised ? maxNsfwLevel : undefined };
+    });
+  } catch (error) {
+    // Chapter 1 is held by the locks above, so this is the post joining another storyline
+    // between its check and the insert.
+    if (isUniqueViolation(error)) throw throwBadRequestError('This post is already in a storyline');
+    throw error;
+  }
 }
 
 /**
@@ -1052,6 +1225,26 @@ export function firstChapterFloor(
   if (!post || post.tosViolation || !post.nsfwLevel) return null;
   const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
   return highest === NsfwLevel.Blocked ? null : highest;
+}
+
+/**
+ * The owner's ceiling for a storyline about to get `post` as chapter 1: unchanged when the post
+ * fits, raised to the post's rating when it does not, or null when no ceiling fits it (unrated,
+ * Blocked, or held to safe for work by a minor-flagged title). The owner picked the ceiling before
+ * choosing chapter 1, so chapter 1 sets it rather than being refused by it.
+ */
+export function firstChapterMaxNsfwLevel(
+  storyline: { maxNsfwLevel: number; minorByScan: boolean },
+  post: { nsfwLevel: number; tosViolation: boolean }
+) {
+  const fits = (maxNsfwLevel: number) =>
+    storylineLevelAllowed({
+      postLevel: post.nsfwLevel,
+      maxNsfwLevel: storylineCeiling({ ...storyline, maxNsfwLevel }),
+    });
+  if (fits(storyline.maxNsfwLevel)) return storyline.maxNsfwLevel;
+  const needed = firstChapterFloor(post);
+  return needed !== null && isStorylineCeilingLevel(needed) && fits(needed) ? needed : null;
 }
 
 /** The owner continuing their own story directly; everyone else continues through a placement. */

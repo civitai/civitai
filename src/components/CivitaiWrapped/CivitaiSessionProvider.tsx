@@ -96,6 +96,7 @@ export function CivitaiSessionProvider({
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    user,
     data?.expires,
     allowMatureContent,
     disableHidden,

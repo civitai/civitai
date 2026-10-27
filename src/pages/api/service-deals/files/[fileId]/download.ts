@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { Tracker } from '~/server/clickhouse/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import {
   getServiceDealFileDownloadUrl,
@@ -26,5 +27,5 @@ export default AuthedEndpoint(async function downloadServiceDealFile(req, res, u
   });
   if (!target) return res.status(404).json({ error: 'Not found' });
 
-  return res.redirect(await getServiceDealFileDownloadUrl(target));
+  return res.redirect(await getServiceDealFileDownloadUrl(target, new Tracker(req, res)));
 });

@@ -18,6 +18,13 @@ describe('validateLink.url', () => {
     expect(validateLink.url('https://civitai.red/user/someone')).toBe(true);
   });
 
+  it('accepts education.civitai.com URLs so guide links get linkified in chat', () => {
+    expect(
+      validateLink.url('https://education.civitai.com/civitais-guide-to-resource-types/#Loras')
+    ).toBe(true);
+    expect(validateLink.url('education.civitai.com')).toBe(true);
+  });
+
   it('still accepts existing allowlist domains and civitai.com/AIR', () => {
     expect(validateLink.url('https://github.com/civitai/civitai')).toBe(true);
     expect(validateLink.url('https://civitai.com/models/123')).toBe(true);
@@ -29,6 +36,60 @@ describe('validateLink.url', () => {
     // fetched by unfurl() as if it were the trusted .red domain.
     expect(validateLink.url('https://civitai.red.evil.com/x')).toBe(false);
     expect(validateLink.url('https://example.com/x')).toBe(false);
+    expect(validateLink.url('https://education.civitai.com.evil.com/x')).toBe(false);
+  });
+
+  // Hosts are matched exactly on the parsed URL, so a name that merely starts with an
+  // allowlisted host, or puts one in the credentials, is not a link.
+  it.each([
+    'https://civitai.com.example.org/x',
+    'https://civitai.community/x',
+    'civitai.com.example.org/x',
+    'https://image.civitai.com.example.org/x',
+    'https://github.com.example.org/x',
+    'https://x.com.example.org/x',
+    'https://twitter.com.example.org/x',
+    'https://civitai.red.example.org/x',
+    'https://education.civitai.com.example.org/x',
+    'https://www.github.com.example.org/x',
+    'https://notgithub.com/x',
+  ])('rejects the look-alike host %s', (url) => {
+    expect(validateLink.url(url)).toBe(false);
+    expect(getLinkHref(url)).toBeUndefined();
+  });
+
+  it.each([
+    'https://civitai.com:x@other.host/',
+    'https://civitai.com@other.host/',
+    'https://github.com:x@other.host/',
+    'https://twitter.com:x@other.host/',
+    'https://x.com:x@other.host/',
+    'https://civitai.red:x@other.host/',
+    'https://education.civitai.com:x@other.host/',
+    'https://user:pass@github.com/x',
+  ])('rejects a URL carrying credentials: %s', (url) => {
+    expect(validateLink.url(url)).toBe(false);
+    expect(getLinkHref(url)).toBeUndefined();
+  });
+
+  it.each([
+    'https://civitai.com',
+    'https://civitai.com/',
+    'civitai.com/models/123',
+    'http://civitai.com/models/123?modelVersionId=4#gallery',
+    'https://civitai.com:443/models/123',
+    'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg',
+    'https://github.com',
+    'github.com/civitai/civitai/pull/1?tab=files#diff',
+    'https://www.github.com/civitai',
+    'https://github.com:443/civitai',
+    'https://x.com/civitai/status/1',
+    'https://twitter.com/civitai',
+    'https://civitai.red/models/123?sort=new',
+    'https://education.civitai.com/guide/#Loras',
+  ])('accepts the genuine URL %s', (url) => {
+    expect(validateLink.url(url)).toBe(true);
+    expect(getLinkHref(url)).toBeDefined();
   });
 });
 
@@ -50,6 +111,14 @@ describe('getLinkHref', () => {
 
   it('rewrites civitai.com links to an internal relative path', () => {
     expect(getLinkHref('https://civitai.com/models/123')).toBe('/models/123');
+  });
+
+  it('keeps the query and fragment of a civitai.com link, and drops a port', () => {
+    expect(getLinkHref('https://civitai.com/models/123?modelVersionId=4#gallery')).toBe(
+      '/models/123?modelVersionId=4#gallery'
+    );
+    expect(getLinkHref('https://civitai.com:443/models/123')).toBe('/models/123');
+    expect(getLinkHref('https://civitai.com')).toBe('/');
   });
 
   it('resolves AIR URNs to a model URL', () => {

@@ -125,6 +125,6 @@ describe('prepareMessage', () => {
     // importers of `OWNER_SUBMISSIONS_URL` rather than stranding it — count them from the
     // constant's definition rather than trusting a total written here.
     expect(msg(DETAILS)!.url).toBe(OWNER_SUBMISSIONS_URL);
-    expect(OWNER_SUBMISSIONS_URL).toBe('/apps/build');
+    expect(OWNER_SUBMISSIONS_URL).toBe('/apps/build?view=apps');
   });
 });

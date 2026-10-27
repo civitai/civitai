@@ -16,7 +16,7 @@ import {
   type RestartOutcome,
 } from '../app-assistant/preview-restart';
 import { MintRefusedError } from '../minter';
-import type { RunService } from '../service';
+import type { RunService } from '../core/service';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 import { signGrant, signViewer, testKeys } from '../test-support/keys';
 import { createTokenVerifier, viewerAuthenticator } from '../tokens';

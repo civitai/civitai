@@ -209,6 +209,8 @@ export interface Img {
   /** Set once auto-labeling has attempted this image (success, empty, or failure), so the automatic
    *  drain labels each image at most once. A failed attempt falls back to manual editing. */
   labelTried?: boolean;
+  /** Why the last auto-label submit for this image was refused, shown on the tile. */
+  labelError?: string;
   /** The label text this item ARRIVED with (a zip's .txt, a reused dataset's caption), verbatim.
    *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
    *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */

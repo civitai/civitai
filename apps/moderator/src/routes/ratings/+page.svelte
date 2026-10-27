@@ -152,27 +152,38 @@
 {/snippet}
 
 {#snippet listHeader()}
-  <div class="flex flex-col gap-1.5">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
-      <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
-    </div>
-    {#if f.tab === 'other'}
-      <TriageFilterChips groups={[kindGroup]} selectionParam={SELECTION} />
-    {/if}
-    <TriageFilterChips groups={chipGroups} selectionParam={SELECTION} />
-    {#if ownerName}
-      <div class="flex items-center gap-1.5 text-xs text-dark-1">
-        <span>Owner: {ownerName}</span>
-        <a
-          href={clearOwnerHref}
-          class="rounded border border-dark-4 px-1.5 py-px text-dark-0 hover:bg-dark-5"
-          aria-label="Clear owner filter"
-        >
-          ×
-        </a>
+  <div class="flex flex-col gap-2.5">
+    <TriageParamTabs
+      {tabs}
+      current={f.tab}
+      param="tab"
+      defaultValue={DEFAULT_DISPUTE_TAB}
+      label="Dispute type"
+      selectionParam={SELECTION}
+      counts={data.facets?.tabs}
+    />
+    <div class="flex flex-col gap-1.5">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TriageFilterChips status={statusGroup} selectionParam={SELECTION} />
+        <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
       </div>
-    {/if}
+      {#if f.tab === 'other'}
+        <TriageFilterChips groups={[kindGroup]} selectionParam={SELECTION} />
+      {/if}
+      <TriageFilterChips groups={chipGroups} selectionParam={SELECTION} />
+      {#if ownerName}
+        <div class="flex items-center gap-1.5 text-xs text-dark-1">
+          <span>Owner: {ownerName}</span>
+          <a
+            href={clearOwnerHref}
+            class="rounded border border-dark-4 px-1.5 py-px text-dark-0 hover:bg-dark-5"
+            aria-label="Clear owner filter"
+          >
+            ×
+          </a>
+        </div>
+      {/if}
+    </div>
   </div>
 {/snippet}
 
@@ -197,15 +208,6 @@
     subtitle="Owners asking for a different rating. Apply the rating the content earns; the owner sees your note."
     placeholder="Owner or ID"
     searchLabel="Search rating disputes"
-  />
-  <TriageParamTabs
-    {tabs}
-    current={f.tab}
-    param="tab"
-    defaultValue={DEFAULT_DISPUTE_TAB}
-    label="Dispute type"
-    selectionParam={SELECTION}
-    counts={data.facets?.tabs}
   />
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
     <TriageShell

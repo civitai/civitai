@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
-  canAccessAppAssistant,
   canAccessAppsActivity,
   canAccessAppsBuild,
   hasAppsStoreAccess,
@@ -492,25 +491,14 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
   });
 });
 
-// The page's own gate is pinned behaviourally in `src/tests/pages/apps/assistant-page.test.ts`.
-describe('App Assistant row', () => {
+// The App Assistant lives on `/apps/build` now (`/apps/assistant` 301s there); the page's matrix,
+// assistant included, is pinned in `src/tests/pages/apps/build-page.test.ts`, and the rail's Build
+// row for an assistant viewer in `AppsRailNav.storeGate.browser.test.tsx`.
+describe('App Assistant', () => {
   const rows = parseRows(code(read(SUBNAV)));
 
-  it('is visible exactly when the shared gate admits the viewer', () => {
-    const row = rows.find((r) => r.href === '/apps/assistant');
-    expect(row, 'the App Assistant row is missing from appsSections').toBeDefined();
-    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
-      for (const appBlocks of [false, true])
-        for (const appAssistant of [false, true]) {
-          const admits = canAccessAppAssistant({ appBlocks, appAssistant });
-          const visible = evaluate(row!.visible, summary, {
-            ...context({ store: true, author: true, getStarted: true }),
-            canUseAssistant: admits,
-          });
-          expect(visible, `appBlocks=${appBlocks} appAssistant=${appAssistant}`).toBe(admits);
-        }
-    // Positive control: the gate is not constant.
-    expect(canAccessAppAssistant({ appBlocks: true, appAssistant: true })).toBe(true);
-    expect(canAccessAppAssistant({ appBlocks: true })).toBe(false);
+  it('has no row of its own — a row into `/apps/assistant` would be a link into a redirect', () => {
+    expect(rows.length).toBeGreaterThan(3); // control: the extractor found the table
+    expect(rows.filter((r) => r.href === '/apps/assistant')).toEqual([]);
   });
 });

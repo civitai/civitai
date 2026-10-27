@@ -9,10 +9,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { trpc } from '~/utils/trpc';
 import {
-  canAccessAppAssistant,
-  canAccessAppsBuild,
   hasAppsStoreAccess,
   isAppDeveloper,
+  resolveAppsBuildPageMode,
 } from '~/shared/utils/app-blocks-access';
 
 /**
@@ -136,7 +135,7 @@ export function useAppsNavSections(): AppsSection[] {
   // Contrast `getNavSummary` above, which really is client-only and therefore
   // really does need the `isClient` deferral.
   //
-  // 🔴 `canBuild` IS NOT RE-DERIVED HERE — it is the SHARED `canAccessAppsBuild`, the
+  // 🔴 `canBuild` IS NOT RE-DERIVED HERE — it is the SHARED `resolveAppsBuildPageMode`, the
   // same call `resolveBuildPageAccess` makes in the page's `getServerSideProps`. That is
   // the fix for the defect class this surface keeps hitting: a nav predicate written
   // separately from its page's gate WILL drift, and both #3899 and PR #4668 were that
@@ -144,17 +143,17 @@ export function useAppsNavSections(): AppsSection[] {
   //
   // 🔴 IT IS NOT SESSION-SCOPED, unlike `isAuthor`, and that asymmetry is deliberate
   // rather than an oversight. `isAppDeveloper` reads `isModerator`, so `isAuthor`
-  // collapses to `false` without a session; `canAccessAppsBuild` takes the user as an
-  // argument and handles the anon case ITSELF (the `appBlocksGetStarted` term consults
-  // no user), so folding it into the `currentUser` branch would hide the entry from a
-  // logged-out viewer the PAGE would happily serve state A to.
+  // collapses to `false` without a session; the mode takes the user as an argument and
+  // handles the anon case ITSELF (the `appBlocksGetStarted` term consults no user), so
+  // folding it into the `currentUser` branch would hide the entry from a logged-out viewer
+  // the PAGE would happily serve state A to.
+  const buildMode = resolveAppsBuildPageMode(currentUser, features);
   const context: AppsNavContext = {
     isAuthor: currentUser
       ? isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })
       : NO_APPS_NAV_CAPABILITIES.isAuthor,
-    canBuild: canAccessAppsBuild(currentUser, features),
+    canBuild: buildMode !== null,
     canSeeStore: hasAppsStoreAccess(features),
-    canUseAssistant: !!currentUser && canAccessAppAssistant(features),
   };
 
   return visibleAppsSections(summary, context);

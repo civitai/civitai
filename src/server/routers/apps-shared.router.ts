@@ -96,7 +96,8 @@ import {
   type SharedStorageOp,
   type SharedStorageOutcome,
 } from '~/server/prom/app-block-shared-storage.metrics';
-import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { middleware, moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { assertLegacyStoreAvailable } from '~/server/services/apps/legacy-store-shutdown';
 import { appsModDocStoreRouter } from '~/server/routers/apps-mod-doc-store.router';
 import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
@@ -1442,9 +1443,17 @@ async function reportSharedRowUnmetered(
   return { ok: true as const };
 }
 
+// Attach every `appsSharedRouter` procedure to this, so a new one cannot miss the shutdown gate.
+const sharedStorageProcedure = publicProcedure.use(
+  middleware(async ({ next }) => {
+    await assertLegacyStoreAvailable('shared');
+    return next();
+  })
+);
+
 export const appsSharedRouter = router({
   /** @see listSharedRows — the shared implementation, also behind GET /api/v1/blocks/shared-storage/list. */
-  list: publicProcedure
+  list: sharedStorageProcedure
     .input(
       blockTokenInput.extend({
         prefix: z.string().max(SHARED_PREFIX_MAX).optional(),
@@ -1476,7 +1485,7 @@ export const appsSharedRouter = router({
     ),
 
   /** @see getSharedRow — also behind GET /api/v1/blocks/shared-storage/item. */
-  get: publicProcedure
+  get: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .query(async ({ input }) => getSharedRow(input.blockToken, input.key)),
 
@@ -1485,7 +1494,7 @@ export const appsSharedRouter = router({
    * one-element array — the batch query already returns 0 for a missing/hidden
    * key, so there is no separate single-key SQL to keep in step.
    */
-  getCount: publicProcedure
+  getCount: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .query(async ({ input }) => {
       const { counts } = await getSharedCounts(input.blockToken, [input.key]);
@@ -1493,7 +1502,7 @@ export const appsSharedRouter = router({
     }),
 
   /** @see getSharedCounts — also behind GET /api/v1/blocks/shared-storage/counts. */
-  getCounts: publicProcedure
+  getCounts: sharedStorageProcedure
     .input(
       blockTokenInput.extend({
         keys: z.array(sharedKeyInput).min(1).max(SHARED_COUNTS_KEYS_MAX),
@@ -1502,32 +1511,32 @@ export const appsSharedRouter = router({
     .query(async ({ input }) => getSharedCounts(input.blockToken, input.keys)),
 
   /** @see appendSharedRow — also behind POST /api/v1/blocks/shared-storage/append. */
-  append: publicProcedure
+  append: sharedStorageProcedure
     .input(blockTokenInput.extend({ value: sharedValueInput }))
     .mutation(async ({ input }) => appendSharedRow(input.blockToken, input.value)),
 
   /** @see updateSharedRow — also behind POST /api/v1/blocks/shared-storage/update. */
-  update: publicProcedure
+  update: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput, value: sharedValueInput }))
     .mutation(async ({ input }) => updateSharedRow(input.blockToken, input.key, input.value)),
 
   /** @see voteSharedRow — also behind POST /api/v1/blocks/shared-storage/vote. */
-  vote: publicProcedure
+  vote: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .mutation(async ({ input }) => voteSharedRow(input.blockToken, input.key)),
 
   /** @see unvoteSharedRow — also behind POST /api/v1/blocks/shared-storage/unvote. */
-  unvote: publicProcedure
+  unvote: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .mutation(async ({ input }) => unvoteSharedRow(input.blockToken, input.key)),
 
   /** @see withdrawSharedRow — also behind POST /api/v1/blocks/shared-storage/withdraw. */
-  withdraw: publicProcedure
+  withdraw: sharedStorageProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .mutation(async ({ input }) => withdrawSharedRow(input.blockToken, input.key)),
 
   /** @see reportSharedRow — also behind POST /api/v1/blocks/shared-storage/report. */
-  report: publicProcedure
+  report: sharedStorageProcedure
     .input(
       blockTokenInput.extend({
         key: sharedKeyInput,

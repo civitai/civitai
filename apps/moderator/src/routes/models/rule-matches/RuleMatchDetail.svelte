@@ -1,28 +1,27 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
-  import { IconLock } from '@tabler/icons-svelte';
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import ModelPreview from '$lib/components/ModelPreview.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
-  import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import HighlightedFields from '$lib/components/model-rule-holds/HighlightedFields.svelte';
   import HoldHistoryCard from '$lib/components/model-rule-holds/HoldHistoryCard.svelte';
   import MatchedRulesCard from '$lib/components/model-rule-holds/MatchedRulesCard.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
-  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
+  import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
-  import { modelUrl } from '$lib/minor-flags/appeal-row';
   import { fetchModelFlagDetail } from '$lib/minor-flags/model-detail';
   import {
     BATCH_DECISIONS,
@@ -44,6 +43,7 @@
     type OwnerResult,
   } from '$lib/model-rule-holds-context';
   import { SSR_PENDING } from '$lib/ssr-pending';
+  import { urlWith } from '$lib/url';
   import type { Outcome } from '$lib/triage/queue';
   import type { PageData } from './$types';
 
@@ -52,6 +52,7 @@
   let {
     row,
     civitaiUrl,
+    canViewTrainingData,
     canStrike,
     verdict,
     error,
@@ -62,6 +63,8 @@
   }: {
     row: Row;
     civitaiUrl: string;
+    /** Holds a training page grant, for the model preview's training-data viewer. */
+    canViewTrainingData: boolean;
     /** Holds `user.strike`. */
     canStrike: boolean;
     verdict: string | undefined;
@@ -90,6 +93,9 @@
     browser ? fetchHoldContext(holdId) : SSR_PENDING
   );
   const history = $derived(context.then((c) => c.history));
+  const ownerHref = $derived(
+    urlWith(page.url, { q: null, owner: row.userId, status: 'pending', page: null, hold: null })
+  );
 
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<ModelRuleHoldDecision>('dismiss_allowed');
@@ -197,173 +203,197 @@
   };
 </script>
 
-<TriageDetailFrame {verdict} {error}>
-  {#snippet children()}
-    <ModelDetailHeader
-      modelId={row.modelId}
-      modelName={row.modelName ?? `Model #${row.modelId}`}
-      userId={row.userId ?? 0}
-      {civitaiUrl}
-      {detail}
-    >
-      {#snippet chips()}
-        <MetaChip tone={row.mode === 'active' ? 'amber' : 'blue'}>{modeLabel(row.mode)}</MetaChip>
-        {#if row.applied}<MetaChip tone="red" solid>taken down</MetaChip>{/if}
-        {#if row.modelStatus && row.modelStatus !== 'Published'}
-          <MetaChip>{modelStatusLabel(row.modelStatus)}</MetaChip>
-        {/if}
-        {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
-        {#if row.source === 'training'}<MetaChip tone="amber">Training</MetaChip>{/if}
-        {#if row.uploadType === 'Trained'}<MetaChip>Trained on Civitai</MetaChip>{/if}
-        {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
-        {#if row.poi}<FlagBadge label="poi" />{/if}
-        {#if row.minor}<FlagBadge label="minor" />{/if}
-        <MetaChip>held {shortAge(row.createdAt)} ago</MetaChip>
-      {/snippet}
-    </ModelDetailHeader>
+{#snippet header()}
+  <ModelDetailHeader
+    modelId={row.modelId}
+    modelName={row.modelName ?? `Model #${row.modelId}`}
+    userId={row.userId ?? 0}
+    {civitaiUrl}
+    {detail}
+  >
+    {#snippet chips()}
+      <MetaChip tone={row.mode === 'active' ? 'amber' : 'blue'}>{modeLabel(row.mode)}</MetaChip>
+      {#if row.applied}<MetaChip tone="red" solid>taken down</MetaChip>{/if}
+      {#if row.modelStatus && row.modelStatus !== 'Published'}
+        <MetaChip>{modelStatusLabel(row.modelStatus)}</MetaChip>
+      {/if}
+      {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+      {#if row.source === 'training'}<MetaChip tone="amber">Training</MetaChip>{/if}
+      {#if row.uploadType === 'Trained'}<MetaChip>Trained on Civitai</MetaChip>{/if}
+      {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
+      {#if row.poi}<FlagBadge label="poi" />{/if}
+      {#if row.minor}<FlagBadge label="minor" />{/if}
+      <MetaChip>held {shortAge(row.createdAt)} ago</MetaChip>
+    {/snippet}
+  </ModelDetailHeader>
+{/snippet}
 
-    {#if decidedRow}
-      <TriageCard dense title="Decision" accent={dismissedRow ? 'neutral' : 'red'}>
-        <dl class="m-0 space-y-1.5">
-          <FactRow label="Outcome">{heldOutcome(row)}</FactRow>
-          <FactRow label="By">{row.decidedByUsername ?? 'an unknown moderator'}</FactRow>
-          <FactRow label="When">{dateTime(row.decidedAt)}</FactRow>
-          <FactRow label="Note"
-            ><span class="whitespace-pre-wrap break-words">{row.decisionNote ?? '—'}</span></FactRow
-          >
-        </dl>
-      </TriageCard>
-    {:else if row.editedSince}
-      <p class="m-0 text-[13px] text-dark-0">
-        <MetaChip tone="green">edited since</MetaChip>
-        The latest scan of this model read different text; the text held here may no longer be on it.
-        The main app refuses a ruling on text that changed, so this hold may need to be superseded by the
-        next scan first.
-      </p>
-    {/if}
-
-    <MatchedRulesCard rules={row.rules} matches={row.matches} />
-
+{#snippet evidence()}
+  <div class="space-y-4">
     <TriageCard dense title="Scanned text">
       <HighlightedFields fields={row.fields} matches={row.matches} />
     </TriageCard>
+    <!-- Keyed so an open lightbox or training-data sheet cannot carry over to the next model. -->
+    {#key row.modelId}
+      <ModelPreview modelId={row.modelId} reportId={null} {civitaiUrl} {canViewTrainingData} />
+    {/key}
+  </div>
+{/snippet}
 
-    <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
-
-    <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard
-        row={{ modelType: row.modelType ?? 'Unknown', ...row.facts }}
-        {detail}
-      />
-      <UploaderCard
-        row={{
-          userId: row.userId ?? 0,
-          username: row.username,
-          otherFlaggedModels: row.otherHeldModels,
-        }}
-        {detail}
-        otherLabel="other model with a rule match"
-        otherLabelMany="other models with rule matches"
-      />
-    </div>
-
-    <HoldHistoryCard modelId={row.modelId} {history} />
-  {/snippet}
-  {#snippet actions()}
-    {#if decidedRow}
-      <p class="m-0 flex items-center gap-1.5 text-sm text-dark-2">
-        <IconLock class="size-3.5" aria-hidden="true" /> This hold is already decided.
-      </p>
-    {:else}
-      {#if error && /reload/i.test(error)}
-        <!-- Stale and superseded refusals both tell the moderator to reload; the current hold arrives with it. -->
-        <button type="button" class="text-[13px] {LINK_CLASS}" onclick={onreload}>
-          Reload the queue
-        </button>
-      {/if}
-      <form
-        bind:this={formEl}
-        method="POST"
-        action={actionHref('decide')}
-        use:enhance={decided}
-        class="min-w-0 flex-1"
-      >
-        <input type="hidden" name="holdId" value={row.id} />
-        <input type="hidden" name="textHash" value={row.textHash} />
-        <input type="hidden" name="decision" value={decision} />
-        {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
-        <TriageDecisionBar
-          hint={row.source === 'training'
-            ? `A training run matched ${subjects || 'the rule'}${row.mode === 'active' ? ' and was refused' : ' and went ahead'}. Confirm records it as a violation; a dismissal lets the same text through next time. J/K to move.`
-            : row.clearsRules
-            ? 'The model is not live. Confirm records the violation; a dismissal clears these matches for this text. J/K to move.'
-            : row.mode === 'active'
-            ? `The model was taken down when ${subjects || 'the rule'} matched. Confirm keeps it down; a dismissal republishes it.`
-            : 'The model is still live. Confirm unpublishes it; a dismissal changes nothing on the model. J/K to move.'}
+{#snippet info()}
+  {#if decidedRow}
+    <TriageCard dense title="Decision" accent={dismissedRow ? 'neutral' : 'red'}>
+      <dl class="m-0 space-y-1.5">
+        <FactRow label="Outcome">{heldOutcome(row)}</FactRow>
+        <FactRow label="By">{row.decidedByUsername ?? 'an unknown moderator'}</FactRow>
+        <FactRow label="When">{dateTime(row.decidedAt)}</FactRow>
+        <FactRow label="Note"
+          ><span class="whitespace-pre-wrap break-words">{row.decisionNote ?? '—'}</span></FactRow
         >
-          {#snippet buttons()}
-            {#each keys as b, i (b.decision)}
-              <TriageKeyButton
-                type="button"
-                key={i + 1}
-                tone={b.tone}
-                disabled={!enabled[i]}
-                title={enabled[i] ? undefined : whyDisabled(b.decision)}
-                onclick={() => press(b.decision)}
-              >
-                {b.label}
-              </TriageKeyButton>
-            {/each}
-          {/snippet}
-          {#snippet fields()}
-            {#await context then loaded}
-              {@const pending = pendingOf(loaded)}
-              {#if pending.length}
-                <div class="flex shrink-0 items-center gap-2 text-[13px] text-dark-0">
-                  <Checkbox id="apply-to-owner" bind:checked={applyToOwner} />
-                  <label for="apply-to-owner">
-                    Also apply to this owner’s {plural(pending.length, 'other pending hold')}{pending.length > BATCH_MAX
-                      ? ` (${BATCH_MAX} at a time)`
-                      : ''}; no strike
-                  </label>
-                </div>
-              {/if}
-            {/await}
-            <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
-            <Input
-              name="note"
-              maxlength={NOTE_MAX_LENGTH}
-              placeholder="Note for the record (optional)"
-              aria-label="Decision note"
-              class="h-8 min-w-0 flex-1 border-dark-4 bg-dark-7 text-[13px] dark:bg-dark-7"
-              onkeydown={(e: KeyboardEvent) => {
-                if (e.key === 'Enter') e.preventDefault();
-              }}
-            />
-          {/snippet}
-        </TriageDecisionBar>
-      </form>
-      <AlertDialog.Root bind:open={confirmOpen}>
-        <AlertDialog.Content>
-          {#if confirming}
-            {@const copy = ask(confirming, covered)}
-            <AlertDialog.Header>
-              <AlertDialog.Title>{copy.title}</AlertDialog.Title>
-              <AlertDialog.Description>{copy.description}</AlertDialog.Description>
-            </AlertDialog.Header>
-            <AlertDialog.Footer>
-              <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-              <AlertDialog.Action
-                variant={takesDown(confirming) ? 'destructive' : 'default'}
-                onclick={() => {
-                  confirmOpen = false;
-                  void decide(confirming!, also);
-                }}>{copy.label}</AlertDialog.Action
-              >
-            </AlertDialog.Footer>
-          {/if}
-        </AlertDialog.Content>
-      </AlertDialog.Root>
+      </dl>
+    </TriageCard>
+  {:else if row.editedSince}
+    <p class="m-0 text-[13px] text-dark-0">
+      <MetaChip tone="green">edited since</MetaChip>
+      The latest scan of this model read different text; the text held here may no longer be on it.
+      The main app refuses a ruling on text that changed, so this hold may need to be superseded by the
+      next scan first.
+    </p>
+  {/if}
+
+  <MatchedRulesCard rules={row.rules} matches={row.matches} />
+
+  <UploaderCard
+    row={{
+      userId: row.userId ?? 0,
+      username: row.username,
+      otherFlaggedModels: row.otherHeldModels,
+    }}
+    {detail}
+    otherLabel="other model with a rule match"
+    otherLabelMany="other models with rule matches"
+  />
+  {#if !decidedRow && row.userId !== null}
+    {#await context then loaded}
+      {@const pending = pendingOf(loaded)}
+      {#if pending.length}
+        <TriageCard dense title="Same owner">
+          <p class="m-0 text-dark-0">
+            {plural(pending.length, 'other pending hold')} on this owner’s models.
+            <a href={ownerHref} class={LINK_CLASS}>Show them</a>
+          </p>
+        </TriageCard>
+      {/if}
+    {:catch}
+      <!-- The owner context is decoration: the decision stays available without it. -->
+    {/await}
+  {/if}
+  <ModelFactsCard row={{ modelType: row.modelType ?? 'Unknown', ...row.facts }} {detail} />
+
+  <HoldHistoryCard modelId={row.modelId} {history} />
+{/snippet}
+
+{#snippet decisionBar()}
+  {#if error && /reload/i.test(error)}
+    <!-- Stale and superseded refusals both tell the moderator to reload; the current hold arrives with it. -->
+    <button type="button" class="text-[13px] {LINK_CLASS}" onclick={onreload}>
+      Reload the queue
+    </button>
+  {/if}
+  {#await context then loaded}
+    {@const pending = pendingOf(loaded)}
+    {#if pending.length}
+      <div class="flex items-start gap-2 text-[13px] text-dark-0">
+        <Checkbox id="apply-to-owner" class="mt-0.5" bind:checked={applyToOwner} />
+        <label for="apply-to-owner">
+          Also apply to this owner’s {plural(pending.length, 'other pending hold')}{pending.length > BATCH_MAX
+            ? ` (${BATCH_MAX} at a time)`
+            : ''}; no strike
+        </label>
+      </div>
     {/if}
-  {/snippet}
-</TriageDetailFrame>
+  {/await}
+  <form
+    bind:this={formEl}
+    method="POST"
+    action={actionHref('decide')}
+    use:enhance={decided}
+    class="min-w-0"
+  >
+    <input type="hidden" name="holdId" value={row.id} />
+    <input type="hidden" name="textHash" value={row.textHash} />
+    <input type="hidden" name="decision" value={decision} />
+    {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
+    <TriageDecisionBar
+      compact
+      hint={row.source === 'training'
+        ? `A training run matched ${subjects || 'the rule'}${row.mode === 'active' ? ' and was refused' : ' and went ahead'}. Confirm records it as a violation; a dismissal lets the same text through next time. J/K to move.`
+        : row.clearsRules
+        ? 'The model is not live. Confirm records the violation; a dismissal clears these matches for this text. J/K to move.'
+        : row.mode === 'active'
+        ? `The model was taken down when ${subjects || 'the rule'} matched. Confirm keeps it down; a dismissal republishes it.`
+        : 'The model is still live. Confirm unpublishes it; a dismissal changes nothing on the model. J/K to move.'}
+    >
+      {#snippet buttons()}
+        {#each keys as b, i (b.decision)}
+          <TriageKeyButton
+            type="button"
+            key={i + 1}
+            tone={b.tone}
+            disabled={!enabled[i]}
+            title={enabled[i] ? undefined : whyDisabled(b.decision)}
+            onclick={() => press(b.decision)}
+          >
+            {b.label}
+          </TriageKeyButton>
+        {/each}
+      {/snippet}
+      {#snippet fields()}
+        <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
+        <Input
+          name="note"
+          maxlength={NOTE_MAX_LENGTH}
+          placeholder="Note for the record (optional)"
+          aria-label="Decision note"
+          class="h-8 min-w-0 flex-1 border-dark-4 bg-dark-7 text-[13px] dark:bg-dark-7"
+          onkeydown={(e: KeyboardEvent) => {
+            if (e.key === 'Enter') e.preventDefault();
+          }}
+        />
+      {/snippet}
+    </TriageDecisionBar>
+  </form>
+{/snippet}
+
+<TriageColumns
+  {verdict}
+  {error}
+  {header}
+  {evidence}
+  {info}
+  decision={decidedRow ? undefined : decisionBar}
+/>
+
+{#if !decidedRow}
+  <AlertDialog.Root bind:open={confirmOpen}>
+    <AlertDialog.Content>
+      {#if confirming}
+        {@const copy = ask(confirming, covered)}
+        <AlertDialog.Header>
+          <AlertDialog.Title>{copy.title}</AlertDialog.Title>
+          <AlertDialog.Description>{copy.description}</AlertDialog.Description>
+        </AlertDialog.Header>
+        <AlertDialog.Footer>
+          <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+          <AlertDialog.Action
+            variant={takesDown(confirming) ? 'destructive' : 'default'}
+            onclick={() => {
+              confirmOpen = false;
+              void decide(confirming!, also);
+            }}>{copy.label}</AlertDialog.Action
+          >
+        </AlertDialog.Footer>
+      {/if}
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/if}

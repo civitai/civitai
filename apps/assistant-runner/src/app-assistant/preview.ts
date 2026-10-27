@@ -9,7 +9,7 @@ import {
 } from '@civitai/app-assistant';
 import type { ChatTool } from '@civitai/components-chat/core';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 
 /**

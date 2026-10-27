@@ -197,15 +197,23 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
       return new Map<string, never>();
     }),
   ]);
-  return rows.map((r) => ({
-    ...r,
-    ownerDisputeCount: owners.get(r.id) ?? 0,
-    preview: previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? {
+  return rows.map((r) => {
+    const preview = previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? {
       total: 0,
       images: [],
-    },
-    scannedText: texts.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? null,
-  }));
+    };
+    const cover = preview.images[0];
+    return {
+      ...r,
+      entity:
+        r.entity && r.entityType !== 'Article'
+          ? { ...r.entity, coverUrl: cover?.url ?? null, coverType: cover?.type ?? null }
+          : r.entity,
+      ownerDisputeCount: owners.get(r.id) ?? 0,
+      preview,
+      scannedText: texts.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? null,
+    };
+  });
 }
 
 /** The whole page ships at once because selection is client state, so each row carries its own preview and owner-dispute number. */

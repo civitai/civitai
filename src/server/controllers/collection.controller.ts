@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
@@ -544,6 +545,7 @@ export const collectionItemsInfiniteHandler = async ({
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
+    coverage: await coverageAudience(ctx.user ?? undefined),
   });
 
   return {
