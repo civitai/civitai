@@ -152,11 +152,13 @@ describe('what a sent CSAM report takes out of the pending count', () => {
   // 201: both listed, one as { id }, one as a bare id. 202: one of two listed. 203: none listed.
   // 204: listed on a report never sent. 205: no report. 206: created after the send, listed.
   // 207: listed only on a report about someone else. 211: listed only on a report of another type.
+  // 212: both listed, but the send recorded one file as missing. 213: a report whose images are not
+  // a list. 206's report details are malformed, which must not change its result.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "User" ("id", "username") VALUES
         (201, 'g'), (202, 'h'), (203, 'i'), (204, 'j'), (205, 'k'), (206, 'l'), (207, 'm'),
-        (211, 'o');
+        (211, 'o'), (212, 'p'), (213, 'q');
       INSERT INTO "Image" ("id", "userId", "needsReview", "createdAt") VALUES
         (21, 201, 'csam', '2026-01-01'),
         (22, 201, 'csam', '2026-01-01'),
@@ -168,7 +170,15 @@ describe('what a sent CSAM report takes out of the pending count', () => {
         (28, 206, 'csam', '2026-04-01'),
         (29, 207, 'csam', '2026-01-01'),
         (30, 201, 'minor', '2026-01-01'),
-        (32, 211, 'csam', '2026-01-01');
+        (32, 211, 'csam', '2026-01-01'),
+        (33, 212, 'csam', '2026-01-01'),
+        (34, 212, 'csam', '2026-01-01'),
+        (35, 213, 'csam', '2026-01-01');
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "details") VALUES
+        (212, '2026-03-01', '[{"id": 33}, {"id": 34}]',
+          '{"images": [{"id": 33, "fileId": "f"}, {"id": 34, "source": "missing"}]}'),
+        (213, '2026-03-01', '{"id": 35}', NULL),
+        (206, '2026-03-01', '[]', '{"images": "x"}');
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "type") VALUES
         (201, '2026-03-01', '[{"id": 21}, 22, {"id": 30}]', 'Image'),
         (202, '2026-03-01', '[{"id": 23}]', 'Image'),
@@ -211,6 +221,8 @@ describe('what a sent CSAM report takes out of the pending count', () => {
       206: 0,
       207: 1,
       211: 1,
+      212: 1,
+      213: 1,
     });
   });
 
@@ -221,7 +233,7 @@ describe('what a sent CSAM report takes out of the pending count', () => {
 
   it('badges exactly what the by-user page shows as pending', async () => {
     const pending = Object.values(await pendingOf()).reduce((a, b) => a + b, 0);
-    expect(pending).toBe(11);
+    expect(pending).toBe(13);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
   });
 
