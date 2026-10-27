@@ -788,9 +788,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         cookies,
       }) ?? undefined;
   }
-  // 🔴 Write only if nothing has been sent. Next runs the page's `getServerSideProps` after this
-  // anyway, and a `notFound` from it renders /404 on the SAME response through this function again,
-  // where the redirect is already sent and a second `writeHead` throws ERR_HTTP_HEADERS_SENT.
+  // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
+  // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
+  // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
     appContext.ctx.res.writeHead(302, { Location: guardTo });
