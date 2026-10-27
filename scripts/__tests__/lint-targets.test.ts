@@ -105,11 +105,17 @@ describe('lint-targets', () => {
   it.each([
     'package.json',
     'pnpm-lock.yaml',
+    // packages/.eslintrc.cjs runs import/no-extraneous-dependencies against each package's own
+    // package.json, so dropping a dependency there creates errors in files the PR never touched.
+    'packages/pkg/package.json',
     '.eslintrc.js',
     'packages/.eslintrc.cjs',
+    'eslint.config.js',
     '.eslintignore',
     'eslint-local-rules.js',
     '.prettierrc',
+    'apps/app/.prettierrc',
+    'prettier.config.js',
     '.prettierignore',
     'tailwind.config.js',
     '.github/workflows/lint.yml',
@@ -137,14 +143,33 @@ describe('lint-targets', () => {
     ]);
   });
 
-  it.each(['packages/pkg/package.json', 'src/eslint-helper.js', 'docs/.prettierrc-notes.md'])(
-    'does not treat %s as lint config',
-    (path) => {
-      put(path, 'x\n');
-      commit('pr');
-      expect(run().githubOutput).toBe('full=false\n');
-    }
-  );
+  it.each([
+    'apps/app/package.json',
+    'packages/pkg/src/package.json.ts',
+    'src/eslint-helper.js',
+    'docs/.prettierrc-notes.md',
+  ])('does not treat %s as lint config', (path) => {
+    put(path, 'x\n');
+    commit('pr');
+    expect(run().githubOutput).toBe('full=false\n');
+  });
+
+  it('treats renaming a lint config away as a config change', () => {
+    // `git diff --name-only` with rename detection lists only the NEW path, so renaming
+    // .eslintrc.js to any name not on the trigger list would not start a full run unless the
+    // old path is listed too.
+    git('checkout', '-q', 'base');
+    put('.eslintrc.js', 'module.exports = {\n  root: true,\n  rules: { a: 1, b: 2, c: 3 },\n};\n');
+    commit('base config');
+    git('checkout', '-q', 'pr');
+    git('merge', '-q', 'base');
+    git('mv', '.eslintrc.js', 'renamed-config.js');
+    commit('pr');
+
+    const r = run();
+    expect(r.githubOutput).toBe('full=true\n');
+    expect(r.stdout).toContain('  .eslintrc.js\n');
+  });
 
   it('ignores changes already on the base branch (diffs from the merge base)', () => {
     put('src/edited.tsx', 'export const x = 3;\n');
