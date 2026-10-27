@@ -17,6 +17,7 @@ import {
   recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
+import { syncConfirmQueue } from '~/server/games/new-order/confirm-queue.runtime';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
@@ -741,6 +742,11 @@ const newOrderAbuseDetection = createJob(
   { lockExpiration: 10 * 60 }
 );
 
+const newOrderConfirmSync = createJob('new-order-confirm-sync', '*/10 * * * *', async () => {
+  const result = await syncConfirmQueue();
+  log(`ConfirmSync :: ${JSON.stringify(result)}`);
+});
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
@@ -749,4 +755,5 @@ export const newOrderJobs = [
   newOrderChangeFillTarget,
   newOrderChangeRateTarget,
   newOrderAbuseDetection,
+  newOrderConfirmSync,
 ];

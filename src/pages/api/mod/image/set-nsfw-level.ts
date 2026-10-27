@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { updateImageNsfwLevel } from '~/server/services/image.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { imageId, nsfwLevel } from '~/server/schema/moderator/image';
+import { enqueueConfirmItems } from '~/server/games/new-order/confirm-queue.runtime';
 
 export default defineModeratorEndpoint('image.setNsfwLevel', {
   summary: 'Set the rating on images, and lock it against further automatic change.',
@@ -29,6 +30,10 @@ export default defineModeratorEndpoint('image.setNsfwLevel', {
       });
       imageIds.push(item.imageId);
     }
+    await enqueueConfirmItems(
+      input.items.map((item) => ({ imageId: item.imageId, level: item.nsfwLevel })),
+      ctx.actor.id
+    );
     return { count: imageIds.length, affected: { imageIds } };
   },
 });
