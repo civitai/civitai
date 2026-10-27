@@ -63,14 +63,29 @@ describe('banning revokes the account’s API tokens', () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
+    expect(revokeUserTokens).toHaveBeenCalledTimes(1);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
     expect(writtenMeta().tokenRevocation).toBeUndefined();
+  });
+
+  it('revokes them before the slow cleanup starts', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
+    let finish = () => {};
+    revokeUserTokens.mockImplementation(() => new Promise<void>((r) => (finish = r)));
+    const ban = toggleBan({ id: USER, userId: 1, isModerator: true } as never);
+    await vi.waitFor(() => expect(revokeUserTokens).toHaveBeenCalled());
+    expect(dbMock.dbWrite.userLink.deleteMany).not.toHaveBeenCalled();
+    finish();
+    await ban;
+    expect(dbMock.dbWrite.userLink.deleteMany).toHaveBeenCalled();
   });
 
   it('a forced ban (the CSAM path) revokes them', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
     await toggleBan({ id: USER, userId: 1, force: true } as never);
+    expect(revokeUserTokens).toHaveBeenCalledTimes(1);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(writtenMeta().tokenRevocation).toBeUndefined();
   });
 
   it('the automated ban path (`onlyBan`) revokes them, and clears an earlier confirmation', async () => {
@@ -87,18 +102,18 @@ describe('banning revokes the account’s API tokens', () => {
         modActivity: { create: async () => ({}) },
       })) as never);
     await toggleBan({ id: USER, userId: -1, onlyBan: true } as never);
+    expect(revokeUserTokens).toHaveBeenCalledTimes(1);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
     expect(updateMany.mock.calls[0][0].data.meta.tokenRevocation).toBeUndefined();
   });
 
-  // Unbanning gives nothing back: the keys stay expired and the old confirmation stays (inert until
-  // a new ban clears it, since the job only reads banned or deleted accounts).
-  it('an unban neither revokes nor restores them', async () => {
+  // The old confirmation stays: inert until a new ban clears it, since the job only reads banned or
+  // deleted accounts.
+  it('an unban does not revoke them', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     expect(revokeUserTokens).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.apiKey.updateMany).not.toHaveBeenCalled();
     expect(writtenMeta().tokenRevocation).toEqual(STALE.tokenRevocation);
   });
 });
@@ -108,6 +123,7 @@ describe('deleting an account revokes its API tokens', () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValue(account(null) as never);
     dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
     await deleteUser({ id: USER, username: 'someone', removeModels: false } as never);
+    expect(revokeUserTokens).toHaveBeenCalledTimes(1);
     expect(revokeUserTokens).toHaveBeenCalledWith(USER);
     const meta = (
       dbMock.dbWrite.user.update.mock.calls.at(-1)?.[0] as {

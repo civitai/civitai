@@ -2,10 +2,9 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { expireUserApiKeys } from '~/server/services/api-key.service';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 export const TOKEN_REVOCATION_RETRY_DELAYS_MS = [1_000, 4_000];
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Revokes every API key and OAuth token of a banned or deleted account, here and in the
@@ -18,7 +17,9 @@ export async function revokeUserTokens(
   { retryDelaysMs = TOKEN_REVOCATION_RETRY_DELAYS_MS }: { retryDelaysMs?: number[] } = {}
 ) {
   // Read first, so a slow revocation cannot stamp a later ban or deletion it did not cover.
-  const since = await readRevocationSince(userId).catch(() => null);
+  // `undefined` = could not read: revoke anyway, but leave the stamp to the job.
+  const since = await readRevocationSince(userId).catch(() => undefined);
+  if (since === null) return false; // unbanned since
 
   let expired = false;
   let confirmed = false;
@@ -41,7 +42,7 @@ export async function revokeUserTokens(
     confirmed = await revokeCivitaiUserTokens({ userId });
   }
 
-  if (!expired || !since) return false;
+  if (!expired || since === undefined) return false;
   if (confirmed) {
     await markTokenRevocation(userId, 'confirmedAt', since).catch((error) =>
       logToAxiom({
@@ -55,9 +56,14 @@ export async function revokeUserTokens(
   return confirmed;
 }
 
+/**
+ * The account's latest ban or deletion, as epoch seconds: comparing a number keeps the stamp's
+ * guard independent of the session time zone. `null` when it is neither banned nor deleted.
+ */
 async function readRevocationSince(userId: number) {
-  const [row] = await dbWrite.$queryRaw<{ since: Date | null }[]>`
-    SELECT GREATEST("bannedAt", "deletedAt") AS "since" FROM "User" WHERE id = ${userId}
+  const [row] = await dbWrite.$queryRaw<{ since: number | null }[]>`
+    SELECT EXTRACT(EPOCH FROM GREATEST("bannedAt", "deletedAt"))::float8 AS "since"
+    FROM "User" WHERE id = ${userId}
   `;
   return row?.since ?? null;
 }
@@ -66,7 +72,7 @@ async function readRevocationSince(userId: number) {
 export async function markTokenRevocation(
   userId: number,
   field: 'confirmedAt' | 'alertedAt',
-  since: Date
+  since: number
 ) {
   await dbWrite.$executeRaw`
     UPDATE "User"
@@ -77,6 +83,7 @@ export async function markTokenRevocation(
         THEN meta -> 'tokenRevocation' ELSE '{}'::jsonb END
         || jsonb_build_object(${field}::text, NOW())
     )
-    WHERE id = ${userId} AND GREATEST("bannedAt", "deletedAt") = ${since}
+    WHERE id = ${userId}
+      AND EXTRACT(EPOCH FROM GREATEST("bannedAt", "deletedAt"))::float8 = ${since}::float8
   `;
 }

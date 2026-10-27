@@ -36,7 +36,8 @@ export async function getUserApiKeys({
   const keys = await db.apiKey.findMany({
     take,
     skip,
-    where: { userId, type: 'User' },
+    // An expired key no longer works, so the owner is not shown it.
+    where: { userId, type: 'User', OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
     select: {
       id: true,
       tokenScope: true,
@@ -174,25 +175,27 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
 
 /**
  * Revokes every live key the user holds by expiring it in place, so the rows survive as a record
- * of what the account held (a ban can be an evidence case). Every reader of the table refuses an
- * expired row; the bearer cache and the orchestrator's auth cache are evicted like `deleteApiKeys`.
+ * of what the account held (a ban can be an evidence case). The auth paths refuse an expired row.
+ * Evicts every key of the user from the bearer cache, not only the ones it expires, so a repeat
+ * call also retries a failed eviction; then expires the orchestrator's cached auth for the user.
  */
 export async function expireUserApiKeys(userId: number) {
   const now = new Date();
   const rows = await dbWrite.apiKey.findMany({
-    where: { userId, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
-    select: { id: true, key: true },
+    where: { userId },
+    select: { id: true, key: true, expiresAt: true },
   });
-  if (rows.length) {
+  const live = rows.filter((row) => !row.expiresAt || row.expiresAt > now);
+  if (live.length) {
     await dbWrite.apiKey.updateMany({
-      where: { id: { in: rows.map((row) => row.id) } },
+      where: { id: { in: live.map((row) => row.id) } },
       data: { expiresAt: now },
     });
-    await evictCachedApiKeys(rows.map((row) => row.key));
   }
+  await evictCachedApiKeys(rows.map((row) => row.key));
   // Even with no live rows: an earlier attempt may have expired them and then failed this call.
   const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
-  return { expired: rows.length, orchestratorConfirmed };
+  return { expired: live.length, orchestratorConfirmed };
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {

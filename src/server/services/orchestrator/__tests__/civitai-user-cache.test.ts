@@ -20,7 +20,7 @@ beforeEach(() => {
   // The generated client's contract: with `throwOnError` an error status rejects with the parsed body.
   deleteMock.mockImplementation(async ({ throwOnError }) => {
     if (status >= 300) {
-      if (throwOnError) throw { status, detail: 'error' };
+      if (throwOnError) throw { status, detail: 'Service Unavailable' };
       return { error: { status }, response: { ok: false, status } };
     }
     return { data: undefined, response: { ok: true, status } };
@@ -55,18 +55,23 @@ describe('orchestrator user cache invalidation', () => {
     await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
   });
 
-  // The route answers 204 whether or not anything is cached, so a 404 means the call reached no route.
-  it('reports a 404 as unconfirmed', async () => {
-    status = 404;
-    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+  it('logs the status of an error answer', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    status = 503;
+    await revokeCivitaiUserTokens({ userId: 501 });
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as { error: { message: string } };
+    expect(logged.error.message).toContain('503');
   });
 
   it('logs the real network error, and bounds each call with a timeout', async () => {
     const { logToAxiom } = await import('~/server/logging/client');
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     deleteMock.mockRejectedValueOnce(new TypeError('fetch failed'));
     await revokeCivitaiUserTokens({ userId: 501 });
     const [{ signal }] = deleteMock.mock.calls[0];
     expect(signal).toBeInstanceOf(AbortSignal);
+    expect(timeout.mock.calls[0][0]).toBeLessThanOrEqual(10_000);
+    timeout.mockRestore();
     const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as { error: { message: string } };
     expect(logged.error.message).toBe('fetch failed');
   });

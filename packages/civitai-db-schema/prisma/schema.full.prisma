@@ -2870,6 +2870,7 @@ model ApiKey {
 
   @@index([clientId])
   @@index([workerDeviceId])
+  @@index([userId])
 }
 
 model OauthClient {

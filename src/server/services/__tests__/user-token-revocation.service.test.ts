@@ -18,15 +18,12 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 
 const { revokeUserTokens } = await import('~/server/services/user-token-revocation.service');
 
-const BANNED_AT = new Date('2026-10-27T12:00:00.000Z');
+const BANNED_AT = Date.parse('2026-10-27T12:00:00.000Z') / 1000;
 /** The `tokenRevocation` field each raw UPDATE stamped, and the ban it was scoped to. */
 const stamps = () =>
   dbMock.dbWrite.$executeRaw.mock.calls.map((call) => {
     const values = (call as unknown[]).slice(1);
-    return [
-      values.find((v) => v === 'confirmedAt' || v === 'alertedAt'),
-      values.find((v) => v instanceof Date),
-    ];
+    return [values.find((v) => v === 'confirmedAt' || v === 'alertedAt'), values.at(-1)];
   });
 
 beforeEach(() => {
@@ -66,9 +63,17 @@ describe('revokeUserTokens', () => {
     expect(stamps()).toEqual([]);
   });
 
-  it('does not stamp an account that is no longer banned or deleted', async () => {
+  it('does nothing to an account that is no longer banned or deleted', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ since: null }] as never);
     await expect(revokeUserTokens(501, { retryDelaysMs: [] })).resolves.toBe(false);
+    expect(expireUserApiKeys).not.toHaveBeenCalled();
+    expect(stamps()).toEqual([]);
+  });
+
+  it('revokes but leaves the stamp to the job when the ban cannot be read', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('primary unavailable'));
+    await expect(revokeUserTokens(501, { retryDelaysMs: [] })).resolves.toBe(false);
+    expect(expireUserApiKeys).toHaveBeenCalledWith(501);
     expect(stamps()).toEqual([]);
   });
 

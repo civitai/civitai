@@ -25,7 +25,8 @@ async function deleteOrchestratorUserCache(userId: number | string, url: string)
     logToAxiom({
       type: 'orchestrator.invalidate-user.failed',
       message: `orchestrator cache invalidation (${url}) failed for user ${userId}`,
-      error: safeError(error),
+      // On an error status the client throws the parsed body, not an Error.
+      error: safeError(error instanceof Error ? error : new Error(JSON.stringify(error))),
     }).catch(() => {});
     return false;
   }

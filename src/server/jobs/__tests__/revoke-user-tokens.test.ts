@@ -45,6 +45,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  await db.pg.exec(`SET TIME ZONE 'UTC'`);
   envMock.set({ ORCHESTRATOR_ACCESS_TOKEN: 'system-token' });
   await db.pg.exec(`DELETE FROM "User"`);
   const raw = pgliteRaw(db.pg);
@@ -64,8 +65,8 @@ async function seed(
   await db.pg.query(
     `INSERT INTO "User" (id, "bannedAt", "deletedAt", meta) VALUES (
       $1,
-      NOW() - make_interval(hours => $2::int),
-      NOW() - make_interval(hours => $3::int),
+      (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $2::int),
+      (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $3::int),
       $4::jsonb
     )`,
     [id, bannedHoursAgo, deletedHoursAgo, meta === null ? null : JSON.stringify(meta)]
@@ -97,6 +98,42 @@ describe('revoke-user-tokens job', () => {
     expect(await metaOf(2)).toEqual({ tokenRevocation: { confirmedAt: expect.any(String) } });
   });
 
+  it('counts a deletion after an old ban from the deletion', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    await seed(1, 200, 1, confirmedLater);
+    await seed(2, 200, 50, null);
+    await seed(3, 200, 1, null);
+    await revokeRecentlyBannedUserTokens();
+    expect(expireUserApiKeys.mock.calls.map(([id]) => id).sort()).toEqual([1, 2, 3]);
+    const alerted = vi
+      .mocked(logToAxiom)
+      .mock.calls.filter(
+        ([e]) => (e as { name?: string }).name === 'user-token-revocation-unconfirmed'
+      )
+      .map(([e]) => (e as { userId: number }).userId);
+    expect(alerted).toEqual([2]);
+    expect(await metaOf(2)).toEqual({ tokenRevocation: { alertedAt: expect.any(String) } });
+  });
+
+  it('does not depend on the database session time zone', async () => {
+    await db.pg.exec(`SET TIME ZONE 'America/Denver'`);
+    await seed(1, 1, null, null);
+    await seed(2, 80, null, null);
+    expireUserApiKeys.mockResolvedValue({ expired: 1, orchestratorConfirmed: true });
+    await revokeRecentlyBannedUserTokens();
+    expect(expireUserApiKeys.mock.calls).toEqual([[1]]);
+    expect(await metaOf(1)).toEqual({ tokenRevocation: { confirmedAt: expect.any(String) } });
+  });
+
+  it('counts confirmed and unconfirmed accounts apart', async () => {
+    await seed(1, 2, null, confirmedLater);
+    await seed(2, 3, null, null);
+    await expect(revokeRecentlyBannedUserTokens()).resolves.toEqual({
+      accounts: 2,
+      unconfirmed: 1,
+    });
+  });
+
   it('re-expires a confirmed account for its first day only', async () => {
     await seed(1, 2, null, confirmedLater);
     await seed(2, 30, null, confirmedLater);
@@ -114,6 +151,8 @@ describe('revoke-user-tokens job', () => {
     });
     await revokeRecentlyBannedUserTokens();
     expect(expireUserApiKeys).toHaveBeenCalledTimes(4);
+    // One attempt per account per run: the run does not wait out the inline retries.
+    expect(revokeCivitaiUserTokens).not.toHaveBeenCalled();
     const alerts = vi
       .mocked(logToAxiom)
       .mock.calls.filter(
@@ -141,12 +180,21 @@ describe('revoke-user-tokens job', () => {
   });
 });
 
+describe('revokeUserTokens', () => {
+  it('leaves an account that is no longer banned or deleted alone', async () => {
+    const { revokeUserTokens } = await import('~/server/services/user-token-revocation.service');
+    await seed(1, null, null, null);
+    await expect(revokeUserTokens(1, { retryDelaysMs: [] })).resolves.toBe(false);
+    expect(expireUserApiKeys).not.toHaveBeenCalled();
+  });
+});
+
 describe('the confirmation stamp', () => {
   it('is not written when a later ban replaced the one the revocation started on', async () => {
     const { revokeUserTokens } = await import('~/server/services/user-token-revocation.service');
     await seed(1, 1, null, null);
     expireUserApiKeys.mockImplementation(async () => {
-      await db.pg.exec(`UPDATE "User" SET "bannedAt" = NOW() WHERE id = 1`);
+      await db.pg.exec(`UPDATE "User" SET "bannedAt" = NOW() AT TIME ZONE 'UTC' WHERE id = 1`);
       return { expired: 1, orchestratorConfirmed: true };
     });
     await expect(revokeUserTokens(1, { retryDelaysMs: [] })).resolves.toBe(true);

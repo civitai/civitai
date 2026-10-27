@@ -257,6 +257,10 @@ const matches = (row: Row, where: Record<string, unknown>): boolean =>
       const value = row[field as keyof Row] as Date | null;
       return value !== null && value > (cond as { gt: Date }).gt;
     }
+    if (cond && typeof cond === 'object' && 'gte' in cond) {
+      const value = row[field as keyof Row] as Date | null;
+      return value !== null && value >= (cond as { gte: Date }).gte;
+    }
     if (cond && typeof cond === 'object' && 'in' in cond)
       return (cond as { in: unknown[] }).in.includes(row[field as keyof Row]);
     return row[field as keyof Row] === cond;
@@ -278,12 +282,9 @@ beforeEach(() => {
   dbMock.dbWrite.apiKey.findFirst.mockImplementation((async ({
     where,
   }: {
-    where: { key: string; OR?: unknown };
+    where: Record<string, unknown>;
   }) => {
-    // The bearer lookup's `OR: [{ expiresAt: { gte: now } }, { expiresAt: null }]`.
-    const row = rows.find(
-      (r) => r.key === where.key && (!where.OR || r.expiresAt === null || r.expiresAt >= new Date())
-    );
+    const row = rows.find((r) => matches(r, where as Record<string, unknown>));
     return row ? { ...row } : null;
   }) as never);
   dbMock.dbWrite.apiKey.updateMany.mockImplementation((async ({
@@ -304,7 +305,7 @@ beforeEach(() => {
   }) =>
     rows
       .filter((r) => matches(r, where))
-      .map(({ id, key, userId }) => ({ id, key, userId }))) as never);
+      .map(({ id, key, userId, expiresAt }) => ({ id, key, userId, expiresAt }))) as never);
   dbMock.dbWrite.apiKey.deleteMany.mockImplementation((async ({
     where,
   }: {
@@ -384,6 +385,26 @@ describe('writes that evict the bearer cache', () => {
       [52, T0],
       [53, null],
     ]);
+    expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
+  });
+
+  it('expireUserApiKeys retries the eviction of a key an earlier pass expired', async () => {
+    await warm('personal');
+    // An earlier pass expired the row but its cache eviction failed.
+    rows[0].expiresAt = new Date(T0.getTime() - 1000);
+    expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51); // control
+    await expireUserApiKeys(501);
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it('expireUserApiKeys still calls the orchestrator, and reports its answer, with no live key left', async () => {
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    vi.mocked(revokeCivitaiUserTokens).mockResolvedValueOnce(false);
+    rows = [];
+    await expect(expireUserApiKeys(501)).resolves.toEqual({
+      expired: 0,
+      orchestratorConfirmed: false,
+    });
     expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
   });
 
