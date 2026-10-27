@@ -3,7 +3,6 @@ import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
   acceptsBlueBuzz,
   buildModelVersionTerms,
-  isPaidAccessActive,
   separateGenerationPriceMissing,
   type ModelVersionTerms,
 } from '@civitai/buzz';
@@ -64,16 +63,6 @@ export function toDonationGoalInput(config: FormPaidAccessConfig | null | undefi
   // A donation goal only makes sense for a timed gate (it ends the window early); permanent never ends.
   if (config?.permanent || !config?.donationGoalEnabled || !config.donationGoal) return null;
   return { amount: config.donationGoal };
-}
-
-// An ended timed window's row outlives it. Loaded as a live config, every save resubmits its timeframe,
-// which the server refuses on a published version as starting Early Access, so nothing saves.
-export function liveStoredPaidAccess<T extends { endsAt?: Date | null }>(
-  paidAccess: T | null | undefined,
-  now: Date = new Date()
-): T | null {
-  if (!paidAccess) return null;
-  return isPaidAccessActive({ endsAt: paidAccess.endsAt ?? null }, now) ? paidAccess : null;
 }
 
 export function toFormPaidAccessConfig(

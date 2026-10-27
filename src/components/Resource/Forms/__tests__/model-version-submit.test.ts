@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import {
   decideModelVersionSubmit,
-  liveStoredPaidAccess,
-  toFormPaidAccessConfig,
   type ModelVersionSubmitContext,
   type ModelVersionSubmitData,
 } from '~/components/Resource/Forms/model-version-submit';
@@ -319,38 +317,5 @@ describe('decideModelVersionSubmit: refusals and skip', () => {
     expect(
       decide({ paidAccessConfig: config }, { isDirty: false, storedPaidAccessConfig: config })
     ).toEqual({ kind: 'skip' });
-  });
-});
-
-// The form loads its gate through liveStoredPaidAccess, so this is the payload an unrelated edit sends.
-describe('decideModelVersionSubmit: an Early Access window that has ended', () => {
-  const now = new Date('2026-06-01T00:00:00Z');
-  const terms = { download: { price: 500 } };
-  const loadAndRename = (row: { timeframeDays: number | null; endsAt: Date | null }) => {
-    const stored = toFormPaidAccessConfig(liveStoredPaidAccess({ ...row, terms }, now), undefined);
-    return submitOf(
-      decide({ name: 'renamed', paidAccessConfig: stored }, { storedPaidAccessConfig: stored })
-    );
-  };
-
-  it('does not resubmit the ended timeframe on an unrelated edit', () => {
-    const d = loadAndRename({ timeframeDays: 7, endsAt: new Date('2026-05-01T00:00:00Z') });
-    expect(d.payload.paidAccess).toBeNull();
-    expect(d.payload.donationGoal).toBeNull();
-  });
-
-  it('still resubmits a window that is running', () => {
-    const d = loadAndRename({ timeframeDays: 7, endsAt: new Date('2026-06-05T00:00:00Z') });
-    expect(d.payload.paidAccess).toMatchObject({ permanent: false, timeframeDays: 7 });
-  });
-
-  it('still resubmits a pending window (not yet published) and a permanent gate', () => {
-    expect(loadAndRename({ timeframeDays: 7, endsAt: null }).payload.paidAccess).toMatchObject({
-      permanent: false,
-      timeframeDays: 7,
-    });
-    expect(loadAndRename({ timeframeDays: null, endsAt: null }).payload.paidAccess).toMatchObject({
-      permanent: true,
-    });
   });
 });

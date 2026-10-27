@@ -148,7 +148,6 @@ import {
   type GenerationMode,
   decideModelVersionSubmit,
   generationModeOf,
-  liveStoredPaidAccess,
   toFormPaidAccessConfig,
   toPaidAccessInput,
 } from '~/components/Resource/Forms/model-version-submit';
@@ -291,8 +290,6 @@ export function ModelVersionUpsertForm({
     version?.status === 'Published' &&
     !!version?.paidAccess?.endsAt &&
     !isFutureDate(version.paidAccess.endsAt);
-  // Every gate read below uses this, never `version.paidAccess`: see liveStoredPaidAccess.
-  const storedPaidAccess = liveStoredPaidAccess(version?.paidAccess);
   // A donation goal is immutable once it exists (create-once), and locked once the EA window is over.
   const donationGoalLocked = !!version?.donationGoal || isEarlyAccessOver;
 
@@ -315,7 +312,7 @@ export function ModelVersionUpsertForm({
         : false
       : true,
     paidAccessConfig: features.earlyAccessModel
-      ? toFormPaidAccessConfig(storedPaidAccess, version?.donationGoal)
+      ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
       : null,
     modelId: model?.id ?? -1,
     description: version?.description ?? null,
@@ -381,7 +378,7 @@ export function ModelVersionUpsertForm({
   // choice survives an unrelated edit, and resynced in the form.reset effect below — without that, a reset
   // restores a price underneath a stale radio.
   const [genMode, setGenMode] = useState<GenerationMode>(() =>
-    generationModeOf(toFormPaidAccessConfig(storedPaidAccess, version?.donationGoal))
+    generationModeOf(toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal))
   );
   const usageControl = form.watch('usageControl');
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
@@ -397,7 +394,7 @@ export function ModelVersionUpsertForm({
   const submittedFee = monetizationBlocked ? 0 : currentLicensingFee ?? 0;
   // A version that already charges opens with the monetization section expanded; everything else starts
   // collapsed behind the master switch below.
-  const hasExistingCharge = !!storedPaidAccess || hasExistingLicensingFee;
+  const hasExistingCharge = !!version?.paidAccess || hasExistingLicensingFee;
   const [chargeEnabled, setChargeEnabled] = useState(hasExistingCharge);
   // The generation fee gets its own opt-in beside paid access, so each of the two ways to charge opens
   // its own card. Paid access tracks `paidAccessConfig != null`; the fee has no such object, so it needs
@@ -427,7 +424,7 @@ export function ModelVersionUpsertForm({
   const feeImageOptions = limits.fee.denominators;
   // Paid access has no ceiling; the input still needs a sane bound, so it borrows the donation one.
   const paidAccessCap = MAX_DONATION_GOAL;
-  const storedTerms = storedPaidAccess?.terms as ModelVersionTerms | undefined;
+  const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
   const storedPaidGen =
     storedTerms?.generation && !('free' in storedTerms.generation)
       ? storedTerms.generation
@@ -522,7 +519,7 @@ export function ModelVersionUpsertForm({
   // "charges nothing" stands in for "sends no gate" because `buildModelVersionTerms` has no branch that
   // emits a gate charging nothing (and the server rejects that shape). Add one and this starts lying —
   // switch it to the nullness of `toPaidAccessInput` then.
-  const removingStoredGate = !!storedPaidAccess && !gateCharges;
+  const removingStoredGate = !!version?.paidAccess && !gateCharges;
   const removingStoredCharge = removingStoredFee || removingStoredGate;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
@@ -632,8 +629,8 @@ export function ModelVersionUpsertForm({
       setFeeEnabled(true);
       applyFeeRatio(feeToRatio(Number(version?.licensingFee ?? 0)));
     }
-    if (storedPaidAccess) {
-      const stored = toFormPaidAccessConfig(storedPaidAccess, version?.donationGoal);
+    if (version?.paidAccess) {
+      const stored = toFormPaidAccessConfig(version.paidAccess, version.donationGoal);
       form.setValue('paidAccessConfig', stored, { shouldDirty: true });
       setGenMode(generationModeOf(stored));
     }
@@ -712,7 +709,7 @@ export function ModelVersionUpsertForm({
         requiresBaseModelAttestation,
         isDirty,
         versionId: version?.id,
-        storedPaidAccessConfig: toFormPaidAccessConfig(storedPaidAccess, version?.donationGoal),
+        storedPaidAccessConfig: toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal),
         templateId: schemaResult.success ? schemaResult.data.templateId : undefined,
         bountyId: schemaResult.success ? schemaResult.data.bountyId : undefined,
       }
@@ -769,7 +766,6 @@ export function ModelVersionUpsertForm({
 
   useEffect(() => {
     if (version) {
-      const liveGate = liveStoredPaidAccess(version.paidAccess);
       form.reset({
         ...version,
         licensingFee: Number(version.licensingFee ?? 0),
@@ -783,7 +779,7 @@ export function ModelVersionUpsertForm({
             : false
           : true,
         paidAccessConfig: features.earlyAccessModel
-          ? toFormPaidAccessConfig(liveGate, version.donationGoal)
+          ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
           : null,
         recommendedResources: version.recommendedResources ?? [],
         meta: { metricVisibility: getMetricVisibilityChoices(version.meta) } as Schema['meta'],
@@ -794,10 +790,12 @@ export function ModelVersionUpsertForm({
       // restores a generationPrice underneath it: on first render `version` is undefined so the box seeds
       // off, then a price arrives and is charged while the input stays hidden — and after the creator
       // unchecks it, any refetch/invalidate re-populates the value they just cleared and re-saves it.
-      setGenMode(generationModeOf(toFormPaidAccessConfig(liveGate, version.donationGoal)));
+      setGenMode(
+        generationModeOf(toFormPaidAccessConfig(version.paidAccess, version.donationGoal))
+      );
       // And for the master switch, for the same reason: `reset` restores the stored fee/gate, so the
       // switch has to follow what was actually restored rather than its mount-time value.
-      setChargeEnabled(!!liveGate || Number(version.licensingFee ?? 0) > 0);
+      setChargeEnabled(!!version.paidAccess || Number(version.licensingFee ?? 0) > 0);
       setFeeEnabled(Number(version.licensingFee ?? 0) > 0);
       feeSeededRef.current = false;
     }
@@ -818,7 +816,7 @@ export function ModelVersionUpsertForm({
 
   // A gate is present (timed OR permanent) — a permanent gate has no endsAt, so check the row, not endsAt.
   // Keeps the Paid Access section visible/editable for a published permanent-gated version.
-  const atEarlyAccess = !!storedPaidAccess;
+  const atEarlyAccess = !!version?.paidAccess;
   const isPublished = version?.status === 'Published';
   // The stored price is a FLOOR, never a ceiling: the server allows resubmitting over-cap, so clamping
   // down would silently cut a grandfathered price. Keying the ceiling to `isPublished` made the stored
@@ -829,7 +827,7 @@ export function ModelVersionUpsertForm({
   const isPrivateModel = model?.availability === Availability.Private;
   // A timed Early Access window can't be *started* after publish; only a version already on one keeps it.
   // Permanent Paid Access has no window, so it stays available post-publish.
-  const timedAlreadySet = storedPaidAccess?.timeframeDays != null;
+  const timedAlreadySet = version?.paidAccess?.timeframeDays != null;
   const canChooseTimed = !isPublished || timedAlreadySet;
   // Paid access applies only to downloadable or on-site-generation versions (undefined = Download);
   // on-site-generation-only can't charge for download (see isGenOnly). Other controls can't be gated.
@@ -863,7 +861,7 @@ export function ModelVersionUpsertForm({
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
-    : storedPaidAccess?.timeframeDays ?? 0;
+    : version?.paidAccess?.timeframeDays ?? 0;
 
   // Fetched for moderators too — they are not exempt from the allowance, so hiding the counter from
   // them makes the server's refusal their first warning. Gated on the monetization sections being
@@ -1517,7 +1515,7 @@ export function ModelVersionUpsertForm({
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
                     }}
-                    disabled={belowPricingFloor}
+                    disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
                   />
                 )}
                 {removingStoredCharge && !monetizationBlocked && (

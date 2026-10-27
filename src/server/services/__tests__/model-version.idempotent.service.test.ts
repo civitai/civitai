@@ -628,10 +628,19 @@ describe('assertUserEarlyAccessLimits', () => {
       vi.mocked(getPaidAccess).mockResolvedValueOnce(gate ? { 10: gate } : {});
     };
 
-    it('refuses restarting a window that has ended', async () => {
+    it('lets an ended window be resubmitted unchanged, without counting it against the caps', async () => {
       published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      mockMaxModels.mockReturnValue(0);
       await expect(
         assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('refuses restarting an ended window with a different length', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 14, versionId: 10 })
       ).rejects.toThrow("Early access can't be started");
     });
 

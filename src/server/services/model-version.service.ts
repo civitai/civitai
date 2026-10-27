@@ -385,6 +385,8 @@ export async function assertUserEarlyAccessLimits({
       const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
       const hasActiveTimedGate =
         !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      // writeModelVersionGateAndGoal leaves this gate as it is, so there is no window to cap.
+      if (gate && isEndedTimedGateResubmitted(gate, { timeframeDays })) return;
       if (!hasActiveTimedGate)
         throw throwBadRequestError(
           "Early access can't be started on a version that has already been published."
@@ -454,16 +456,43 @@ export const getLicensingRoots = async ({
   return { roots, defaultVersionId };
 };
 
+// An edit form reloads an ended window's row and sends it back with the rest of the version. Writing it
+// would recompute endsAt from publishedAt, which the ending job has moved to the expiry, and so restart
+// the paywall. Judged on the server clock: a client clock must never decide that a gate has ended.
+export function isEndedTimedGateResubmitted(
+  stored: { timeframeDays?: number | null; endsAt: Date | null },
+  input: { permanent?: boolean; timeframeDays?: number | null },
+  now: Date = new Date()
+) {
+  return (
+    stored.timeframeDays != null &&
+    stored.endsAt != null &&
+    stored.endsAt <= now &&
+    !input.permanent &&
+    input.timeframeDays === stored.timeframeDays
+  );
+}
+
 // Shared tail of both upsertModelVersion branches: write the gate + (optional) donation goal natively,
 // then invalidate the derived caches. Kept out of the version write's transaction deliberately.
+// Returns whether the stored gate was kept as it was (see isEndedTimedGateResubmitted).
 async function writeModelVersionGateAndGoal(
   version: { id: number; modelId: number },
   ownerId: number,
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined,
   donationGoal: { amount: number } | null | undefined
 ) {
-  await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
-  if (donationGoal)
+  const stored = paidAccess
+    ? await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: version.id } },
+        select: { timeframeDays: true, endsAt: true },
+      })
+    : null;
+  const keptGate = !!stored && !!paidAccess && isEndedTimedGateResubmitted(stored, paidAccess);
+
+  if (!keptGate) await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
+  // A goal ends a running window early; an ended one has nothing left to end.
+  if (donationGoal && !keptGate)
     await ensureDonationGoal({
       entityType: 'ModelVersion',
       entityId: version.id,
@@ -476,6 +505,7 @@ async function writeModelVersionGateAndGoal(
     bustMvCache(version.id, version.modelId),
     dataForModelsCache.refresh(version.modelId),
   ]);
+  return keptGate;
 }
 
 // Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
@@ -1182,7 +1212,12 @@ export const upsertModelVersion = async ({
     );
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
-    await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+    const keptGate = await writeModelVersionGateAndGoal(
+      version,
+      model.userId,
+      paidAccess,
+      donationGoal
+    );
 
     if (tracker) {
       const changeRows = diffEntityChanges({
@@ -1200,7 +1235,7 @@ export const upsertModelVersion = async ({
           ...data,
           // Mirror the write semantics above: paidAccess + monetization are always
           // applied (absent input = gate cleared / monetization deleted).
-          paidAccess: toPaidAccessAuditState(paidAccess),
+          paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess),
           monetization: toMonetizationAuditShape(monetization),
         },
         actorRole: resolveActorRole({
@@ -1377,7 +1412,7 @@ export const updateModelVersionPaidAccess = async ({
   const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
   // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
-  await writeModelVersionGateAndGoal(
+  const keptGate = await writeModelVersionGateAndGoal(
     { id, modelId },
     existingVersion.model.userId,
     paidAccess,
@@ -1400,7 +1435,7 @@ export const updateModelVersionPaidAccess = async ({
       entityId: id,
       ownerId: existingVersion.model.userId,
       before: { paidAccess: paidAccessBefore },
-      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      after: { paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess) },
       actorRole: resolveActorRole({
         actorUserId: actorUserId ?? 0,
         ownerId: existingVersion.model.userId,
