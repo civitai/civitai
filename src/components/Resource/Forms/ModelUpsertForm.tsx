@@ -79,7 +79,7 @@ import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 import { RequestLockReviewLink } from '~/components/Model/LockReview/RequestLockReview';
-import { isRequestableLock } from '~/shared/constants/lock-review.constants';
+import { requestableLocks } from '~/shared/constants/lock-review.constants';
 
 const schema = modelUpsertSchema
   .extend({
@@ -378,7 +378,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
   function isLockedDescription(key: string, defaultDescription?: string) {
     if (!model?.lockedProperties?.includes(key)) return defaultDescription;
-    if (!model.id || !isRequestableLock(key)) return 'Locked by moderator';
+    if (!model.id || !requestableLocks(model.lockedProperties).some((lock) => lock === key))
+      return 'Locked by moderator';
     return (
       <>
         Locked by moderator · <RequestLockReviewLink model={{ ...model, id: model.id }} />
