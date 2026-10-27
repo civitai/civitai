@@ -16,6 +16,7 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
   notes: [
     'Requires the moderator app permission `creatorServices.reviewDispute`. It moves no Buzz and settles nothing, whatever `mode` says.',
     '`proposal` null means the review escalates to a human. The latest review is shown on the dispute card, and filled with the human ruling when the deal is resolved.',
+    '`disputeOpenedAt` is `deal.disputeOpenedAt` from the dispute-evidence bundle the review read. If the dispute has been reopened since, it answers CONFLICT: read the evidence again.',
     'A deal that is not Disputed answers CONFLICT. A moderator who is its buyer or seller answers FORBIDDEN.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
@@ -39,6 +40,7 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
       .describe('The bundle the review read, as JSON.'),
     agentVersion: z.string().trim().min(1).max(100),
     mode: z.enum(DISPUTE_REVIEW_MODES),
+    disputeOpenedAt: z.coerce.date().describe("The evidence bundle's `deal.disputeOpenedAt`."),
   }),
   async handler(input, { actor }) {
     if (!(await hasModeratorGrant(actor, 'creatorServices.reviewDispute')))

@@ -117,4 +117,16 @@ describe('reading the deal file access log', () => {
       expect.objectContaining({ name: 'creator-service-file-access', type: 'error' })
     );
   });
+
+  it.each([
+    ['the per-file summary', 'GROUP BY'],
+    ['the recording start', 'minOrNull'],
+  ])('is null when only %s fails', async (_, failing) => {
+    const query = answer([]);
+    query.mockImplementation(async ({ query: sql }: { query: string }) => {
+      if (sql.includes(failing)) throw new Error('timeout');
+      return { json: async () => [] };
+    });
+    expect(await readServiceDealFileAccess([1])).toBeNull();
+  });
 });

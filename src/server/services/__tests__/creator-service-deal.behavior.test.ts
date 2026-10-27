@@ -2796,8 +2796,22 @@ describe('dispute reviews', () => {
     await deals.openServiceDealDispute({ dealId: id, userId: buyerId, reason: 'not as previewed' });
     return id;
   };
-  const review = (dealId: number, proposal: 'Refund' | 'Release' | null, reviewerId = STRANGER) =>
+  // The opening the reviewer read, as an agent takes it from the evidence bundle.
+  const openedAt = async (dealId: number) => {
+    const { disputeOpenedAt } = (
+      await reviews.getServiceDisputeEvidence({ dealId, viewerId: STRANGER })
+    ).deal;
+    if (!disputeOpenedAt) throw new Error(`deal ${dealId} has no dispute opening`);
+    return disputeOpenedAt;
+  };
+  const review = async (
+    dealId: number,
+    proposal: 'Refund' | 'Release' | null,
+    reviewerId = STRANGER,
+    disputeOpenedAt?: Date
+  ) =>
     reviews.createServiceDisputeReview({
+      disputeOpenedAt: disputeOpenedAt ?? (await openedAt(dealId)),
       dealId,
       reviewerId,
       class: 'B1',
@@ -2827,7 +2841,9 @@ describe('dispute reviews', () => {
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();
-    await expect(review(id, 'Refund')).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(review(id, 'Refund', STRANGER, new Date())).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
     expect(await rows(id)).toEqual([]);
   });
 
@@ -2900,6 +2916,7 @@ describe('dispute reviews', () => {
       [id]
     );
     await q(`UPDATE "ServiceDisputeReview" SET "createdAt" = "createdAt" - interval '1 hour'`);
+    const firstOpening = await openedAt(id);
     await resolve(id, 'Release');
     // As a payout that holds the deal again does: the dispute reopens with a new opening time.
     await q(
@@ -2909,6 +2926,11 @@ describe('dispute reviews', () => {
       [id]
     );
     expect(await latestOnQueue(id)).toBeNull();
+    // A review built on the evidence of the first hold is refused, not scored against this one.
+    await expect(review(id, 'Release', STRANGER, firstOpening)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringMatching(/reopened/),
+    });
 
     await review(id, null);
     await resolve(id, 'Release');
@@ -2916,6 +2938,20 @@ describe('dispute reviews', () => {
       { proposal: 'Release', humanRuling: 'Release', humanId: STRANGER, agreed: true },
       { proposal: null, humanRuling: 'Release', humanId: STRANGER, agreed: null },
     ]);
+  });
+
+  it('accepts the current opening whatever the session time zone', async () => {
+    const id = await disputed();
+    const opening = await openedAt(id);
+    // The stored column has no zone; the comparison must not borrow the session's.
+    await q(`SET TIME ZONE 'Asia/Tokyo'`);
+    try {
+      await expect(review(id, 'Refund', STRANGER, opening)).resolves.toMatchObject({
+        id: expect.any(Number),
+      });
+    } finally {
+      await q(`SET TIME ZONE 'UTC'`);
+    }
   });
 
   it("bundles the deal's evidence, and counts each party's other recent disputes", async () => {
@@ -2935,7 +2971,7 @@ describe('dispute reviews', () => {
       expect.objectContaining({ kind: 'Final', scanStatus: 'Passed' }),
     ]);
     expect(evidence.priorDisputes).toEqual({ days: 90, buyer: 0, seller: 1 });
-    // ClickHouse is not configured here: the access log reads as unknown, never as empty.
+    // The access log could not be read: it reads as unknown, never as empty.
     expect(evidence.files[0].access).toBeUndefined();
     expect(evidence.accessRecordedSince).toBeNull();
 

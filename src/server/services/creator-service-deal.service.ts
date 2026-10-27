@@ -1213,7 +1213,7 @@ export async function listDisputedServiceDeals({
       events: events
         .filter((event) => event.dealId === row.id)
         .map(({ dealId: _, ...event }) => event),
-      // A party is refused the review everywhere else; the queue must not hand it over either.
+      // Parties never see a review of their own deal.
       latestReview:
         viewerId === row.buyerId || viewerId === row.sellerId
           ? null

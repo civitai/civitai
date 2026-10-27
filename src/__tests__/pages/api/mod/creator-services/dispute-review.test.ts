@@ -63,6 +63,7 @@ const REVIEW = {
   evidence: { marker: 'evidence-body' },
   agentVersion: 'agent-1',
   mode: 'shadow',
+  disputeOpenedAt: '2026-10-20T10:00:00.000Z',
 };
 
 type Handler = typeof reviewHandler;
@@ -128,7 +129,13 @@ describe('writing a review', () => {
     const { status } = await call(reviewHandler, 'POST', REVIEW);
     expect(status).toBe(200);
     expect(createReview).toHaveBeenCalledWith(
-      expect.objectContaining({ dealId: 4, class: 'B1', mode: 'shadow', reviewerId: MODERATOR })
+      expect.objectContaining({
+        dealId: 4,
+        class: 'B1',
+        mode: 'shadow',
+        reviewerId: MODERATOR,
+        disputeOpenedAt: new Date('2026-10-20T10:00:00.000Z'),
+      })
     );
   });
 
@@ -144,6 +151,7 @@ describe('writing a review', () => {
     ['class', { class: 'D' }],
     ['mode', { mode: 'auto' }],
     ['confidence', { confidence: 1.5 }],
+    ['dispute opening', { disputeOpenedAt: 'yesterday' }],
     ['evidence size', { evidence: { blob: 'é'.repeat(40 * 1024) } }],
     ['evidence NUL', { evidence: { text: 'a\u0000b' } }],
   ])('refuses an unknown %s', async (_, override) => {
