@@ -28,6 +28,7 @@ export function MenuItemLabel({ item }: { item: UserMenuItem & { badgeMuted?: bo
       )}
       <QueueCountBadge
         count={item.badge ?? 0}
+        tooltip={item.badgeTooltip}
         max={99}
         ml={4}
         color={item.badgeMuted ? 'gray' : undefined}

@@ -12,6 +12,7 @@ import {
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
+import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -86,11 +87,11 @@ export function UserMenu() {
   return features.userMenuV2 ? <UserMenuV2 /> : <LegacyUserMenu />;
 }
 
-/** `indicator` is positioned by the caller, who must pass a `relative` className. */
+/** `badge` is the count label (e.g. "5", "99+"); it is drawn exactly like the bell's and chat's. */
 export const UserMenuTrigger = forwardRef<
   HTMLButtonElement,
-  { open: boolean; indicator?: React.ReactNode; className?: string; onClick?: () => void }
->(function UserMenuTrigger({ open, indicator, className, ...props }, ref) {
+  { open: boolean; badge?: string; className?: string; onClick?: () => void }
+>(function UserMenuTrigger({ open, badge, className, ...props }, ref) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const creator = useGetCreator();
@@ -98,7 +99,7 @@ export const UserMenuTrigger = forwardRef<
   return (
     <UnstyledButton
       ref={ref}
-      aria-label={currentUser ? 'Account menu' : 'Menu'}
+      aria-label={currentUser ? `Account menu${badge ? `, ${badge} waiting for you` : ''}` : 'Menu'}
       className={clsx(
         'flex items-center rounded-[var(--mantine-radius-default)] hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
         { ['bg-gray-1 dark:bg-dark-5']: open },
@@ -107,19 +108,20 @@ export const UserMenuTrigger = forwardRef<
       type="button"
       {...props}
     >
-      <div
-        className={clsx('flex items-center gap-2', {
-          ['hidden']: !currentUser,
-          ['@max-md:hidden']: !features.buzzSpendPop,
-        })}
-      >
-        <div className="@max-md:hidden">
-          <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+      <CountIndicator label={badge} disabled={!badge}>
+        <div
+          className={clsx('flex items-center gap-2', {
+            ['hidden']: !currentUser,
+            ['@max-md:hidden']: !features.buzzSpendPop,
+          })}
+        >
+          <div className="@max-md:hidden">
+            <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+          </div>
+          {features.buzz && currentUser && <HeaderUserBuzz />}
         </div>
-        {features.buzz && currentUser && <HeaderUserBuzz />}
-      </div>
-      <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
-      {indicator}
+        <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
+      </CountIndicator>
     </UnstyledButton>
   );
 });
