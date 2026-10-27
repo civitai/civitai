@@ -111,19 +111,15 @@ const view = (
   {
     activity = 'reportMedia:select:original',
     entityType = 'image',
-    createdAt = undefined as string | undefined,
+    // PGlite's clock ticks in whole milliseconds, so a row stamped "now" often equals the send's cutoff.
+    createdAt = `CURRENT_TIMESTAMP - interval '1 second'`,
   } = {}
 ) =>
-  createdAt
-    ? db.pg.query(
-        `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-         VALUES (10, $1, $2, $3, ${createdAt})`,
-        [entityType, activity, entityId]
-      )
-    : db.pg.query(
-        `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId") VALUES (10, $1, $2, $3)`,
-        [entityType, activity, entityId]
-      );
+  db.pg.query(
+    `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
+     VALUES (10, $1, $2, $3, ${createdAt})`,
+    [entityType, activity, entityId]
+  );
 
 const imageRow = (id: number) => ({
   id,
