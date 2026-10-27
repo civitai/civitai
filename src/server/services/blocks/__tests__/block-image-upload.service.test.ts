@@ -2,6 +2,7 @@ import { isBlurhashValid } from 'blurhash';
 import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * App Blocks (Phase-1 seam) — `persistBlockWorkflowOutputImage` redirect-follow
@@ -18,10 +19,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * All network/store/DB deps are mocked — no real fetch / S3 / Prisma / image.service.
  */
 
-const { mockUpload, mockCreateImage, mockLog } = vi.hoisted(() => ({
+const { mockUpload, mockCreateImage } = vi.hoisted(() => ({
   mockUpload: vi.fn(async (..._a: unknown[]): Promise<{ key: string }> => ({ key: 'uuid-key' })),
   mockCreateImage: vi.fn(async (..._a: unknown[]): Promise<{ id: number }> => ({ id: 4242 })),
-  mockLog: vi.fn(async (..._a: unknown[]) => undefined),
 }));
 
 // The service statically imports getEdgeUrl; stub it so the module graph never
@@ -30,11 +30,8 @@ vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u
 vi.mock('~/utils/s3-utils', () => ({ uploadImageBufferToStore: mockUpload }));
 // `createImage` is dynamically imported inside the service.
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
-// The blurhash helper's failure log — asserted on by the fallback test below.
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLog,
-}));
+// The blurhash helper's failure log goes through the canonical logging mock (setup.ts).
+const mockLog = loggingMock.logToAxiom;
 
 // A minimal fetch Response stand-in. A 3xx carries a `location` header; a 2xx
 // carries the body bytes. `body.cancel` is asserted to run on every redirect hop
@@ -216,7 +213,7 @@ describe('persistBlockWorkflowOutputImage — blurhash placeholder', () => {
     fetchMock.mockReset();
     mockUpload.mockReset().mockResolvedValue({ key: 'uuid-key' });
     mockCreateImage.mockReset().mockResolvedValue({ id: 4242 });
-    mockLog.mockReset().mockResolvedValue(undefined);
+    mockLog.mockClear();
   });
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -576,6 +576,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
+  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
+    decision: 'stored-merge-server-keys',
+    sites: 1,
+  },
   'src/server/jobs/remove-deleted-user-images.ts#blockUserImages': {
     decision: 'raw-server-keys',
     sites: 2,
