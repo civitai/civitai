@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as UserWorkflows from '$lib/server/user-workflows.service';
 
 const getUserGeneratedWorkflows = vi.fn();
-vi.mock('$lib/server/user-workflows.service', () => ({
-  ORCHESTRATOR_TIMEOUT_MS: 30_000,
+vi.mock('$lib/server/user-workflows.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserWorkflows>()),
   getUserGeneratedWorkflows,
-  isWorkflowSource: (s: unknown) => s === 'onsite' || s === 'comfy',
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: () => true }));
 
@@ -39,7 +39,7 @@ describe('/api/user-workflows when the orchestrator fails', () => {
     const res = await call();
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      error: 'The orchestrator did not answer within 30 seconds.',
+      error: 'The orchestrator did not answer within 90 seconds.',
     });
   });
 });
