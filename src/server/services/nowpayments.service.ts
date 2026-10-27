@@ -191,7 +191,7 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
   // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
   // after the upsert so a row another delivery created meanwhile is still handed over.
   await dbWrite.cryptoDeposit.updateMany({
-    where: { paymentId, status: { in: ['waiting', 'confirming', 'sending', 'partially_paid', 'failed'] } },
+    where: { paymentId, status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid', 'failed'] } },
     data: { status: 'buzz_failed', retryCount: 0 },
   });
 };
@@ -945,7 +945,6 @@ export const retryFailedDeposits = async () => {
   return { retried: failedDeposits.length, succeeded, failed, exhausted, held };
 };
 
-/** Hard cap on perPage to prevent abuse */
 const openDepositWhere = () => ({
   status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid'] },
   payAmount: { gt: 0 },
@@ -1039,6 +1038,7 @@ export const watchOpenDeposits = async () => {
   };
 };
 
+/** Hard cap on perPage to prevent abuse */
 const MAX_PER_PAGE = 25;
 
 export const getDepositHistory = async (userId: number, page = 1, perPage = 3) => {

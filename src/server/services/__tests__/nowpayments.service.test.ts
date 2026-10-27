@@ -89,6 +89,7 @@ import {
   retryFailedDeposits,
   watchOpenDeposits,
   getOpenDepositReport,
+  recordUnverifiedDeposit,
 } from '~/server/services/nowpayments.service';
 import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
 
@@ -1063,6 +1064,7 @@ function resetDepositMocks() {
   mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
   mockDbRead.cryptoDeposit.findUnique.mockReset().mockResolvedValue(null);
   mockDbRead.cryptoDeposit.findMany.mockReset().mockResolvedValue([]);
+  mockDbRead.cryptoDeposit.count.mockReset().mockResolvedValue(0);
   mockDbWrite.cryptoDeposit.findUnique.mockReset().mockResolvedValue(null);
   mockDbWrite.cryptoDeposit.upsert.mockReset().mockResolvedValue({});
   mockDbWrite.cryptoDeposit.updateMany.mockReset().mockResolvedValue({ count: 1 });
@@ -1072,6 +1074,49 @@ function resetDepositMocks() {
   mockGetMultipliersForUser.mockReset().mockResolvedValue({ purchasesMultiplier: 1 });
   mockGrantBuzzPurchase.mockReset().mockResolvedValue('tx_123');
 }
+
+type DepositRow = Record<string, unknown>;
+/** Applies the subset of a Prisma where-clause the deposit queries use: equality, in, gt and OR. */
+const matchesWhere = (row: DepositRow, where: Record<string, any>): boolean =>
+  Object.entries(where).every(([key, cond]) => {
+    if (key === 'OR') return (cond as Record<string, any>[]).some((w) => matchesWhere(row, w));
+    if (cond && typeof cond === 'object' && 'in' in cond) return cond.in.includes(row[key]);
+    if (cond && typeof cond === 'object' && 'gt' in cond) return (row[key] as number) > cond.gt;
+    return (row[key] ?? null) === cond;
+  });
+
+/** Serves cryptoDeposit findMany/count from a fake table, so a wrong where-clause changes results. */
+function serveDepositTable(table: () => DepositRow[]) {
+  mockDbRead.cryptoDeposit.findMany.mockImplementation(async ({ where }: any) =>
+    table()
+      .filter((r) => matchesWhere(r, where))
+      .sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
+  );
+  mockDbRead.cryptoDeposit.count.mockImplementation(
+    async ({ where }: any) => table().filter((r) => matchesWhere(r, where)).length
+  );
+}
+
+describe('recordUnverifiedDeposit', () => {
+  beforeEach(resetDepositMocks);
+
+  it.each(['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'failed'])(
+    'hands a %s row to the retry sweep when a paid IPN cannot be verified',
+    async (status) => {
+      let rowStatus = status;
+      mockDbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (!where.status.in.includes(rowStatus)) return { count: 0 };
+        rowStatus = data.status;
+        return { count: 1 };
+      });
+
+      await recordUnverifiedDeposit(makeWebhookEvent({ payment_status: 'finished' }));
+
+      expect(rowStatus).toBe('buzz_failed');
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+    }
+  );
+});
 
 const staffTipCitingPayment = {
   covering: [
@@ -1201,7 +1246,6 @@ describe('watchOpenDeposits', () => {
 
   beforeEach(() => {
     resetDepositMocks();
-    mockDbRead.cryptoDeposit.count.mockReset().mockResolvedValue(0);
     rowStatus = {};
     mockDbWrite.cryptoDeposit.findUnique.mockImplementation(async ({ where }: any) =>
       rowStatus[Number(where.paymentId)] ? { status: rowStatus[Number(where.paymentId)] } : null
@@ -1214,25 +1258,38 @@ describe('watchOpenDeposits', () => {
     });
   });
 
-  /** The report reads the rows back after the poll, the way the database would hold them. */
+  /** Serves findMany/count from `rows` by their where-clause, with statuses as the poll left them. */
   const watch = (rows: ReturnType<typeof openRow>[], npStatus: Record<number, string>) => {
     for (const r of rows) rowStatus[Number(r.paymentId)] = r.status;
-    mockDbRead.cryptoDeposit.findMany
-      .mockResolvedValueOnce(rows)
-      .mockImplementationOnce(async () =>
-        rows
-          .map((r) => ({ ...r, status: rowStatus[Number(r.paymentId)] }))
-          .filter((r) =>
-            ['confirming', 'confirmed', 'sending', 'waiting', 'partially_paid', 'held'].includes(
-              r.status
-            )
-          )
-      );
+    serveDepositTable(() => rows.map((r) => ({ ...r, status: rowStatus[Number(r.paymentId)] })));
     mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: number) =>
       npStatus[id] ? makePayment({ payment_id: id, payment_status: npStatus[id] }) : null
     );
     return watchOpenDeposits();
   };
+
+  it('polls paid in-flight and partially_paid rows only', async () => {
+    const result = await watch(
+      [
+        openRow(811, 'waiting', 5),
+        openRow(812, 'confirming', 5),
+        openRow(813, 'confirmed', 5),
+        openRow(814, 'sending', 5),
+        openRow(815, 'partially_paid', 5),
+        { ...openRow(816, 'confirming', 5), payAmount: 0 },
+        { ...openRow(817, 'finished', 5), buzzCredited: 5000 },
+        openRow(818, 'held', 5),
+        openRow(819, 'buzz_failed', 5),
+        openRow(820, 'expired', 5),
+      ],
+      {}
+    );
+
+    const polled = mockNowpaymentsCaller.getPaymentStatus.mock.calls.map(([id]) => Number(id));
+    expect(polled.sort()).toEqual([811, 812, 813, 814, 815]);
+    expect(result.checked).toBe(5);
+    expect(result.counts).toMatchObject({ open: 5, held: 1, finishedUncredited: 1 });
+  });
 
   it('credits a payment that finished after the reconcile window, once', async () => {
     const result = await watch([openRow(801, 'confirming', 5)], { 801: 'finished' });
@@ -1307,34 +1364,33 @@ describe('getOpenDepositReport', () => {
   beforeEach(resetDepositMocks);
 
   it('reads the open list and counts without calling NowPayments or writing', async () => {
-    mockDbRead.cryptoDeposit.findMany.mockResolvedValueOnce([
-      {
-        paymentId: 901n,
-        userId: 42,
-        status: 'confirmed',
-        payCurrency: 'btc',
-        payAmount: 10,
-        createdAt: new Date(Date.now() - 6 * 86_400_000),
-        user: { username: 'tester' },
-      },
-      {
-        paymentId: 902n,
-        userId: 42,
-        status: 'held',
-        payCurrency: 'eth',
-        payAmount: 1,
-        createdAt: new Date(),
-        user: null,
-      },
+    const day = 86_400_000;
+    const row = (paymentId: bigint, status: string, ageDays: number, extra = {}) => ({
+      paymentId,
+      userId: 42,
+      status,
+      payCurrency: 'btc',
+      payAmount: 10,
+      createdAt: new Date(Date.now() - ageDays * day),
+      user: { username: 'tester' },
+      ...extra,
+    });
+    serveDepositTable(() => [
+      row(901n, 'confirmed', 6),
+      row(902n, 'held', 0, { user: null }),
+      row(903n, 'partially_paid', 2),
+      row(904n, 'finished', 1, { buzzCredited: null }),
+      row(905n, 'finished', 1, { buzzCredited: 10000 }),
+      row(906n, 'expired', 9),
     ]);
-    mockDbRead.cryptoDeposit.count.mockReset().mockResolvedValueOnce(1);
 
     const report = await getOpenDepositReport();
 
-    expect(report.counts).toEqual({ open: 1, oldestOpenDays: 6, held: 1, finishedUncredited: 1 });
-    expect(report.items.map((i) => [i.paymentId, i.held])).toEqual([
+    expect(report.counts).toEqual({ open: 2, oldestOpenDays: 6, held: 1, finishedUncredited: 1 });
+    expect(report.items.map((i) => [i.paymentId, i.held]).sort()).toEqual([
       ['901', false],
       ['902', true],
+      ['903', false],
     ]);
     expect(mockNowpaymentsCaller.getPaymentStatus).not.toHaveBeenCalled();
     expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
