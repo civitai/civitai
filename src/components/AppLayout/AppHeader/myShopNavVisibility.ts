@@ -1,5 +1,5 @@
 /**
- * Whether the user menu shows "My Shop".
+ * Whether the user menu shows "Shop".
  *
  * Same rule as the shop itself: every Creator Shop endpoint sits behind the `creatorShop`
  * feature flag (`creatorShopProcedure`), so anyone holding it (testers, Creator Program,

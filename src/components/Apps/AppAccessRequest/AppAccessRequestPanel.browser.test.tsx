@@ -69,7 +69,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppAccessRequestPanel } = await import('./AppAccessRequestPanel');
 const { DialogProvider } = await import('~/components/Dialog/DialogProvider');
-const { dialogStore } = await import('~/components/Dialog/dialogStore');
+const { dialogStore, useDialogStore } = await import('~/components/Dialog/dialogStore');
 
 const IDEA = 'A sketchbook app that turns my rough line art into a coloured comic panel.';
 const PENDING: Request = {
@@ -91,6 +91,8 @@ function render() {
 
 const whatToBuild = () => page.getByTestId('app-access-what-to-build');
 const submit = () => page.getByTestId('app-access-submit');
+/** The dialogs the store holds open. Opening the form pushes onto it synchronously, in the click. */
+const openDialogIds = () => useDialogStore.getState().dialogs.map((d) => d.id);
 
 beforeEach(() => {
   dialogStore.closeAll?.();
@@ -108,6 +110,8 @@ describe('AppAccessRequestPanel — a first request', () => {
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
     expect(mocks.onRequest).toHaveBeenCalledTimes(1);
+    // The store read the signed-out case relies on can see an open form.
+    expect(openDialogIds()).toEqual(['app-access-request']);
     await expect.element(whatToBuild()).toBeInTheDocument();
 
     await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
@@ -191,8 +195,11 @@ describe('AppAccessRequestPanel — signed out', () => {
     mocks.user = null;
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
+    // Positive first: the click reached the sign-in flow, so the click's handlers have run.
     expect(mocks.requireLogin).toHaveBeenCalledTimes(1);
     expect(mocks.requireLogin.mock.calls[0][0]).toMatchObject({ reason: 'perform-action' });
-    expect(whatToBuild().elements()).toHaveLength(0);
+    // The store, not the DOM, is the settled answer: a form opened in the click would already be
+    // in it, while its DOM mounts later, behind a lazy import.
+    expect(openDialogIds()).toEqual([]);
   });
 });

@@ -10,6 +10,22 @@ export type DisputeReviewClass = (typeof DISPUTE_REVIEW_CLASSES)[number];
 export const DISPUTE_REVIEW_MODES = ['shadow', 'propose', 'settle'] as const;
 export type DisputeReviewMode = (typeof DISPUTE_REVIEW_MODES)[number];
 
+export const DISPUTE_AGENT_MODE_KEY = 'creator-services-dispute-agent-mode';
+const DISPUTE_AGENT_MODES = ['off', 'shadow', 'propose', 'settle'] as const;
+export type DisputeAgentMode = (typeof DISPUTE_AGENT_MODES)[number];
+
+/** The dispute agent's kill switch. Missing, unknown or unreadable reads as 'off'. */
+export async function getDisputeAgentMode(): Promise<DisputeAgentMode> {
+  try {
+    const [row] = await dbWrite.$queryRaw<{ value: unknown }[]>`
+      SELECT "value" FROM "KeyValue" WHERE "key" = ${DISPUTE_AGENT_MODE_KEY}`;
+    const mode = row?.value;
+    return DISPUTE_AGENT_MODES.find((m) => m === mode) ?? 'off';
+  } catch {
+    return 'off';
+  }
+}
+
 const PRIOR_DISPUTE_DAYS = 90;
 
 const partyRefused = () =>
@@ -230,6 +246,7 @@ export async function getServiceDisputeEvidence({
           OR ${deal.sellerId}::int IN ("buyerId", "sellerId"))`,
     readServiceDealFileAccess([dealId]),
   ]);
+  const agentMode = await getDisputeAgentMode();
 
   const { offeringId, offeringTitle, offeringDescription, ...dealFields } = deal;
   return {
@@ -242,5 +259,6 @@ export async function getServiceDisputeEvidence({
     })),
     accessRecordedSince: access?.recordedSince ?? null,
     priorDisputes: { days: PRIOR_DISPUTE_DAYS, ...(prior[0] ?? { buyer: 0, seller: 0 }) },
+    agentMode,
   };
 }
