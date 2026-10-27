@@ -120,9 +120,7 @@ function ChallengesPage() {
     setStatusSelection(defaultStatus[engagement]);
   }
   const allowedStatuses = engagementStatuses[engagement];
-  const myStatus = allowedStatuses.includes(statusSelection)
-    ? statusSelection
-    : allowedStatuses[0];
+  const myStatus = allowedStatuses.includes(statusSelection) ? statusSelection : allowedStatuses[0];
 
   const handleEngagementChange = (next: string) => {
     router.replace(
@@ -162,7 +160,7 @@ function ChallengesPage() {
                 >
                   <IconArrowLeft size={20} />
                 </LegacyActionIcon>
-                <Title>Your Challenges</Title>
+                <Title>Challenges</Title>
               </Group>
               {createChallengeButton}
             </Group>
