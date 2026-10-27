@@ -40,7 +40,6 @@ const verifierWith = (redis: SessionRegistryRedis) =>
     isRevoked: createRevocationCheck({ redis: () => redis }),
   });
 
-// Test 4: a spoke sees a family sign-out.
 describe('createRevocationCheck', () => {
   it('ends a token whose family was signed out, though its own jti was never marked', async () => {
     const token = await signer.mintSessionToken(

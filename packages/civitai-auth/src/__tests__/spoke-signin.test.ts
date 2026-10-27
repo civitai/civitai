@@ -106,7 +106,6 @@ describe('spokeAuthorize / spokeCallback', () => {
     expect(await res.text()).toMatch(/couldn't sign you in/);
   });
 
-  // M3 loop breaker.
   it('a session cookie that never lands: the first miss retries, the second shows the problem page', async () => {
     const b = browser(HOST);
     const events: string[] = [];

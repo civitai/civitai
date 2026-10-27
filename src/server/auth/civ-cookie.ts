@@ -3,6 +3,8 @@ import {
   hostDeviceCookieName,
   hostSessionCookieName,
   isSecureCookie,
+  LOGIN_RETRY_COOKIE,
+  POST_LOGIN_MARKER,
   sessionCookieMode,
   sessionCookieName,
   sessionCookieNameForSlot,
@@ -209,7 +211,7 @@ export function setSessionCookie(
 // session cookie that DIDN'T stick (a cross-domain Domain/Secure misconfig — the redirect-loop case) from a
 // normal login. Deliberately host-only and NOT Secure: it must stick regardless of the session cookie's fate,
 // which is the whole point of using it as the "did the real cookie land?" probe.
-export const POST_LOGIN_MARKER = 'civ_postlogin';
+export { POST_LOGIN_MARKER };
 
 /** Set-Cookie for the one-shot post-login marker (60s; host-only; non-secure so it always lands). */
 export function postLoginMarkerCookie(): string {
@@ -227,7 +229,7 @@ export function clearPostLoginMarker(): string {
 // the login once (consume the marker, re-enter the flow) so a transient miss self-heals; only on a SECOND
 // consecutive miss do we show the terminal "couldn't sign you in" page — that's a genuine redirect loop.
 // Host-only + non-secure like the marker so it always lands; short TTL (the whole login chain is a few hops).
-export const LOGIN_RETRY_COOKIE = 'civ_login_retry';
+export { LOGIN_RETRY_COOKIE };
 const LOGIN_RETRY_TTL_S = 120;
 
 /** Set-Cookie recording the current login-retry count (host-only; always lands, like the marker). */
