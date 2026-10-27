@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../../test/component-setup';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -38,15 +39,18 @@ vi.mock('~/components/Model/ModelDiscussion/CommentMasonryVirtual', () => ({
     </ul>
   ),
 }));
-vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    comment: {
-      getAll: {
+// A proxy: only the three procedures measured here are overridden; any other path is inert.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'comment.getAll': {
         useInfiniteQuery: () => ({
           data: { pages: mocks.pages },
           isLoading: false,
@@ -56,7 +60,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isRefetching: false,
         }),
       },
-      getVisibleCountByModel: {
+      'comment.getVisibleCountByModel': {
         useQuery: (input: Record<string, unknown>, opts: { enabled?: boolean } = {}) => {
           const enabled = opts.enabled ?? true;
           mocks.singleCalls.push({ input, enabled });
@@ -64,16 +68,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           return { data: input.hidden ? mocks.singleCount.hidden : mocks.singleCount.visible };
         },
       },
-      getVisibleCountsByModel: {
+      'comment.getVisibleCountsByModel': {
         useQuery: (input: Record<string, unknown>, opts: { enabled?: boolean } = {}) => {
           const enabled = opts.enabled ?? true;
           mocks.countsCalls.push({ input, enabled });
           return { data: enabled ? mocks.counts : undefined };
         },
       },
-    },
-  },
-}));
+    }),
+  };
+});
 
 const { ModelDiscussionV2 } = await import('../ModelDiscussionV2');
 
