@@ -244,8 +244,7 @@ export function StorylineModeProvider({
     if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
     if (next.kind === 'end') {
-      // The path read says this reader can see the chapter's first image; only the walk's own
-      // image read missed it. Ending here would leave the reader on the previous chapter's image.
+      // The path shows a first image the walk lacks: ending here would strand the reader.
       const at = path?.chapters.findIndex((stop) => stop.chapterId === pendingChapterId) ?? -1;
       const stop = at >= 0 ? path?.chapters[at] : undefined;
       if (stop?.firstImage) {

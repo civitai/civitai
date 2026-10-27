@@ -376,12 +376,7 @@ describe('the map clicked before a swipe back has settled', () => {
   });
 });
 
-/**
- * Tester report (Firefox, prod): from chapter 5, tapping the chapter 6 row under "Other paths"
- * closed the map and did nothing; the map then read "Chapter 5 of 6" with chapter 6 in the line,
- * and only a reload opened chapter 6. The path says the reader may see chapter 6's first image
- * while the walk's own image read does not return it.
- */
+// The path says the reader may see chapter 6's first image; the walk's image read lacks it.
 describe('a branch chapter whose first image is not in the walk', () => {
   afterEach(() => {
     mocks.unwalkedPostIds.clear();
@@ -399,5 +394,6 @@ describe('a branch chapter whose first image is not in the walk', () => {
     await vi.waitFor(() =>
       expect(Router.push).toHaveBeenCalledWith('/images/460?storylineChapter=46')
     );
+    expect(Router.push).toHaveBeenCalledTimes(1);
   });
 });
