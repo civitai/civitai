@@ -14,7 +14,7 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
   notes: [
     'The original file, whatever its status or scan result: this is for dispute review. With delivered=true, the file as the buyer receives it.',
     'The URL is an attachment download and stops working after about five minutes. Do not store it; ask again.',
-    'Each call is recorded as a moderator fetch, never as a download by the buyer or seller.',
+    "Each call is recorded as a moderator fetch (kind ModeratorFetch, never Download), under the caller's own role on the deal.",
   ],
   input: z.object({
     fileId: z.coerce.number().int().positive().describe('The delivery file id.'),
