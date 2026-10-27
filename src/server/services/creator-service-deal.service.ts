@@ -11,6 +11,10 @@ import {
   notifyServiceDealTransition,
 } from '~/server/services/creator-service-deal-notify';
 import {
+  getLatestServiceDisputeReviews,
+  recordHumanRulingSql,
+} from '~/server/services/creator-service-dispute-review.service';
+import {
   claimHold,
   claimRefund,
   dealFinalsClear,
@@ -1059,6 +1063,7 @@ export async function resolveServiceDealDispute({
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
       VALUES (${dealId}::int, ${moderatorId}::int, 'DisputeResolved'::"ServiceDealEventType",
         ${note ?? resolution}::text)`;
+    await tx.$executeRaw`${recordHumanRulingSql(dealId, moderatorId, resolution)}`;
     if (resolution === 'Refund') await claimRefund(tx, dealId);
     return 'resolved' as const;
   });
@@ -1148,9 +1153,11 @@ function parseDisputeCursor(cursor: string | undefined) {
 export async function listDisputedServiceDeals({
   cursor,
   limit = 20,
+  viewerId,
 }: {
   cursor?: string;
   limit?: number;
+  viewerId: number;
 }) {
   const after = parseDisputeCursor(cursor);
   const page_ = after
@@ -1172,14 +1179,17 @@ export async function listDisputedServiceDeals({
     ORDER BY d."disputeOpenedAt", d."id"
     LIMIT ${limit + 1}::int`;
   const page = rows.slice(0, limit);
-  const events = page.length
-    ? await dbWrite.$queryRaw<DisputedDealEventRow[]>`
-        SELECT "id", "dealId", "type"::text AS "type", "actorId", "round", "comment", "reasonCode",
-          "createdAt"
-        FROM "ServiceDealEvent"
-        WHERE "dealId" IN (${Prisma.join(page.map((row) => Prisma.sql`${row.id}::int`))})
-        ORDER BY "createdAt", "id"`
-    : [];
+  const [events, reviews] = await Promise.all([
+    page.length
+      ? dbWrite.$queryRaw<DisputedDealEventRow[]>`
+          SELECT "id", "dealId", "type"::text AS "type", "actorId", "round", "comment",
+            "reasonCode", "createdAt"
+          FROM "ServiceDealEvent"
+          WHERE "dealId" IN (${Prisma.join(page.map((row) => Prisma.sql`${row.id}::int`))})
+          ORDER BY "createdAt", "id"`
+      : [],
+    getLatestServiceDisputeReviews(page.map((row) => row.id)),
+  ]);
 
   return {
     items: page.map((row) => ({
@@ -1203,6 +1213,11 @@ export async function listDisputedServiceDeals({
       events: events
         .filter((event) => event.dealId === row.id)
         .map(({ dealId: _, ...event }) => event),
+      // A party is refused the review everywhere else; the queue must not hand it over either.
+      latestReview:
+        viewerId === row.buyerId || viewerId === row.sellerId
+          ? null
+          : reviews.find((review) => review.dealId === row.id) ?? null,
     })),
     nextCursor: rows.length > limit ? page[page.length - 1].cursor : undefined,
   };

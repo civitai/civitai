@@ -18,6 +18,7 @@ export type ModeratorGrantId =
   | 'user.creatorScore.grantLarge'
   | 'user.creatorProgram.ban'
   | 'creatorServices.resolveDispute'
+  | 'creatorServices.reviewDispute'
   | 'image.removal.confirm'
   | 'csam.report.file'
   | 'user.ban'

@@ -78,3 +78,22 @@ const logCacheFailure = (error: unknown) => {
   }).catch(() => null);
   return null;
 };
+
+/** Fails open to null, logged: a dispute read must not depend on the access log. */
+export async function readServiceDealFileAccess(dealIds: number[]) {
+  try {
+    const [rows, recordedSince] = await Promise.all([
+      listServiceDealFileAccess(dealIds),
+      getServiceDealFileAccessRecordedSince(),
+    ]);
+    return { rows, recordedSince };
+  } catch (error) {
+    logToAxiom({
+      name: 'creator-service-file-access',
+      type: 'error',
+      message: 'Could not read deal file accesses',
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return null;
+  }
+}

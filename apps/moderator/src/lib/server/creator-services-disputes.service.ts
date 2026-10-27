@@ -30,6 +30,19 @@ export type DisputeRow = {
   deliveredAt: string | null;
   finalsClear: boolean;
   events: DisputeEvent[];
+  /** Absent from a main app that predates dispute reviews. */
+  latestReview?: DisputeReview | null;
+};
+
+export type DisputeReview = {
+  id: number;
+  class: string;
+  proposal: DisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  agentVersion: string;
+  mode: 'shadow' | 'propose' | 'settle';
+  createdAt: string;
 };
 
 /** `nextCursor` is opaque: it goes back as `?cursor=` untouched. */
