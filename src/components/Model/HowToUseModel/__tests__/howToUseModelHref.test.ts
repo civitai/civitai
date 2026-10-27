@@ -5,7 +5,6 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 const GUIDE = 'https://education.civitai.com/civitais-guide-to-resource-types/';
 
 describe('howToUseModelHref', () => {
-  // A tester followed the LoRA and Checkpoint icons to the retired GitHub wiki (10/27).
   it.each([
     [ModelType.LORA, `${GUIDE}#Loras`],
     [ModelType.Checkpoint, `${GUIDE}#models`],
