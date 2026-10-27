@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
+import { createCache } from './cache';
 import { dbRead } from './db';
 
 /** Threads whose last message is the user's, for the sidebar badge. 0 when the account is not configured. */
@@ -19,4 +20,16 @@ export async function countAwaitingReply(): Promise<number> {
     WHERE sm."userId" = ${moderationId} AND last."userId" <> ${moderationId}
   `.execute(dbRead);
   return rows[0]?.count ?? 0;
+}
+
+// Shared and short: the client re-reads at most once a minute per tab, so 15 s costs no freshness, and
+// one fill per window serves every moderator instead of one query per request.
+const awaitingReply = createCache({
+  name: 'civitai-messages-awaiting:v1',
+  fetch: async () => ({ count: await countAwaitingReply() }),
+  ttlSeconds: 15,
+});
+
+export async function getAwaitingReplyBadge(): Promise<number> {
+  return (await awaitingReply.get({})).count;
 }
