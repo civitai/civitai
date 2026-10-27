@@ -26,7 +26,7 @@ async function deleteOrchestratorUserCache(userId: number | string, url: string)
       type: 'orchestrator.invalidate-user.failed',
       message: `orchestrator cache invalidation (${url}) failed for user ${userId}`,
       // On an error status the client throws the parsed body, not an Error.
-      error: safeError(error instanceof Error ? error : new Error(JSON.stringify(error))),
+      error: safeError(toError(error)),
     }).catch(() => {});
     return false;
   }
@@ -43,4 +43,14 @@ export async function invalidateCivitaiUser({ userId }: { userId: number | strin
  */
 export async function revokeCivitaiUserTokens({ userId }: { userId: number | string }) {
   return deleteOrchestratorUserCache(userId, `/v2/consumer/civitai/${userId}/tokens`);
+}
+
+function toError(error: unknown) {
+  if (error instanceof Error) return error;
+  try {
+    return new Error(JSON.stringify(error) ?? String(error));
+  } catch {
+    // A circular or BigInt body; String() can throw too, on a null-prototype object.
+    return new Error(Object.prototype.toString.call(error));
+  }
 }

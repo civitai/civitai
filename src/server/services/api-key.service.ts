@@ -16,6 +16,7 @@ import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrato
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
+import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -193,9 +194,29 @@ export async function expireUserApiKeys(userId: number) {
     });
   }
   await evictCachedApiKeys(rows.map((row) => row.key));
+  await forgetGenerationToken(userId);
   // Even with no live rows: an earlier attempt may have expired them and then failed this call.
   const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
   return { expired: live.length, orchestratorConfirmed };
+}
+
+/**
+ * Drops the user's cached generation token, which holds a key just expired: left for its hour, it
+ * would be handed to the orchestrator after an unban or restore and refused. The next generation
+ * call mints a fresh one.
+ */
+async function forgetGenerationToken(userId: number) {
+  try {
+    // Raced like a read: a half-open sysRedis must not stall the ban.
+    await withSysReadDeadline(sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, userId.toString()));
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'expire-user-api-keys-generation-token',
+      userId,
+      message: (error as Error).message,
+    }).catch(() => null);
+  }
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {

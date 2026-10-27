@@ -76,9 +76,13 @@ describe('orchestrator user cache invalidation', () => {
     expect(logged.error.message).toBe('fetch failed');
   });
 
-  it('a failed call does not throw, and is unconfirmed', async () => {
-    deleteMock.mockRejectedValueOnce(new Error('orchestrator down'));
-    await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+  it('a failed call does not throw, and is unconfirmed, whatever it rejects with', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    for (const rejection of [new Error('orchestrator down'), circular, { size: 1n }, undefined]) {
+      deleteMock.mockRejectedValueOnce(rejection);
+      await expect(revokeCivitaiUserTokens({ userId: 501 })).resolves.toBe(false);
+    }
   });
 
   it('is unconfirmed when there is no system token to call with', async () => {

@@ -115,14 +115,23 @@ describe('revoke-user-tokens job', () => {
     expect(await metaOf(2)).toEqual({ tokenRevocation: { alertedAt: expect.any(String) } });
   });
 
+  // Denver is 6-7h behind UTC: read in its zone, each ban would look that much more recent.
   it('does not depend on the database session time zone', async () => {
     await db.pg.exec(`SET TIME ZONE 'America/Denver'`);
     await seed(1, 1, null, null);
-    await seed(2, 80, null, null);
+    await seed(2, 76, null, null); // would fall inside the 72h window
+    await seed(3, 26, null, confirmedLater); // would still be in its first day
     expireUserApiKeys.mockResolvedValue({ expired: 1, orchestratorConfirmed: true });
     await revokeRecentlyBannedUserTokens();
     expect(expireUserApiKeys.mock.calls).toEqual([[1]]);
     expect(await metaOf(1)).toEqual({ tokenRevocation: { confirmedAt: expect.any(String) } });
+  });
+
+  // An unban clears bannedAt and a restore clears deletedAt; the confirmation stays behind.
+  it('stops re-expiring an account once it is unbanned or restored', async () => {
+    await seed(1, null, null, confirmedLater);
+    await revokeRecentlyBannedUserTokens();
+    expect(expireUserApiKeys).not.toHaveBeenCalled();
   });
 
   it('counts confirmed and unconfirmed accounts apart', async () => {
