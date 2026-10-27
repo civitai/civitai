@@ -14,13 +14,13 @@ import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service
  *
  * The fake `publish.sh` copies the FAILURE POLICY of the real one in the platform's templates
  * ConfigMap: a failure is fatal only when PUBLISH_REQUIRED=1 or the slug is listed in
- * `publish-required-slugs` (the apps the shared static server routes); any other failure prints a
- * warning and exits 0. So "the deploy failed" here means what it would mean in production.
+ * `publish-required-slugs` (apps already cut over to the shared static server); any other
+ * failure prints a warning and exits 0. So "the deploy failed" here means what it would mean in production.
  */
 
 const NS = 'civitai-apps';
 const SHA = 'a'.repeat(40);
-const ROUTED_SLUG = 'routed-app';
+const LISTED_SLUG = 'listed-app';
 const NEW_SLUG = 'brand-new-app';
 
 const KUBECTL_STUB = `#!/usr/bin/env bash
@@ -79,7 +79,7 @@ function run(opts: RunOpts) {
     chmodSync(join(bin, name), 0o755);
   }
   writeFileSync(join(templates, 'app.yaml.tmpl'), 'kind: Deployment\nmetadata:\n  name: ${SLUG}\n');
-  writeFileSync(join(templates, 'publish-required-slugs'), `# routed apps\n${ROUTED_SLUG}\n`);
+  writeFileSync(join(templates, 'publish-required-slugs'), `# required apps\n${LISTED_SLUG}\n`);
   if (opts.publishScript !== false) writeFileSync(join(templates, 'publish.sh'), FAKE_PUBLISH);
 
   const script = buildApplyScript(NS, { perAppObjects: opts.perAppObjects });
@@ -119,36 +119,43 @@ const ROLLOUT = /rollout status/;
 
 describe('apply script, per-app objects OFF (production default)', () => {
   it('smoke-tests and publishes as required, and creates no per-app object', () => {
-    const r = run({ perAppObjects: false, slug: ROUTED_SLUG });
+    const r = run({ perAppObjects: false, slug: LISTED_SLUG });
     expect(r.stderr).not.toMatch(/ERROR/);
     expect(r.status).toBe(0);
     expect(r.idx(SMOKE_RUN)).toBeGreaterThan(-1);
-    expect(r.calls).toContain(`publish PUBLISH_REQUIRED=1 SLUG=${ROUTED_SLUG}`);
+    expect(r.calls).toContain(`publish PUBLISH_REQUIRED=1 SLUG=${LISTED_SLUG}`);
     expect(r.idx(PUBLISH)).toBeGreaterThan(r.idx(SMOKE_RUN));
     expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
   });
 
-  // INVARIANT guard, not regression coverage: a routed app's publish failure already failed the
+  // INVARIANT guard, not regression coverage: a listed app's publish failure already failed the
   // deploy before this switch existed (publish.sh treats a listed slug as required). It pins
   // that the OFF path, where publish is the only serving path, keeps it that way.
   it('fails the deploy when the publish fails', () => {
-    const r = run({ perAppObjects: false, slug: ROUTED_SLUG, publishFails: true });
+    const r = run({ perAppObjects: false, slug: LISTED_SLUG, publishFails: true });
     expect(r.status).not.toBe(0);
     expect(r.idx(PUBLISH)).toBeGreaterThan(-1);
   });
 
   it('fails the deploy when the templates ship no publish script (nothing would serve it)', () => {
-    const r = run({ perAppObjects: false, slug: ROUTED_SLUG, publishScript: false });
+    const r = run({ perAppObjects: false, slug: LISTED_SLUG, publishScript: false });
     expect(r.status).not.toBe(0);
     expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
   });
 
-  it('fails the deploy, before any smoke pod or publish, for an app the static server does not route', () => {
+  // A new app is not in the required list; the shared static server's catch-all serves it once
+  // published, so its publish is what makes it live.
+  it('deploys a new app, not in the required list, once its required publish succeeds', () => {
     const r = run({ perAppObjects: false, slug: NEW_SLUG });
+    expect(r.status).toBe(0);
+    expect(r.calls).toContain(`publish PUBLISH_REQUIRED=1 SLUG=${NEW_SLUG}`);
+    expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
+  });
+
+  it('fails the deploy when the publish of a new app, not in the required list, fails', () => {
+    const r = run({ perAppObjects: false, slug: NEW_SLUG, publishFails: true });
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toContain(`${NEW_SLUG} has no route on the shared static server`);
-    expect(r.idx(SMOKE_RUN)).toBe(-1);
-    expect(r.idx(PUBLISH)).toBe(-1);
+    expect(r.idx(PUBLISH)).toBeGreaterThan(-1);
     expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
   });
 });
@@ -164,7 +171,7 @@ describe('apply script, per-app objects ON (rollback)', () => {
     expect(r.idx(ROLLOUT)).toBeGreaterThan(r.idx(APPLY));
   });
 
-  it('fails the deploy, and applies nothing, when the publish of an app not yet routed fails', () => {
+  it('fails the deploy, and applies nothing, when the publish of an app not in the required list fails', () => {
     const r = run({ perAppObjects: true, slug: NEW_SLUG, publishFails: true });
     expect(r.status).not.toBe(0);
     expect(r.idx(PUBLISH)).toBeGreaterThan(-1);
