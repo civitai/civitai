@@ -14,8 +14,8 @@ import { addImageToQueue, manageSanityChecks } from '~/server/services/games/new
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
-export const CONFIRM_LABEL_FAMILY = 'knights_confirm';
-export const CONFIRM_LABEL_QUESTION = 'knights_confirm.image.rating';
+export const CONFIRM_LABEL_FAMILY = 'new_order_confirm';
+export const CONFIRM_LABEL_QUESTION = 'new_order_confirm.image.rating';
 
 class LabelsNotRecorded extends Error {}
 
@@ -33,7 +33,7 @@ export async function enqueueConfirmItems(
   if (!rows.length) return;
   try {
     await dbWrite.$executeRaw`
-      INSERT INTO "KnightsConfirmItem" ("imageId", "firstLevel", "firstModId", "firstSetAt")
+      INSERT INTO "NewOrderConfirmItem" ("imageId", "firstLevel", "firstModId", "firstSetAt")
       SELECT t."imageId", t."firstLevel", ${modId}::int, ${at}::timestamptz
       FROM unnest(${rows.map((r) => r.imageId)}::int[], ${rows.map((r) => r.level)}::int[])
         AS t("imageId", "firstLevel")
@@ -42,7 +42,7 @@ export async function enqueueConfirmItems(
   } catch (error) {
     await logToAxiom({
       type: 'error',
-      name: 'knights-confirm-enqueue',
+      name: 'new-order-confirm-enqueue',
       message: (error as Error).message,
       details: { modId, imageIds: rows.map((r) => r.imageId) },
     }).catch(() => null);
@@ -61,7 +61,7 @@ async function recordJudgment(tx: LabelStoreTx, item: AgreedItem, which: 'first'
       p_value => ${String(item.firstLevel)}::text,
       p_labeller_kind => 'moderator',
       p_labeller_user_id => ${first ? item.firstModId : item.secondModId}::int,
-      p_source_ref => ${`KnightsConfirm:${item.id}:${which}`}::text,
+      p_source_ref => ${`NewOrderConfirm:${item.id}:${which}`}::text,
       p_labelled_at => ${first ? item.firstSetAt : item.secondAt}::timestamptz,
       p_snapshot => ${JSON.stringify({ v: 1, itemId: item.id, blind: !first })}::jsonb
     ) AS id
@@ -74,7 +74,7 @@ export const confirmStore: ConfirmStore = {
     return dbWrite.$queryRaw<AgreedItem[]>`
       SELECT k.id, k."imageId", img.url, k."firstLevel", img."nsfwLevel" AS "imageLevel",
         k."firstModId", k."secondModId", k."firstSetAt", k."secondAt"
-      FROM "KnightsConfirmItem" k
+      FROM "NewOrderConfirmItem" k
       JOIN "Image" img ON img.id = k."imageId"
       WHERE k.status = 'agreed' AND k."pooledAt" IS NULL AND k."expiredAt" IS NULL
         AND k."poolAttempts" < ${MAX_POOL_ATTEMPTS}
@@ -87,7 +87,7 @@ export const confirmStore: ConfirmStore = {
     try {
       return await dbWrite.$transaction(async (tx) => {
         const updated = await tx.$executeRaw`
-          UPDATE "KnightsConfirmItem" SET "pooledAt" = ${now}::timestamptz
+          UPDATE "NewOrderConfirmItem" SET "pooledAt" = ${now}::timestamptz
           WHERE id = ${item.id} AND "pooledAt" IS NULL
         `;
         if (!updated) return true;
@@ -101,7 +101,7 @@ export const confirmStore: ConfirmStore = {
           (error) =>
             void logToAxiom({
               type: 'error',
-              name: 'knights-confirm-label',
+              name: 'new-order-confirm-label',
               message: (error as Error).message,
               details: { itemId: item.id },
             }).catch(() => null)
@@ -117,28 +117,28 @@ export const confirmStore: ConfirmStore = {
 
   async markPoolFailed(ids) {
     await dbWrite.$executeRaw`
-      UPDATE "KnightsConfirmItem" SET "poolAttempts" = "poolAttempts" + 1
+      UPDATE "NewOrderConfirmItem" SET "poolAttempts" = "poolAttempts" + 1
       WHERE id = ANY(${ids}::int[])
     `;
   },
 
   async markStale(ids, now) {
     await dbWrite.$executeRaw`
-      UPDATE "KnightsConfirmItem" SET "expiredAt" = ${now}::timestamptz
+      UPDATE "NewOrderConfirmItem" SET "expiredAt" = ${now}::timestamptz
       WHERE id = ANY(${ids}::int[]) AND "pooledAt" IS NULL
     `;
   },
 
   async pooledActive() {
     return dbWrite.$queryRaw<PooledItem[]>`
-      SELECT id, "imageId", "secondAt" FROM "KnightsConfirmItem"
+      SELECT id, "imageId", "secondAt" FROM "NewOrderConfirmItem"
       WHERE status = 'agreed' AND "pooledAt" IS NOT NULL AND "expiredAt" IS NULL
     `;
   },
 
   async markExpired(ids, now) {
     await dbWrite.$executeRaw`
-      UPDATE "KnightsConfirmItem" SET "expiredAt" = ${now}::timestamptz
+      UPDATE "NewOrderConfirmItem" SET "expiredAt" = ${now}::timestamptz
       WHERE id = ANY(${ids}::int[])
     `;
   },

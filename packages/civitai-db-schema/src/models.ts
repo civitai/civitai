@@ -4872,7 +4872,7 @@ export interface ScanLabelQuota {
   updatedAt: Date;
 }
 
-export interface KnightsConfirmItem {
+export interface NewOrderConfirmItem {
   id: number;
   imageId: number;
   firstLevel: number;
@@ -4888,7 +4888,7 @@ export interface KnightsConfirmItem {
   createdAt: Date;
 }
 
-export interface KnightsConfirmClaim {
+export interface NewOrderConfirmClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;

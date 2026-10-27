@@ -3680,27 +3680,6 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
-export type KnightsConfirmClaim = {
-  itemId: number;
-  userId: number;
-  expiresAt: Timestamp;
-  token: Generated<string>;
-};
-export type KnightsConfirmItem = {
-  id: Generated<number>;
-  imageId: number;
-  firstLevel: number;
-  firstModId: number;
-  firstSetAt: Timestamp;
-  status: Generated<string>;
-  secondLevel: number | null;
-  secondModId: number | null;
-  secondAt: Timestamp | null;
-  pooledAt: Timestamp | null;
-  expiredAt: Timestamp | null;
-  poolAttempts: Generated<number>;
-  createdAt: Generated<Timestamp>;
-};
 export type Leaderboard = {
   id: string;
   index: number;
@@ -4243,6 +4222,27 @@ export type ModerationRuleVersion = {
   action: ModerationRuleAction;
   reason: string | null;
   createdById: number;
+  createdAt: Generated<Timestamp>;
+};
+export type NewOrderConfirmClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+  token: Generated<string>;
+};
+export type NewOrderConfirmItem = {
+  id: Generated<number>;
+  imageId: number;
+  firstLevel: number;
+  firstModId: number;
+  firstSetAt: Timestamp;
+  status: Generated<string>;
+  secondLevel: number | null;
+  secondModId: number | null;
+  secondAt: Timestamp | null;
+  pooledAt: Timestamp | null;
+  expiredAt: Timestamp | null;
+  poolAttempts: Generated<number>;
   createdAt: Generated<Timestamp>;
 };
 export type NewOrderPlayer = {
@@ -6475,8 +6475,6 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
-  KnightsConfirmClaim: KnightsConfirmClaim;
-  KnightsConfirmItem: KnightsConfirmItem;
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
@@ -6518,6 +6516,8 @@ export type DB = {
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
+  NewOrderConfirmClaim: NewOrderConfirmClaim;
+  NewOrderConfirmItem: NewOrderConfirmItem;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;

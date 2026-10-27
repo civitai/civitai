@@ -31,7 +31,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = readFileSync(
   join(
     HERE,
-    '../../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_knights_confirm_queue/migration.sql'
+    '../../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_new_order_confirm_queue/migration.sql'
   ),
   'utf8'
 );
@@ -68,7 +68,7 @@ async function seed(imageId: number, level: number, modId: number, at = NOW) {
 const row = async (imageId: number) =>
   (
     await pg.query<Record<string, unknown>>(
-      `SELECT * FROM "KnightsConfirmItem" WHERE "imageId" = $1 ORDER BY id DESC`,
+      `SELECT * FROM "NewOrderConfirmItem" WHERE "imageId" = $1 ORDER BY id DESC`,
       [imageId]
     )
   ).rows[0];
@@ -84,7 +84,7 @@ describe('enqueueConfirm', () => {
   it('keeps a single open item per image', async () => {
     await seed(10, R, 7);
     expect(await seed(10, PG, 8)).toBe(false);
-    const { rows } = await pg.query(`SELECT * FROM "KnightsConfirmItem"`);
+    const { rows } = await pg.query(`SELECT * FROM "NewOrderConfirmItem"`);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ firstLevel: R, firstModId: 7 });
   });
@@ -125,7 +125,7 @@ describe('claimNext', () => {
     const a = (await claimNext(8, NOW))!;
     const b = (await claimNext(8, later(500)))!;
     expect(b.token).toBe(a.token);
-    const { rows } = await pg.query(`SELECT * FROM "KnightsConfirmClaim" WHERE "userId" = 8`);
+    const { rows } = await pg.query(`SELECT * FROM "NewOrderConfirmClaim" WHERE "userId" = 8`);
     expect(rows).toHaveLength(1);
   });
 
@@ -191,7 +191,7 @@ describe('answerConfirm', () => {
   it('refuses the moderator who set the level, even holding a claim', async () => {
     await seed(10, R, 7);
     await pg.query(
-      `INSERT INTO "KnightsConfirmClaim" ("itemId", "userId", "expiresAt", "token")
+      `INSERT INTO "NewOrderConfirmClaim" ("itemId", "userId", "expiresAt", "token")
        VALUES (1, 7, $1, '00000000-0000-4000-8000-000000000001')`,
       [later(60_000).toISOString()]
     );

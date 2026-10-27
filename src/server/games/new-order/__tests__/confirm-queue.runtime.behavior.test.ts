@@ -39,7 +39,7 @@ const { confirmStore, enqueueConfirmItems } = await import(
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_knights_confirm_queue/migration.sql'
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_new_order_confirm_queue/migration.sql'
 );
 
 const NOW = new Date('2026-10-30T12:00:00.000Z');
@@ -66,7 +66,7 @@ beforeAll(async () => {
     BEGIN
       IF EXISTS (
         SELECT 1 FROM label_store.fail_for f
-        WHERE p_source_ref LIKE 'KnightsConfirm:' || f.itemId || ':%'
+        WHERE p_source_ref LIKE 'NewOrderConfirm:' || f.itemId || ':%'
       ) THEN RAISE EXCEPTION 'label store down'; END IF;
       INSERT INTO label_store.recorded VALUES (p_source_ref, p_value, p_labeller_user_id)
         ON CONFLICT DO NOTHING;
@@ -78,7 +78,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(
-    `TRUNCATE "KnightsConfirmItem", "Image", label_store.recorded, label_store.fail_for RESTART IDENTITY CASCADE`
+    `TRUNCATE "NewOrderConfirmItem", "Image", label_store.recorded, label_store.fail_for RESTART IDENTITY CASCADE`
   );
 });
 
@@ -90,13 +90,16 @@ const image = (id: number, level = R) =>
   ]);
 
 const items = async () =>
-  (await holder.db.query<Record<string, unknown>>(`SELECT * FROM "KnightsConfirmItem" ORDER BY id`))
-    .rows;
+  (
+    await holder.db.query<Record<string, unknown>>(
+      `SELECT * FROM "NewOrderConfirmItem" ORDER BY id`
+    )
+  ).rows;
 
 async function agreeItem(imageId: number, level = R) {
   await enqueueConfirmItems([{ imageId, level }], 1, NOW);
   await holder.db.query(
-    `UPDATE "KnightsConfirmItem" SET status = 'agreed', "secondLevel" = "firstLevel",
+    `UPDATE "NewOrderConfirmItem" SET status = 'agreed', "secondLevel" = "firstLevel",
        "secondModId" = 2, "secondAt" = $2 WHERE "imageId" = $1 AND status = 'open'`,
     [imageId, NOW.toISOString()]
   );
@@ -170,8 +173,8 @@ describe('markPooled', () => {
     const refs = (await holder.db.query<{ ref: string }>(`SELECT ref FROM label_store.recorded`))
       .rows;
     expect(refs.map((r) => r.ref).sort()).toEqual([
-      `KnightsConfirm:${item.id}:first`,
-      `KnightsConfirm:${item.id}:second`,
+      `NewOrderConfirm:${item.id}:first`,
+      `NewOrderConfirm:${item.id}:second`,
     ]);
   });
 
@@ -285,7 +288,7 @@ describe('runConfirmSync against the real store', () => {
     await agreeItem(10);
     const { members, pools } = fakePools();
     const later = new Date(NOW.getTime() + 20 * 86_400_000);
-    await holder.db.query(`UPDATE "KnightsConfirmItem" SET "secondAt" = $1 WHERE id = 2`, [
+    await holder.db.query(`UPDATE "NewOrderConfirmItem" SET "secondAt" = $1 WHERE id = 2`, [
       later.toISOString(),
     ]);
 

@@ -5,7 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { getImageRatingRequests } from '$lib/server/image-rating-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { enqueueConfirm } from '$lib/server/knights-confirm/confirm.service';
+import { enqueueConfirm } from '$lib/server/new-order-confirm/confirm.service';
 import { logAxiomError } from '$lib/server/axiom';
 
 const querySchema = z.object({
@@ -37,7 +37,7 @@ export const actions: Actions = {
       userId: locals.user.id,
     });
     await enqueueConfirm({ imageId: id, level: nsfwLevel, modId: locals.user.id }).catch((e) =>
-      logAxiomError(e, { name: 'knights-confirm-enqueue', imageId: id })
+      logAxiomError(e, { name: 'new-order-confirm-enqueue', imageId: id })
     );
     return { success: true, id, nsfwLevel };
   },

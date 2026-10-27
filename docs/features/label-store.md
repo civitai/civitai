@@ -83,13 +83,13 @@ existed get one label inferred from their status, ref `CreatorShopReviewInferred
 in the snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
 
-Also wired from site code: the Knights confirm queue, where a second moderator blind-confirms a moderator's
+Also wired from site code: the Knights of New Order confirm queue, where a second moderator blind-confirms a moderator's
 NSFW rating (`src/server/games/new-order/confirm-queue.runtime.ts`, run by the `new-order-confirm-sync` job).
 When both agree, the job records both judgments in one transaction under a savepoint and pools the image; if
 they cannot be recorded, nothing is pooled and the next run retries. Subject `image`, `subjectId` = the image
-id, `contentHash` = the hash of the image's storage key; family `knights_confirm`, question
-`knights_confirm.image.rating`, value the agreed browsing level; kind `moderator`. Refs are
-`KnightsConfirm:<item id>:first` and `KnightsConfirm:<item id>:second`. There is no `rule` row yet, so the
+id, `contentHash` = the hash of the image's storage key; family `new_order_confirm`, question
+`new_order_confirm.image.rating`, value the agreed browsing level; kind `moderator`. Refs are
+`NewOrderConfirm:<item id>:first` and `NewOrderConfirm:<item id>:second`. There is no `rule` row yet, so the
 question is not trainable.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the

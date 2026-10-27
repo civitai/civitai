@@ -2,8 +2,8 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm } from '$lib/server/query';
-import { answerConfirm, claimNext } from '$lib/server/knights-confirm/confirm.service';
-import { pageCard } from '$lib/server/knights-confirm/card';
+import { answerConfirm, claimNext } from '$lib/server/new-order-confirm/confirm.service';
+import { pageCard } from '$lib/server/new-order-confirm/card';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const card = await claimNext(locals.user.id);

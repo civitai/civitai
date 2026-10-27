@@ -38,7 +38,7 @@ export async function enqueueConfirm(
 ): Promise<boolean> {
   if (!isConfirmLevel(level)) return false;
   const inserted = await db
-    .insertInto('KnightsConfirmItem')
+    .insertInto('NewOrderConfirmItem')
     .values({ imageId, firstLevel: level, firstModId: modId, firstSetAt: at })
     .onConflict((oc) => oc.column('imageId').where('status', '=', 'open').doNothing())
     .executeTakeFirst();
@@ -55,9 +55,9 @@ async function toCard(
   leaseExpiresAt: Date
 ): Promise<ConfirmCard | null> {
   const row = await db
-    .selectFrom('KnightsConfirmItem as i')
+    .selectFrom('NewOrderConfirmItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .innerJoin('KnightsConfirmClaim as c', (j) =>
+    .innerJoin('NewOrderConfirmClaim as c', (j) =>
       j.onRef('c.itemId', '=', 'i.id').on('c.userId', '=', userId)
     )
     .select([
@@ -77,7 +77,7 @@ async function toCard(
 
 const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
   db
-    .selectFrom('KnightsConfirmClaim')
+    .selectFrom('NewOrderConfirmClaim')
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .where('itemId', '=', itemId)
     .where('userId', '!=', userId)
@@ -95,8 +95,8 @@ export async function claimNext(
 ): Promise<ConfirmCard | null> {
   return dbWrite.transaction().execute(async (trx) => {
     const held = await trx
-      .selectFrom('KnightsConfirmClaim as c')
-      .innerJoin('KnightsConfirmItem as i', 'i.id', 'c.itemId')
+      .selectFrom('NewOrderConfirmClaim as c')
+      .innerJoin('NewOrderConfirmItem as i', 'i.id', 'c.itemId')
       .select(['c.itemId', 'c.expiresAt'])
       .where('c.userId', '=', userId)
       .where('c.expiresAt', '>', now)
@@ -109,7 +109,7 @@ export async function claimNext(
     const tried: number[] = [];
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
       let q = trx
-        .selectFrom('KnightsConfirmItem as i')
+        .selectFrom('NewOrderConfirmItem as i')
         .innerJoin('Image as img', 'img.id', 'i.imageId')
         .select('i.id')
         .where('i.status', '=', 'open')
@@ -118,7 +118,7 @@ export async function claimNext(
           eb.not(
             eb.exists(
               eb
-                .selectFrom('KnightsConfirmItem as prior')
+                .selectFrom('NewOrderConfirmItem as prior')
                 .select(sql`1`.as('one'))
                 .whereRef('prior.imageId', '=', 'i.imageId')
                 .where('prior.secondModId', '=', userId)
@@ -129,7 +129,7 @@ export async function claimNext(
           eb.not(
             eb.exists(
               eb
-                .selectFrom('KnightsConfirmClaim as c')
+                .selectFrom('NewOrderConfirmClaim as c')
                 .select(sql`1`.as('one'))
                 .whereRef('c.itemId', '=', 'i.id')
                 .where('c.userId', '!=', userId)
@@ -150,7 +150,7 @@ export async function claimNext(
       // 🔴 Re-check under the row lock: the candidate query's snapshot can predate a rival
       // claimer's commit, and every claimer and answerer takes this lock first.
       const fresh = await trx
-        .selectFrom('KnightsConfirmItem')
+        .selectFrom('NewOrderConfirmItem')
         .select('status')
         .where('id', '=', candidate.id)
         .executeTakeFirstOrThrow();
@@ -161,7 +161,7 @@ export async function claimNext(
 
       const expiresAt = new Date(now.getTime() + CONFIRM_LEASE_MS);
       await trx
-        .insertInto('KnightsConfirmClaim')
+        .insertInto('NewOrderConfirmClaim')
         .values({ itemId: candidate.id, userId, expiresAt })
         .onConflict((oc) => oc.columns(['itemId', 'userId']).doUpdateSet({ expiresAt }))
         .execute();
@@ -180,7 +180,7 @@ export async function itemForToken(
   now: Date = new Date()
 ): Promise<number | null> {
   const claim = await dbWrite
-    .selectFrom('KnightsConfirmClaim')
+    .selectFrom('NewOrderConfirmClaim')
     .select('itemId')
     .where('token', '=', token)
     .where('userId', '=', userId)
@@ -200,7 +200,7 @@ export async function answerConfirm(
   if (!isConfirmLevel(level)) return { ok: false, reason: 'invalid-level' };
   return dbWrite.transaction().execute(async (trx): Promise<AnswerResult> => {
     const claim = await trx
-      .selectFrom('KnightsConfirmClaim')
+      .selectFrom('NewOrderConfirmClaim')
       .select(['itemId', 'expiresAt'])
       .where('token', '=', token)
       .where('userId', '=', userId)
@@ -209,7 +209,7 @@ export async function answerConfirm(
     if (claim.expiresAt <= now) return { ok: false, reason: 'expired' };
 
     const item = await trx
-      .selectFrom('KnightsConfirmItem')
+      .selectFrom('NewOrderConfirmItem')
       .select(['status', 'firstLevel', 'firstModId'])
       .where('id', '=', claim.itemId)
       .forUpdate()
@@ -219,7 +219,7 @@ export async function answerConfirm(
 
     const outcome = item.firstLevel === level ? 'agreed' : 'disagreed';
     await trx
-      .updateTable('KnightsConfirmItem')
+      .updateTable('NewOrderConfirmItem')
       .set({ status: outcome, secondLevel: level, secondModId: userId, secondAt: now })
       .where('id', '=', claim.itemId)
       .where('status', '=', 'open')

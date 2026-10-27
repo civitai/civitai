@@ -7776,9 +7776,9 @@ model ScanLabelQuota {
   updatedAt  DateTime @default(now()) @db.Timestamptz(3)
 }
 
-// Knights Acolyte training data: a moderator's rating is confirmed blind by a second moderator.
-// FKs and CHECK constraints live in migration 20261209120000_knights_confirm_queue.
-model KnightsConfirmItem {
+// Knights of New Order Acolyte training data: a moderator's rating is confirmed blind by a second moderator.
+// FKs and CHECK constraints live in migration 20261209120000_new_order_confirm_queue.
+model NewOrderConfirmItem {
   id          Int       @id @default(autoincrement())
   imageId     Int
   firstLevel  Int       @db.SmallInt
@@ -7798,7 +7798,7 @@ model KnightsConfirmItem {
   @@index([imageId])
 }
 
-model KnightsConfirmClaim {
+model NewOrderConfirmClaim {
   itemId    Int
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
