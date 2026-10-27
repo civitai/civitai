@@ -11,7 +11,11 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { API_KEY, API_URL, createCli, projectRoot, trpcCall, whoami } from '../mod-actions/lib.mjs';
-import { attachUrl as runAttachUrl, detachUrl as runDetachUrl } from './attach-url.mjs';
+import {
+  attachUrl as runAttachUrl,
+  detachUrl as runDetachUrl,
+  verifyUrl as runVerifyUrl,
+} from './attach-url.mjs';
 import { queryDb } from '../generation-coverage/coverage.mjs';
 
 // constants.system.officialUserId in src/server/common/constants.ts
@@ -38,6 +42,7 @@ const { flags, writable, fail, required, requiredInt, oneOf, dryRun, dispatch } 
   'writable',
   'no-download',
   'optional',
+  'storage-registration-follows',
 ]);
 
 const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
@@ -468,7 +473,21 @@ async function attachUrl() {
       fromVersion: requiredInt('from-version'),
       version: requiredInt('version'),
       url: flags.url,
+      storageRegistrationFollows: !!flags['storage-registration-follows'],
       writable,
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
+async function verifyUrl() {
+  const ok = await runVerifyUrl(
+    {
+      file: requiredInt('file'),
+      version: requiredInt('version'),
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
     },
     urlDeps
   );
@@ -501,9 +520,11 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
   files               --version <id>                                 are the uploaded files ready?
   hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
   attach-import       --import <id> --version <id> --type <type> [--fp <precision>] [--optional] [--writable]
-  attach-url          --from-file <id> --from-version <id> --version <id> [--url <same object>] [--writable]
-                                                                     reuse another version's stored file
-  detach-url          --file <id> --version <id> --from-file <id> --from-version <id> [--writable]
+  attach-url          --from-file <id> --from-version <id> --version <id> [--url <same object>]
+                      [--storage-registration-follows] [--writable]  reuse another version's stored file
+  verify-url          --file <id> --version <id> --from-file <id> --from-version <id>
+                                                                     does the copy download the source's bytes?
+  detach-url        --file <id> --version <id> --from-file <id> --from-version <id> [--writable]
 
 Description writes need --approved <hash>, printed by the dry run of the same command.
 --kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.
@@ -521,6 +542,7 @@ dispatch(
     'hf-imports': hfImports,
     'attach-import': attachImport,
     'attach-url': attachUrl,
+    'verify-url': verifyUrl,
     'detach-url': detachUrl,
   },
   HELP

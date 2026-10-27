@@ -174,7 +174,18 @@ node .claude/skills/official-model-admin/model.mjs attach-url --from-file <id> -
 - **Both runs download the first 64 KB of the source** through the download route and stop if it
   fails. The writable run then does the same for the new file and compares the two, ending
   `VERIFIED`, or `NOT VERIFIED` (exit 1) with the `detach-url` command that removes the new file.
-- Re-running is safe: a version that already has the url gets no second file, only the check.
+- Re-running is safe: a version that already has the url gets no second file, only the check. Files
+  are read from the primary database, since the cached file list can miss a file created moments ago.
+- **It stops before any write when the source is served from B2 but its url names R2.** Downloads find
+  a file's storage location by file id, and a new file's location is taken from its url, so such a
+  copy would not resolve. That source needs its location registered for the new file, or a real copy.
+- **`--storage-registration-follows`** is for that case when the registration is arranged (ask an
+  infra owner). The file is created with the identical url, no download check runs, and the command
+  prints `PENDING REGISTRATION file <id> version <v> model <m> source <fromFile>`, one line per file,
+  for whoever registers it. A re-run creates nothing and prints the line again until the file downloads.
+- **`verify-url --file <id> --version <id> --from-file <id> --from-version <id>`** is read-only: it
+  repeats the same-bytes check and prints `VERIFIED` or `NOT VERIFIED` (exit 1). Run it after the
+  registration.
 - The key must be a moderator's: the API returns file urls only to moderators and the owner.
 - `--url` replaces the url with another url for the **same object key**, e.g. the same key on the
   other storage backend. A url naming a different key is refused.
