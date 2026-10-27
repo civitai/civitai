@@ -1,3 +1,4 @@
+import type * as EmblaReact from 'embla-carousel-react';
 import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
@@ -28,6 +29,32 @@ vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),
   useFeatureFlags: () => ({}),
 }));
+
+// Counts the calls the carousel makes on embla's API, through the one hook that hands it out.
+const emblaCalls = vi.hoisted(() => ({
+  reInit: [] as unknown[][],
+  scrollTo: [] as unknown[][],
+  seen: new WeakSet<object>(),
+}));
+vi.mock('embla-carousel-react', async (o) => {
+  const actual = (await o<object>()) as typeof EmblaReact;
+  const spied = (...args: Parameters<typeof actual.default>) => {
+    const result = actual.default(...args);
+    const api = result[1];
+    if (api && !emblaCalls.seen.has(api)) {
+      emblaCalls.seen.add(api);
+      for (const method of ['reInit', 'scrollTo'] as const) {
+        const original = api[method].bind(api) as (...a: unknown[]) => unknown;
+        (api as unknown as Record<string, unknown>)[method] = (...a: unknown[]) => {
+          emblaCalls[method].push(a);
+          return original(...a);
+        };
+      }
+    }
+    return result;
+  };
+  return { ...actual, default: Object.assign(spied, actual.default) };
+});
 
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 
@@ -121,7 +148,24 @@ function Harness({
   );
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Long enough for embla's observers, the resize observer and the settle fallback to have fired. */
+const QUIET_MS = 1000;
+
+/**
+ * Calls that move the reader, made while `action` runs and for QUIET_MS after so a late one still
+ * counts. A bare `reInit()` is the resize observer re-measuring and keeps the position.
+ */
+async function movesAfter(action: () => Promise<unknown>) {
+  const before = { reInit: emblaCalls.reInit.length, scrollTo: emblaCalls.scrollTo.length };
+  await action();
+  await wait(QUIET_MS);
+  return {
+    reInitWithOptions: emblaCalls.reInit.slice(before.reInit).filter((args) => args.length > 0),
+    scrollTo: emblaCalls.scrollTo.slice(before.scrollTo),
+  };
+}
 
 describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
   test('an index into slides appended in the same commit lands on that slide', async () => {
@@ -154,9 +198,9 @@ describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
     await page.viewport(1200, 800);
     renderWithProviders(<Harness loop={loop} initialCount={4} initialIndex={1} />);
     await vi.waitFor(() => expect(slideInView()).toBe(1));
-    await page.getByTestId('append').click();
-    await settle();
+    const moves = await movesAfter(() => page.getByTestId('append').click());
     await expect.element(page.getByTestId('count')).toHaveTextContent('5');
+    expect(moves).toEqual({ reInitWithOptions: [], scrollTo: [] });
     expect(slideInView()).toBe(1);
     await expect.element(page.getByTestId('state')).toHaveTextContent('1');
   });
@@ -165,9 +209,9 @@ describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
     await page.viewport(1200, 800);
     renderWithProviders(<Harness loop={loop} initialCount={5} initialIndex={1} />);
     await vi.waitFor(() => expect(slideInView()).toBe(1));
-    await page.getByTestId('shrink').click();
-    await settle();
+    const moves = await movesAfter(() => page.getByTestId('shrink').click());
     await expect.element(page.getByTestId('count')).toHaveTextContent('4');
+    expect(moves).toEqual({ reInitWithOptions: [], scrollTo: [] });
     expect(slideInView()).toBe(1);
     await expect.element(page.getByTestId('state')).toHaveTextContent('1');
   });
