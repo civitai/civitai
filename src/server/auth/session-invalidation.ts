@@ -13,7 +13,8 @@ import {
   type SessionStateCaller,
 } from './session-metrics';
 
-const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
+// Revocation markers must outlast the 90-day session limit, or a token outlives the marker that revokes it.
+const MARKER_EXPIRATION = 60 * 60 * 24 * 91;
 // Fields per HSCAN page. Only bounds how many field names come back per round trip; the scan is incremental
 // either way, so this trades round trips against per-command size rather than affecting correctness.
 const SCAN_PAGE = 500;
@@ -112,7 +113,7 @@ async function updateSessionState(
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
     // hSet (multi-field) + hExpire (multi-field). The previous pair could
     // leave a subset of fields no-TTL if the second call failed; here all
-    // fields land with the same DEFAULT_EXPIRATION TTL atomically.
+    // fields land with the same MARKER_EXPIRATION TTL atomically.
     //
     // Fail-open wrapper: an in-flight EVAL throw during a sysRedis
     // sentinel failover (Phase 4) would otherwise propagate up into the
@@ -131,7 +132,7 @@ async function updateSessionState(
       chunksWritten = chunkIndex + 1;
       chunksTotal = chunkTotal;
     };
-    const ttlMs = DEFAULT_EXPIRATION * 1000;
+    const ttlMs = MARKER_EXPIRATION * 1000;
     const tokenStateKey = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
     let marked = false;
     try {
@@ -183,6 +184,17 @@ async function untrackTokens(key: string, userId: number, tokens: string[]) {
       tokenCount: tokens.length,
       removed,
     });
+  }
+}
+
+// Ends every token of the user signed before now, including ones the token walk can't find.
+async function writeUserCut(userId: number) {
+  try {
+    await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.USER_CUT}:${userId}` as any, String(Date.now()), {
+      EX: MARKER_EXPIRATION,
+    });
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', 'session-invalidation.writeUserCut', err, { userId });
   }
 }
 
@@ -267,6 +279,7 @@ export async function invalidateSession(
   userId: number,
   caller: SessionStateCaller = 'unspecified'
 ) {
+  await writeUserCut(userId);
   const userTokens = await updateSessionState(userId, 'invalid', caller);
   await sendSessionSignal(userId, 'invalid');
 

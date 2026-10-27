@@ -10,7 +10,8 @@ import { createHash } from 'crypto';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import { API_URL, createCli, projectRoot, trpcCall, whoami } from '../mod-actions/lib.mjs';
+import { API_KEY, API_URL, createCli, projectRoot, trpcCall, whoami } from '../mod-actions/lib.mjs';
+import { attachUrl as runAttachUrl, detachUrl as runDetachUrl } from './attach-url.mjs';
 import { queryDb } from '../generation-coverage/coverage.mjs';
 
 // constants.system.officialUserId in src/server/common/constants.ts
@@ -458,6 +459,36 @@ async function attachImport() {
   console.log('Scanning and hashing start on their own. Check with: files --version ' + modelVersionId);
 }
 
+const urlDeps = { call: trpcCall, fetchFn: fetch, apiUrl: API_URL, apiKey: API_KEY, log: console.log };
+
+async function attachUrl() {
+  const ok = await runAttachUrl(
+    {
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
+      version: requiredInt('version'),
+      url: flags.url,
+      writable,
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
+async function detachUrl() {
+  const ok = await runDetachUrl(
+    {
+      file: requiredInt('file'),
+      version: requiredInt('version'),
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
+      writable,
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
 const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command> [flags]
 
   whoami
@@ -470,6 +501,9 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
   files               --version <id>                                 are the uploaded files ready?
   hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
   attach-import       --import <id> --version <id> --type <type> [--fp <precision>] [--optional] [--writable]
+  attach-url          --from-file <id> --from-version <id> --version <id> [--url <same object>] [--writable]
+                                                                     reuse another version's stored file
+  detach-url          --file <id> --version <id> --from-file <id> --from-version <id> [--writable]
 
 Description writes need --approved <hash>, printed by the dry run of the same command.
 --kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.
@@ -486,6 +520,8 @@ dispatch(
     files,
     'hf-imports': hfImports,
     'attach-import': attachImport,
+    'attach-url': attachUrl,
+    'detach-url': detachUrl,
   },
   HELP
 );

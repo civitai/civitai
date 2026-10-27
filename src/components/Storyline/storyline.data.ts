@@ -1,7 +1,18 @@
 import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/StorylineContinueForm';
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
+import { useMemo } from 'react';
 import type { StorylineClosedReason } from '~/components/Storyline/storyline-ui';
+import {
+  STORYLINE_CONTINUE_POST_LIMIT,
+  storylineContinuePostOptions,
+  storylineWithoutChapters,
+} from '~/components/Storyline/storyline-ui';
+import { isPublished } from '~/components/Storyline/storyline.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PostSort } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -253,4 +264,65 @@ export async function readSubmitOutcome(
 export function useStorylineChapterLevels(storylineId: number, { enabled }: { enabled: boolean }) {
   const query = trpc.storyline.getChapterLevels.useQuery({ id: storylineId }, { enabled });
   return query.data ?? null;
+}
+
+/** The viewer's newest posts that are not chapters yet, for a chapter picker. */
+export function useOwnStorylinePosts({
+  enabled,
+  excludePostId,
+  publishedOnly = false,
+}: {
+  enabled: boolean;
+  excludePostId?: number;
+  /** Leaves out drafts and posts scheduled for later. */
+  publishedOnly?: boolean;
+}) {
+  const currentUser = useCurrentUser();
+  // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
+  // Newest, all time: the default sort lists only posts that already have reactions, which leaves
+  // out the post just made to continue the story.
+  const {
+    data: postPages,
+    isLoading: postsLoading,
+    isError: postsError,
+  } = trpc.post.getInfinite.useInfiniteQuery(
+    {
+      username: currentUser?.username,
+      browsingLevel: allBrowsingLevelsFlag,
+      limit: STORYLINE_CONTINUE_POST_LIMIT,
+      sort: PostSort.Newest,
+      period: MetricTimeframe.AllTime,
+    },
+    { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
+  );
+  const firstPage = postPages?.pages[0];
+  const ownPosts = useMemo(
+    () =>
+      currentUser
+        ? storylineContinuePostOptions(firstPage?.items ?? [], {
+            viewerId: currentUser.id,
+            parentPostId: excludePostId ?? 0,
+          }).filter((post) => !publishedOnly || isPublished(post))
+        : [],
+    [currentUser, firstPage, excludePostId, publishedOnly]
+  );
+  // Which of them are already chapters; the author is told whatever the post's level.
+  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
+  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
+    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
+    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
+    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
+  );
+  const { posts, alreadyChapters } = storylineWithoutChapters(
+    ownPosts,
+    new Set(Object.keys(ownChapters ?? {}).map(Number))
+  );
+  return {
+    posts,
+    alreadyChapters,
+    postsLoading: postsLoading || (ownPostIds.length > 0 && ownChaptersLoading),
+    // A failed refetch keeps the posts already shown.
+    postsError: postsError && !firstPage,
+    morePosts: !!firstPage?.nextCursor,
+  };
 }
