@@ -4872,6 +4872,28 @@ export interface ScanLabelQuota {
   updatedAt: Date;
 }
 
+export interface KnightsConfirmItem {
+  id: number;
+  imageId: number;
+  firstLevel: number;
+  firstModId: number;
+  firstSetAt: Date;
+  status: string;
+  secondLevel: number | null;
+  secondModId: number | null;
+  secondAt: Date | null;
+  pooledAt: Date | null;
+  expiredAt: Date | null;
+  createdAt: Date;
+}
+
+export interface KnightsConfirmClaim {
+  itemId: number;
+  userId: number;
+  expiresAt: Date;
+  token: string;
+}
+
 export interface AuctionBase {
   id: number;
   type: AuctionType;

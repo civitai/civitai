@@ -3680,6 +3680,26 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
+export type KnightsConfirmClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+  token: Generated<string>;
+};
+export type KnightsConfirmItem = {
+  id: Generated<number>;
+  imageId: number;
+  firstLevel: number;
+  firstModId: number;
+  firstSetAt: Timestamp;
+  status: Generated<string>;
+  secondLevel: number | null;
+  secondModId: number | null;
+  secondAt: Timestamp | null;
+  pooledAt: Timestamp | null;
+  expiredAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+};
 export type Leaderboard = {
   id: string;
   index: number;
@@ -6454,6 +6474,8 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
+  KnightsConfirmClaim: KnightsConfirmClaim;
+  KnightsConfirmItem: KnightsConfirmItem;
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;

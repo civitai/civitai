@@ -106,6 +106,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/scan-probe', label: 'Scan Probe' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
+      { path: '/images/confirm', label: 'Rating Confirmation', noPreload: true },
       { path: '/images/downleveled', label: 'Downleveled' },
       // `informational`: stuck scans are a pipeline fault with no moderator action; summed into
       // the group badge they would read as a review backlog.

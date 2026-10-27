@@ -7776,6 +7776,37 @@ model ScanLabelQuota {
   updatedAt  DateTime @default(now()) @db.Timestamptz(3)
 }
 
+// Knights Acolyte training data: a moderator's rating is confirmed blind by a second moderator.
+// FKs and CHECK constraints live in migration 20261209120000_knights_confirm_queue.
+model KnightsConfirmItem {
+  id          Int       @id @default(autoincrement())
+  imageId     Int
+  firstLevel  Int       @db.SmallInt
+  firstModId  Int
+  firstSetAt  DateTime  @db.Timestamptz(3)
+  status      String    @default("open")
+  secondLevel Int?      @db.SmallInt
+  secondModId Int?
+  secondAt    DateTime? @db.Timestamptz(3)
+  pooledAt    DateTime? @db.Timestamptz(3)
+  expiredAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([status, secondAt])
+  @@index([imageId])
+}
+
+model KnightsConfirmClaim {
+  itemId    Int
+  userId    Int
+  expiresAt DateTime @db.Timestamptz(3)
+  token     String   @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  @@id([itemId, userId])
+  @@index([userId])
+}
+
 enum AuctionType {
   Model
   Image
