@@ -267,6 +267,29 @@ describe('sendAsCivitai', () => {
 });
 
 describe('sendAsCivitai refusals that must not take the thread', () => {
+  it.each([
+    ['Invited', true],
+    ['Kicked', false],
+    ['Ignored', false],
+    [null, false],
+  ] as const)('a recipient whose membership is %s can be messaged: %s', async (status, allowed) => {
+    const { chatId } = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'one' });
+    if (status === null)
+      await db.query(`DELETE FROM "ChatMember" WHERE "chatId" = $1 AND "userId" = $2`, [
+        chatId,
+        USER,
+      ]);
+    else
+      await db.query(`UPDATE "ChatMember" SET status = $3 WHERE "chatId" = $1 AND "userId" = $2`, [
+        chatId,
+        USER,
+        status,
+      ]);
+    const second = sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'two' });
+    if (allowed) await expect(second).resolves.toBeDefined();
+    else await expect(second).rejects.toThrow(/no longer in/);
+  });
+
   it('refuses a user who has left the thread', async () => {
     const { chatId } = await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'one' });
     await db.query(
@@ -355,6 +378,24 @@ describe('sendAsCivitaiOnce', () => {
     });
     expect([edited.deduped, other.deduped]).toEqual([false, false]);
     expect(h.createMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it('marks a send in progress only briefly, and keeps the result for a day', async () => {
+    await sendAsCivitaiOnce({
+      actorId: MOD_A,
+      userId: USER,
+      message: 'hi',
+      idempotencyKey: 'key-0004',
+    });
+    const writes = redisMock.sysRedis.set.mock.calls.filter(([k]) =>
+      String(k).includes('idempotency')
+    );
+    expect(writes.map(([, v, opts]) => [v === 'pending' ? 'pending' : 'result', opts?.EX])).toEqual(
+      [
+        ['pending', 300],
+        ['result', 86400],
+      ]
+    );
   });
 
   it('frees the key when the send fails, so a retry can succeed', async () => {

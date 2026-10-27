@@ -102,6 +102,9 @@ describe.each(Object.keys(calls) as (keyof typeof calls)[])('%s', (name) => {
     h.hasGrant.mockResolvedValue(true);
     expect(await invoke(name)).toBe(200);
     expect(h.service[calls[name].service]).toHaveBeenCalled();
-    expect(h.hasGrant).toHaveBeenCalledWith(expect.anything(), 'user.message.asCivitai');
+    expect(h.hasGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      'user.message.asCivitai'
+    );
   });
 });

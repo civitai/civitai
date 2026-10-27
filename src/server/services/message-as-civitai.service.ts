@@ -213,7 +213,8 @@ async function sendLocked({
     );
   await audit('chatMessage', sent.id);
   if (context?.reportId) await audit('report', context.reportId);
-  await nudge({ userId, chatId, messageId: sent.id });
+  // Delivered already; a failed tray notice must not free the idempotency key for a second send.
+  await nudge({ userId, chatId, messageId: sent.id }).catch(() => undefined);
 
   return { chatId, messageId: sent.id };
 }
