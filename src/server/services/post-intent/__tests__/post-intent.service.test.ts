@@ -630,23 +630,54 @@ describe('publishIntent', () => {
 });
 
 describe('item: the app sub-listing a share names', () => {
+  const live = { author: { bannedAt: null, deletedAt: null }, ...parentWith(true) };
+  function parentWith(enabled: boolean) {
+    return { parentListing: { subListingParent: { enabled } } };
+  }
   const SUB_LISTINGS = [
     { id: 'asl_FAKEFUL', parentListingId: 'apl_games', itemKey: 'fakeful', status: 'approved' },
     { id: 'asl_PENDING', parentListingId: 'apl_games', itemKey: 'unreviewed', status: 'pending' },
     { id: 'asl_HIDDEN', parentListingId: 'apl_games', itemKey: 'hidden', status: 'hidden' },
     { id: 'asl_OTHER', parentListingId: 'apl_other_app', itemKey: 'elsewhere', status: 'approved' },
-  ];
+  ]
+    .map((r) => ({ ...r, ...live }))
+    .concat([
+      {
+        id: 'asl_BANNED',
+        parentListingId: 'apl_games',
+        itemKey: 'banned',
+        status: 'approved',
+        ...live,
+        author: { bannedAt: new Date('2026-10-01') as never, deletedAt: null },
+      },
+      {
+        id: 'asl_SWITCHED_OFF',
+        parentListingId: 'apl_games',
+        itemKey: 'switchedoff',
+        status: 'approved',
+        ...live,
+        ...parentWith(false),
+      },
+    ]);
 
-  /** Matches every `where` field against the rows, so a dropped condition admits a row. */
+  /** Every `where` field, nested and `is` ones included, must hold for a row to match. */
+  function matches(row: unknown, where: Record<string, unknown>): boolean {
+    const r = (row ?? {}) as Record<string, unknown>;
+    return Object.entries(where).every(([k, v]) => {
+      if (k === 'is') return matches(r, v as Record<string, unknown>);
+      if (v !== null && typeof v === 'object' && !(v instanceof Date))
+        return matches(r[k], v as Record<string, unknown>);
+      return r[k] === v;
+    });
+  }
+
   function serveSubListings() {
     dbMock.dbRead.appSubListing.findFirst.mockImplementation((async ({
       where,
     }: {
       where: Record<string, unknown>;
     }) => {
-      const row = SUB_LISTINGS.find((r) =>
-        Object.entries(where).every(([k, v]) => r[k as keyof typeof r] === v)
-      );
+      const row = SUB_LISTINGS.find((r) => matches(r, where));
       return row ? { id: row.id, title: `Title of ${row.itemKey}` } : null;
     }) as never);
   }
@@ -686,6 +717,8 @@ describe('item: the app sub-listing a share names', () => {
     ['pending review', 'unreviewed'],
     ['hidden by a moderator', 'hidden'],
     ["approved under another app's listing", 'elsewhere'],
+    ['by a banned author', 'banned'],
+    ['under an app whose sub-listings are switched off', 'switchedoff'],
     ['unknown', 'nosuchgame'],
   ])('credits only the app for an item %s', async (_, item) => {
     expect(await publishWith(item)).toEqual({ blockPublishedAppId: APP_ID });

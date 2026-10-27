@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -119,11 +120,24 @@ export async function resolveIntentItem(
 ): Promise<{ id: string; title: string } | null> {
   if (!item) return null;
   try {
-    return await dbRead.appSubListing.findFirst({
-      where: { parentListingId: record.listingId, itemKey: item, status: APPROVED },
+    const row = await dbRead.appSubListing.findFirst({
+      where: {
+        parentListingId: record.listingId,
+        itemKey: item,
+        status: APPROVED,
+        author: { bannedAt: null, deletedAt: null },
+        parentListing: { subListingParent: { is: { enabled: true } } },
+      },
       select: { id: true, title: true },
     });
-  } catch {
+    return row && { id: row.id, title: sanitizeAppChromeName(row.title) ?? '' };
+  } catch (err) {
+    logToAxiom({
+      name: 'post-intent',
+      type: 'error',
+      message: 'failed to resolve item',
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
     return null;
   }
 }
@@ -274,7 +288,11 @@ async function toStagedIntent(
   const item = await resolveIntentItem(record, manifest.item);
   return {
     manifestUrl,
-    app: { name: record.listingName, host: record.host, ...(item && { itemName: item.title }) },
+    app: {
+      name: record.listingName,
+      host: record.host,
+      ...(item?.title && { itemName: item.title }),
+    },
     title: manifest.title,
     description: manifest.description,
     tags: manifest.tags ?? [],

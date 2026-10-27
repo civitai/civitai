@@ -128,12 +128,17 @@ export async function readPostAppChip({
       subListingId = readBlockPublishedSubListingId(row?.metadata ?? null);
       return readBlockPublishedAppId(row?.metadata ?? null);
     },
-    readItem: async (listingId) =>
-      subListingId
-        ? ((await dbRead.appSubListing.findFirst(
-            postAppChipItemQuery(subListingId, listingId)
-          )) as PostAppChipItemRow | null)
-        : null,
+    readItem: async (listingIds) => {
+      if (!subListingId) return null;
+      try {
+        return (await dbRead.appSubListing.findFirst(
+          postAppChipItemQuery(subListingId, listingIds)
+        )) as PostAppChipItemRow | null;
+      } catch (err) {
+        noteDegradedChipRead(err, 'post');
+        return null;
+      }
+    },
   });
 }
 
@@ -165,7 +170,7 @@ export async function readAppChip({
   viewerBrowsingLevel?: number | null;
   readMarker: () => Promise<string | null>;
   /** See `resolveAppChip`. */
-  readItem?: (viewableListingId: string) => Promise<PostAppChipItemRow | null>;
+  readItem?: (viewableListingIds: string[]) => Promise<PostAppChipItemRow | null>;
 }): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see

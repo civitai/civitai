@@ -58,7 +58,7 @@ type SubRow = {
     slug: string;
     kind: string;
     contentRating: string | null;
-    subListingParent: { linkTemplate: string | null } | null;
+    subListingParent: { enabled: boolean; linkTemplate: string | null } | null;
   };
 };
 
@@ -74,19 +74,23 @@ const subRow = (over: Partial<SubRow> = {}): SubRow => ({
     slug: 'game-frame',
     kind: 'onsite',
     contentRating: 'pg',
-    subListingParent: null,
+    subListingParent: { enabled: true, linkTemplate: null },
   },
   ...over,
 });
 
 /** Every `where` field, nested ones included, must hold, so a dropped condition admits a row. */
 function matches(row: unknown, where: Record<string, unknown>): boolean {
-  const r = row as Record<string, unknown>;
-  return Object.entries(where).every(([k, v]) =>
-    v !== null && typeof v === 'object' && !(v instanceof Date)
-      ? matches(r[k], v as Record<string, unknown>)
-      : r[k] === v
-  );
+  const r = (row ?? {}) as Record<string, unknown>;
+  return Object.entries(where).every(([k, v]) => {
+    if (k === 'is') return matches(r, v as Record<string, unknown>);
+    if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+      const filter = v as Record<string, unknown>;
+      if (Array.isArray(filter.in)) return filter.in.includes(r[k]);
+      return matches(r[k], filter);
+    }
+    return r[k] === v;
+  });
 }
 
 function given({
@@ -163,7 +167,7 @@ describe('the post chip names the sub-listing a post was shared from', () => {
       slug: 'game-frame',
       kind: 'offsite',
       contentRating: 'pg',
-      subListingParent: { linkTemplate: 'https://games.civitai.com/play/{id}' },
+      subListingParent: { enabled: true, linkTemplate: 'https://games.civitai.com/play/{id}' },
     };
     given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ parentListing })] });
     await expect(read()).resolves.toMatchObject({
@@ -176,12 +180,29 @@ describe('the post chip names the sub-listing a post was shared from', () => {
       slug: 'game-frame',
       kind: 'offsite',
       contentRating: 'pg',
-      subListingParent: { linkTemplate: 'http://insecure.example/{id}' },
+      subListingParent: { enabled: true, linkTemplate: 'http://insecure.example/{id}' },
     };
     given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ parentListing })] });
     await expect(read()).resolves.toMatchObject({
       item: { name: 'Fakeful', href: null, external: false },
     });
+  });
+
+  it.each([
+    ['has no sub-listing switch', null],
+    ['has switched its sub-listings off', { enabled: false, linkTemplate: null }],
+  ])('drops the item when the app %s', async (_, subListingParent) => {
+    const parentListing = { ...subRow().parentListing, subListingParent };
+    given({ subListingId: 'asl_FAKEFUL', rows: [subRow({ parentListing })] });
+    await expect(read()).resolves.toEqual(PARENT_CHIP);
+  });
+
+  it("finds the item under any of the app's viewable listings, not only the one it names", async () => {
+    const app = appRow();
+    const first = { ...app.appBlocks[0].appListing, id: 'apl_aaa', slug: 'aaa', name: 'Aaa' };
+    app.appBlocks.unshift({ ...app.appBlocks[0], appListing: first });
+    given({ subListingId: 'asl_FAKEFUL', rows: [subRow()], app });
+    await expect(read()).resolves.toMatchObject({ slug: 'aaa', item: { name: 'Fakeful' } });
   });
 
   it('leaves a post with no item marker unchanged, with no item read', async () => {

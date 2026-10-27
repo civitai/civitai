@@ -600,7 +600,7 @@ function projectChipAndListing(
      */
     viewerBrowsingLevel?: number | null;
   }
-): { chip: PostAppChip; viewableListingId: string | null } | null {
+): { chip: PostAppChip; viewableListingIds: string[] } | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
   const candidates = chipCandidateBlocks(row)
@@ -638,7 +638,10 @@ function projectChipAndListing(
       name,
       iconUrl: chosen?.viewable ? chosen.iconUrl : null,
     },
-    viewableListingId: chosen?.viewable ? chosen.id : null,
+    // Every viewable listing of the app, not only the chosen one: the item may sit under any.
+    viewableListingIds: chosen?.viewable
+      ? candidates.filter((c) => c.viewable && c.id).map((c) => c.id as string)
+      : [],
   };
 }
 
@@ -651,17 +654,18 @@ export function projectPostAppChip(
 }
 
 /**
- * The sub-listing read for {@link projectPostAppChipItem}: approved now, under the app's own
- * viewable listing, by an author still in good standing. Matching the parent here is what keeps
- * a marker naming another app's item from rendering.
+ * The sub-listing read for {@link projectPostAppChipItem}: approved now, under one of the app's
+ * own viewable listings, by an author still in good standing. Matching the parent here is what
+ * keeps a marker naming another app's item from rendering.
  */
-export function postAppChipItemQuery(subListingId: string, parentListingId: string) {
+export function postAppChipItemQuery(subListingId: string, parentListingIds: string[]) {
   return {
     where: {
       id: subListingId,
-      parentListingId,
+      parentListingId: { in: parentListingIds },
       status: APPROVED_STATUS,
       author: { bannedAt: null, deletedAt: null },
+      parentListing: { subListingParent: { is: { enabled: true } } },
     },
     select: {
       id: true,
@@ -838,10 +842,10 @@ export async function resolveAppChip(args: {
   /** See {@link resolvePostAppChip}. */
   readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
   /**
-   * The marked sub-listing under the app's viewable listing (build with
+   * The marked sub-listing under one of the app's viewable listings (build with
    * {@link postAppChipItemQuery}), or null. Absent on a surface with no sub-listing marker.
    */
-  readItem?: (viewableListingId: string) => Promise<PostAppChipItemRow | null | undefined>;
+  readItem?: (viewableListingIds: string[]) => Promise<PostAppChipItemRow | null | undefined>;
 }): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
   if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
@@ -868,10 +872,10 @@ export async function resolveAppChip(args: {
     viewerBrowsingLevel: args.viewerBrowsingLevel,
   });
   if (!projected) return { chip: null, outcome: 'unresolved' };
-  const { chip, viewableListingId } = projected;
-  if (viewableListingId && args.readItem) {
+  const { chip, viewableListingIds } = projected;
+  if (viewableListingIds.length && args.readItem) {
     // A failed item read keeps the app's own chip rather than dropping the credit.
-    const itemRow = await args.readItem(viewableListingId).catch(() => null);
+    const itemRow = await args.readItem(viewableListingIds).catch(() => null);
     const item = projectPostAppChipItem(itemRow, args.host);
     if (item) chip.item = item;
   }
