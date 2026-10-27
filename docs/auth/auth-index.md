@@ -86,6 +86,7 @@ an attacker. Those records live in the private infra repo. See the Security sect
 | [plans/oauth-scoped-tokens-review.md](./oauth-scoped-tokens-review.md) | Scoped-tokens review checklist (pre-prod). |
 | [plans/oauth-resume-state.md](./oauth-resume-state.md) | Resume state for the `feature/scoped-tokens` branch. |
 | [plans/oauth-developer-docs.md](./oauth-developer-docs.md) | External-facing Civitai OAuth developer guide. |
+| [oauth-client-package-plan.md](./oauth-client-package-plan.md) | Not pursued: a published `@civitai/oauth` client package. We made the hub follow the OAuth and OIDC standards instead, and the doc keeps the reasoning. (2026-10-27) |
 
 ## Operational / misc
 

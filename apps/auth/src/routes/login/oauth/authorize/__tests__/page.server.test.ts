@@ -33,15 +33,18 @@ vi.mock('$lib/server/auth/session', () => ({
   mintUserSession: vi.fn(),
   setSessionCookie: vi.fn(),
 }));
-vi.mock('$lib/server/auth/session-producer', () => ({ getOrProduceSessionUser: vi.fn() }));
+vi.mock('$lib/server/auth/session-producer', () => ({
+  getOrProduceSessionUser: vi.fn(async (id: number) => ({ id, username: 'owner' })),
+}));
 
 import { load } from '../+page.server';
 
-function loadWith(scope: number) {
+function loadWith(scope: number | string, extra: Record<string, string> = {}) {
   const url = new URL('https://auth.civitai.com/login/oauth/authorize');
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
   url.searchParams.set('scope', String(scope));
+  for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
   return load({ url, locals: { user: { id: 7 } }, cookies: {}, setHeaders } as never) as Promise<
     Record<string, unknown>
   >;
@@ -67,5 +70,28 @@ describe('consent screen load', () => {
       'content-security-policy': "frame-ancestors 'none'",
       'x-frame-options': 'DENY',
     });
+  });
+});
+
+describe('consent screen — scope names and prompt', () => {
+  it('reads scope names and keeps an openid request in the Approve form', async () => {
+    const page = await loadWith('openid ModelsRead');
+    expect(page).toMatchObject({ invalid: false });
+    expect((page.params as Record<string, string>).scope).toBe(
+      `openid ${TokenScope.UserRead | TokenScope.ModelsRead}`
+    );
+  });
+
+  it('treats an unknown scope name as invalid', async () => {
+    expect(await loadWith('ModelsRead Bogus')).toEqual({ invalid: true });
+  });
+
+  it('prompt=select_account opens the picker even for one account, with a way to add another', async () => {
+    const page = await loadWith(TokenScope.UserRead, { prompt: 'select_account' });
+    expect(page).toMatchObject({ selectAccount: true, accounts: [{ userId: 7, active: true }] });
+    const add = new URL(page.addAccountUrl as string, 'https://auth.civitai.com');
+    expect(add.pathname).toBe('/login');
+    expect(add.searchParams.get('prompt')).toBe('select_account');
+    expect(add.searchParams.get('returnUrl')).toMatch(/^\/login\/oauth\/authorize\?/);
   });
 });

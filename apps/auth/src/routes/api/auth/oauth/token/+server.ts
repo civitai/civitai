@@ -14,12 +14,14 @@ import { OriginNotAllowedError } from '$lib/server/oauth/errors';
 import {
   ACCESS_TOKEN_TTL,
   ACCESS_TOKEN_TYPE,
+  DEVICE_CODE_GRANT,
   TOKEN_EXCHANGE_GRANT,
   WORKER_TOKEN_TTL,
 } from '$lib/server/oauth/constants';
 import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
-import { hasScope } from '$lib/server/oauth/scope';
+import { hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
+import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import {
   parseBody,
   toOAuthRequest,
@@ -90,6 +92,10 @@ export const POST: RequestHandler = async ({ request }) => {
   const origin = request.headers.get('origin') ?? undefined;
   const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
+  // RFC 8628 §3.4: a device polls the token endpoint. The poll has its own limits (per device_code,
+  // behind a per-IP ceiling), so it goes before the `token` bucket a poll loop would otherwise drain.
+  if (body.grant_type === DEVICE_CODE_GRANT) return deviceTokenGrant(request, body);
+
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
   // fresh bucket each request. The worker exchange has its own, larger bucket: a pool of workers can
   // share one egress IP. Past the IP limit, a confidential client with a staff-set limit that
@@ -125,6 +131,21 @@ export const POST: RequestHandler = async ({ request }) => {
   // library's string-`.includes()` subset check is meaningless for it, so dropping `scope` lets the
   // stored scope pass through unchanged (no silent escalation or broken downgrade).
   if (body.grant_type === 'refresh_token') delete body.scope;
+
+  // client_credentials takes `scope` from this request, and the library hands it to validateScope as the
+  // decimal bitmask string. A request may also name scopes (`ModelsRead MediaRead`), so convert it here.
+  if (body.grant_type === 'client_credentials' && body.scope) {
+    const requested = parseScopeRequest(body.scope);
+    if (!requested) {
+      const headers = new Headers();
+      setWildcardCors(headers);
+      return json(
+        { error: 'invalid_scope', error_description: 'Invalid scope value' },
+        { status: 400, headers }
+      );
+    }
+    body.scope = String(requested.scope);
+  }
 
   // The library's token handler hard-requires `request.is('application/x-www-form-urlencoded')`, which in
   // turn needs a body-length signal (Content-Length / Transfer-Encoding). We've already parsed the body,
@@ -201,11 +222,10 @@ export const POST: RequestHandler = async ({ request }) => {
     });
 
     // OIDC id_token — only on authorization_code (not refresh), and ONLY when the client actually requested
-    // OIDC, signalled by a `nonce` on the /authorize request (our "Sign in with Civitai" flow always sets
-    // one; UserRead is force-added to every token, so it can't be the openid signal). Plain OAuth API
-    // clients (no nonce) get just access/refresh tokens — no signed identity assertion. The OIDC context is
-    // consumed exactly once here regardless (single-use cleanup). NOTE: a nonce-less OIDC client wouldn't get
-    // an id_token; if that's ever needed, add an explicit `openid` request marker.
+    // OIDC: the `openid` scope on the /authorize request (OIDC Core §3.1.2.1), or a `nonce`, which our own
+    // "Sign in with Civitai" flow sent before scope names existed. UserRead is force-added to every token,
+    // so it can't be the signal. Plain OAuth API clients get just access/refresh tokens — no signed
+    // identity assertion. The OIDC context is consumed exactly once here regardless (single-use cleanup).
     let idToken: string | undefined;
     if (
       idTokenSigner &&
@@ -216,7 +236,7 @@ export const POST: RequestHandler = async ({ request }) => {
     ) {
       const code = typeof body.code === 'string' ? body.code : undefined;
       const ctx = code ? await consumeOidcContext(code) : {};
-      if (ctx.nonce) {
+      if (ctx.openid || ctx.nonce) {
         idToken = await idTokenSigner.mintIdToken({
           sub: token.user.id,
           aud: token.client.id,

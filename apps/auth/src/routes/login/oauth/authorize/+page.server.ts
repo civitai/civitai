@@ -2,8 +2,9 @@ import { redirect, fail, error } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
-import { carriesNonUserScope, scopeLabels } from '$lib/server/oauth/scope';
-import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
+import { carriesNonUserScope, parseScopeRequest, scopeLabels } from '$lib/server/oauth/scope';
+import { parsePrompt } from '$lib/server/oauth/prompt';
+import { clientErrorUrl, redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import {
   getDeviceId,
@@ -67,27 +68,41 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     return { invalid: true as const };
   }
 
-  // UserRead is the forced baseline — reflect it in the displayed + submitted scope.
-  const scope =
-    (parseInt(params.scope ?? url.searchParams.get('scope') ?? '0', 10) || 0) | TokenScope.UserRead;
+  // A bitmask or scope names (the endpoint accepts both). UserRead is the forced baseline — reflect it in
+  // the displayed + submitted scope.
+  const requested = parseScopeRequest(url.searchParams.get('scope'));
+  if (!requested) return { invalid: true as const };
+  const scope = requested.scope | TokenScope.UserRead;
   if (carriesNonUserScope(scope)) return { invalid: true as const };
   const scopes = scopeLabels(scope);
 
-  // Hidden-field values for the Approve form (normalized scope incl. UserRead). Typed as a Record so
-  // the page can read individual keys (client_id/redirect_uri/state) for the Deny form.
-  const formParams: Record<string, string> = { ...params, scope: String(scope) };
+  // Hidden-field values for the Approve form (normalized scope incl. UserRead, keeping an `openid`
+  // request so the id_token survives the round-trip). Typed as a Record so the page can read individual
+  // keys (client_id/redirect_uri/state) for the Deny form.
+  const formParams: Record<string, string> = {
+    ...params,
+    scope: requested.openid ? `openid ${scope}` : String(scope),
+  };
+
+  // prompt=select_account: the client asked for the account picker, so it opens straight away and shows
+  // even with one account, with a way to sign in to another.
+  const selectAccount = parsePrompt(url.searchParams.get('prompt')).has('select_account');
 
   // Account selector: the browser's linked accounts (device set), so the user can authorize as a
   // different account than the active session. Only materialized at ≥2 accounts (lazy device set), so a
-  // single-account browser yields an empty list → no picker, current account auto-selected. Resolve
-  // username/image the same way GET /api/auth/accounts does. Display only — switching is authorized
-  // server-side against the device set (see the `switch` action).
+  // single-account browser yields an empty list → no picker, current account auto-selected (unless
+  // select_account asked for it). Resolve username/image the same way GET /api/auth/accounts does.
+  // Display only — switching is authorized server-side against the device set (see the `switch` action).
   const deviceId = getDeviceId(cookies);
   const linked = deviceId ? await listAccounts(deviceId) : [];
+  // select_account always lists the signed-in account, even if this browser's device set doesn't have it.
+  const currentUserId = locals.user.id;
+  const shown = linked.length >= 2 || selectAccount ? linked.map((a) => a.userId) : [];
+  if (selectAccount && !shown.includes(currentUserId)) shown.unshift(currentUserId);
   const accounts =
-    linked.length >= 2
+    shown.length > 0
       ? await Promise.all(
-          linked.map(async ({ userId }) => {
+          shown.map(async (userId) => {
             const account = await getOrProduceSessionUser(userId).catch(() => null);
             return {
               userId,
@@ -110,6 +125,12 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     scopes,
     params: formParams,
     accounts,
+    selectAccount,
+    // For select_account: the login page's add-account mode, returning here once the new account is
+    // signed in, so the picker can offer one this browser hasn't used.
+    addAccountUrl: selectAccount
+      ? `/login?prompt=select_account&returnUrl=${encodeURIComponent(url.pathname + url.search)}`
+      : null,
   };
 };
 
@@ -165,10 +186,14 @@ export const actions: Actions = {
       return fail(400, { denyError: true });
     }
 
-    const target = new URL(redirectUri);
-    target.searchParams.set('error', 'access_denied');
-    target.searchParams.set('error_description', 'The user denied the authorization request');
-    if (state) target.searchParams.set('state', state);
-    redirect(303, target.toString());
+    redirect(
+      303,
+      clientErrorUrl(
+        redirectUri,
+        state,
+        'access_denied',
+        'The user denied the authorization request'
+      )
+    );
   },
 };

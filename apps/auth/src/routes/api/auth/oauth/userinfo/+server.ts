@@ -13,13 +13,13 @@ import { setWildcardCors } from '$lib/server/oauth/http';
 
 export const OPTIONS: RequestHandler = () => {
   const headers = new Headers();
-  setWildcardCors(headers, 'GET');
+  setWildcardCors(headers, 'GET, POST');
   return new Response(null, { status: 204, headers });
 };
 
-export const GET: RequestHandler = async ({ request }) => {
+const userinfo: RequestHandler = async ({ request }) => {
   const headers = new Headers();
-  setWildcardCors(headers, 'GET');
+  setWildcardCors(headers, 'GET, POST');
 
   const auth = request.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) {
@@ -92,3 +92,6 @@ export const GET: RequestHandler = async ({ request }) => {
     { headers }
   );
 };
+
+export const GET = userinfo;
+export const POST = userinfo;
