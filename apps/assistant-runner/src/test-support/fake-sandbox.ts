@@ -27,7 +27,9 @@ export interface FakeSandboxRecord {
 /** What a fake tool does with a call. */
 export type FakeToolBody = (
   args: Record<string, unknown>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** The sandbox (its name) the call was made in. */
+  sandbox: string
 ) => Promise<string> | string;
 
 /** The public half of the single-use key the fake sandbox's `tunnel_key` makes (TEST-ONLY, not a real key). */
@@ -81,6 +83,8 @@ export class FakeSandboxService {
   /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
   keepLimit = Infinity;
   readonly tools = new Map<string, FakeToolBody>();
+  /** The host each sandbox's tunnel runs to (by sandbox name), as `tunnel_status` reports it. */
+  readonly tunnelHosts = new Map<string, string>();
   /** Tools this sandbox does not list, as an older sandbox image without them. */
   readonly hiddenTools = new Set<string>();
   #server: HttpServer | undefined;
@@ -97,10 +101,18 @@ export class FakeSandboxService {
     this.tools.set('tunnel_key', () =>
       JSON.stringify({ publicKey: FAKE_TUNNEL_PUBLIC_KEY, stoppedTunnel: false })
     );
-    this.tools.set('tunnel_connect', (args) =>
-      JSON.stringify({ running: true, host: args.host, localPort: 5173 })
-    );
-    this.tools.set('tunnel_disconnect', () => JSON.stringify({ stopped: true }));
+    this.tools.set('tunnel_connect', (args, _signal, sandbox) => {
+      this.tunnelHosts.set(sandbox, String(args.host));
+      return JSON.stringify({ running: true, host: args.host, localPort: 5173 });
+    });
+    this.tools.set('tunnel_disconnect', (_args, _signal, sandbox) => {
+      this.tunnelHosts.delete(sandbox);
+      return JSON.stringify({ stopped: true });
+    });
+    this.tools.set('tunnel_status', (_args, _signal, sandbox) => {
+      const host = this.tunnelHosts.get(sandbox);
+      return JSON.stringify(host ? { running: true, host } : { running: false, host: null });
+    });
     this.tools.set('run_command', async (args, signal) => {
       if (args.command === 'hang')
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
@@ -249,7 +261,7 @@ export class FakeSandboxService {
         const signal = AbortSignal.any([closed, extra.signal]);
         // A body that throws fails as sandbox-mcp's tools fail: an error result, never a thrown call.
         try {
-          return { content: [{ type: 'text', text: await body(args, signal) }] };
+          return { content: [{ type: 'text', text: await body(args, signal, sandbox) }] };
         } catch (error) {
           return {
             content: [{ type: 'text', text: `error: ${(error as Error)?.message ?? error}` }],

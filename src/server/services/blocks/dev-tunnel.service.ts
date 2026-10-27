@@ -1147,20 +1147,33 @@ export async function keepAliveDevTunnel(
 }
 
 /**
- * Keep `userId`'s CURRENT tunnel for `blockId` from idling out, whoever opened it: a run, the
- * page's Restart preview, or the browser. The same stamp as `keepAliveDevTunnel`, for a caller
- * that does not hold the tunnel's id because it did not open it.
+ * Keep `userId`'s tunnel at `host` from idling out, whoever opened it: a run, the page's Restart
+ * preview, or the browser. The same stamp as `keepAliveDevTunnel`, for a caller that does not hold
+ * the tunnel's id because it did not open it, but can see which host the app's sandbox is connected
+ * to right now (the runner reads it from the sandbox's own `tunnel_status`), so only a tunnel that
+ * is actually being served is kept.
  *
- * Ownership comes from `getActiveDevTunnel`, which looks the tunnel up in `userId`'s own index
- * and re-checks the record's user and block: a caller can never keep another author's tunnel,
- * or another block's, alive. `not_found` covers no tunnel, a foreign one and one past its hard cap.
+ * Ownership-checked like `keepAliveDevTunnel`: the record the host names must be `userId`'s and
+ * still be at that host. `not_found` covers no such tunnel, another author's, and one past its
+ * hard cap, so a caller learns nothing about a tunnel that is not its own.
  */
-export async function keepAliveDevTunnelForBlock(
+export async function keepAliveDevTunnelAtHost(
   userId: number,
-  blockId: string
+  host: string
 ): Promise<DevTunnelKeepAlive> {
-  const session = await getActiveDevTunnel(userId, blockId);
-  if (!session) return { status: 'not_found' };
+  if (!isValidDevHost(host, env.APPS_DOMAIN)) return { status: 'not_found' };
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (!sessionId || typeof sessionId !== 'string') return { status: 'not_found' };
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  const session = read.session;
+  if (session.userId !== userId || session.host !== host) return { status: 'not_found' };
   let stamped: number | null;
   try {
     stamped = await stampSessionActivity(session);

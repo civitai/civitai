@@ -100,7 +100,7 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  *
  * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
  * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
- * preview, as civitai keeps the user's current tunnel for the app's block. `close()`, as the run
+ * preview, as long as the app's sandbox is connected to it. `close()`, as the run
  * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
@@ -125,11 +125,12 @@ export class RunnerPreview {
   }
 
   /**
-   * For a run: from now until `close()`, keeps the open app's current preview from idling out,
-   * whoever opened it. Each tick asks civitai for the run's user's tunnel of the block the open app
-   * shows (the one this run opened, else its `block.manifest.json`'s, else the app's own key), so
-   * it never names another app's block, and civitai keeps only that user's own tunnel. Paused by
-   * `stop_preview` (the user asked for it to go) until the next start.
+   * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
+   * opened it. Each tick asks the open app's sandbox which host its tunnel is connected to
+   * (`tunnel_status`) and has civitai keep the run's user's tunnel at that host: never another
+   * app's (it is not that app's sandbox), never another user's (civitai checks the owner), and
+   * never one the sandbox has let go (paused, disconnected), which civitai then lets idle out.
+   * Paused by `stop_preview` (the user asked for it to go) until the next start.
    */
   keepWhileRunning(): void {
     if (this.#closed) return;
@@ -505,18 +506,18 @@ export class RunnerPreview {
   async #tick(): Promise<void> {
     if (this.#closed || this.#keeping) return;
     this.#keeping = true;
-    let blockId: string | null = null;
+    let host: string | null = null;
     try {
-      blockId = await this.#currentBlockId();
-      // Ended, or stopped (`stop_preview`), while the block was looked up.
-      if (!blockId || this.#closed || !this.#timer) return;
-      await this.#deps.tunnels.keepalive({ blockId });
+      host = await this.#connectedHost();
+      // Ended, or stopped (`stop_preview`), while the sandbox was asked.
+      if (!host || this.#closed || !this.#timer) return;
+      await this.#deps.tunnels.keepalive({ host });
     } catch (error) {
       if (error instanceof DevTunnelError && error.status === 404) {
-        // No live preview of the app just now (none opened yet, or it went): one may open later
-        // (the page's Restart preview), so the next tick looks again. One this run opened of it is
-        // gone, so a start of the same preview opens a new one.
-        if (this.#open?.blockId === blockId) this.#open = null;
+        // civitai has no tunnel of the user's at that host (it went, at its cap or stopped): one may
+        // open later (the page's Restart preview), so the next tick looks again. One this run
+        // opened there is gone, so a start of the same preview opens a new one.
+        if (this.#open?.host === host) this.#open = null;
         return;
       }
       // Refused (a gate, the dev-tunnel flag) or the grant is no longer good: nothing to keep alive
@@ -529,21 +530,20 @@ export class RunnerPreview {
   }
 
   /**
-   * The block the open app's preview shows: the one this run opened for it, else its project's
-   * `block.manifest.json`'s (the directory its dev server runs in, else the app's own key), else
-   * the app's own key. `null` when no app is open and running.
+   * The host the open app's sandbox has a tunnel running to (`tunnel_status`), else `null`: no app
+   * open and running, no tunnel in it, or an answer that does not say.
    */
-  async #currentBlockId(): Promise<string | null> {
+  async #connectedHost(): Promise<string | null> {
     const app = this.#deps.sandbox.active;
     if (!app || app.state !== 'running') return null;
-    const open = this.#open;
-    if (open && open.app === app.name) return open.blockId;
-    const status = await this.#devServerStatus().catch(() => null);
-    const manifest = await this.#manifest(projectDirOf(status) ?? app.app);
-    // Another app opened meanwhile: its block is looked up at the next tick.
-    if (this.#deps.sandbox.active?.name !== app.name) return null;
-    const blockId = typeof manifest.block_id === 'string' ? manifest.block_id : app.app;
-    return isAppBlockId(blockId) ? blockId : null;
+    const status = await this.#deps.sandbox.call('tunnel_status', {});
+    // Another app opened meanwhile: its sandbox is asked at the next tick.
+    if (status.isError || this.#deps.sandbox.active?.name !== app.name) return null;
+    const { running, host } = (parseJson(status.text) ?? {}) as {
+      running?: unknown;
+      host?: unknown;
+    };
+    return running === true && typeof host === 'string' && host ? host : null;
   }
 
   #warn(error: unknown, message: string): void {
