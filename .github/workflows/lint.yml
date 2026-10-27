@@ -40,6 +40,11 @@ name: Lint
 #                       ESLint error - 44 (45%) would red the job for reasons
 #                       unrelated to the PR, turning a 3-line bugfix into a
 #                       200-line reformat. The job would be off within a week.
+#   EVERY FILE       -> report-only, and only when the PR changes lint config,
+#                       package.json or pnpm-lock.yaml (list in
+#                       scripts/ci/lint-targets.mjs). Those can change the
+#                       verdict for files the PR never touched, so checking only
+#                       the changed files would hide what the change does.
 #
 # Findings surface as file annotations on the PR diff: ESLint via the problem
 # matcher in .github/problem-matchers/, Prettier via ::warning / ::error commands.
@@ -209,7 +214,9 @@ jobs:
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    # 15, not 10: a full run (see the header) lints ~10,600 files. That took
+    # 115s locally (ESLint is single-threaded), before install and Prettier.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -225,6 +232,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Writes added.txt / added-lint.txt (blocking steps) and report.txt / report-lint.txt
+      # (report-only steps). The report-only lists are the files the PR modified, or EVERY
+      # tracked file when the PR changes lint config, package.json or the lockfile, since
+      # those can change the verdict for files the PR never touched. The trigger list is in
+      # the script.
       - name: Collect changed files
         id: changed
         env:
@@ -232,17 +244,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin "$BASE_REF"
-          git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > added.txt
-          git diff --name-only --diff-filter=CMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > modified.txt
-          # Only paths an eslint config covers. apps/event-engine has its own `root: true`
-          # config, which eslint resolves per file, so linting it from here works; the other
-          # apps/ members have none and would fall through to the root Next config, whose
-          # typed rules crash outside src/.
-          LINTABLE='^(src|packages|apps/event-engine)/'
-          grep -E "$LINTABLE" added.txt > added-lint.txt || true
-          grep -E "$LINTABLE" modified.txt > modified-lint.txt || true
-          echo "added ($(wc -l < added.txt)):"; cat added.txt
-          echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
+          node scripts/ci/lint-targets.mjs FETCH_HEAD
 
       # BLOCKING. Migrations live next to the schema in packages/civitai-db-schema.
       # The root prisma/migrations directory predates the monorepo and has no
@@ -292,23 +294,24 @@ jobs:
           echo "all new files formatted"
 
       # Report-only: 10% of recently-touched files carry a pre-existing
-      # error-severity finding. See the header comment.
-      - name: ESLint (modified files, report-only)
+      # error-severity finding. See the header comment. On a full run (lint config
+      # or dependencies changed) this covers every tracked file, not just modified ones.
+      - name: ESLint (${{ steps.changed.outputs.full == 'true' && 'all files' || 'modified files' }}, report-only)
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s modified-lint.txt ]; then echo "no modified lintable files"; exit 0; fi
-          xargs -a modified-lint.txt pnpm exec eslint --format unix \
+          if [ ! -s report-lint.txt ]; then echo "no modified lintable files"; exit 0; fi
+          xargs -a report-lint.txt pnpm exec eslint --format unix \
             | sed "s|^$GITHUB_WORKSPACE/||"
 
       # Report-only: 19% of src files are unformatted today and a formatter has no
-      # changed-line granularity. See the header comment.
-      - name: Prettier (modified files, report-only)
+      # changed-line granularity. See the header comment. Same full-run widening.
+      - name: Prettier (${{ steps.changed.outputs.full == 'true' && 'all files' || 'modified files' }}, report-only)
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s modified.txt ]; then echo "no modified files"; exit 0; fi
-          xargs -a modified.txt pnpm exec prettier --list-different > unformatted.txt || true
+          if [ ! -s report.txt ]; then echo "no modified files"; exit 0; fi
+          xargs -a report.txt pnpm exec prettier --list-different > unformatted.txt || true
           while IFS= read -r f; do
             [ -n "$f" ] || continue
             echo "::warning file=$f::Not formatted (pre-existing, not blocking). Run: pnpm exec prettier --write $f"
