@@ -5,21 +5,22 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
-export function JudgeReportButton({
+export function CrucibleReportButton({
   imageId,
   side,
   className,
 }: {
   imageId: number;
-  side: string;
+  /** Which card of a judging pair this sits on. */
+  side?: string;
   className?: string;
 }) {
   return (
-    // data-judge-chrome keeps Space on this button from skipping the pair; the stops keep a click
-    // from reaching the card's vote handler.
+    // data-judge-chrome keeps Space on this button from skipping a judging pair; the stops keep a
+    // click from reaching the card's vote handler or the viewer's hotkeys.
     <div
       data-judge-chrome
-      data-testid="judge-report"
+      data-testid="crucible-report"
       data-side={side}
       className={clsx('rounded-full', className)}
       onClick={(e) => e.stopPropagation()}

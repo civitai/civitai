@@ -1242,7 +1242,7 @@ describe('CrucibleJudgingUI — reactions', () => {
     const { onVote } = await renderPair();
 
     document
-      .querySelector<HTMLElement>('[data-testid="judge-report"][data-side="right"]')!
+      .querySelector<HTMLElement>('[data-testid="crucible-report"][data-side="right"]')!
       .parentElement!.click();
 
     await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
@@ -1252,7 +1252,7 @@ describe('CrucibleJudgingUI — reactions', () => {
     const { onVote, onSkip } = await renderPair();
     const reportButton = (side: string) =>
       document.querySelector<HTMLButtonElement>(
-        `[data-testid="judge-report"][data-side="${side}"] button`
+        `[data-testid="crucible-report"][data-side="${side}"] button`
       )!;
 
     reportButton('right').click();

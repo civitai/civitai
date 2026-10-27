@@ -29,7 +29,7 @@ import {
   JudgeReactionBar,
   type JudgeReactionBarProps,
 } from '~/components/Crucible/JudgeReactionBar';
-import { JudgeReportButton } from '~/components/Crucible/JudgeReportButton';
+import { CrucibleReportButton } from '~/components/Crucible/CrucibleReportButton';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasCoarsePointer } from '~/hooks/useIsMobile';
@@ -669,12 +669,14 @@ function ImageCard({
           )}
         />
 
-        <JudgeReportButton
+        <CrucibleReportButton
           imageId={entry.image.id}
           side={position}
+          // Video's sound (and, on touch, fullscreen) buttons own the top-right corner, so the
+          // flag sits left of them.
           className={clsx(
-            'absolute left-2.5 z-10',
-            isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
+            'absolute top-2.5 z-10',
+            !isVideo ? 'right-2.5' : coarsePointer ? 'right-[112px]' : 'right-[60px]'
           )}
         />
 

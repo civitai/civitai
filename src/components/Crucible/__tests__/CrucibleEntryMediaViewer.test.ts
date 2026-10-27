@@ -13,12 +13,16 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   },
 }));
 
+// The report button is covered by CrucibleEntryMediaViewer.browser.test.tsx; it needs a router.
+vi.mock('~/components/Crucible/CrucibleReportButton', () => ({ CrucibleReportButton: () => null }));
+
 const { CrucibleEntryMediaViewer } = await import('~/components/Crucible/CrucibleEntryMediaViewer');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const item = (entryId: number, type: 'image' | 'video' = 'image'): CrucibleEntryMedia => ({
   entryId,
+  imageId: entryId * 10,
   url: `media-${entryId}`,
   name: null,
   type,

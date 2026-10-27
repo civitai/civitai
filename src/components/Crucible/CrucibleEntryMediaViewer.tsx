@@ -4,11 +4,13 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { CrucibleReportButton } from '~/components/Crucible/CrucibleReportButton';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 /** An entry's media and nothing that identifies who made it. */
 export type CrucibleEntryMedia = {
   entryId: number;
+  imageId: number;
   url: string;
   name: string | null;
   type: MediaType;
@@ -81,6 +83,7 @@ export function CrucibleEntryMediaViewer({
               // a portalled modal is outside of, so it would never start.
               videoProps={{ autoPlay: true, hoverPlay: false }}
             />
+            <CrucibleReportButton imageId={item.imageId} className="absolute right-2 top-2 z-10" />
             <NavButton
               label="Previous entry"
               disabled={prev === undefined}
