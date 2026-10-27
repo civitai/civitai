@@ -853,6 +853,8 @@ export type VotingRateLimitConfig = {
    * falls back to the legacy sequential drain.
    */
   poolQuotas?: Partial<Record<NewOrderRankType, number[]>>;
+  /** Validated by `parseLinkDetectionConfig`; the linking job stays off while it is absent. */
+  linkDetection?: unknown;
 };
 
 // Re-export the pure quota math from a side-effect-free module so unit tests

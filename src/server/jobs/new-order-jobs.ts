@@ -17,6 +17,7 @@ import {
   recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
+import { runLinkDetection } from '~/server/games/new-order/link-detection.service';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
@@ -813,6 +814,15 @@ const newOrderAbuseDetection = createJob(
   { lockExpiration: 10 * 60 }
 );
 
+const newOrderLinkDetection = createJob(
+  'new-order-link-detection',
+  '30 23 * * *',
+  async () => {
+    await runLinkDetection();
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
@@ -821,4 +831,5 @@ export const newOrderJobs = [
   newOrderChangeFillTarget,
   newOrderChangeRateTarget,
   newOrderAbuseDetection,
+  newOrderLinkDetection,
 ];
