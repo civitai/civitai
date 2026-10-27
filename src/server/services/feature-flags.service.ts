@@ -1325,14 +1325,21 @@ function computeFeatureFlagsByCohort(ctx: FeatureAccessContext): FeatureAccess {
 }
 
 /**
- * The `feature-flags-cohort-cache` kill switch: a global boolean, evaluated with no entity and no
- * context, once per whole-result cache miss. OFF, unknown to Flipt, or Flipt not loaded ⇒ today's
- * `computeFeatureFlags`. Read through the lazily loaded client module so this file keeps no value
- * import of it (it is bundled for the browser too).
+ * Flipt key of the cohort-cache kill switch. Declared here, not in `FLIPT_FEATURE_FLAGS`
+ * (flipt/client.ts): this file is bundled for the browser too and holds no value import of that
+ * module, and this is the only reader.
+ *
+ * A global boolean, evaluated with no entity and no context, once per whole-result cache miss.
+ * DEFAULT-OFF: `isFliptSync` answers null for an unknown flag or an uninitialized client, and OFF,
+ * unknown or null all keep `computeFeatureFlags`.
+ *
+ * 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing key
+ * makes `evaluateBoolean` throw (swallowed, so it reads OFF, but uncached) on every cache miss.
  */
+export const FEATURE_FLAGS_COHORT_CACHE_FLIPT_KEY = 'feature-flags-cohort-cache';
+
 function isCohortCacheOn(): boolean {
-  const flag = _fliptModule?.FLIPT_FEATURE_FLAGS?.FEATURE_FLAGS_COHORT_CACHE;
-  return !!flag && _fliptModule?.isFliptSync(flag) === true;
+  return _fliptModule?.isFliptSync(FEATURE_FLAGS_COHORT_CACHE_FLIPT_KEY) === true;
 }
 
 // getFeatureFlags is PURE given (user identity, host, region, live Flipt config):
