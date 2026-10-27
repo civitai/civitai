@@ -1,8 +1,11 @@
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead } from '~/server/db/client';
+
+type LockReviewDb = Pick<typeof dbRead, 'model' | 'report'>;
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   LOCK_REVIEW_COOLDOWN_DAYS,
+  LOCK_REVIEW_ASK_SEPARATOR,
   LOCK_REVIEW_MAX_COMMENTS,
   LOCK_REVIEW_REPORT_REASON,
   lockReviewQueueLabel,
@@ -29,13 +32,15 @@ export async function getLockReviewState({
   modelId,
   userId,
   isModerator,
+  db = dbRead,
 }: {
   modelId: number;
   userId: number;
   isModerator?: boolean;
+  db?: LockReviewDb;
 }): Promise<LockReviewState | null> {
   if (isModerator) return null;
-  const model = await dbRead.model.findUnique({
+  const model = await db.model.findUnique({
     where: { id: modelId },
     select: { userId: true, lockedProperties: true },
   });
@@ -46,11 +51,11 @@ export async function getLockReviewState({
   if (!requestable.length) return { requestable, pending: false, reopensAt: null };
 
   const [pending, recentlyClosed] = await Promise.all([
-    dbRead.report.findFirst({
+    db.report.findFirst({
       where: { ...lockReviewReports(modelId), status: ReportStatus.Pending },
       select: { id: true },
     }),
-    dbRead.report.findMany({
+    db.report.findMany({
       where: {
         ...lockReviewReports(modelId),
         status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
@@ -79,14 +84,16 @@ export async function assertLockReviewAllowed({
   userId,
   isModerator,
   lockedProperties,
+  db,
 }: {
   modelId: number;
   userId: number;
   isModerator?: boolean;
   lockedProperties: unknown;
+  db?: LockReviewDb;
 }) {
   if (isModerator) throw throwBadRequestError('Moderators can change locked settings directly.');
-  const state = await getLockReviewState({ modelId, userId });
+  const state = await getLockReviewState({ modelId, userId, db });
   if (!state) throw throwBadRequestError("Only the model's owner can request this review.");
 
   const asked = Array.isArray(lockedProperties) ? lockedProperties : [];
@@ -120,7 +127,7 @@ export function mergeOwnLockReview(existing: unknown, incoming: MixedObject): Mi
     lockedProperties,
     violation: lockReviewQueueLabel(lockedProperties),
     comments,
-    ...(comments.length ? { comment: comments.join('\n\n') } : {}),
+    ...(comments.length ? { comment: comments.join(LOCK_REVIEW_ASK_SEPARATOR) } : {}),
   };
 }
 

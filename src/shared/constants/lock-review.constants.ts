@@ -32,3 +32,6 @@ export const lockReviewQueueLabel = (locks: string[]) =>
 
 /** An owner's repeat requests keep the reasons from only their most recent asks. */
 export const LOCK_REVIEW_MAX_COMMENTS = 3;
+
+/** Between asks in the comment moderators read, so it is not mistaken for a paragraph break. */
+export const LOCK_REVIEW_ASK_SEPARATOR = '\n\n---\n\n';

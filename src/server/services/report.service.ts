@@ -305,10 +305,12 @@ const validateReportCreation = async ({
     });
     if (count) return { ...existingReport, details: merged };
     // Closed in between: the new request it falls through to is held to the cooldown that close began.
+    // Read from `db`, which just saw the close; a replica may not have it yet.
     await assertLockReviewAllowed({
       modelId: entityReportId,
       userId,
       lockedProperties: details?.lockedProperties,
+      db,
     });
     return null;
   }

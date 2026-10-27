@@ -21,6 +21,8 @@ const EXISTING_REPORT = 104;
 const reportFindFirst = dbMock.dbWrite.report.findFirst;
 const closedRequests = dbMock.dbRead.report.findMany;
 const openRequest = dbMock.dbRead.report.findFirst;
+const primaryModelFindUnique = dbMock.dbWrite.model.findUnique;
+const primaryClosedRequests = dbMock.dbWrite.report.findMany;
 const reportUpdate = dbMock.dbWrite.report.update;
 const reportUpdateMany = dbMock.dbWrite.report.updateMany;
 const modelFindUnique = dbMock.dbRead.model.findUnique;
@@ -63,6 +65,11 @@ beforeEach(() => {
   modelFindUnique.mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'sfwOnly'] });
   closedRequests.mockReset().mockResolvedValue([]);
   openRequest.mockReset().mockResolvedValue(null);
+  reportFindFirst.mockReset().mockResolvedValue(null);
+  primaryModelFindUnique
+    .mockReset()
+    .mockResolvedValue({ userId: OWNER, lockedProperties: ['nsfw', 'sfwOnly'] });
+  primaryClosedRequests.mockReset().mockResolvedValue([]);
 });
 
 describe('a request to review a locked setting', () => {
@@ -209,7 +216,7 @@ describe('a request to review a locked setting', () => {
     expect(details).toMatchObject({
       lockedProperties: ['nsfw', 'sfwOnly'],
       violation: `${LOCK_REVIEW_REPORT_REASON}: Is intended to produce mature themes, Cannot be used for NSFW generation`,
-      comment: 'First reason.\n\nSecond reason.',
+      comment: 'First reason.\n\n---\n\nSecond reason.',
     });
   });
 
@@ -238,7 +245,7 @@ describe('a request to review a locked setting', () => {
 
     expect(mergeWrite().details).toMatchObject({
       comments: ['A\n\nB\n\nC\n\nD', 'X\n\nThanks.'],
-      comment: 'A\n\nB\n\nC\n\nD\n\nX\n\nThanks.',
+      comment: 'A\n\nB\n\nC\n\nD\n\n---\n\nX\n\nThanks.',
     });
   });
 
@@ -283,11 +290,30 @@ describe('a request to review a locked setting', () => {
   });
 
   it('holds the request it falls through to to the cooldown the close began', async () => {
-    ownOpenRequest({ lockedProperties: ['sfwOnly'], comments: ['First reason.'] });
     reportUpdateMany.mockResolvedValue({ count: 0 });
-    // Open when the request is first checked; closed, with its setting still locked, by the merge.
-    openRequest.mockResolvedValueOnce({ id: EXISTING_REPORT }).mockResolvedValue(null);
-    closedRequestsAre([{ daysAgo: 0, lockedProperties: ['sfwOnly'] }]);
+    // The replica has not seen the close: it still reads the request as open, and nothing closed.
+    openRequest.mockResolvedValue({ id: EXISTING_REPORT });
+    // The primary has: the request is closed today with its setting still locked.
+    primaryModelFindUnique.mockResolvedValue({
+      userId: OWNER,
+      lockedProperties: ['nsfw', 'sfwOnly'],
+    });
+    reportFindFirst.mockImplementation((async (args: { where: MixedObject }) =>
+      args.where.details
+        ? null
+        : {
+            id: EXISTING_REPORT,
+            userId: OWNER,
+            alsoReportedBy: [],
+            previouslyReviewedCount: 0,
+            details: { reason: LOCK_REVIEW_REPORT_REASON, lockedProperties: ['sfwOnly'] },
+          }) as never);
+    primaryClosedRequests.mockResolvedValue([
+      {
+        statusSetAt: new Date(),
+        details: { reason: LOCK_REVIEW_REPORT_REASON, lockedProperties: ['sfwOnly'] },
+      },
+    ] as never);
 
     await expect(askAgain(['nsfw'], 'Second reason.')).rejects.toThrow(/ask again/);
     expect(reportCreate).not.toHaveBeenCalled();
