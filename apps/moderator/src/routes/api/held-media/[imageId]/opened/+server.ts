@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { sql } from 'kysely';
+import { sql } from '@civitai/db/kysely';
 import type { RequestHandler } from './$types';
 import { SERVED_ACTIVITY, shownActivity } from '@civitai/shared/held-media';
 import { requireIdParam } from '$lib/server/api-guard';

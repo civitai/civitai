@@ -236,7 +236,11 @@ export function CsamImageCard({
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
   const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
-  const [opened, setOpened] = useState(false);
+  const shownRow = useCsamImageSelectStore((state) => state.shownRows[`${userId}:${imageId}`]);
+  const record = (action: 'open' | 'select', rendition: ShownRendition) =>
+    void recordShown({ imageId, userId, action, rendition }).then((ok) =>
+      useCsamImageSelectStore.getState().setShownRow(userId, imageId, ok ? 'recorded' : 'refused')
+    );
   // What the tile has put on screen so far; a selection made before then is not recorded.
   const shown = useRef<ShownRendition | null>(null);
   const [fullView, setFullView] = useState(false);
@@ -244,8 +248,7 @@ export function CsamImageCard({
     const store = useCsamImageSelectStore.getState();
     const selecting = !store.selected[userId]?.[imageId];
     store.toggle(userId, imageId);
-    if (selecting && shown.current)
-      recordShown({ imageId, userId, action: 'select', rendition: shown.current });
+    if (selecting && shown.current) record('select', shown.current);
   };
   return (
     <MasonryCard
@@ -275,7 +278,7 @@ export function CsamImageCard({
           >
             <IconMaximize size={16} />
           </ActionIcon>
-          {preselected && checked && !opened && (
+          {checked && shownRow !== 'recorded' && (preselected || shownRow === 'refused') && (
             <Button
               size="compact-xs"
               color="dark"
@@ -308,10 +311,7 @@ export function CsamImageCard({
         <CsamHeldMedia
           image={image}
           onClick={() => undefined}
-          onShown={(rendition) => {
-            setOpened(true);
-            recordShown({ imageId, userId, action: 'open', rendition });
-          }}
+          onShown={(rendition) => record('open', rendition)}
         />
       </Modal>
     </MasonryCard>

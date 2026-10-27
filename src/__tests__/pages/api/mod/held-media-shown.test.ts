@@ -59,12 +59,12 @@ const rows = async () =>
 /** The held route's row for bytes it served, `ago` before now. */
 const served = (
   imageId: number,
-  { userId = 42, ago = '1 minute', activity = 'heldMedia:view' } = {}
+  { userId = 42, ago = '1 minute', activity = 'heldMedia:view', entityType = 'image' } = {}
 ) =>
   pg.query(
     `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-     VALUES ($1, 'image', $4, $2, LOCALTIMESTAMP - $3::interval)`,
-    [userId, imageId, ago, activity]
+     VALUES ($1, $5, $4, $2, LOCALTIMESTAMP - $3::interval)`,
+    [userId, imageId, ago, activity, entityType]
   );
 
 async function post(body: unknown) {
@@ -187,6 +187,7 @@ describe('POST /api/mod/held-media/shown', () => {
     ["another moderator's serve", { userId: 43 }],
     ['a serve of another image', { imageId: 502 }],
     ['a grid view only', { activity: 'heldMedia:grid' }],
+    ['a serve of another kind of entity', { entityType: 'modelVersion' }],
   ] as const)('refuses the original after %s, and writes nothing', async (_, serve) => {
     getHeldMedia.mockResolvedValue({ url: 'key', type: 'image', mimeType: 'image/png' });
     if (serve) {
@@ -195,6 +196,7 @@ describe('POST /api/mod/held-media/shown', () => {
         ago?: string;
         userId?: number;
         activity?: string;
+        entityType?: string;
       };
       await served(imageId, rest);
     }

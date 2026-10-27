@@ -36,8 +36,14 @@ const shownPosts = () =>
     .filter(([url]) => url === '/api/mod/held-media/shown')
     .map(([, init]) => JSON.parse(init.body));
 
-/** A held file: the route's own <img> or <video> stays on screen (the probe never answers). */
-const held = () => fetchMock.mockImplementation(() => new Promise(() => undefined));
+/** A held file: the route's own <img> or <video> stays on screen (the probe never answers). Shown
+ *  rows are answered `shownStatus`. */
+const held = (shownStatus = 204) =>
+  fetchMock.mockImplementation((url: string) =>
+    url === '/api/mod/held-media/shown'
+      ? Promise.resolve(new Response(null, { status: shownStatus }))
+      : new Promise(() => undefined)
+  );
 /** Not held: the probe says so, and the CDN copy replaces the route's. */
 const notHeld = () =>
   fetchMock.mockImplementation(async (url: string) =>
@@ -80,7 +86,7 @@ const media = async (selector: string) => {
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
-  useCsamImageSelectStore.setState({ selected: {}, seeded: {} });
+  useCsamImageSelectStore.setState({ selected: {}, seeded: {}, shownRows: {} });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -243,23 +249,88 @@ describe('selecting on the report page', () => {
     expect(shownPosts()).toEqual([]);
   });
 
-  test('a preselected image asks for its full view until that is recorded', async () => {
-    held();
-    useCsamImageSelectStore.getState().seedSelected(20, 41);
-    await renderCard(image);
-    const cue = page.getByRole('button', { name: 'Open full view to confirm viewed' });
-
-    await cue.click();
+  const CUE = 'Open full view to confirm viewed';
+  const cueShown = () => !!document.body.textContent?.includes(CUE);
+  const rowFor41 = () => useCsamImageSelectStore.getState().shownRows['20:41'];
+  /** Opens the tile's full view and loads the image in it. */
+  async function openFullView(from: 'cue' | 'icon') {
+    await page.getByRole('button', { name: from === 'cue' ? CUE : 'View full size' }).click();
     await expect
       .poll(() => document.querySelectorAll('img[src="/api/mod/held-media/41"]').length)
       .toBe(2);
     loadImage(document.querySelectorAll<HTMLImageElement>('img[src="/api/mod/held-media/41"]')[1]);
+  }
+
+  test('a preselected image asks for its full view until its open is recorded', async () => {
+    held();
+    useCsamImageSelectStore.getState().seedSelected(20, 41);
+    await renderCard(image);
+    await expect.element(page.getByRole('button', { name: CUE })).toBeInTheDocument();
+
+    await openFullView('cue');
 
     expect(shownPosts()).toEqual([
       { imageId: 41, userId: 20, action: 'open', rendition: 'original' },
     ]);
+    await expect.poll(rowFor41).toBe('recorded');
     await page.getByRole('button', { name: 'Close' }).click();
-    expect(document.body.textContent?.includes('Open full view to confirm viewed')).toBe(false);
+    expect(cueShown()).toBe(false);
+  });
+
+  test('keeps asking when the open is refused', async () => {
+    held(403);
+    useCsamImageSelectStore.getState().seedSelected(20, 41);
+    await renderCard(image);
+
+    await openFullView('cue');
+
+    await expect.poll(rowFor41).toBe('refused');
+    await page.getByRole('button', { name: 'Close' }).click();
+    expect(cueShown()).toBe(true);
+  });
+
+  test('asks for the full view of an image whose selection was refused', async () => {
+    held(403);
+    await renderCard(image);
+    loadImage((await media('img')) as HTMLImageElement);
+    expect(cueShown()).toBe(false);
+
+    await page.getByRole('checkbox').click();
+
+    await expect.poll(rowFor41).toBe('refused');
+    expect(cueShown()).toBe(true);
+  });
+
+  test('a recorded open still counts once the tile is remounted', async () => {
+    held();
+    useCsamImageSelectStore.getState().seedSelected(20, 41);
+    const first = await renderCard(image);
+    await openFullView('cue');
+    await expect.poll(rowFor41).toBe('recorded');
+    await page.getByRole('button', { name: 'Close' }).click();
+
+    // A new key mounts a new card, as stepping away and back does.
+    await first.rerender(
+      <IntersectionObserverProvider>
+        <CsamImageCard key="again" data={image} height={100} />
+      </IntersectionObserverProvider>
+    );
+    await expect
+      .poll(() => document.querySelector('img[src="/api/mod/held-media/41"]'))
+      .not.toBeNull();
+
+    expect(cueShown()).toBe(false);
+  });
+
+  test('a preselected image the moderator deselected shows no cue', async () => {
+    held();
+    useCsamImageSelectStore.getState().seedSelected(20, 41);
+    await renderCard(image);
+
+    await page.getByRole('checkbox').click();
+
+    expect(useCsamImageSelectStore.getState().selected[20]?.[41]).toBeUndefined();
+    expect(cueShown()).toBe(false);
   });
 
   test('an image the moderator selected shows no cue', async () => {
@@ -268,7 +339,8 @@ describe('selecting on the report page', () => {
     loadImage((await media('img')) as HTMLImageElement);
     await page.getByRole('checkbox').click();
 
-    expect(document.body.textContent?.includes('Open full view to confirm viewed')).toBe(false);
+    await expect.poll(rowFor41).toBe('recorded');
+    expect(cueShown()).toBe(false);
   });
 
   test('clicking the CDN copy of an image selects it and records it', async () => {

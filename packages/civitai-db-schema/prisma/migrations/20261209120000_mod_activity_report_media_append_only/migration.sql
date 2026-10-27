@@ -32,7 +32,8 @@ $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 DROP TRIGGER IF EXISTS "ModActivity_stamp_report_media" ON "ModActivity";
 CREATE TRIGGER "ModActivity_stamp_report_media"
 BEFORE INSERT ON "ModActivity"
-FOR EACH ROW EXECUTE FUNCTION mod_activity_stamp_report_media();
+FOR EACH ROW WHEN (NEW."activity" LIKE 'reportMedia:%')
+EXECUTE FUNCTION mod_activity_stamp_report_media();
 
 CREATE OR REPLACE FUNCTION mod_activity_guard_report_media() RETURNS trigger AS $$
 BEGIN

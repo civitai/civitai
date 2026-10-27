@@ -61,12 +61,12 @@ const rows = async () =>
 /** The held route's row for bytes it served, `ago` before now. */
 const served = (
   imageId: number,
-  { userId = 42, ago = '1 minute', activity = 'heldMedia:view' } = {}
+  { userId = 42, ago = '1 minute', activity = 'heldMedia:view', entityType = 'image' } = {}
 ) =>
   db.query(
     `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
-     VALUES ($1, 'image', $4, $2, LOCALTIMESTAMP - $3::interval)`,
-    [userId, imageId, ago, activity]
+     VALUES ($1, $5, $4, $2, LOCALTIMESTAMP - $3::interval)`,
+    [userId, imageId, ago, activity, entityType]
   );
 
 async function post(imageId: string, body?: string, origin: string | null = 'http://mod.test') {
@@ -170,6 +170,7 @@ describe('POST /api/held-media/[imageId]/opened', () => {
     ["another moderator's serve", { userId: 43 }],
     ['a serve of another image', { imageId: 8 }],
     ['a grid view only', { activity: 'heldMedia:grid' }],
+    ['a serve of another kind of entity', { entityType: 'modelVersion' }],
   ] as const)('refuses an open after %s, and writes nothing', async (_, serve) => {
     if (serve) {
       const { imageId = 7, ...rest } = serve as {
@@ -177,6 +178,7 @@ describe('POST /api/held-media/[imageId]/opened', () => {
         ago?: string;
         userId?: number;
         activity?: string;
+        entityType?: string;
       };
       await served(imageId, rest);
     }

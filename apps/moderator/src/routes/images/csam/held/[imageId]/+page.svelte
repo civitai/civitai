@@ -5,10 +5,14 @@
 
   let { data }: { data: PageData } = $props();
 
-  const recordOpened = () =>
-    void fetch(`/api/held-media/${data.item.id}/opened`, { method: 'POST', keepalive: true }).catch(
-      () => null
-    );
+  // The image whose open the server did not take, so the notice is never another image's.
+  let refusedId = $state<number | null>(null);
+  const recordOpened = () => {
+    const id = data.item.id;
+    void fetch(`/api/held-media/${id}/opened`, { method: 'POST', keepalive: true })
+      .then((res) => (refusedId = res.ok ? null : id))
+      .catch(() => (refusedId = id));
+  };
 </script>
 
 <svelte:head><title>Media #{data.item.id}</title></svelte:head>
@@ -21,3 +25,8 @@
     <HeldMedia item={data.item} class="max-h-[90vh] max-w-full object-contain" controls />
   </div>
 {/key}
+{#if refusedId === data.item.id}
+  <p class="mt-2 text-center text-sm text-dark-2">
+    This open was not recorded. Reload the page to try again.
+  </p>
+{/if}

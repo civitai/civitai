@@ -399,7 +399,11 @@ describe('image report: a view of the CDN copy', () => {
   const cdn = 'reportMedia:select:cdn-450';
 
   it("counts the filer's view from the day before the filing", async () => {
-    await view(501, { activity: cdn, createdAt: `CURRENT_TIMESTAMP - interval '24 hours'` });
+    // 23h59m before the filing.
+    await view(501, {
+      activity: cdn,
+      createdAt: `CURRENT_TIMESTAMP - interval '24 hours 59 minutes'`,
+    });
 
     await processCsamReport(imageReport([501, 502]));
 
@@ -423,7 +427,11 @@ describe('image report: a view of the CDN copy', () => {
   });
 
   it("counts no filer's view from more than a day before the filing", async () => {
-    await view(501, { activity: cdn, createdAt: `CURRENT_TIMESTAMP - interval '26 hours'` });
+    // 24h01m before the filing.
+    await view(501, {
+      activity: cdn,
+      createdAt: `CURRENT_TIMESTAMP - interval '25 hours 1 minute'`,
+    });
 
     await processCsamReport(imageReport([501, 502]));
 

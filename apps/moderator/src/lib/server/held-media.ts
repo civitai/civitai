@@ -33,9 +33,9 @@ export function recordHeldGridView(moderatorId: number, count: number) {
   void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count }).catch(() => null);
 }
 
-/** One image opened from byte 0, in the grid or the full view. */
+/** One image opened from byte 0, in the grid or the full view. Never throws. */
 export function recordHeldView(moderatorId: number, imageId: number) {
-  void recordModActivity({
+  return recordModActivity({
     userId: moderatorId,
     entityType: 'image',
     entityId: imageId,
