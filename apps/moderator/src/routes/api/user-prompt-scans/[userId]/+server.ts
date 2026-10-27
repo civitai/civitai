@@ -8,7 +8,11 @@ import {
   type PromptScanDays,
   type PromptScanLimit,
 } from '$lib/prompt-scans';
-import { getPromptScans } from '$lib/server/prompt-scans.service';
+import {
+  PROMPT_SCAN_TIMEOUT_S,
+  getPromptScans,
+  isScanTimeout,
+} from '$lib/server/prompt-scans.service';
 
 const PAGES = ['/retool/user-lookup'];
 
@@ -38,6 +42,9 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
   } catch (e) {
     console.error('[user-prompt-scans] query failed', e);
     // Never 502 or 504: Cloudflare swaps those for its own HTML page.
-    return json({ error: 'Could not read the prompt scans.' }, { status: 503 });
+    const error = isScanTimeout(e)
+      ? `The scan took longer than ${PROMPT_SCAN_TIMEOUT_S} seconds. Try a shorter window.`
+      : 'Could not read the prompt scans.';
+    return json({ error }, { status: 503 });
   }
 };

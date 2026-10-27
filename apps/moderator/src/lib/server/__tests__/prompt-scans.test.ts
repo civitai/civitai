@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const query = vi.fn();
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query }) }));
 
-const { getPromptScans, readScores } = await import('../prompt-scans.service');
+const { getPromptScans, isScanTimeout, readScores } = await import('../prompt-scans.service');
 
 const rows = (r: unknown[]) => query.mockResolvedValue({ json: async () => r });
 
@@ -19,6 +19,15 @@ describe('getPromptScans', () => {
     expect(sql).toMatch(/xguardPromptResults FINAL/);
     expect(sql).not.toContain('42');
     expect(sql).toMatch(/userId = \{userId:Int32\}/);
+  });
+
+  // A scan measured 20.1 s under load and failed at the old 20 s cap; Cloudflare cuts the request at 100 s.
+  it('gives the scan room beyond the measured worst case, inside the edge limit', async () => {
+    rows([]);
+    await getPromptScans(1, { days: 30, limit: 100 });
+    const cap = query.mock.calls[0][0].clickhouse_settings.max_execution_time;
+    expect(cap).toBeGreaterThanOrEqual(40);
+    expect(cap).toBeLessThanOrEqual(60);
   });
 
   it('reads prompts and scores, an empty negative prompt as none', async () => {
@@ -60,5 +69,14 @@ describe('readScores', () => {
 
   it('reads a missing map as no scores rather than throwing', () => {
     expect(readScores(null)).toEqual([]);
+  });
+});
+
+describe('isScanTimeout', () => {
+  it("recognises ClickHouse's TIMEOUT_EXCEEDED and nothing else", () => {
+    expect(isScanTimeout({ code: '159', type: 'TIMEOUT_EXCEEDED' })).toBe(true);
+    expect(isScanTimeout({ code: '497' })).toBe(false);
+    expect(isScanTimeout(new Error('socket hang up'))).toBe(false);
+    expect(isScanTimeout(null)).toBe(false);
   });
 });

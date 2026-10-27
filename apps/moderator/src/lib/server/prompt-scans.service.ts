@@ -13,6 +13,12 @@ import type { PromptScan, PromptScanDays, PromptScanLimit } from '$lib/prompt-sc
  * keys the scan wrote, and the moderator picks the cutoff.
  */
 
+export const PROMPT_SCAN_TIMEOUT_S = 45;
+
+/** ClickHouse's TIMEOUT_EXCEEDED: the scan outran `max_execution_time`. */
+export const isScanTimeout = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && String((e as { code?: unknown }).code) === '159';
+
 type Row = {
   promptHash: string;
   createdAt: string;
@@ -44,8 +50,9 @@ export async function getPromptScans(
     `,
     query_params: { userId, days, limit },
     format: 'JSONEachRow',
-    // Every call scans the table; a closed tab or a stuck query must not hold a ClickHouse slot.
-    clickhouse_settings: { max_execution_time: 20 },
+    // Every call scans the table, and its time swings with cluster load (8-20 s+ measured); this
+    // stays under Cloudflare's 100 s with room for the request around it. A closed tab cancels it.
+    clickhouse_settings: { max_execution_time: PROMPT_SCAN_TIMEOUT_S },
     abort_signal: signal,
   });
   const rows = await resp.json<Row>();
