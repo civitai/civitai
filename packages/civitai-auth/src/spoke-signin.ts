@@ -15,7 +15,7 @@ import {
   safePath,
 } from './first-party-bridge';
 import { hubBaseUrl } from './hub';
-import { registrableDomain, spokeLogoutCookies } from './spoke-logout';
+import { registrableDomain } from './spoke-logout';
 
 // Sign-in handlers for a first-party app on its own host: `GET /api/auth/authorize` and `GET /api/auth/callback`.
 // They write only the host-only slot, which no other host can set; the shared slot belongs to the hub and the main
@@ -48,11 +48,14 @@ export interface SpokeCallbackOptions extends SpokeSignInOptions {
   clientIp?: string;
 }
 
-const markerCookie = () => `${POST_LOGIN_MARKER}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=60`;
-const clearMarker = () => `${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`;
-const retryCookie = (n: number) =>
+/** The one-shot marker the callback sets, so the next authorize can tell a cookie that never landed. */
+export const postLoginMarkerCookie = () =>
+  `${POST_LOGIN_MARKER}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=60`;
+export const clearPostLoginMarker = () => `${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`;
+export const loginRetryCookie = (n: number) =>
   `${LOGIN_RETRY_COOKIE}=${n}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${LOGIN_RETRY_TTL_S}`;
-const clearRetry = () => `${LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+export const clearLoginRetryCookie = () =>
+  `${LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 
 function cookie(
   name: string,
@@ -101,7 +104,6 @@ export function spokeSessionCookies(
 ): string[] {
   const secure = isSecureCookie();
   const slot = opts.slot ?? 'host';
-  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
   const domain = slot === 'shared' && opts.hostname ? registrableDomain(opts.hostname) : undefined;
   const session = sessionCookieNameForSlot(slot, secure);
   const out = [cookie(session, token, secure, tokenMaxAge(token), domain)];
@@ -109,12 +111,27 @@ export function spokeSessionCookies(
     const device = deviceCookieNameForSlot(slot, secure);
     out.push(cookie(device, opts.deviceId, secure, DEVICE_TTL_S, domain));
   }
+  out.push(...otherSlotExpiries(slot, opts.requestCookies, secure));
+  return out;
+}
+
+/**
+ * Host-only expiries for the other slot's session and device cookies, for those the request carries, so a write
+ * to one slot leaves no stale identity in the other.
+ */
+export function otherSlotExpiries(
+  slot: CookieSlot,
+  requestCookies: Partial<Record<string, string | undefined>> | undefined,
+  secure: boolean = isSecureCookie()
+): string[] {
+  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
+  const out: string[] = [];
   for (const [mine, theirs] of [
-    [session, sessionCookieNameForSlot(other, secure)],
+    [sessionCookieNameForSlot(slot, secure), sessionCookieNameForSlot(other, secure)],
     [deviceCookieNameForSlot(slot, secure), deviceCookieNameForSlot(other, secure)],
   ]) {
     // On http dev both slots share the bare name; expiring "the other" would delete what was just written.
-    if (theirs !== mine && opts.requestCookies?.[theirs]) out.push(expire(theirs, secure));
+    if (theirs !== mine && requestCookies?.[theirs]) out.push(expire(theirs, secure));
   }
   return out;
 }
@@ -176,17 +193,20 @@ export function spokeAuthorize(request: Request, opts: SpokeSignInOptions = {}):
     const retries = Number.parseInt(jar[LOGIN_RETRY_COOKIE] ?? '', 10) || 0;
     if (retries >= 1) {
       opts.onEvent?.('loop-terminal', { retries });
+      // Only this host's own slot: the shared Domain session belongs to every other app.
+      const secure = isSecureCookie();
       return problemPage([
-        ...spokeLogoutCookies(url.hostname),
+        expire(sessionCookieNameForSlot('host', secure), secure),
+        expire(deviceCookieNameForSlot('host', secure), secure),
         clearBridgeCookie(),
-        clearMarker(),
-        clearRetry(),
+        clearPostLoginMarker(),
+        clearLoginRetryCookie(),
       ]);
     }
     opts.onEvent?.('cookie-miss-retry', { retries });
-    cookieOps.push(clearMarker(), retryCookie(retries + 1));
+    cookieOps.push(clearPostLoginMarker(), loginRetryCookie(retries + 1));
   } else if (jar[LOGIN_RETRY_COOKIE]) {
-    cookieOps.push(clearRetry());
+    cookieOps.push(clearLoginRetryCookie());
   }
 
   const { location, setCookie } = buildAuthorizeRedirect({
@@ -234,7 +254,7 @@ export async function spokeCallback(
       deviceId: result.deviceId,
       requestCookies: jar,
     }),
-    markerCookie(),
+    postLoginMarkerCookie(),
   ]);
 }
 

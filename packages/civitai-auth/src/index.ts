@@ -41,6 +41,11 @@ export {
   signInProblemHtml,
   POST_LOGIN_MARKER,
   LOGIN_RETRY_COOKIE,
+  postLoginMarkerCookie,
+  clearPostLoginMarker,
+  loginRetryCookie,
+  clearLoginRetryCookie,
+  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';

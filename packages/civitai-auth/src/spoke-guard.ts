@@ -92,6 +92,8 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     (config.updateAgeSeconds ?? (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60)) *
     1000;
   let tokens = config.sessionTokenClient;
+  // Concurrent requests carrying the same aged token share one hub refresh.
+  const rolling = new Map<string, Promise<string | undefined>>();
 
   const hubLogin = (returnUrl: string): string => {
     const base = hubBaseUrl() ?? ''; // hub origin (AUTH_JWT_ISSUER); '' is a degenerate misconfig fallback
@@ -112,9 +114,15 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     const iat = issuedAtMs(token);
     if (!iat || Date.now() - iat < updateAgeMs) return [];
     tokens ??= createSessionTokenClient();
-    const fresh = (
-      await tokens.refresh(token, { deviceCookie: device?.value, onFailure: config.onRollFailed })
-    )?.token;
+    let pending = rolling.get(token);
+    if (!pending) {
+      pending = tokens
+        .refresh(token, { deviceCookie: device?.value, onFailure: config.onRollFailed })
+        .then((r) => r?.token)
+        .finally(() => rolling.delete(token));
+      rolling.set(token, pending);
+    }
+    const fresh = await pending;
     if (!fresh) return [];
     const deviceId = device?.slot === 'host' ? device.value : undefined;
     return spokeSessionCookies(fresh, { slot: 'host', deviceId, requestCookies: jar });

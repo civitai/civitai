@@ -8,6 +8,7 @@ import {
   spokeAuthorize,
   spokeCallback,
   spokeReauthResponse,
+  spokeSessionCookies,
   withSetCookies,
 } from '../spoke-signin';
 
@@ -132,6 +133,22 @@ describe('spokeAuthorize / spokeCallback', () => {
     expect(b.jar.has('civ_login_retry')).toBe(false);
   });
 
+  it('the problem page clears only this host: the shared session cookies are left alone', async () => {
+    const b = browser(HOST);
+    b.jar.set('civ_postlogin', '1');
+    b.jar.set('civ_login_retry', '1');
+    b.jar.set('__Host-civ-device', 'D1');
+    b.jar.set('__Secure-civ-token', 'shared');
+    b.jar.set('__Secure-civ-device', 'shared-device');
+    const res = spokeAuthorize(b.get('/api/auth/authorize?returnUrl=%2F'));
+    expect(res.status).toBe(400);
+    const set = res.headers.getSetCookie();
+    expect(set.filter((c) => /^(__Secure-)?civ-(token|device)=/.test(c))).toEqual([]);
+    expect(set.some((c) => /Domain=/.test(c))).toBe(false);
+    expect(set).toContain('__Host-civ-token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure');
+    expect(set).toContain('__Host-civ-device=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure');
+  });
+
   it('a cookie that lands on the retry signs in normally', async () => {
     const flaky = browser(HOST);
     let res = spokeAuthorize(flaky.get('/api/auth/authorize'));
@@ -201,5 +218,21 @@ describe('spokeReauthResponse / withSetCookies', () => {
     const out = withSetCookies(immutable, ['a=1']);
     expect(out).not.toBe(immutable);
     expect(out.headers.getSetCookie()).toEqual(['a=1']);
+  });
+});
+
+describe('spokeSessionCookies', () => {
+  it('a shared-slot write is scoped to the registrable domain, so every app reads it', () => {
+    const set = spokeSessionCookies(TOKEN, {
+      slot: 'shared',
+      hostname: 'creators.civitai.com',
+      deviceId: 'D1',
+    });
+    expect(set).toContain(
+      `__Secure-civ-token=${TOKEN}; Path=/; HttpOnly; SameSite=Lax; Secure; Domain=civitai.com; Max-Age=3600`
+    );
+    expect(set).toContain(
+      '__Secure-civ-device=D1; Path=/; HttpOnly; SameSite=Lax; Secure; Domain=civitai.com; Max-Age=2592000'
+    );
   });
 });

@@ -62,22 +62,13 @@ export const allCookieNames = (base: string): string[] => [
 
 /** Pull a single cookie value out of a `Cookie` header string. */
 export function readCookie(header: string, name: string): string | undefined {
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() !== name) continue;
-    const raw = part.slice(idx + 1).trim();
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      // A malformed %-escape must not throw out of a caller such as logout; hand back the raw value.
-      return raw;
-    }
-  }
-  return undefined;
+  return parseCookieHeader(header)[name];
 }
 
-/** Every cookie in a `Cookie` header string, by name (the first occurrence of a repeated name wins, as in readCookie). */
+/**
+ * Every cookie in a `Cookie` header string, by name. The first occurrence of a repeated name wins, and a malformed
+ * %-escape keeps its raw value rather than throwing out of a caller such as logout.
+ */
 export function parseCookieHeader(header: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of header.split(';')) {

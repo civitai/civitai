@@ -2,9 +2,14 @@ import {
   deviceCookieNameForSlot,
   hostDeviceCookieName,
   hostSessionCookieName,
+  clearLoginRetryCookie,
+  clearPostLoginMarker,
   isSecureCookie,
   LOGIN_RETRY_COOKIE,
+  loginRetryCookie,
+  otherSlotExpiries,
   POST_LOGIN_MARKER,
+  postLoginMarkerCookie,
   sessionCookieMode,
   sessionCookieName,
   sessionCookieNameForSlot,
@@ -194,15 +199,7 @@ export function setSessionCookie(
     const deviceName = deviceCookieNameForSlot(slot, secure);
     all.push(buildCookie(deviceName, opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
-  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
-  for (const [mine, theirs] of [
-    [sessionCookieNameForSlot(slot, secure), sessionCookieNameForSlot(other, secure)],
-    [deviceCookieNameForSlot(slot, secure), deviceCookieNameForSlot(other, secure)],
-  ]) {
-    // On http dev both slots share the bare name; expiring "the other" would delete what was just written.
-    if (theirs !== mine && opts?.requestCookies?.[theirs])
-      all.push(buildCookie(theirs, '', secure, undefined, 0));
-  }
+  all.push(...otherSlotExpiries(slot, opts?.requestCookies, secure));
   res.setHeader('Set-Cookie', all);
 }
 
@@ -211,17 +208,7 @@ export function setSessionCookie(
 // session cookie that DIDN'T stick (a cross-domain Domain/Secure misconfig — the redirect-loop case) from a
 // normal login. Deliberately host-only and NOT Secure: it must stick regardless of the session cookie's fate,
 // which is the whole point of using it as the "did the real cookie land?" probe.
-export { POST_LOGIN_MARKER };
-
-/** Set-Cookie for the one-shot post-login marker (60s; host-only; non-secure so it always lands). */
-export function postLoginMarkerCookie(): string {
-  return `${POST_LOGIN_MARKER}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=60`;
-}
-
-/** Expire the one-shot post-login marker. */
-export function clearPostLoginMarker(): string {
-  return `${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`;
-}
+export { POST_LOGIN_MARKER, postLoginMarkerCookie, clearPostLoginMarker };
 
 // First-party login RETRY budget, paired with POST_LOGIN_MARKER. When /api/auth/authorize sees the marker but
 // NO session cookie, the callback set a civ-token that didn't arrive — EITHER an intermittent cookie-landing
@@ -229,18 +216,7 @@ export function clearPostLoginMarker(): string {
 // the login once (consume the marker, re-enter the flow) so a transient miss self-heals; only on a SECOND
 // consecutive miss do we show the terminal "couldn't sign you in" page — that's a genuine redirect loop.
 // Host-only + non-secure like the marker so it always lands; short TTL (the whole login chain is a few hops).
-export { LOGIN_RETRY_COOKIE };
-const LOGIN_RETRY_TTL_S = 120;
-
-/** Set-Cookie recording the current login-retry count (host-only; always lands, like the marker). */
-export function loginRetryCookie(count: number): string {
-  return `${LOGIN_RETRY_COOKIE}=${count}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${LOGIN_RETRY_TTL_S}`;
-}
-
-/** Expire the login-retry counter (on success, terminal error, or the start of a fresh login chain). */
-export function clearLoginRetryCookie(): string {
-  return `${LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
-}
+export { LOGIN_RETRY_COOKIE, loginRetryCookie, clearLoginRetryCookie };
 
 // Post-login RETRY budget. /api/auth/post-login is reached with the civ-token cookie already meant to be set;
 // when the session STILL doesn't resolve there, the cookie either never landed OR landed but can't be verified
