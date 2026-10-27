@@ -421,6 +421,13 @@ export const serverSchema = z
     // reason as MODERATOR_APP_INTERNAL_URL above.
     GF_REPORT_TOKEN: z.string().optional(),
     GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
+    // The shared "Civitai Moderation" account that moderators message users as. Unset or '' turns the
+    // feature off. The account never signs in, so every session resolver refuses it.
+    CIVITAI_MODERATION_USER_ID: z
+      .union([z.coerce.number().int().positive(), z.literal('')])
+      .optional(),
+    // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
+    MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),

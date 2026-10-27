@@ -1362,6 +1362,13 @@ export interface ModActivity {
   host: string | null;
 }
 
+export interface ModThreadClaim {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Date;
+  expiresAt: Date;
+}
+
 export interface Report {
   id: number;
   userId: number;

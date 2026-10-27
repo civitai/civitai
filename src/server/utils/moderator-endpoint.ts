@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
@@ -212,7 +213,11 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
     const { actor, fullCredential } = resolved;
-    if (!actor.isModerator || actor.bannedAt) {
+    if (
+      !actor.isModerator ||
+      actor.bannedAt ||
+      refuseModerationAccountSession(actor.id, 'moderator-endpoint')
+    ) {
       return res.status(403).json({ error: 'Moderator role required' });
     }
     if (!fullCredential) {

@@ -4,6 +4,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
+import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
 import {
@@ -80,6 +81,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
+  if (refuseModerationAccountSession(user.id, 'bearer-token')) return null;
 
   // OAuth-issued tokens key their subject on clientId (stable across access-token
   // rotations) and read their limit from the user's OauthConsent. Other keys use

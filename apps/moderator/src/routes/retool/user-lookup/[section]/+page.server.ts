@@ -50,6 +50,8 @@ import {
 } from '$lib/server/mystery-box-grant.service';
 import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
 import { accountEnforcementActions } from '$lib/server/account-actions';
+import { sendAsCivitai } from '$lib/server/message-as-civitai';
+import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import {
   CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
@@ -102,6 +104,8 @@ const reactionsFail = (message: string) =>
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
+const messageFail = (message: string) =>
+  fail(400, { scope: 'message' as const, error: message });
 
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
 
@@ -384,6 +388,20 @@ export const actions: Actions = {
     if (!result.ok) return notifyFail(result.error);
     return { success: true };
   },
+
+  messageAsCivitai: requiresGrant('user.message.asCivitai', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        message: z.string().trim().min(1).max(MESSAGE_AS_CIVITAI_MAX_LENGTH),
+        idempotencyKey: z.string().min(8).max(128),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return messageFail(input);
+    const result = await sendAsCivitai(input);
+    if (!result.ok) return messageFail(result.error);
+    return { success: true, chatId: result.value.chatId };
+  }),
 
   refundPurchase: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return shopFail('Not permitted.');

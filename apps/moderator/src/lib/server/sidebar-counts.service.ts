@@ -18,6 +18,7 @@ import {
   type LastActioned,
 } from './reports.service';
 import { countNewFeedback } from './feedback.service';
+import { countAwaitingReply } from './message-as-civitai-count';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countSiteAppeals } from './site-appeals.service';
 import { siteAppealCountKey } from '$lib/site-appeals';
@@ -130,6 +131,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    civitaiMessages,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -181,6 +183,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    bounded(countAwaitingReply),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -193,6 +196,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     scamRestrictions,
     csamTextHolds,
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
+    civitaiMessages,
     stuckIngestion,
     ingestionErrors,
   };
