@@ -14,6 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
+const { Tracker } = await import('~/server/clickhouse/client');
 const { default: handler } = (await import(
   '../../../pages/api/service-deals/files/[fileId]/download'
 )) as unknown as {
@@ -47,7 +48,7 @@ const response = () => {
 
 const call = (fileId: unknown, user = { id: 7, isModerator: false }) => {
   const res = response();
-  return handler({ query: { fileId } }, res, user).then(() => res);
+  return handler({ query: { fileId }, headers: {} }, res, user).then(() => res);
 };
 
 beforeEach(() => {
@@ -66,6 +67,10 @@ describe('download route', () => {
     const res = await call('12');
     expect(res.redirected).toBe('https://signed/url');
     expect(res.headers['Cache-Control']).toMatch(/no-store/);
+    expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'k' }),
+      expect.any(Tracker)
+    );
     expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith({
       fileId: 12,
       userId: 7,

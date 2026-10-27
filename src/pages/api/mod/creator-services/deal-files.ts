@@ -38,7 +38,7 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
     'A moderator sees every file, including previews that failed processing and finals that have not passed their scan.',
     'Get a short-lived download link for one with GET /api/mod/creator-services/deal-file-url (the original, not the watermarked preview).',
     '`previewUrl` is the watermarked derivative a buyer sees. Null until the preview is Ready.',
-    '`access` lists who has been handed a download link for the file: one entry per role on the deal (Buyer, Seller, or Moderator for a non-party) and kind (Download through the site, ModeratorFetch through deal-file-url), with `count`, `firstAt` and `lastAt`. Empty if nobody has; absent if the access log could not be read.',
+    '`access` lists who has been handed a download link for the file: one entry per role on the deal (Buyer, Seller, or Moderator for a non-party) and kind (Download through the site, ModeratorFetch through deal-file-url), with `count`, `firstAt` and `lastAt`. Empty if nobody has; absent if the access log could not be read. Read from ClickHouse, so an access can take a few seconds to appear.',
     '`accessRecordedSince` is when the first access was recorded (null if none yet). Nothing before it was recorded, so an empty `access` on a deal completed earlier proves nothing.',
   ],
   input: z.object({

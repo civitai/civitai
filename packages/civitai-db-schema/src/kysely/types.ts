@@ -143,8 +143,6 @@ import type {
   ServiceDealStatus,
   ServiceDealEventType,
   ServiceDealFileKind,
-  ServiceDealAccessRole,
-  ServiceDealAccessKind,
   ServiceDealFileStatus,
   ServiceDealFileScanStatus,
   ServiceDisputeResolution,
@@ -5223,15 +5221,6 @@ export type ServiceDealFile = {
   repackedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
-export type ServiceDealFileAccess = {
-  id: Generated<number>;
-  dealId: number;
-  fileId: number;
-  userId: number;
-  role: ServiceDealAccessRole;
-  kind: ServiceDealAccessKind;
-  createdAt: Generated<Timestamp>;
-};
 export type ServiceDealFileEntry = {
   id: Generated<number>;
   /**
@@ -6539,7 +6528,6 @@ export type DB = {
   ServiceDeal: ServiceDeal;
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
-  ServiceDealFileAccess: ServiceDealFileAccess;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceOffering: ServiceOffering;

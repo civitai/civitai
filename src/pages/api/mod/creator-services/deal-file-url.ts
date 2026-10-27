@@ -24,7 +24,7 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
       .transform((value) => value === 'true')
       .describe('Ask for the file as the buyer receives it instead of the original.'),
   }),
-  async handler({ fileId, delivered }, { actor }) {
+  async handler({ fileId, delivered }, { actor, tracker }) {
     const target = await resolveServiceDealFileDownload({
       fileId,
       userId: actor.id,
@@ -33,7 +33,7 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
       moderatorFetch: true,
     });
     if (!target) throw throwNotFoundError('File not found');
-    const url = await getServiceDealFileDownloadUrl(target);
+    const url = await getServiceDealFileDownloadUrl(target, tracker);
     return {
       url,
       expiresAt: new Date(Date.now() + SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS * 1000).toISOString(),

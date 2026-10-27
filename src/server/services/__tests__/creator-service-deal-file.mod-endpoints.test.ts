@@ -18,7 +18,9 @@ vi.mock('~/server/utils/moderator-endpoint', () => ({
   defineModeratorEndpoint: (_name: string, def: unknown) => def,
 }));
 
-type Handler<I, O> = { handler: (input: I, ctx: { actor: { id: number } }) => Promise<O> };
+type Handler<I, O> = {
+  handler: (input: I, ctx: { actor: { id: number }; tracker?: unknown }) => Promise<O>;
+};
 const files = (await import('../../../pages/api/mod/creator-services/deal-files'))
   .default as unknown as Handler<{ dealId?: number; dealIds?: string }, { items: any[] }>;
 const url = (await import('../../../pages/api/mod/creator-services/deal-file-url'))
@@ -144,7 +146,8 @@ describe('deal-file-url', () => {
     });
     service.getServiceDealFileDownloadUrl.mockResolvedValue('https://signed/url');
     const before = Date.now();
-    const result = await url.handler({ fileId: 12 }, actor);
+    const tracker = { serviceDealFileAccess: vi.fn() };
+    const result = await url.handler({ fileId: 12 }, { ...actor, tracker });
     expect(result.url).toBe('https://signed/url');
     const expires = new Date(result.expiresAt).getTime();
     expect(expires).toBeGreaterThanOrEqual(before + 299_000);
@@ -155,6 +158,7 @@ describe('deal-file-url', () => {
       isModerator: true,
       moderatorFetch: true,
     });
+    expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(expect.anything(), tracker);
   });
 
   it('answers an unknown file with not-found and signs nothing', async () => {

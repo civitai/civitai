@@ -58,7 +58,7 @@ export type DealFile = {
 /** One role's accesses of one file. `ModeratorFetch` is the dispute tool, never a party's download. */
 export type DealFileAccess = {
   role: 'Buyer' | 'Seller' | 'Moderator';
-  kind: 'Download' | 'PreviewView' | 'ModeratorFetch';
+  kind: 'Download' | 'ModeratorFetch';
   count: number;
   firstAt: string;
   lastAt: string;
