@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -22,18 +23,13 @@ const CORE_PACKAGES = [
   'zod',
 ] as const;
 
-/** Every module specifier a TypeScript source names: static, type-only, re-export, dynamic, require. */
+/**
+ * Every module specifier a TypeScript source names: static, type-only, re-export, side-effect,
+ * dynamic and `require`, as TypeScript's own pre-processor reads them. Not a regex: SQL text such as
+ * `from "${SCHEMA}".streams` inside a template string reads as an import to one.
+ */
 function specifiers(source: string): string[] {
-  const found: string[] = [];
-  const patterns = [
-    /\bfrom\s+['"]([^'"]+)['"]/g,
-    /\bimport\s+['"]([^'"]+)['"]/g,
-    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-  ];
-  for (const pattern of patterns)
-    for (const match of source.matchAll(pattern)) found.push(match[1]!);
-  return found;
+  return ts.preProcessFile(source, true, true).importedFiles.map((file) => file.fileName);
 }
 
 function packageOf(specifier: string): string {
@@ -121,6 +117,9 @@ describe('src/core/ boundary', () => {
       `import { createHash } from 'node:crypto';`,
       `import { MockLanguageModelV3 } from 'ai/test';`,
       `import type { TurnPart } from '@civitai/components-chat/core';`,
+      // Not imports: SQL in a template string, and a comment.
+      'const q = `select 1 from "${SCHEMA}".streams`;',
+      `// moved from '../tokens'`,
     ];
     for (const source of fine)
       expect(coreBoundaryViolations(CORE, file, source), source).toEqual([]);

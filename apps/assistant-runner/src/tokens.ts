@@ -5,8 +5,6 @@ import { jwtVerify, type JWTPayload } from 'jose';
 
 import type { Authenticator, RunGrant } from './core/interfaces';
 
-export { GRANT_HEADER, grantHeader } from './core/protocol';
-
 /**
  * The two credentials civitai signs for the runner (`src/server/services/app-assistant/
  * assistant-runner-tokens.ts` on the civitai side). Both are ES256 JWTs from one key pair: civitai

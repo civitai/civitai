@@ -81,24 +81,6 @@ const DONE = 'done';
 export const WORKFLOW_VERSION = 'reply-1';
 
 /**
- * What names a runner's runs in DBOS. A run is recovered only by a process with the same application
- * version, and is found again only under the same workflow names: a deployment that changes either
- * strands the runs in flight (`sweepStranded` ends them as interrupted).
- */
-export interface RunnerIdentity {
-  /** DBOS's application name. */
-  appName: string;
-  /** DBOS's application version: bumped when the reply workflow's sequence of DBOS calls changes. */
-  workflowVersion: string;
-}
-
-/** The identity a runner has unless its deployment names another. */
-export const DEFAULT_IDENTITY: RunnerIdentity = {
-  appName: 'assistant-runner',
-  workflowVersion: WORKFLOW_VERSION,
-};
-
-/**
  * How many times DBOS recovers one run after its process died. Each recovery asks the model for the
  * step in flight again, so a run that kills its process every time must not loop; a deploy restart
  * counts as one too.
@@ -186,8 +168,6 @@ export interface RunnerDeps {
    * not set up): every start is refused with these words, rather than answered with no tools.
    */
   startRefusal?: string;
-  /** `DEFAULT_IDENTITY` unless set. */
-  identity?: RunnerIdentity;
 }
 
 export interface LaunchOptions {
@@ -205,7 +185,6 @@ export interface LaunchOptions {
  */
 export class Runner implements RunService {
   readonly #deps: RunnerDeps;
-  readonly #identity: RunnerIdentity;
   #reply: ((input: ReplyInput) => Promise<ReplyOutput>) | undefined;
   #marker: (() => Promise<boolean>) | undefined;
   #pool: pg.Pool | undefined;
@@ -223,7 +202,6 @@ export class Runner implements RunService {
 
   constructor(deps: RunnerDeps) {
     this.#deps = deps;
-    this.#identity = deps.identity ?? DEFAULT_IDENTITY;
   }
 
   /** Registers the workflows. Once per process, before `launch`. */
@@ -237,11 +215,11 @@ export class Runner implements RunService {
 
   async launch(options: LaunchOptions): Promise<void> {
     DBOS.setConfig({
-      name: this.#identity.appName,
+      name: 'assistant-runner',
       systemDatabaseUrl: options.databaseUrl,
       systemDatabaseSchemaName: SYSTEM_SCHEMA,
       executorID: options.executorId,
-      applicationVersion: this.#identity.workflowVersion,
+      applicationVersion: WORKFLOW_VERSION,
       logLevel: options.logLevel ?? 'info',
     });
     await DBOS.launch();
@@ -373,9 +351,7 @@ export class Runner implements RunService {
       executorId: this.#executorId,
     });
     const stranded = runs.filter(
-      (run) =>
-        run.applicationVersion !== undefined &&
-        run.applicationVersion !== this.#identity.workflowVersion
+      (run) => run.applicationVersion !== undefined && run.applicationVersion !== WORKFLOW_VERSION
     );
     for (const run of stranded) {
       await DBOS.cancelWorkflow(run.workflowID);
