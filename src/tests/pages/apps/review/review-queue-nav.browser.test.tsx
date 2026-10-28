@@ -25,6 +25,10 @@ const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
   subListingCount: 0,
   flaggedCount: 0,
+  // The Access requests tab: the badge's `list` page (useQuery) and the queue's (useInfiniteQuery).
+  accessPending: [] as unknown[],
+  accessPendingNext: null as number | null,
+  accessBadgeInputs: [] as unknown[],
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -159,6 +163,22 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         useQuery: () => ({ data: { count: state.subListingCount } }),
       },
       'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
+      // The Access requests tab label's pending count reads ONE page of the pending list…
+      'appAccessRequest.list': {
+        useQuery: (input: unknown) => {
+          state.accessBadgeInputs.push(input);
+          return { data: { items: state.accessPending, nextCursor: state.accessPendingNext } };
+        },
+        // …and the tab's panel is the real `AppAccessRequestsQueue`, which pages it.
+        useInfiniteQuery: () => ({
+          data: { pages: [{ items: state.accessPending, nextCursor: null }] },
+          isLoading: false,
+          hasNextPage: false,
+        }),
+      },
+      'appAccessRequest.decide': {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+      },
     },
     {
       useUtils: () => ({
@@ -194,6 +214,9 @@ beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
   state.subListingCount = 0;
   state.flaggedCount = 0;
+  state.accessPending = [];
+  state.accessPendingNext = null;
+  state.accessBadgeInputs = [];
   routerState().query = {};
   routerPush().mockClear();
 });
@@ -219,6 +242,65 @@ describe('ReviewQueuePage — App feedback tab', () => {
       .element(page.getByRole('tab', { name: /App feedback/ }))
       .toHaveAttribute('aria-selected', 'true');
     await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
+  });
+});
+
+const accessRequest = (id: number) => ({
+  id,
+  userId: 9000 + id,
+  username: `builder_${id}`,
+  whatToBuild: `Idea ${id}: a palette board.`,
+  status: 'pending' as const,
+  createdAt: new Date('2026-10-20T09:00:00Z'),
+  reviewedAt: null,
+  reviewedById: null,
+  reviewedByUsername: null,
+});
+
+describe('ReviewQueuePage — Access requests tab', () => {
+  test('?tab=access-requests selects the tab and mounts the access-request queue', async () => {
+    state.accessPending = [accessRequest(41)];
+    routerState().query = { tab: 'access-requests' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /Access requests/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    // The REAL queue, rendering this fixture's row with its decision controls.
+    const row = page.getByTestId('app-access-request-41');
+    await expect.element(row).toBeInTheDocument();
+    await expect.element(row.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
+  test('the queue is not mounted while another tab is active', async () => {
+    state.accessPending = [accessRequest(41)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-41').elements()).toHaveLength(0);
+  });
+
+  test('the tab label shows how many requests are pending', async () => {
+    state.accessPending = [accessRequest(1), accessRequest(2), accessRequest(3)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^3$/);
+    // The count is read from the PENDING filter, at the proc's page ceiling.
+    expect(state.accessBadgeInputs).toContainEqual({ status: 'pending', limit: 100 });
+  });
+
+  test('a pending backlog past one page reads as "N+", not as exactly N', async () => {
+    state.accessPending = [accessRequest(1), accessRequest(2)];
+    state.accessPendingNext = 2;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^2\+$/);
+  });
+
+  test('no badge when nothing is pending', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-pending-count').elements()).toHaveLength(0);
   });
 });
 
