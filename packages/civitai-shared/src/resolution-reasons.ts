@@ -157,6 +157,30 @@ export const RESOLUTION_REASONS = {
       OTHER,
     ],
   },
+  // An owner's request to review a setting a moderator locked. Approved unlocks it, Rejected keeps it.
+  lockReview: {
+    Approved: [
+      {
+        value: 'lock-not-needed',
+        label: 'Lock not needed',
+        description: 'The owner can be trusted to set this themselves.',
+      },
+      {
+        value: 'context-provided',
+        label: 'User supplied context',
+        description: 'The owner explained why the locked value is wrong.',
+      },
+      OTHER,
+    ],
+    Rejected: [
+      {
+        value: 'lock-stands',
+        label: 'Lock stands',
+        description: 'The setting is right and stays locked.',
+      },
+      OTHER,
+    ],
+  },
   heldDetection: {
     Kept: FLAG_KEPT,
     Dismissed: FLAG_DISMISSED,

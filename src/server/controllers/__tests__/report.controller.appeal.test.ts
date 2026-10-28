@@ -138,7 +138,12 @@ describe('createEntityAppealHandler — Model re-request', () => {
     expect(mockGetLatestAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: EntityType.Model, entityId: 2186217, userId: 602767 })
     );
-    expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 7, message: baseInput.message });
+    // A flag appeal reopened on a row last filed as a lock review must not stay one.
+    expect(mockReopenAppeal).toHaveBeenCalledWith({
+      id: 7,
+      message: baseInput.message,
+      context: null,
+    });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'Pending' });
   });

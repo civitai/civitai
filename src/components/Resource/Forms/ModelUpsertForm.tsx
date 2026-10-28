@@ -79,7 +79,7 @@ import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 import { RequestLockReviewLink } from '~/components/Model/LockReview/RequestLockReview';
-import { requestableLocks } from '~/shared/constants/lock-review.constants';
+import { requestableLocks } from '@civitai/shared/lock-review';
 
 const schema = modelUpsertSchema
   .extend({

@@ -45,6 +45,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/membership-gift/refund-unfulfilled'),
   '/api/mod/membership-gift/revoke-unpaid': () =>
     import('~/pages/api/mod/membership-gift/revoke-unpaid'),
+  '/api/mod/messages/claim': () => import('~/pages/api/mod/messages/claim'),
+  '/api/mod/messages/inbox': () => import('~/pages/api/mod/messages/inbox'),
+  '/api/mod/messages/release': () => import('~/pages/api/mod/messages/release'),
+  '/api/mod/messages/thread': () => import('~/pages/api/mod/messages/thread'),
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
@@ -56,6 +60,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
   '/api/mod/model/bump': () => import('~/pages/api/mod/model/bump'),
   '/api/mod/model/republish': () => import('~/pages/api/mod/model/republish'),
+  '/api/mod/model/resolve-lock-review': () => import('~/pages/api/mod/model/resolve-lock-review'),
   '/api/mod/model/set-poi': () => import('~/pages/api/mod/model/set-poi'),
   '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
   '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),
@@ -91,6 +96,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),
   '/api/mod/user/membership-code-revoke': () =>
     import('~/pages/api/mod/user/membership-code-revoke'),
+  '/api/mod/user/message-as-civitai': () => import('~/pages/api/mod/user/message-as-civitai'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
   '/api/mod/user/reactions': () => import('~/pages/api/mod/user/reactions'),
   '/api/mod/user/remove-reactions': () => import('~/pages/api/mod/user/remove-reactions'),

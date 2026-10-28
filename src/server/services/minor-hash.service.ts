@@ -924,6 +924,7 @@ export async function resolveMinorFlagAppeal({
     resolvedReason,
     internalNotes,
     userId,
+    modelAppealKind: 'flag',
   });
 
   // The grants cover the current text, so there is nothing to rescan. The moderator app still reads

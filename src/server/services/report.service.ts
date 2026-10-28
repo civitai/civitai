@@ -74,15 +74,7 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import {
-  assertLockReviewAllowed,
-  lockReviewComments,
-  mergeOwnLockReview,
-} from '~/server/services/lock-review.service';
-import {
-  LOCK_REVIEW_REPORT_REASON,
-  lockReviewQueueLabel,
-} from '~/shared/constants/lock-review.constants';
+import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -201,28 +193,8 @@ const reportedMergeSourceFilter = ({
   ];
 };
 
-const isLockReview = ({
-  reportType,
-  reason,
-  details,
-}: {
-  reportType: ReportEntity;
-  reason: ReportReason;
-  details?: MixedObject;
-}) =>
-  reportType === ReportEntity.Model &&
-  reason === ReportReason.AdminAttention &&
-  (details as { reason?: unknown } | undefined)?.reason === LOCK_REVIEW_REPORT_REASON;
-
-const reportedLockReviewFilter = (input: {
-  reportType: ReportEntity;
-  reason: ReportReason;
-  details?: MixedObject;
-}): Prisma.ReportWhereInput[] =>
-  isLockReview(input) ? [{ details: { path: ['reason'], equals: LOCK_REVIEW_REPORT_REASON } }] : [];
-
 /** The existing report a new one on this entity would be folded into, if any. */
-export const findReportToFoldInto = async ({
+export const findReportToFoldInto = ({
   reportType,
   entityReportId,
   reason,
@@ -252,46 +224,17 @@ export const findReportToFoldInto = async ({
     ...(('AND' in placement ? placement.AND : undefined) ?? []),
     ...reportedGameFrameFilter({ reportType, reason, details }),
     ...reportedMergeSourceFilter({ reportType, reason, details }),
-    ...reportedLockReviewFilter({ reportType, reason, details }),
   ];
-  const where: Prisma.ReportWhereInput = {
-    reason,
-    [reportType]: { [entityIdField]: entityReportId },
-    ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
-    ...(narrowing.length ? { AND: narrowing } : {}),
-  };
-  const find = (before?: number) =>
-    db.report.findFirst({
-      where: before ? { ...where, id: { lt: before } } : where,
-      orderBy: { id: 'desc' },
-    });
-  if (!isOtherModelAdminAttention({ reportType, reason, details })) return find();
-
-  // Any other AdminAttention report on a model must not land in an owner's lock review request: it
-  // would be shown, closed and rewarded as part of the owner's ask. Skipped in code, not in the
-  // query, because a JSON path NOT also drops rows that have no `reason` at all.
-  let found = await find();
-  for (let skipped = 0; found && isLockReviewDetails(found.details); skipped++) {
-    if (skipped >= MAX_LOCK_REVIEWS_SKIPPED) return null;
-    found = await find(found.id);
-  }
-  return found;
+  return db.report.findFirst({
+    where: {
+      reason,
+      [reportType]: { [entityIdField]: entityReportId },
+      ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
+      ...(narrowing.length ? { AND: narrowing } : {}),
+    },
+    orderBy: { id: 'desc' },
+  });
 };
-
-/** Past this many of an owner's requests in a row, a new report gets its own row instead. */
-const MAX_LOCK_REVIEWS_SKIPPED = 10;
-
-const isLockReviewDetails = (details: unknown) =>
-  (details as { reason?: unknown } | null)?.reason === LOCK_REVIEW_REPORT_REASON;
-
-const isOtherModelAdminAttention = (input: {
-  reportType: ReportEntity;
-  reason: ReportReason;
-  details?: MixedObject;
-}) =>
-  input.reportType === ReportEntity.Model &&
-  input.reason === ReportReason.AdminAttention &&
-  !isLockReview(input);
 
 const validateReportCreation = async ({
   userId,
@@ -323,26 +266,6 @@ const validateReportCreation = async ({
   if (!existingReport) return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
-  // An owner asking again extends their own request rather than joining it as a second reporter.
-  // Pending is rechecked here: a request closed since the find gets a new row, not the new settings.
-  if (existingReport.userId === userId && isLockReview({ reportType, reason, details })) {
-    const merged = mergeOwnLockReview(existingReport.details, details ?? {});
-    const { count } = await db.report.updateMany({
-      where: { id, status: ReportStatus.Pending },
-      data: { details: merged },
-    });
-    if (count) return { ...existingReport, details: merged };
-    // Closed in between: the new request it falls through to is held to the cooldown that close began.
-    // Read from `db`, which just saw the close; a replica may not have it yet.
-    await assertLockReviewAllowed({
-      modelId: entityReportId,
-      userId,
-      lockedProperties: details?.lockedProperties,
-      db,
-    });
-    return null;
-  }
-
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;
 
@@ -538,14 +461,6 @@ export const createReport = async ({
   )
     throw throwNotFoundError('That service no longer exists.');
 
-  const lockReview = isLockReview({ reportType: type, reason: data.reason, details: data.details });
-  if (lockReview) {
-    const lockedProperties = (data.details as MixedObject).lockedProperties;
-    await assertLockReviewAllowed({ modelId: id, userId, isModerator, lockedProperties });
-    (data.details as MixedObject).violation = lockReviewQueueLabel(lockedProperties as string[]);
-    (data.details as MixedObject).comments = lockReviewComments(data.details as MixedObject);
-  }
-
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
@@ -565,7 +480,7 @@ export const createReport = async ({
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
   const details = data.details as MixedObject;
-  if (castsNoTagVotes || lockReview) details[NO_REPORT_REWARD_KEY] = true;
+  if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
@@ -575,7 +490,7 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          pendingOnly: castsNoTagVotes || lockReview,
+          pendingOnly: castsNoTagVotes,
           tx: callerTx,
         })
       : null;
@@ -894,7 +809,16 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenAppeal({ id, message }: { id: number; message: string }) {
+export function reopenAppeal({
+  id,
+  message,
+  context,
+}: {
+  id: number;
+  message: string;
+  /** Replaces what the row was last filed about; omitted leaves it. */
+  context?: LockReviewContext | null;
+}) {
   return dbWrite.appeal.update({
     // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
     // moderator-only review flag. A reopen has no such check, so it must never reach an image.
@@ -912,6 +836,7 @@ export function reopenAppeal({ id, message }: { id: number; message: string }) {
       // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
       resolvedReason: null,
       internalNotes: null,
+      ...(context !== undefined && { context: context ?? Prisma.DbNull }),
     },
   });
 }
@@ -1009,7 +934,13 @@ export async function createEntityAppeal({
   userId,
   buzzType,
   skipFee,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
+  context,
+}: Omit<CreateEntityAppealInput, 'locks'> & {
+  userId: number;
+  buzzType: BuzzSpendType;
+  skipFee?: boolean;
+  context?: LockReviewContext;
+}) {
   let buzzTransactionId: string | null = null;
 
   if (!skipFee) {
@@ -1061,7 +992,7 @@ export async function createEntityAppeal({
       }
 
       return tx.appeal.create({
-        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId, context },
       });
     });
 
@@ -1538,7 +1469,13 @@ export async function resolveEntityAppeal({
   resolvedReason,
   refundBuzz,
   userId,
-}: ResolveAppealInput & { userId?: number }) {
+  modelAppealKind,
+}: ResolveAppealInput & {
+  userId?: number;
+  /** A model's flag appeal and its lock review are ruled on apart: each closes only its own kind. */
+  modelAppealKind?: 'flag' | 'lock-review';
+}) {
+  const lockReview = { context: { path: ['kind'], equals: LOCK_REVIEW_KIND } };
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
@@ -1548,6 +1485,11 @@ export async function resolveEntityAppeal({
       entityType,
       entityRemovedAt: null,
       category: null,
+      ...(modelAppealKind === 'lock-review' && lockReview),
+      // A JSON path NOT alone also drops the rows whose context is NULL, which every flag appeal's is.
+      ...(modelAppealKind === 'flag' && {
+        OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReview }],
+      }),
     },
     data: {
       status,

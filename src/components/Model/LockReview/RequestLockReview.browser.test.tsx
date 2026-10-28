@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+import type * as DialogStore from '~/components/Dialog/dialogStore';
 import type * as TrpcModule from '~/utils/trpc';
 
 const OWNER = 82;
@@ -10,11 +11,14 @@ const mocks = vi.hoisted(() => ({
   user: null as { id: number; isModerator?: boolean } | null,
   state: null as unknown,
   queried: [] as { enabled?: boolean }[],
-  openReportModal: vi.fn(),
+  trigger: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
-vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: mocks.openReportModal }));
+vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof DialogStore>()),
+  dialogStore: { trigger: mocks.trigger },
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
@@ -47,7 +51,7 @@ beforeEach(() => {
   mocks.user = { id: OWNER };
   mocks.state = open;
   mocks.queried = [];
-  mocks.openReportModal.mockReset();
+  mocks.trigger.mockReset();
 });
 
 describe('Request review, beside a locked setting', () => {
@@ -55,9 +59,7 @@ describe('Request review, beside a locked setting', () => {
     renderWithProviders(<RequestLockReviewLink model={model(['nsfw'])} />);
 
     await page.getByRole('button', { name: 'Request review' }).click();
-    expect(mocks.openReportModal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: 71, reportKey: 'lock-review' })
-    );
+    expect(mocks.trigger).toHaveBeenCalledWith(expect.objectContaining({ props: { modelId: 71 } }));
   });
 
   test('is not shown when the only locks cannot be requested', async () => {

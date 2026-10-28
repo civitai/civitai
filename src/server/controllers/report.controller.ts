@@ -10,6 +10,8 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
+import { assertLockReviewAllowed } from '~/server/services/lock-review.service';
+import type { LockReviewContext } from '@civitai/shared/lock-review';
 import {
   createEntityAppeal,
   createReport,
@@ -102,6 +104,7 @@ export async function createEntityAppealHandler({
 }) {
   const { id: userId } = ctx.user;
   let skipFee = false;
+  let context: LockReviewContext | undefined;
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
@@ -136,15 +139,28 @@ export async function createEntityAppealHandler({
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
-        // Legacy flags carry no snapshot and are deliberately excluded.
-        if (!isModelFlagAppealable(model))
+        if (input.locks) {
+          // Refuses a model marked as a real person or a minor: its owner appeals the flag instead.
+          context = await assertLockReviewAllowed({
+            modelId: input.entityId,
+            userId,
+            isModerator: ctx.user.isModerator,
+            locks: input.locks,
+          });
+        } else if (!isModelFlagAppealable(model))
+          // Legacy flags carry no snapshot and are deliberately excluded.
           throw throwBadRequestError('This model has no automated flag to review');
 
-        // Asking again after a denial is intended for an automated flag, so reuse the row.
+        // Asking again after a denial is intended, so reuse the row, as the request now describes it.
         const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+        if (existing)
+          return await reopenAppeal({
+            id: existing.id,
+            message: input.message,
+            context: context ?? null,
+          });
 
         skipFee = true;
         break;
@@ -190,7 +206,10 @@ export async function createEntityAppealHandler({
     }
 
     const appeal = await createEntityAppeal({
-      ...input,
+      entityId: input.entityId,
+      entityType: input.entityType,
+      message: input.message,
+      context,
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
       skipFee,

@@ -33,8 +33,6 @@ import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
-import { LockReviewForm } from '~/components/Report/LockReviewForm';
-import { LOCK_REVIEW_REPORT_KEY } from '~/shared/constants/lock-review.constants';
 
 const reports = [
   {
@@ -157,14 +155,6 @@ const reports = [
     availableFor: [ReportEntity.Image],
   },
   {
-    // Reachable only from an owner's "Request moderator review"; the label is the modal's title.
-    key: LOCK_REVIEW_REPORT_KEY,
-    reason: ReportReason.AdminAttention,
-    label: 'Request a review',
-    Element: LockReviewForm,
-    availableFor: [ReportEntity.Model],
-  },
-  {
     key: 'spam',
     reason: ReportReason.Spam,
     label: 'Spam',
@@ -285,15 +275,6 @@ export default function ReportModal({
       });
     },
     async onSuccess(_, variables) {
-      if (reportKey === LOCK_REVIEW_REPORT_KEY) {
-        showSuccessNotification({
-          title: 'Review requested',
-          message: 'A moderator will look at it; the current settings stay in place until then.',
-        });
-        dialog.onClose();
-        await queryUtils.report.getLockReviewState.invalidate({ id: variables.id });
-        return;
-      }
       showSuccessNotification({
         title: `${reportEntityLabels[entityType]} reported`,
         message: 'Your request has been received',
@@ -445,7 +426,6 @@ export default function ReportModal({
                     // indistinguishable in a list — the guess a moderator then
                     // acts on is what the flag exists to remove.
                     if (item.reason === ReportReason.StickerPlacement) return false;
-                    if (item.key === LOCK_REVIEW_REPORT_KEY) return false;
                     return true;
                   }) // TEMP FIX
                   .map(({ key, label }) => (
@@ -463,7 +443,7 @@ export default function ReportModal({
                   Cancel
                 </Button>
                 <Button type="submit" loading={isLoading} disabled={uploading}>
-                  {reportKey === LOCK_REVIEW_REPORT_KEY ? 'Send request' : 'Submit'}
+                  Submit
                 </Button>
               </Group>
             </ReportForm>

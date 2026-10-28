@@ -451,7 +451,8 @@ export type Appeal = {
   entityRemovedAt: Timestamp | null;
   category: AppealCategory | null;
   /**
-   * What the form collected beyond the message (`SiteAppealContext`).
+   * What the form collected beyond the message (`SiteAppealContext`); on an in-app model appeal, the
+   * locked settings an owner asks a moderator to review (`LockReviewContext`), else NULL.
    */
   context: unknown | null;
 };

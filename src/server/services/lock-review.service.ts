@@ -1,19 +1,29 @@
-import dayjs from '~/shared/utils/dayjs';
-import { dbRead } from '~/server/db/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { Prisma } from '@prisma/client';
 import {
   LOCK_REVIEW_COOLDOWN_DAYS,
-  LOCK_REVIEW_ASK_SEPARATOR,
-  LOCK_REVIEW_MAX_COMMENTS,
-  LOCK_REVIEW_REPORT_REASON,
-  lockReviewQueueLabel,
-  REQUESTABLE_LOCKS,
+  LOCK_REVIEW_KIND,
+  type LockReviewContext,
+  lockReviewContext,
+  locksToLift,
+  parseLockReviewContext,
   requestableLocks,
   type RequestableLock,
-} from '~/shared/constants/lock-review.constants';
-import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+} from '@civitai/shared/lock-review';
+import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
+import dayjs from '~/shared/utils/dayjs';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  accountHoldSql,
+  holdMarkerViewExists,
+  isAccountUnderLegalHold,
+} from '~/server/services/legal-hold.service';
+import { resolveEntityAppeal } from '~/server/services/report.service';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
-type LockReviewDb = Pick<typeof dbRead, 'model' | 'report'>;
+type LockReviewDb = Pick<typeof dbRead, 'model' | 'appeal'>;
 
 export type LockReviewState = {
   requestable: RequestableLock[];
@@ -22,11 +32,10 @@ export type LockReviewState = {
   reopensAt: Date | null;
 };
 
-const lockReviewReports = (modelId: number) => ({
-  reason: ReportReason.AdminAttention,
-  model: { modelId },
-  details: { path: ['reason'], equals: LOCK_REVIEW_REPORT_REASON },
-});
+/** Every refusal an owner can be given. One text, so it says nothing about which check failed. */
+export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
+export const LOCK_REVIEW_HELD =
+  "The owner's account is under an evidence hold, so this review can't be approved now.";
 
 export async function getLockReviewState({
   modelId,
@@ -46,93 +55,151 @@ export async function getLockReviewState({
   });
   if (!model || model.userId !== userId) return null;
 
-  const locked = model.lockedProperties ?? [];
   const requestable = requestableLocks(model);
   if (!requestable.length) return { requestable, pending: false, reopensAt: null };
 
-  const [pending, recentlyClosed] = await Promise.all([
-    db.report.findFirst({
-      where: { ...lockReviewReports(modelId), status: ReportStatus.Pending },
-      select: { id: true },
-    }),
-    db.report.findMany({
-      where: {
-        ...lockReviewReports(modelId),
-        status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
-        statusSetAt: { gt: dayjs().subtract(LOCK_REVIEW_COOLDOWN_DAYS, 'day').toDate() },
-      },
-      select: { statusSetAt: true, details: true },
-      orderBy: { statusSetAt: 'desc' },
-    }),
-  ]);
+  // One in-app appeal row per owner and model, reused on every request.
+  const latest = await db.appeal.findFirst({
+    where: { entityType: EntityType.Model, entityId: modelId, userId, category: null },
+    orderBy: { id: 'desc' },
+    select: { status: true, resolvedAt: true, context: true },
+  });
+  const asked = parseLockReviewContext(latest?.context);
+  if (!latest || !asked) return { requestable, pending: false, reopensAt: null };
+  if (latest.status === AppealStatus.Pending)
+    return { requestable, pending: true, reopensAt: null };
 
   // A request whose settings were all left locked starts the cooldown; lifting any of them ends it.
-  const unchanged = recentlyClosed.find(({ details }) => {
-    const asked = (details as { lockedProperties?: unknown } | null)?.lockedProperties;
-    return Array.isArray(asked) && asked.length > 0 && asked.every((key) => locked.includes(key));
-  });
-  const reopensAt = unchanged?.statusSetAt
-    ? dayjs(unchanged.statusSetAt).add(LOCK_REVIEW_COOLDOWN_DAYS, 'day').toDate()
-    : null;
-
-  return { requestable, pending: !!pending, reopensAt };
+  const locked = model.lockedProperties ?? [];
+  const reopensAt =
+    latest.resolvedAt && asked.locks.every((key) => locked.includes(key))
+      ? dayjs(latest.resolvedAt).add(LOCK_REVIEW_COOLDOWN_DAYS, 'day').toDate()
+      : null;
+  return {
+    requestable,
+    pending: false,
+    reopensAt: reopensAt && reopensAt > new Date() ? reopensAt : null,
+  };
 }
 
-/** Refuses a request the owner may not file now. An open request is left to the report dedupe. */
+/** The `Appeal.context` for an owner's request, or a refusal. */
 export async function assertLockReviewAllowed({
   modelId,
   userId,
   isModerator,
-  lockedProperties,
+  locks,
   db,
 }: {
   modelId: number;
   userId: number;
   isModerator?: boolean;
-  lockedProperties: unknown;
+  locks: string[];
   db?: LockReviewDb;
-}) {
+}): Promise<LockReviewContext> {
   if (isModerator) throw throwBadRequestError('Moderators can change locked settings directly.');
   const state = await getLockReviewState({ modelId, userId, db });
-  if (!state) throw throwBadRequestError("Only the model's owner can request this review.");
-
-  const asked = Array.isArray(lockedProperties) ? lockedProperties : [];
-  if (!asked.length || !asked.every((key) => state.requestable.includes(key)))
-    throw throwBadRequestError("That setting can't be reviewed this way.");
-
-  if (state.reopensAt && !state.pending)
+  if (!state || !locks.length || !locks.every((key) => state.requestable.includes(key as never)))
+    throw throwBadRequestError(LOCK_REVIEW_UNAVAILABLE);
+  if (state.pending)
+    throw throwBadRequestError('Your review request for this model is already under review');
+  if (state.reopensAt)
     throw throwBadRequestError(
       `A moderator reviewed this recently. You can ask again on ${dayjs(state.reopensAt).format(
         'MMMM D, YYYY'
       )}.`
     );
+  // Unknown counts as held. Refused in the words of every other refusal, so it reveals no hold.
+  if ((await isAccountUnderLegalHold(userId)) !== false)
+    throw throwBadRequestError(LOCK_REVIEW_UNAVAILABLE);
+  return lockReviewContext(locks as RequestableLock[]);
 }
 
-const asLocks = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
+/**
+ * Rules on a model's pending lock review. Approving unlocks only the settings the owner named that
+ * are still locked, and never changes their values.
+ */
+export async function resolveLockReviewAppeal({
+  modelId,
+  approve,
+  userId,
+  resolvedReason,
+  internalNotes,
+}: {
+  modelId: number;
+  approve: boolean;
+  userId: number;
+  resolvedReason?: string;
+  internalNotes?: string;
+}) {
+  if (resolvedReason) {
+    const invalid = resolutionReasonError(
+      'lockReview',
+      approve ? 'Approved' : 'Rejected',
+      resolvedReason,
+      internalNotes
+    );
+    if (invalid) throw throwBadRequestError(invalid);
+  }
 
-/** The details an owner's open request carries after they ask again: one request, every setting named. */
-export function mergeOwnLockReview(existing: unknown, incoming: MixedObject): MixedObject {
-  const current = (existing ?? {}) as MixedObject;
-  const named = new Set([
-    ...asLocks(current.lockedProperties),
-    ...asLocks(incoming.lockedProperties),
-  ]);
-  const lockedProperties = REQUESTABLE_LOCKS.filter((key) => named.has(key));
-  const comments = [...lockReviewComments(current), ...lockReviewComments(incoming)]
-    .filter((text, index, all) => all.lastIndexOf(text) === index)
-    .slice(-LOCK_REVIEW_MAX_COMMENTS);
-  return {
-    ...current,
-    lockedProperties,
-    violation: lockReviewQueueLabel(lockedProperties),
-    comments,
-    ...(comments.length ? { comment: comments.join(LOCK_REVIEW_ASK_SEPARATOR) } : {}),
-  };
-}
+  const markerView = approve ? await holdMarkerViewExists() : false;
+  const unlocked = await dbWrite.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<
+      {
+        context: unknown;
+        lockedProperties: string[] | null;
+        poi: boolean;
+        minor: boolean;
+        held: boolean;
+      }[]
+    >`
+      SELECT a.context, m."lockedProperties", m.poi, m.minor,
+        ${
+          approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
+        } AS held
+      FROM "Appeal" a
+      JOIN "Model" m ON m.id = a."entityId"
+      WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
+        AND a.status = 'Pending' AND a.category IS NULL
+        AND a.context->>'kind' = ${LOCK_REVIEW_KIND}
+      FOR UPDATE OF a, m
+    `;
+    const asked = parseLockReviewContext(row?.context);
+    if (!row || !asked)
+      throw throwBadRequestError('This model has no pending locked-setting review');
+    if (!approve) return [];
+    if (row.held) throw throwBadRequestError(LOCK_REVIEW_HELD);
+    if (row.poi || row.minor)
+      throw throwBadRequestError(
+        'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
+      );
 
-/** One entry per ask. Requests filed before `comments` existed carry only `comment`, read as one ask. */
-export function lockReviewComments(details: MixedObject): string[] {
-  const entries = Array.isArray(details.comments) ? details.comments : [details.comment];
-  return entries.filter((text): text is string => typeof text === 'string' && !!text.trim());
+    const locked = row.lockedProperties ?? [];
+    const lift = locksToLift(asked.locks, locked);
+    if (lift.length)
+      await tx.model.update({
+        where: { id: modelId },
+        data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
+      });
+    return lift;
+  });
+  if (unlocked.length) await preventReplicationLag('model', modelId);
+
+  await resolveEntityAppeal({
+    ids: [modelId],
+    entityType: EntityType.Model,
+    status: approve ? AppealStatus.Approved : AppealStatus.Rejected,
+    resolvedReason,
+    internalNotes,
+    userId,
+    modelAppealKind: 'lock-review',
+  });
+
+  // The same rows a moderator's own unlock on the model form writes.
+  for (const activity of [
+    approve ? ('approveLockReview' as const) : ('rejectLockReview' as const),
+    ...unlocked.map((key) => `unlockProperty:${key}` as const),
+  ])
+    await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity });
+
+  return { unlocked };
 }

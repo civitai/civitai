@@ -1,12 +1,8 @@
-import { openReportModal } from '~/components/Dialog/triggers/report';
+import { requestableLocks, type LockReviewModelFlags } from '@civitai/shared/lock-review';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LockReviewDialog } from '~/components/Model/LockReview/LockReviewDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  LOCK_REVIEW_REPORT_KEY,
-  requestableLocks,
-  type LockReviewModelFlags,
-} from '~/shared/constants/lock-review.constants';
 import { formatDate } from '~/utils/date-helpers';
-import { ReportEntity } from '~/shared/utils/report-helpers';
 import { trpc } from '~/utils/trpc';
 
 type LockReviewModel = LockReviewModelFlags & {
@@ -50,11 +46,6 @@ export function useLockReviewAction(model: LockReviewModel | undefined) {
     label,
     tooltip,
     open: () =>
-      model &&
-      openReportModal({
-        entityType: ReportEntity.Model,
-        entityId: model.id,
-        reportKey: LOCK_REVIEW_REPORT_KEY,
-      }),
+      model && dialogStore.trigger({ component: LockReviewDialog, props: { modelId: model.id } }),
   };
 }

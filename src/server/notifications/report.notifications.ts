@@ -8,9 +8,6 @@ import {
   SITE_APPEAL_PATH,
   type SiteAppealCategory,
 } from '@civitai/shared/site-appeal';
-import { LOCK_REVIEW_REPORT_REASON } from '~/shared/constants/lock-review.constants';
-
-const lockReviewReason = `'${LOCK_REVIEW_REPORT_REASON.replace(/'/g, "''")}'`;
 
 const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
@@ -85,8 +82,7 @@ export const reportNotifications = createNotificationProcessor({
             WHERE ir."reportId" = r.id AND i."userId" = u.id
           ) AND
           r."statusSetAt" > '${lastSent}' AND
-          r.status = 'Actioned' AND
-          r.details->>'reason' IS DISTINCT FROM ${lockReviewReason}
+          r.status = 'Actioned'
       )
       SELECT
         concat('report-actioned:', details->>'reportId') "key",
@@ -94,32 +90,6 @@ export const reportNotifications = createNotificationProcessor({
         'report-actioned' "type",
         details
       FROM actioned r
-    `,
-  },
-  'lock-review-resolved': {
-    displayName: 'Model settings review completed',
-    category: NotificationCategory.System,
-    toggleable: false,
-    prepareMessage: ({ details }) => ({
-      message: 'A moderator reviewed your request about a locked setting on your model.',
-      url: `/models/${details.modelId}`,
-    }),
-    prepareQuery: async ({ lastSent }) => `
-      SELECT
-        concat('lock-review-resolved:', r.id) "key",
-        r."userId",
-        'lock-review-resolved' "type",
-        JSONB_BUILD_OBJECT('reportId', r.id, 'modelId', mr."modelId") "details"
-      FROM "Report" r
-      JOIN "ModelReport" mr ON mr."reportId" = r.id
-      JOIN "User" u ON u.id = r."userId"
-      WHERE
-        r.reason = 'AdminAttention' AND
-        r.details->>'reason' = ${lockReviewReason} AND
-        r.status IN ('Actioned', 'Unactioned') AND
-        r."statusSetAt" > '${lastSent}' AND
-        u."bannedAt" IS NULL AND
-        u."deletedAt" IS NULL
     `,
   },
   'entity-appeal-resolved': {

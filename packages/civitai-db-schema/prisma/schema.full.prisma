@@ -7620,7 +7620,8 @@ model Appeal {
   buzzTransactionId String?
   entityRemovedAt   DateTime?
   category          AppealCategory?
-  /// What the form collected beyond the message (`SiteAppealContext`).
+  /// What the form collected beyond the message (`SiteAppealContext`); on an in-app model appeal, the
+  /// locked settings an owner asks a moderator to review (`LockReviewContext`), else NULL.
   context           Json?
 
   @@index([entityType, entityId, userId])
