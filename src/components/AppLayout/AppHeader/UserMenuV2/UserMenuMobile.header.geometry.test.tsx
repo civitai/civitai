@@ -25,6 +25,7 @@ import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
  */
 const mocks = vi.hoisted(() => ({
   username: 'tester',
+  tier: undefined as string | undefined,
   decorated: false,
   signedIn: true,
   animated: true,
@@ -33,7 +34,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useCurrentUser: () => (mocks.signedIn ? { id: 1, username: mocks.username } : null),
+  useCurrentUser: () =>
+    mocks.signedIn ? { id: 1, username: mocks.username, tier: mocks.tier } : null,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -121,6 +123,7 @@ afterEach(() => {
   mocks.decorated = false;
   mocks.signedIn = true;
   mocks.username = 'tester';
+  mocks.tier = undefined;
   mocks.balances = { blue: 1234, yellow: 209500 };
   mocks.animated = true;
 });
@@ -217,6 +220,18 @@ describe('mobile menu account card', () => {
     expect(chip.contains(document.elementFromPoint(chipBox.right - 4, chipBox.top + 3))).toBe(true);
     // The user row sits close above the balances.
     expect(buzzBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
+  });
+
+  test('keeps a long name clear of the pin when a tier badge replaces the chip', async () => {
+    mocks.tier = 'gold';
+    mocks.username = 'abcdefghijklmnopqrstuvwxy';
+    const { card, profile, pin } = await renderHeader(NARROW_PHONE_VIEWPORT);
+    const nameText = [...profile.querySelectorAll('span')].find(
+      (s) => s.textContent === mocks.username
+    )!;
+
+    expect(card.querySelector('a[class*="supportChip"]')).toBeNull();
+    expect(box(pin).left - box(nameText).right).toBeGreaterThanOrEqual(4);
   });
 
   test('curves the top-left corner around the avatar', async () => {
@@ -358,18 +373,23 @@ describe('account card frame', () => {
 
   afterEach(() => document.documentElement.removeAttribute('data-mantine-color-scheme'));
 
-  test.each(['light', 'dark'])(
-    'the phone card has a border and a gradient in %s mode',
-    async (scheme) => {
-      await renderHeader();
-      document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
-      await nextLayout();
-      const frame = frameOf(document.querySelector('#panel > div') as HTMLElement);
+  test('the phone card has a border and a gradient, restyled for dark mode', async () => {
+    await renderHeader();
+    const card = document.querySelector('#panel > div') as HTMLElement;
+    const light = frameOf(card);
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    await nextLayout();
+    const dark = frameOf(card);
+
+    for (const frame of [light, dark]) {
       expect(frame.border).toBe('1px');
       expect(frame.borderColor).not.toBe('rgba(0, 0, 0, 0)');
       expect(frame.image).toContain('linear-gradient');
     }
-  );
+    // Dropping the dark: classes would leave the light frame on a dark sheet.
+    expect(dark.borderColor).not.toBe(light.borderColor);
+    expect(dark.image).not.toBe(light.image);
+  });
 
   test('the desktop Buzz card carries the same frame as the phone card', async () => {
     await renderAtViewport(

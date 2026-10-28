@@ -531,7 +531,7 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      // Mantine's menu item sets border: 0, (border: 0 resets the style too), so the frame's border needs the override.
+      // Mantine's menu item resets border to 0, style included, so the frame needs the override.
       className={clsx(ACCOUNT_CARD_FRAME, 'my-1 !border !border-solid')}
       rightSection={
         <Button
