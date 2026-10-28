@@ -18,6 +18,7 @@ import {
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
+import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { StartStorylineButton } from '~/components/Storyline/StartStorylineButton';
 
 export const STORYLINES_INTRO_DISMISSED_KEY = 'storylines-intro-dismissed';
@@ -78,13 +79,14 @@ function StorylinesIntroHero({ video }: { video: typeof STORYLINES_INTRO_VIDEO }
         <UnstyledButton
           onClick={() => openIntroVideo(video)}
           aria-label={`Watch the ${video.title} video`}
-          className="group absolute inset-0 flex flex-col items-center justify-end gap-1.5 pb-4"
+          className="group absolute inset-0 flex flex-col items-center justify-center gap-2"
         >
-          <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
-            <IconPlayerPlayFilled size={22} />
+          {/* As the birthday hero's play button (ScoredEventHero). */}
+          <span className="flex size-20 items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110 group-focus-visible:scale-110">
+            <IconPlayerPlayFilled size={32} />
           </span>
-          <span className="rounded-full bg-dark-9/40 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-md">
-            Watch
+          <span className="rounded-full bg-dark-9/70 px-3 py-1 text-sm font-semibold text-white backdrop-blur-sm">
+            {video.duration ? `Watch · ${filmLength(video.duration)}` : 'Watch'}
           </span>
         </UnstyledButton>
       )}
