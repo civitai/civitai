@@ -1,5 +1,5 @@
-import { RANK_WEIGHT } from '../queue/ranks';
-import { RANK_GOLD_MULTIPLIER, RANK_LADDER, RATING } from './config';
+import { RANK_RULES, type Rank } from '../ranks';
+import { RANK_LADDER, RATING } from './config';
 
 export type Ledger = { correct: number; graded: number };
 
@@ -23,16 +23,27 @@ export function standingOf(rank: string, ledger: Ledger): Standing {
   };
 }
 
-export const nextLadderEntry = (rank: string): LadderEntry | null =>
-  RANK_LADDER[ladderIndex(rank) + 1] ?? null;
-
-/** The highest rank above `rank` whose level and accuracy bar are both met, or null. Only Knights, Templars and Paladins are on the ladder. */
-export function earnedRank(rank: string, level: number, accuracy: number | null): string | null {
+export const nextLadderEntry = (rank: string): LadderEntry | null => {
   const at = ladderIndex(rank);
-  if (at === -1 || accuracy === null) return null;
-  const earned = RANK_LADDER.slice(at + 1).filter(
-    (entry) => level >= entry.fromLevel && accuracy >= entry.accuracyBar
-  );
+  return at === -1 ? null : RANK_LADDER[at + 1] ?? null;
+};
+
+export function progressToward(entry: LadderEntry, level: number, accuracy: number | null) {
+  return {
+    levelsToGo: Math.max(0, entry.fromLevel - level),
+    levelMet: level >= entry.fromLevel,
+    accuracyMet: accuracy !== null && accuracy >= entry.accuracyBar,
+  };
+}
+
+/** The highest rank above `rank` whose level and accuracy bar are both met, or null. */
+export function earnedRank(rank: string, level: number, accuracy: number | null): Rank | null {
+  const at = ladderIndex(rank);
+  if (at === -1) return null;
+  const earned = RANK_LADDER.slice(at + 1).filter((entry) => {
+    const progress = progressToward(entry, level, accuracy);
+    return progress.levelMet && progress.accuracyMet;
+  });
   return earned.at(-1)?.rank ?? null;
 }
 
@@ -47,6 +58,5 @@ export const rankTable = () =>
     rank: entry.rank,
     levels: levelsLabel(index),
     accuracyBar: entry.accuracyBar,
-    voteWeight: RANK_WEIGHT[entry.rank],
-    goldMultiplier: RANK_GOLD_MULTIPLIER[entry.rank] ?? 1,
+    ...RANK_RULES[entry.rank],
   }));

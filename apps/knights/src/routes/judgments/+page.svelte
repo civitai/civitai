@@ -66,9 +66,6 @@
   p {
     margin: 0.15rem 0;
   }
-  .muted {
-    color: var(--muted);
-  }
   .state.correct {
     color: var(--gold);
   }

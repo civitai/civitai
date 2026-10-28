@@ -58,7 +58,6 @@ async function newItem(): Promise<number> {
   return enqueueItem(db, { questionKey: Q, imageId, source: 'test', expiresAt: null }, NOW);
 }
 
-/** The first player votes with the crowd on a new item, so their vote is graded correct. */
 async function settleCorrect(userId: number) {
   const itemId = await newItem();
   for (let i = 0; i < 4; i++) {

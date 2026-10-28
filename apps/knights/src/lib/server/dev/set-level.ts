@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { applyRankUp } from '../progression/progression';
-import { expForLevel } from '../progression/levels';
+import { expForLevel, MAX_LEVEL } from '../progression/levels';
 
 export type SetLevelResult =
   | { ok: true; exp: number; rank: string }
@@ -11,11 +11,14 @@ export type SetLevelResult =
 export async function setPlayerLevel(
   db: Kysely<DB>,
   userId: number,
-  level: number
+  level: number,
+  forgetLegacyExp?: (playerId: number) => Promise<void>
 ): Promise<SetLevelResult> {
-  if (!Number.isInteger(level) || level < 1) return { ok: false, reason: 'bad-level' };
+  if (!Number.isInteger(level) || level < 1 || level > MAX_LEVEL) {
+    return { ok: false, reason: 'bad-level' };
+  }
   const exp = expForLevel(level);
-  return db.transaction().execute(async (trx) => {
+  const result = await db.transaction().execute(async (trx) => {
     const updated = await trx
       .updateTable('NewOrderPlayer')
       .set({ exp })
@@ -26,4 +29,11 @@ export async function setPlayerLevel(
     const promoted = await applyRankUp(trx, userId);
     return { ok: true, exp, rank: promoted ?? updated.rankType } as const;
   });
+  // The original game's counter would otherwise win at its nightly reset and undo the level.
+  if (result.ok) {
+    await forgetLegacyExp?.(userId).catch((error) =>
+      console.error('knights: could not clear the original game exp counter', { userId, error })
+    );
+  }
+  return result;
 }

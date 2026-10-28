@@ -1,10 +1,9 @@
 <script lang="ts">
   import StatusBar from '$lib/StatusBar.svelte';
+  import { percent } from '$lib/format';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
-
-  const percent = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 </script>
 
 <h1>Ranks of the Knights of New Order</h1>
@@ -64,8 +63,5 @@
   }
   .mine {
     color: var(--gold);
-  }
-  .muted {
-    color: var(--muted);
   }
 </style>

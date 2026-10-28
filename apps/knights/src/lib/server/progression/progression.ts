@@ -17,7 +17,7 @@ export function calculateFervor({ correct, graded }: { correct: number; graded: 
   return Math.floor(correct * PROGRESSION.fervorPerCorrect * accuracy);
 }
 
-/** The player's last `fervorWindow` graded votes, one scan for fervor and accuracy. Inconclusive and still-pending votes are not in it, nor are votes cast before the career reset. */
+/** Shared by fervor and accuracy. Excludes inconclusive and unsettled votes, and votes cast before the `startAt` reset. */
 export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> {
   const window = db
     .selectFrom('KnightsVote as v')
@@ -41,39 +41,26 @@ export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> 
   return { correct: Number(totals.correct), graded: Number(totals.graded) };
 }
 
-export const fervorOf = async (db: Executor, playerId: number): Promise<number> =>
-  calculateFervor(await ledgerOf(db, playerId));
+const rankEarnedBy = (player: { rankType: string; exp: number }, ledger: Ledger) =>
+  earnedRank(player.rankType, getLevelProgression(player.exp).level, accuracyOf(ledger));
 
-/** Moves a Knight, Templar or Paladin up to the highest rank their level and accuracy earn; never down, and the guard keeps a concurrent change of rank from being overwritten. */
-async function rankUp(
-  trx: Executor,
-  player: { userId: number; rankType: string; exp: number },
-  ledger: Ledger
-): Promise<string | null> {
-  const earned = earnedRank(
-    player.rankType,
-    getLevelProgression(player.exp).level,
-    accuracyOf(ledger)
-  );
-  if (!earned) return null;
-  const moved = await trx
-    .updateTable('NewOrderPlayer')
-    .set({ rankType: earned as RankType })
-    .where('userId', '=', player.userId)
-    .where('rankType', '=', player.rankType as RankType)
-    .executeTakeFirst();
-  return moved.numUpdatedRows > 0n ? earned : null;
-}
-
-/** For the dev tools: the same rank-up settle applies, on demand. */
+/** Dev tools only: runs the settle-time rank-up on demand. */
 export async function applyRankUp(trx: Executor, playerId: number): Promise<string | null> {
   const player = await trx
     .selectFrom('NewOrderPlayer')
-    .select(['userId', 'rankType', 'exp'])
+    .select(['rankType', 'exp'])
     .where('userId', '=', playerId)
     .forUpdate()
     .executeTakeFirst();
-  return player ? rankUp(trx, player, await ledgerOf(trx, playerId)) : null;
+  if (!player) return null;
+  const earned = rankEarnedBy(player, await ledgerOf(trx, playerId));
+  if (!earned) return null;
+  await trx
+    .updateTable('NewOrderPlayer')
+    .set({ rankType: earned as RankType })
+    .where('userId', '=', playerId)
+    .execute();
+  return earned;
 }
 
 export type SettleResult = { votes: number; xp: XpDelta[] };
@@ -138,19 +125,27 @@ export async function settleItemVotes(
   const xp: XpDelta[] = [];
   // Votes were read in player order, so concurrent settlements lock player rows in the same order.
   for (const [playerId, total] of perPlayer) {
-    const ledger = await ledgerOf(trx, playerId);
-    const after = await trx
+    const locked = await trx
       .updateTable('NewOrderPlayer')
       .set({
         exp: sql<number>`"exp" + ${total.xp}`,
         goldPending: sql<number>`GREATEST(0, "goldPending" - ${total.pending})`,
         goldEarned: sql<number>`"goldEarned" + ${total.earned}`,
-        fervor: calculateFervor(ledger),
       })
       .where('userId', '=', playerId)
-      .returning(['userId', 'rankType', 'exp'])
+      .returning(['rankType', 'exp'])
       .executeTakeFirst();
-    if (after) await rankUp(trx, after, ledger);
+    // Read only now: the update above took the row lock, so a settlement that committed first is in the ledger.
+    const ledger = await ledgerOf(trx, playerId);
+    const earned = locked ? rankEarnedBy(locked, ledger) : null;
+    await trx
+      .updateTable('NewOrderPlayer')
+      .set({
+        fervor: calculateFervor(ledger),
+        ...(earned ? { rankType: earned as RankType } : {}),
+      })
+      .where('userId', '=', playerId)
+      .execute();
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }
   return { votes: votes.length, xp };

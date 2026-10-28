@@ -37,7 +37,7 @@
 </form>
 
 {#if form?.message}
-  <p class="notice" role="status">{form.message}</p>
+  <p class="notice" role="alert">{form.message}</p>
 {:else if form?.success && form.levelSet}
   <p class="notice" role="status">You are now level {form.levelSet}, {form.rank}.</p>
 {:else if form?.success}
@@ -50,7 +50,7 @@
 
 {#each data.items as item (item.id)}
   <form method="POST" action="?/simulate" use:enhance={submit} class="item">
-    <img src={item.src} alt="" width="96" />
+    <img src={item.src} alt="Subject of item {item.id}" width="96" />
     <div>
       <p>
         #{item.id} · {item.prompt}
@@ -69,12 +69,6 @@
 <p><a href="/play">Back</a></p>
 
 <style>
-  .muted {
-    color: var(--muted);
-  }
-  .notice {
-    color: var(--gold);
-  }
   .level {
     margin: 1rem 0;
   }
@@ -92,17 +86,8 @@
     object-fit: cover;
     border: 1px solid var(--border);
   }
-  button:disabled {
-    opacity: 0.5;
-    cursor: wait;
-  }
   button {
     margin: 0 0.5rem 0.5rem 0;
     padding: 0.35rem 0.9rem;
-    border: 1px solid var(--gold);
-    background: var(--panel);
-    color: var(--text);
-    font: inherit;
-    cursor: pointer;
   }
 </style>

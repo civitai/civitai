@@ -13,6 +13,7 @@ vi.mock('$app/environment', () => ({
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
+vi.mock('$lib/server/redis', () => ({ getSysRedis: vi.fn() }));
 vi.mock('$lib/server/dev/simulate', () => ({ simulateOtherVoters, listSimulatableItems }));
 vi.mock('$lib/server/dev/set-level', () => ({ setPlayerLevel }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
@@ -90,7 +91,7 @@ describe('simulate other voters', () => {
       setPlayerLevel.mockResolvedValue({ ok: true, exp: 10, rank: 'Knight' });
 
       await expect(submitLevel()).resolves.toMatchObject({ success: true });
-      expect(setPlayerLevel).toHaveBeenCalledWith(expect.anything(), 7, 30);
+      expect(setPlayerLevel).toHaveBeenCalledWith(expect.anything(), 7, 30, expect.any(Function));
     });
   });
 });

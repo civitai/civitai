@@ -1,11 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedGradedVotes, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
+import { MAX_LEVEL } from '../progression/levels';
 import { setPlayerLevel } from './set-level';
 
 let pg: PGlite;
@@ -51,6 +52,32 @@ describe('setPlayerLevel', () => {
     await seedPlayer(pg, 1);
     await setPlayerLevel(db, 1, 45);
     expect((await row(1)).rankType).toBe('Knight');
+  });
+
+  it('forgets the original game counter of the player once the level is saved', async () => {
+    await seedPlayer(pg, 1);
+    const forget = vi.fn(async () => undefined);
+
+    await setPlayerLevel(db, 1, 5, forget);
+
+    expect(forget).toHaveBeenCalledWith(1);
+  });
+
+  it('still succeeds when the counter cannot be reached', async () => {
+    await seedPlayer(pg, 1);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await setPlayerLevel(db, 1, 5, async () => Promise.reject(new Error('down')));
+
+    expect(result).toMatchObject({ ok: true });
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('refuses a level whose XP would not fit the column', async () => {
+    await seedPlayer(pg, 1);
+    expect(await setPlayerLevel(db, 1, MAX_LEVEL + 1)).toEqual({ ok: false, reason: 'bad-level' });
+    expect(await setPlayerLevel(db, 1, MAX_LEVEL)).toMatchObject({ ok: true });
+    expect((await row(1)).exp).toBeLessThanOrEqual(2147483647);
   });
 
   it('refuses a player who has not joined, and a level below 1', async () => {

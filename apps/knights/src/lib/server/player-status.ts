@@ -2,7 +2,14 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { calculateFervor, ledgerOf } from './progression/progression';
-import { accuracyOf, nextLadderEntry, standingOf, type Ledger } from './progression/rating';
+import {
+  accuracyOf,
+  nextLadderEntry,
+  progressToward,
+  standingOf,
+  type Ledger,
+  type Standing,
+} from './progression/rating';
 import { RATING } from './progression/config';
 
 export type PlayerStatus = {
@@ -14,13 +21,7 @@ export type PlayerStatus = {
   fervor: number;
   goldPending: number;
   goldEarned: number;
-  rating: {
-    graded: number;
-    minGraded: number;
-    accuracy: number | null;
-    bar: number | null;
-    belowBar: boolean;
-  };
+  rating: Standing & { graded: number; minGraded: number };
   nextRank: {
     rank: string;
     fromLevel: number;
@@ -56,9 +57,7 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
       rank: next.rank,
       fromLevel: next.fromLevel,
       accuracyBar: next.accuracyBar,
-      levelsToGo: Math.max(0, next.fromLevel - progress.level),
-      levelMet: progress.level >= next.fromLevel,
-      accuracyMet: accuracy !== null && accuracy >= next.accuracyBar,
+      ...progressToward(next, progress.level, accuracy),
     },
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LEGACY_EXP_KEY, legacyExpMirror, mirrorXp } from './legacy-exp';
+import { LEGACY_EXP_KEY, legacyExpForget, legacyExpMirror, mirrorXp } from './legacy-exp';
 
 describe('legacyExpMirror', () => {
   it('increments the original game hash field for the player, only when it is present', async () => {
@@ -32,5 +32,17 @@ describe('mirrorXp', () => {
     await mirrorXp(undefined, [{ playerId: 1, xp: 5 }]);
     await mirrorXp(mirror, []);
     expect(mirror).not.toHaveBeenCalled();
+  });
+});
+
+describe('legacyExpForget', () => {
+  it('drops the player field so the original game reloads exp from Postgres', async () => {
+    const evalMock = vi.fn(async () => 1);
+    await legacyExpForget(() => ({ eval: evalMock }))(7);
+
+    expect(evalMock).toHaveBeenCalledWith(expect.stringContaining('HDEL'), {
+      keys: ['new-order:exp'],
+      arguments: ['7'],
+    });
   });
 });

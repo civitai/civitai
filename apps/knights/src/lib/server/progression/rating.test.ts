@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { PROGRESSION, RANK_LADDER, RATING } from './config';
-import { accuracyOf, earnedRank, rankTable, standingOf } from './rating';
+import {
+  accuracyOf,
+  earnedRank,
+  nextLadderEntry,
+  progressToward,
+  rankTable,
+  standingOf,
+} from './rating';
 
 const rated = (correct: number, failed: number) => ({ correct, graded: correct + failed });
 
@@ -61,5 +68,33 @@ describe('rankTable', () => {
     ]);
     expect(rankTable().map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
     expect(PROGRESSION.baseGold).toBeGreaterThan(0);
+  });
+});
+
+describe('nextLadderEntry', () => {
+  it('names the next rank only for ranks on the ladder', () => {
+    expect(nextLadderEntry('Knight')?.rank).toBe('Templar');
+    expect(nextLadderEntry('Templar')?.rank).toBe('Paladin');
+    expect(nextLadderEntry('Paladin')).toBeNull();
+    expect(nextLadderEntry('Acolyte')).toBeNull();
+    expect(nextLadderEntry('Inquisitor')).toBeNull();
+  });
+});
+
+describe('progressToward', () => {
+  const templar = RANK_LADDER[1];
+
+  it('says how many levels are left and which requirements are met', () => {
+    expect(progressToward(templar, 18, 0.9)).toEqual({
+      levelsToGo: 3,
+      levelMet: false,
+      accuracyMet: true,
+    });
+    expect(progressToward(templar, 21, 0.79)).toEqual({
+      levelsToGo: 0,
+      levelMet: true,
+      accuracyMet: false,
+    });
+    expect(progressToward(templar, 21, null).accuracyMet).toBe(false);
   });
 });
