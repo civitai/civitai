@@ -12,8 +12,10 @@ import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
 import { withDefiniteArticle } from '~/utils/string-helpers';
 
-/** A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify. */
-// Not hidden for ToS either: an author's delete keeps a comment for a hold that way.
+/**
+ * A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify, and
+ * neither does a row hidden for ToS: an author's delete keeps a comment for a hold that way.
+ */
 export const liveV3Since = (lastSent: string) =>
   `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
 

@@ -4950,6 +4950,8 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
+  /// Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+  removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]

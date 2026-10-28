@@ -106,6 +106,13 @@ describe('clearing a comment ToS flag', () => {
     expect(statements).toHaveLength(0);
   });
 
+  it('leaves a legacy comment its author removed flagged, in the same UPDATE', async () => {
+    await bulkClearCommentTosViolation({ ids: [7] });
+    expect(dbMock.dbWrite.comment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7, removedByAuthor: false } })
+    );
+  });
+
   it('the legacy twin carries the same predicate against its own report table', async () => {
     // v1 deliberately does NOT reuse `updateCommentReportStatusByReason`, whose `<> target` guard is
     // wrong for reopening. If it ever starts reusing it, this fails.

@@ -437,7 +437,10 @@ export const togglePinComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
+export const deleteCommentById = async ({
+  id,
+  byAuthor = false,
+}: GetByIdInput & { byAuthor?: boolean }) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
       where: { id },
@@ -448,7 +451,7 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
   // moderator bulk delete.
   const markerView = await holdMarkerViewExists();
   const { deleted, retained } = await dbWrite.$transaction((tx) =>
-    deleteLegacyCommentsUnlessHeld(tx, [id], markerView)
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView, { byAuthor })
   );
   if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
@@ -599,7 +602,8 @@ export async function bulkDeleteComments({
 export async function deleteLegacyCommentsUnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false }: { byAuthor?: boolean } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
@@ -614,6 +618,7 @@ export async function deleteLegacyCommentsUnlessHeld(
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
     UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      ${byAuthor ? Prisma.sql`, "removedByAuthor" = true` : Prisma.empty}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;
@@ -661,8 +666,13 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
   let count = 0;
 
   for (const id of ids) {
+    // One its author deleted, kept for a hold, stays down: restoring it would republish it.
     const updated = await dbWrite.comment
-      .update({ where: { id }, data: { tosViolation: false }, select: { id: true } })
+      .update({
+        where: { id, removedByAuthor: false },
+        data: { tosViolation: false },
+        select: { id: true },
+      })
       .catch(() => null);
     if (!updated) continue;
     count += 1;

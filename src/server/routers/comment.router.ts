@@ -37,22 +37,35 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
-  const { id } = input as { id: number };
+  const { id, parentId } = input as { id?: number; parentId?: number | null };
   const userId = ctx.user.id;
+  const isModerator = ctx.user.isModerator;
   let ownerId: number = userId;
   if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.comment.findUnique({ where: { id } }))?.userId ?? 0;
+    const comment = await dbRead.comment.findUnique({
+      where: { id },
+      select: { userId: true, tosViolation: true },
+    });
+    ownerId = comment?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
+      // Hidden for ToS is gone to its author too: their own delete keeps a comment that way for a hold.
+      if (comment?.tosViolation) throw throwNotFoundError(`No comment with id ${id}`);
     }
+  }
+  if (parentId && !isModerator) {
+    const parent = await dbRead.comment.findUnique({
+      where: { id: parentId },
+      select: { tosViolation: true },
+    });
+    if (parent?.tosViolation) throw throwNotFoundError(`No comment with id ${parentId}`);
   }
 
   return next({

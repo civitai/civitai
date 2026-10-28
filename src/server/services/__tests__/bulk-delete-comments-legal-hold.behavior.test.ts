@@ -49,7 +49,11 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
   reportAcceptedReward: { apply: reward },
 }));
 
-import { bulkDeleteComments, deleteCommentById } from '~/server/services/comment.service';
+import {
+  bulkClearCommentTosViolation,
+  bulkDeleteComments,
+  deleteCommentById,
+} from '~/server/services/comment.service';
 import { deleteComment } from '~/server/services/commentsv2.service';
 import {
   isLegalHoldAbort,
@@ -83,7 +87,8 @@ const SCHEMA = `
     CREATE TABLE "Comment" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelId" int NOT NULL, content text NOT NULL,
       "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      "removedByAuthor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "CommentV2" (
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
@@ -96,6 +101,11 @@ const SCHEMA = `
       "parentThreadId" int, "rootThreadId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    -- What a ToS restore reopens; no reports here, so only the flag moves.
+    CREATE DOMAIN "ReportStatus" AS text;
+    CREATE DOMAIN "ReportReason" AS text;
+    CREATE TABLE "Report" (id int PRIMARY KEY, status text, reason text);
+    CREATE TABLE "CommentReport" ("reportId" int, "commentId" int);
 `;
 
 beforeAll(async () => {
@@ -487,6 +497,40 @@ describe('a member deleting their own legacy comment', () => {
 
   it('is not found when it does not exist', async () => {
     await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  describe("and a moderator's ToS restore after it", () => {
+    beforeEach(() => {
+      // Prisma's update, as one UPDATE whose WHERE carries every field the call names.
+      vi.mocked(dbMock.dbWrite.comment.update).mockImplementation((async (args: {
+        where: { id: number; removedByAuthor?: boolean };
+        data: { tosViolation: boolean };
+      }) => {
+        const { rows } = await holder.db.query(
+          `UPDATE "Comment" SET "tosViolation" = $2 WHERE id = $1
+             AND ($3::boolean IS NULL OR "removedByAuthor" = $3) RETURNING id`,
+          [args.where.id, args.data.tosViolation, args.where.removedByAuthor ?? null]
+        );
+        if (!rows.length) throw Object.assign(new Error('not found'), { code: 'P2025' });
+        return rows[0];
+      }) as never);
+    });
+
+    it('leaves the comment its author deleted hidden', async () => {
+      await deleteCommentById({ id: 11, byAuthor: true });
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 0,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'hidden', 41: 'public' });
+    });
+
+    it('restores one a moderator deleted (control)', async () => {
+      await deleteCommentById({ id: 11 });
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 1,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'public' });
+    });
   });
 });
 
