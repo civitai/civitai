@@ -1,12 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
-import {
-  DialogIdContext,
-  dialogStore,
-  useDialogId,
-  useDialogStore,
-  useIsLevelFocused,
-} from '~/components/Dialog/dialogStore';
+import { DialogIdContext, useDialogId } from '~/components/Dialog/dialogId';
+import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
 
 type DialogState = {

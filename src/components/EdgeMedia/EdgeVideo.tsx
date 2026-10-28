@@ -27,7 +27,8 @@ import clsx from 'clsx';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { useDialogId, useDialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogId } from '~/components/Dialog/dialogId';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
 type VideoProps = Omit<
