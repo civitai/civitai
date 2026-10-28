@@ -10,6 +10,7 @@ const { mockTx } = vi.hoisted(() => ({
     model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -115,6 +116,8 @@ beforeEach(() => {
   mockTx.modelVersion.findFirst.mockResolvedValue({ publishedAt: ORIGINAL_PUBLISHED_AT });
   dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockTx.$executeRaw.mockResolvedValue(0);
+  // unpublishModelById's locked read of the model row.
+  mockTx.$queryRaw.mockResolvedValue([{ status: 'Published', meta: {} }]);
   dbMock.dbWrite.post.findMany.mockResolvedValue([]);
   dbMock.dbWrite.image.findMany.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);

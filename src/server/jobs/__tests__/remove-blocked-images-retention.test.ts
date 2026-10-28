@@ -163,8 +163,8 @@ const {
       if (at < 0) return undefined;
       return values[sql.slice(0, at + pattern.length).split('?').length - 2];
     };
-    const only = bound('"entityId" = ANY(?');
-    const excluded = bound('"entityId" <> ALL(?');
+    const only = bound('AND EXISTS (SELECT 1 FROM unnest(?');
+    const excluded = bound('NOT EXISTS (SELECT 1 FROM unnest(?');
     const before = bound('"createdAt" <= ?');
     const where = {
       type: bound('type = ?'),
@@ -173,10 +173,10 @@ const {
       ...(before ? { createdAt: { lte: before } } : {}),
     };
     queueWhereLog.push(where);
-    const limit = sql.match(/LIMIT (\d+)/);
+    const limit = bound('LIMIT ?');
     return queueRows(where, {
-      limit: limit ? Number(limit[1]) : undefined,
-      oldestFirst: /ORDER BY "createdAt" ASC/.test(sql),
+      limit: limit === undefined ? undefined : Number(limit),
+      oldestFirst: /ORDER BY j\."createdAt" ASC/.test(sql),
     });
   };
   const queryRaw = async (first: TemplateStringsArray | SqlLike, ...rawValues: unknown[]) => {
@@ -186,8 +186,7 @@ const {
     if (values.length > MAX_BIND_VARIABLES) throw tooManyBindVariables(values.length);
     sqlLog.push(sql);
     // The job's two queue reads; its backlog count reads "JobQueue" too, and falls through.
-    if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"'))
-      return queueRead(sql, values);
+    if (sql.includes('FROM "JobQueue" j')) return queueRead(sql, values);
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
@@ -256,8 +255,7 @@ const {
         // The job reads its queue with raw SQL now. Kept so a return to Prisma's `in`/`notIn`
         // fails here the way it fails in Postgres: one bind variable per listed id.
         findMany: vi.fn(async ({ where }: any) => {
-          const listed =
-            (where?.entityId?.notIn?.length ?? 0) + (where?.entityId?.in?.length ?? 0);
+          const listed = (where?.entityId?.notIn?.length ?? 0) + (where?.entityId?.in?.length ?? 0);
           if (listed > MAX_BIND_VARIABLES) throw tooManyBindVariables(listed);
           queueWhereLog.push(where);
           return queueRows(where);
@@ -673,7 +671,7 @@ describe('remove-blocked-images retention clock', () => {
     heldUsers.length = 0;
     const result = await runJob();
 
-    expect(batchWhere()?.entityId).toBeUndefined();
+    expect(batchWhere()?.entityId).toEqual({ notIn: [] });
     expect(result.csamHeld).toBe(0);
     // id 5 is now an ordinary expired block.
     expect(deletedIds()).toContain(5);

@@ -91,6 +91,7 @@ const INSET_CONSUMERS = [
   'src/components/Image/DetailV2/ImageDetail2.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
+  'src/components/Post/Detail/PostDetail.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with
