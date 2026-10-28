@@ -116,7 +116,6 @@ const REQUEST_ACCESS = 'apps-build-request-access';
 // catches the CLI steps in any wrapper.
 const MANUAL_TOGGLE = 'apps-manual-setup-toggle';
 const MANUAL_REGION = 'apps-manual-setup';
-const NPM_INSTALL = 'npm install -g @civitai/cli';
 /**
  * Every copyable CLI step on the page, by `CopyableCommand`'s `aria-label` contract
  * (`Copy command: …`). A raw DOM query, NOT `getByRole`: role queries skip elements a closed
@@ -181,8 +180,8 @@ beforeEach(() => {
 describe('the agent card and manual setup across the three states', () => {
   /**
    * 🔴 THE PITCH OFFERS NO BUILD ROUTE. It is what a viewer WITHOUT builder access sees, and
-   * both the agent prompt and the CLI steps need access — so neither renders; Request access is
-   * the one action. Presence in the DOM, not visibility: a closed Mantine `Collapse` keeps its
+   * the agent prompt needs access — so it does not render (and the manual CLI steps are gone
+   * from `/apps/build` entirely); Request access is the one action. Presence in the DOM, not visibility: a closed Mantine `Collapse` keeps its
    * children mounted, so a hidden manual setup would still be found here.
    */
   test('🔴 A · pitch — NO agent card and NO manual CLI setup', async () => {
@@ -210,7 +209,7 @@ describe('the agent card and manual setup across the three states', () => {
     // The card is never behind a toggle in this state: state B has no workbench strip.
     expect(seen(RESOURCES)).toBe(0);
 
-    // The manual CLI route was removed from this state; the agent card is the one route.
+    // The manual CLI route was removed from `/apps/build`; the agent card is the one route.
     expect(seen(MANUAL_TOGGLE)).toBe(0);
     expect(seen(MANUAL_REGION)).toBe(0);
     expect(copyCommandButtons()).toHaveLength(0);
@@ -282,7 +281,13 @@ describe('the agent card and manual setup across the three states', () => {
     await expect.element(page.getByTestId(AGENT_PROMPT_TESTID)).toBeVisible();
   });
 
-  test('🔴 C · inside the strip the card comes BEFORE the commands, with no nested toggle', async () => {
+  /**
+   * 🔴 THE STRIP HOLDS THE AGENT CARD AND NOTHING ELSE. The manual CLI steps that sat beside
+   * the card here were removed from `/apps/build` everywhere. Presence in the DOM, not
+   * visibility: the strip is a closed `Collapse` that keeps its children mounted, so the
+   * absence is asserted both while closed and after opening it.
+   */
+  test('🔴 C · the strip holds the agent card and NO manual CLI steps', async () => {
     mocks.isFetched = true;
     mocks.navSummary = { ...SUMMARY_WITH_APPS };
     await renderBody();
@@ -290,18 +295,15 @@ describe('the agent card and manual setup across the three states', () => {
     const region = page.getByTestId(RESOURCES);
     await expect.element(region).toBeInTheDocument();
     const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
-    const install = page.getByText(`$ ${NPM_INSTALL}`);
-    await expect.element(install).toBeInTheDocument();
-    expect(install.element().closest(`[data-testid="${RESOURCES}"]`)).not.toBeNull();
-    expect(follows(card.element(), install.element()), 'the card must precede the commands').toBe(
-      true
-    );
-    // One click reveals both routes: the strip does not nest the manual-setup collapse.
+    await expect.element(card).toBeInTheDocument();
+    expect(card.element().closest(`[data-testid="${RESOURCES}"]`)).not.toBeNull();
+    expect(copyCommandButtons()).toHaveLength(0);
     expect(seen(MANUAL_TOGGLE)).toBe(0);
+    expect(seen(MANUAL_REGION)).toBe(0);
 
     await page.getByTestId(RESOURCES_TOGGLE).click();
     await expect.element(region).toBeVisible();
-    await expect.element(install).toBeVisible();
+    expect(copyCommandButtons()).toHaveLength(0);
   });
 
   test('🔴 C · the workbench card is STATIC — the collapsed strip stays cheap', async () => {
@@ -420,38 +422,4 @@ describe('the `agent_prompt_copy` funnel step', () => {
       { type: 'AppsBuild_Action', details: { action: 'agent_prompt_copy', state: 'workbench' } },
     ]);
   });
-
-  /**
-   * 🔴 ALSO THE POSITIVE CONTROL for every `agent_prompt_copy` assertion above. Without it they
-   * could be satisfied by a component that posts that action for EVERY copy on the page, and
-   * the two routes would be indistinguishable in the rollup.
-   */
-  test.for([
-    {
-      label: 'C · workbench',
-      state: 'workbench',
-      toggle: RESOURCES_TOGGLE,
-      arrange: () => {
-        mocks.isFetched = true;
-        mocks.navSummary = { ...SUMMARY_WITH_APPS };
-      },
-    },
-  ])(
-    '🔴 $label: a CLI copy from the collapse posts ONE `cli_copy`, not the agent step',
-    async ({ state, toggle, arrange }) => {
-      arrange();
-      await renderBody();
-
-      await page.getByTestId(toggle).click();
-      const copy = page.getByRole('button', { name: `Copy command: ${NPM_INSTALL}` });
-      await expect.element(copy).toBeVisible();
-      mocks.tracked = [];
-      await copy.click();
-
-      expect(mocks.tracked).toEqual([
-        { type: 'AppsBuild_Action', details: { action: 'cli_copy', state } },
-      ]);
-      expect(writeText()).toHaveBeenCalledWith(NPM_INSTALL);
-    }
-  );
 });

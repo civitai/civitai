@@ -8,7 +8,6 @@ import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
-import { ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
 import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
@@ -34,11 +33,9 @@ import { trpc } from '~/utils/trpc';
  * it rejects is dropped with a 200, so a local union that is WIDER than the schema fails
  * silently in production and nowhere in CI.
  *
- * `agent_prompt_copy` is deliberately its own step and not folded into `cli_copy`: the page
- * offers two routes into building an app, and which one developers take is the comparison
- * the split exists to keep answerable. `state` does not separate them — `agent_prompt_copy`
- * fires in `first-app` and `workbench`, `cli_copy` in `workbench` only. Neither fires from the
- * pitch, which offers no build route to a viewer without access.
+ * `agent_prompt_copy` fires in `first-app` and `workbench`, never from the pitch, which
+ * offers no build route to a viewer without access. The page no longer offers manual CLI
+ * steps anywhere, so there is no `cli_copy` step any more.
  */
 type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
@@ -198,11 +195,10 @@ export function AppsBuildBody() {
     track('view', state);
   }, [settled, state, track]);
 
-  const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
   // 🔴 FIRED FROM HERE, NOT FROM THE CARD. `AgentOnboardingCard` is props-only by
   // construction (its own suite renders it with no providers), so the tracker cannot live in
-  // it — the same reason `onCopyCommand` is a callback. And it cannot fire under the
-  // skeleton: every mount of the card is inside a branch below the `!settled` early return.
+  // it and arrives as a callback. And it cannot fire under the skeleton: every mount of the
+  // card is inside a branch below the `!settled` early return.
   const onCopyAgentPrompt = useCallback(() => track('agent_prompt_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
 
@@ -264,7 +260,7 @@ export function AppsBuildBody() {
         </Group>
         <MyAppsBody />
         <AppDocStoreUsageCard />
-        <BuildResourcesStrip onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
+        <BuildResourcesStrip onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );
   }
@@ -325,14 +321,11 @@ export function AppsBuildBody() {
 
 /**
  * The pitch, DEMOTED for the workbench. An author who already has apps does not need the
- * "what you get" marketing above their app table every visit, but the agent prompt and the
- * CLI commands are the things they come back for — so the resources live on, collapsed, below
- * the list. Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, so
- * the workbench does not pay for the hero image.
- *
- * The strip has its own toggle around the agent card and the manual steps together, so one
- * click reveals both routes; a second collapse nested inside it would hide the commands
- * behind two clicks.
+ * "what you get" marketing above their app table every visit, but the agent prompt is the
+ * thing they come back for — so it lives on, collapsed, below the list. Collapsed by default
+ * and cheap: `GetStartedBody` is not mounted here at all, so the workbench does not pay for
+ * the hero image. (The manual CLI steps that used to sit beside the card here were removed
+ * from `/apps/build` entirely.)
  *
  * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
  * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
@@ -341,13 +334,7 @@ export function AppsBuildBody() {
  * be seen even once. Static also means no `LazyMotion`, so the workbench does not pull the
  * animation chunk at all. See `AgentOnboardingCard`'s `animated` prop.
  */
-function BuildResourcesStrip({
-  onCopyCommand,
-  onCopyAgentPrompt,
-}: {
-  onCopyCommand: () => void;
-  onCopyAgentPrompt: () => void;
-}) {
+function BuildResourcesStrip({ onCopyAgentPrompt }: { onCopyAgentPrompt: () => void }) {
   const [opened, { toggle }] = useDisclosure(false);
   const regionId = useId();
   return (
@@ -375,10 +362,7 @@ function BuildResourcesStrip({
         {opened ? 'Hide developer resources' : 'Developer resources'}
       </Button>
       <Collapse in={opened} id={regionId} data-testid="apps-build-resources">
-        <Stack gap="sm">
-          <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
-          <ManualSetupSteps onCopyCommand={onCopyCommand} />
-        </Stack>
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
       </Collapse>
     </Stack>
   );

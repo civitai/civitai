@@ -2,7 +2,6 @@ import { Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/c
 import { useDisclosure } from '@mantine/hooks';
 import { IconArrowRight, IconChevronDown, IconTerminal2 } from '@tabler/icons-react';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
-import { ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 
 /**
  * Ladle previews for `AgentOnboardingCard` in each of `/apps/build`'s two placements
@@ -81,10 +80,7 @@ export const WorkbenchStripOpen = () => {
           {opened ? 'Hide developer resources' : 'Developer resources'}
         </Button>
         <Collapse in={opened}>
-          <Stack gap="sm">
-            <AgentOnboardingCard tone="inline" animated={false} />
-            <ManualSetupSteps />
-          </Stack>
+          <AgentOnboardingCard tone="inline" animated={false} />
         </Collapse>
       </Stack>
     </Frame>

@@ -5,11 +5,6 @@ import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_INSTALL_NPM,
-  CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -81,21 +76,6 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(page.getByTestId(MANUAL_TOGGLE).elements()).toHaveLength(0);
     expect(page.getByTestId(MANUAL_REGION).elements()).toHaveLength(0);
     expect(document.querySelectorAll('[aria-label^="Copy command: "]')).toHaveLength(0);
-  });
-
-  test('the run command installs deps before dev:harness (the CLI does not auto-install)', () => {
-    // Guards the correctness fix: `create` does NOT install deps, so the run step
-    // MUST include `npm install`, and uses `dev:harness` (mock host), not `dev`.
-    expect(CLI_RUN_COMMAND).toContain('npm install');
-    expect(CLI_RUN_COMMAND).toContain('npm run dev:harness');
-  });
-
-  test('command constants are the real, verified one-liners', () => {
-    expect(CLI_INSTALL_NPM).toBe('npm install -g @civitai/cli');
-    expect(CLI_INSTALL_BREW).toBe('brew install civitai/tap/civitai');
-    expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
-    expect(CLI_CREATE_SAMPLE_COMMAND).toBe('civitai app create my-app');
-    expect(CLI_RUN_COMMAND).toBe('cd my-app && npm install && npm run dev:harness');
   });
 
   test('renders the platform-capabilities grid (catalog / hosting / identity)', async () => {

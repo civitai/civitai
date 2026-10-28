@@ -38,9 +38,10 @@ import {
  * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
  * NO BUILD ROUTES HERE. This body is what a viewer WITHOUT builder access sees (the pitch,
- * next to the Request access panel), so it carries neither the agent-onboarding prompt nor
- * the manual CLI steps: both need access to be useful. They live in the `first-app` state
- * and the workbench's "Developer resources" strip, which only authors reach.
+ * next to the Request access panel), so it does not carry the agent-onboarding prompt: it
+ * needs access to be useful. The prompt lives in the `first-app` state and the workbench's
+ * "Developer resources" strip, which only authors reach. (`/apps/build` shows no manual CLI
+ * steps in any state.)
  *
  * Pure presentational (no props, no tRPC / no network) so it renders in
  * isolation in component tests.

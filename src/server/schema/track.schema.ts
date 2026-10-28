@@ -846,11 +846,10 @@ const appsBuildActionSchema = z.object({
     /**
      * Which funnel step fired. Ordered as the funnel runs.
      *
-     * `agent_prompt_copy` is the SECOND route to the same destination, kept separate from
-     * `cli_copy` on purpose: the page offers "copy three commands and run them" and "paste
-     * one prompt into a coding agent", and which one developers take is the question the
-     * split exists to answer. Folding it into `cli_copy` would make that unanswerable after
-     * the fact, and `state` does not separate them (both fire from the workbench).
+     * `agent_prompt_copy` is a copy of the "paste one prompt into a coding agent" route.
+     * `cli_copy` (copying one of the manual CLI steps) was REMOVED with those steps: nothing
+     * on `/apps/build` offers them any more, so nothing emits it. Rows already stored keep
+     * the value — `details` is a String column — but the schema no longer accepts new ones.
      *
      * 🔴 ADDING A VALUE HERE NEEDS NO ClickHouse MIGRATION — `details` is a String column
      * (`tracker.action` JSON-stringifies it), so only a new `type` would. It DOES need the
@@ -858,7 +857,7 @@ const appsBuildActionSchema = z.object({
      * enum's members exactly; that pin is why this is a deliberate edit rather than a
      * silent one.
      */
-    action: z.enum(['view', 'request_access', 'cli_copy', 'agent_prompt_copy', 'create_entry']),
+    action: z.enum(['view', 'request_access', 'agent_prompt_copy', 'create_entry']),
     /**
      * Which of the page's three states the viewer was in. Mirrors `AppsBuildState` in
      * `~/components/Apps/appsBuildState`; the two are pinned together by
