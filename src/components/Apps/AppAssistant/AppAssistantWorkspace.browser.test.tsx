@@ -500,18 +500,19 @@ const switcher = () => page.getByRole('button', { name: /^Switch app:/ });
 const CLICK_TIMEOUT_MS = 5000;
 
 /**
- * On CI the switcher click was performed ("click action done") and then hung in Playwright's
- * "waiting for scheduled navigations to finish". Nothing here navigates; the assertions below wait
- * for the popover state itself, so the click need not wait on the page.
+ * On CI Playwright's click on these buttons stalled at different steps (after "click action done",
+ * at "performing click action", at "done scrolling") with the page itself idle, even with
+ * noWaitAfter. A click dispatched from inside the page does not go through that pipeline; the
+ * assertions below still wait on the popover state itself.
  */
-const SWITCHER_CLICK = { timeout: CLICK_TIMEOUT_MS, noWaitAfter: true };
-
 async function openFromSwitcher(app: string) {
-  await switcher().click(SWITCHER_CLICK);
-  await page
+  await expect.element(switcher()).toBeInTheDocument();
+  (switcher().element() as HTMLElement).click();
+  const appButton = page
     .getByRole('dialog', { name: 'Apps' })
-    .getByRole('button', { name: new RegExp(`^${app}`) })
-    .click(SWITCHER_CLICK);
+    .getByRole('button', { name: new RegExp(`^${app}`) });
+  await expect.element(appButton).toBeInTheDocument();
+  (appButton.element() as HTMLElement).click();
   await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
   await expect.element(switcher()).toHaveAccessibleName(new RegExp(`^Switch app: ${app},`));
 }
