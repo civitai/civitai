@@ -1,13 +1,15 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { HARVEST } from './config';
+import { HARVEST, NSFW_LEVEL_QUESTION, type HarvestConfig } from './config';
 import { poolFor } from './plan';
 import { utc } from './utc';
 
-const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 const RATING_LEVELS = [1, 2, 4, 8, 16];
-const RULING_ACTIVITIES = ['setNsfwLevel', 'setNsfwLevelKono'];
+/** The moderator action that makes a reference answer. */
+const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
+/** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
+const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
 const DAY_MS = 86_400_000;
 
 export type HarvestResult = { scanned: number; added: number; retired: number };
@@ -18,30 +20,30 @@ export type HarvestResult = { scanned: number; added: number; retired: number };
  */
 export async function harvestRulings(
   db: Kysely<DB>,
-  { now }: { now: Date }
+  { now, config = HARVEST }: { now: Date; config?: HarvestConfig }
 ): Promise<HarvestResult> {
-  const cutoff = new Date(now.getTime() - HARVEST.maxRulingAgeDays * DAY_MS);
+  const cutoff = new Date(now.getTime() - config.maxRulingAgeDays * DAY_MS);
   const cursor = await db
     .selectFrom('KnightsHarvestCursor')
     .select('lastActivityId')
-    .where('name', '=', HARVEST.cursorName)
+    .where('name', '=', config.cursorName)
     .executeTakeFirst();
   let lastActivityId = cursor?.lastActivityId ?? 0;
   let scanned = 0;
   let added = 0;
 
-  for (let batch = 0; batch < HARVEST.maxBatches; batch++) {
+  for (let batch = 0; batch < config.maxBatches; batch++) {
     const activities = await db
       .selectFrom('ModActivity')
       .select('id')
       .where('id', '>', lastActivityId)
-      .where('activity', '=', 'setNsfwLevel')
+      .where('activity', '=', MODERATOR_RULING_ACTIVITY)
       .where('entityType', '=', 'image')
       .where('entityId', 'is not', null)
       .where('userId', 'is not', null)
       .where('createdAt', '>=', utc(cutoff))
       .orderBy('id', 'asc')
-      .limit(HARVEST.batchSize)
+      .limit(config.batchSize)
       .execute();
     if (activities.length === 0) break;
 
@@ -72,7 +74,7 @@ export async function harvestRulings(
               .whereRef('later.entityId', '=', 'a.entityId')
               .whereRef('later.id', '>', 'a.id')
               .where('later.entityType', '=', 'image')
-              .where('later.activity', 'in', RULING_ACTIVITIES)
+              .where('later.activity', 'in', RERATING_ACTIVITIES)
           )
         )
       )
@@ -85,7 +87,7 @@ export async function harvestRulings(
           holding.map((row) => ({
             imageId: row.imageId,
             questionKey: NSFW_LEVEL_QUESTION,
-            pool: poolFor(row.imageId, HARVEST.hiddenCheckShare),
+            pool: poolFor(row.imageId, config.hiddenCheckShare),
             answer: String(row.level),
             source: 'harvested',
             modActivityId: row.activityId,
@@ -100,23 +102,23 @@ export async function harvestRulings(
     }
 
     lastActivityId = ids[ids.length - 1];
-    if (activities.length < HARVEST.batchSize) break;
+    if (activities.length < config.batchSize) break;
   }
 
   if (scanned > 0) {
     await db
       .insertInto('KnightsHarvestCursor')
-      .values({ name: HARVEST.cursorName, lastActivityId, updatedAt: utc(now) })
+      .values({ name: config.cursorName, lastActivityId, updatedAt: utc(now) })
       .onConflict((oc) => oc.column('name').doUpdateSet({ lastActivityId, updatedAt: utc(now) }))
       .execute();
   }
 
-  const retired = await retireStale(db, now);
+  const retired = await retireStale(db, now, config);
   return { scanned, added, retired };
 }
 
-async function retireStale(db: Kysely<DB>, now: Date): Promise<number> {
-  const agedOut = new Date(now.getTime() - HARVEST.freshMaxAgeDays * DAY_MS);
+async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {
+  const agedOut = new Date(now.getTime() - config.freshMaxAgeDays * DAY_MS);
   const result = await db
     .updateTable('KnightsReferenceImage as r')
     .set({ status: 'retired', updatedAt: utc(now) })

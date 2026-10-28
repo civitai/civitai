@@ -22,8 +22,7 @@ import {
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
-
-export const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
+import { NSFW_LEVEL_QUESTION } from '../trials/config';
 
 export type ConsensusApplication = {
   questionKey: string;

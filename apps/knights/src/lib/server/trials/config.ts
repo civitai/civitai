@@ -1,4 +1,6 @@
-export const TRIAL_MODULES: readonly string[] = ['knights.image.nsfwLevel'];
+export const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
+
+export const TRIAL_MODULES: readonly string[] = [NSFW_LEVEL_QUESTION];
 
 export const TRIALS = {
   runLength: 12,
@@ -8,11 +10,20 @@ export const TRIALS = {
   cooldownHours: 24,
 } as const;
 
-export const HARVEST = {
+export type HarvestConfig = {
+  cursorName: string;
+  batchSize: number;
+  maxBatches: number;
+  maxRulingAgeDays: number;
+  hiddenCheckShare: number;
+  freshMaxAgeDays: number;
+};
+
+export const HARVEST: HarvestConfig = {
   cursorName: 'trials',
   batchSize: 500,
   maxBatches: 10,
   maxRulingAgeDays: 14,
   hiddenCheckShare: 0.3,
   freshMaxAgeDays: 60,
-} as const;
+};

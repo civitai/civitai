@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { HARVEST } from './config';
 import { harvestRulings } from './harvest.service';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -210,5 +211,49 @@ describe('harvestRulings', () => {
       [2, 'retired'],
       [3, 'active'],
     ]);
+  });
+});
+
+describe('harvestRulings batching', () => {
+  const small = { ...HARVEST, batchSize: 2, maxBatches: 3 };
+  const cursor = async () =>
+    (
+      await pg.query<{ lastActivityId: number }>(
+        `SELECT "lastActivityId" FROM "KnightsHarvestCursor"`
+      )
+    ).rows[0]?.lastActivityId;
+
+  async function rulings(count: number) {
+    const ids: number[] = [];
+    for (let imageId = 1; imageId <= count; imageId++) {
+      await image(imageId);
+      ids.push(await ruling(imageId));
+    }
+    return ids;
+  }
+
+  it('walks batches until one comes back short, and stores the last id it read', async () => {
+    const ids = await rulings(5);
+    const result = await harvestRulings(db, { now: NOW, config: small });
+    expect(result).toMatchObject({ scanned: 5, added: 5 });
+    expect(await cursor()).toBe(ids[4]);
+  });
+
+  it('stops at maxBatches and stores the cursor where it stopped, then resumes from there', async () => {
+    const ids = await rulings(8);
+    const first = await harvestRulings(db, { now: NOW, config: small });
+    expect(first).toMatchObject({ scanned: 6, added: 6 });
+    expect(await cursor()).toBe(ids[5]);
+
+    const second = await harvestRulings(db, { now: NOW, config: small });
+    expect(second).toMatchObject({ scanned: 2, added: 2 });
+    expect(await cursor()).toBe(ids[7]);
+  });
+
+  it('stores the cursor when the last batch it read was full', async () => {
+    const ids = await rulings(4);
+    await harvestRulings(db, { now: NOW, config: small });
+    expect(await cursor()).toBe(ids[3]);
+    expect((await harvestRulings(db, { now: NOW, config: small })).scanned).toBe(0);
   });
 });

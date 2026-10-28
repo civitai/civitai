@@ -21,23 +21,25 @@ export function seededShuffle<T>(items: readonly T[], seed: number): T[] {
   return out;
 }
 
+/**
+ * A stored run replays its plan from `seed`. Core items shuffle with the seed itself and fresh ones
+ * with the seed xor this salt, so changing either reorders every plan stored by an open run.
+ */
+const FRESH_SEED_SALT = 0x51ed;
+
 export type RunPlanInput = {
   seed: number;
   core: readonly number[];
-  /** Fresh items the player has not met in an earlier run. */
+  /** Fresh items the player has never answered; an answered one may not count toward a score again. */
   freshUnseen: readonly number[];
-  freshSeen: readonly number[];
   length: number;
   freshCount: number;
 };
 
 /** Core items first, then fresh ones. Same input, same plan. */
-export function planRun({ seed, core, freshUnseen, freshSeen, length, freshCount }: RunPlanInput) {
+export function planRun({ seed, core, freshUnseen, length, freshCount }: RunPlanInput) {
   const sorted = (ids: readonly number[]) => [...ids].sort((a, b) => a - b);
-  const fresh = [
-    ...seededShuffle(sorted(freshUnseen), seed ^ 0x51ed),
-    ...seededShuffle(sorted(freshSeen), seed ^ 0x2f1d),
-  ].slice(0, freshCount);
+  const fresh = seededShuffle(sorted(freshUnseen), seed ^ FRESH_SEED_SALT).slice(0, freshCount);
   const coreSlots = Math.max(0, length - fresh.length);
   return {
     core: seededShuffle(sorted(core), seed).slice(0, coreSlots),
@@ -47,12 +49,19 @@ export function planRun({ seed, core, freshUnseen, freshSeen, length, freshCount
 
 export type ScoredAnswer = { fresh: boolean; correct: boolean };
 
-/** Only fresh items count: the core set teaches. */
-export function scoreRun(answers: readonly ScoredAnswer[], passMark: number) {
+export type RunScore =
+  | { result: 'void'; score: null }
+  | { result: 'passed' | 'failed'; score: number };
+
+/** Only fresh items count: the core set teaches. Fewer than `minFresh` of them decide nothing. */
+export function scoreRun(
+  answers: readonly ScoredAnswer[],
+  { passMark, minFresh }: { passMark: number; minFresh: number }
+): RunScore {
   const fresh = answers.filter((a) => a.fresh);
-  if (fresh.length === 0) return { score: 0, passed: false };
+  if (fresh.length < Math.max(1, minFresh)) return { result: 'void', score: null };
   const score = fresh.filter((a) => a.correct).length / fresh.length;
-  return { score, passed: score >= passMark };
+  return { result: score >= passMark ? 'passed' : 'failed', score };
 }
 
 /** Stable per image, so an image never changes pool between harvests. */

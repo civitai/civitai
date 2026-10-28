@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { NSFW_LEVEL_QUESTION, type ApplyOutcome, type ConsensusApplication } from './queue.service';
+import { NSFW_LEVEL_QUESTION } from '../trials/config';
+import type { ApplyOutcome, ConsensusApplication } from './queue.service';
 
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 

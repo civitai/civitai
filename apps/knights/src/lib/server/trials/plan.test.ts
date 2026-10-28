@@ -7,7 +7,6 @@ describe('planRun', () => {
   const base = {
     core: ids(100, 6),
     freshUnseen: ids(200, 20),
-    freshSeen: [],
     length: 10,
     freshCount: 7,
   };
@@ -31,17 +30,6 @@ describe('planRun', () => {
     expect(new Set([...plan.core, ...plan.fresh]).size).toBe(10);
   });
 
-  it('serves unseen fresh items before ones the player already met', () => {
-    const plan = planRun({
-      ...base,
-      seed: 3,
-      freshUnseen: ids(200, 2),
-      freshSeen: ids(300, 10),
-    });
-    expect(plan.fresh.slice(0, 2).sort()).toEqual([200, 201]);
-    expect(plan.fresh).toHaveLength(7);
-  });
-
   it('gives core what the fresh pool cannot fill, and works without core', () => {
     expect(planRun({ ...base, seed: 1, freshUnseen: ids(200, 4) }).core).toHaveLength(6);
     expect(planRun({ ...base, seed: 1, core: [] }).core).toEqual([]);
@@ -55,6 +43,8 @@ describe('seededShuffle', () => {
 });
 
 describe('scoreRun', () => {
+  const rules = { passMark: 0.75, minFresh: 3 };
+
   it('ignores core answers', () => {
     const answers = [
       { fresh: false, correct: false },
@@ -64,13 +54,18 @@ describe('scoreRun', () => {
       { fresh: true, correct: true },
       { fresh: true, correct: false },
     ];
-    expect(scoreRun(answers, 0.75)).toEqual({ score: 0.75, passed: true });
-    expect(scoreRun(answers, 0.8).passed).toBe(false);
+    expect(scoreRun(answers, rules)).toEqual({ result: 'passed', score: 0.75 });
+    expect(scoreRun(answers, { ...rules, passMark: 0.8 }).result).toBe('failed');
   });
 
-  it('cannot pass without a fresh answer', () => {
-    expect(scoreRun([{ fresh: false, correct: true }], 0)).toEqual({ score: 0, passed: false });
-    expect(scoreRun([], 0).passed).toBe(false);
+  it('is void, not failed, below the fresh minimum', () => {
+    const two = [
+      { fresh: true, correct: true },
+      { fresh: true, correct: true },
+      { fresh: false, correct: true },
+    ];
+    expect(scoreRun(two, rules)).toEqual({ result: 'void', score: null });
+    expect(scoreRun([], { passMark: 0, minFresh: 0 }).result).toBe('void');
   });
 });
 

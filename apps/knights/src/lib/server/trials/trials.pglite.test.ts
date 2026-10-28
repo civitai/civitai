@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { TRIALS } from './config';
+import { TRIAL_MODULES, TRIALS } from './config';
 import { planRun } from './plan';
 import {
   answerTrial,
@@ -14,6 +14,7 @@ import {
 } from './trials.service';
 
 const T0 = new Date('2026-12-15T12:00:00Z');
+const Q = TRIAL_MODULES[0];
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -37,10 +38,10 @@ beforeEach(async () => {
 });
 
 async function player(userId: number, rankType = 'Acolyte') {
-  await pg.query(`INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES ($1,$2)`, [
-    userId,
-    rankType,
-  ]);
+  await pg.query(
+    `INSERT INTO "NewOrderPlayer" ("userId","rankType","startAt") VALUES ($1,$2,'2020-01-01')`,
+    [userId, rankType]
+  );
 }
 
 async function reference(
@@ -104,7 +105,11 @@ async function playOut(userId: number, wrongOn: number[] = []) {
     if (view.kind !== 'question') return last;
     const right = await answerOf(view.item.referenceId);
     const answer = wrongOn.includes(view.item.referenceId) ? (right === '16' ? '1' : '16') : right;
-    last = await answerTrial(db, { userId, referenceId: view.item.referenceId, answer }, deps);
+    last = await answerTrial(
+      db,
+      { questionKey: Q, userId, referenceId: view.item.referenceId, answer },
+      deps
+    );
   }
   throw new Error('run did not end');
 }
@@ -161,7 +166,6 @@ describe('getTrial', () => {
       seed: 4242,
       core: [1, 2],
       freshUnseen: [3, 4, 5, 6],
-      freshSeen: [],
       length: TRIALS.runLength,
       freshCount: TRIALS.freshCount,
     });
@@ -184,6 +188,31 @@ describe('getTrial', () => {
     ).rows.map((r) => r.itemIds);
     expect(plans[1]).toEqual(plans[0]);
     expect(plans[2]).not.toEqual(plans[0]);
+  });
+
+  it('shows nothing to serve, and starts no scorable run, when too few fresh items are unseen', async () => {
+    await player(1);
+    await standardPool();
+    seeds = [100, 200, 300];
+    await playOut(1, [3, 4, 5, 6]);
+    now = new Date(T0.getTime() + (TRIALS.cooldownHours + 1) * 3_600_000);
+    const metBefore = (
+      await pg.query<{ referenceId: number }>(`SELECT "referenceId" FROM "KnightsTrialAnswer"`)
+    ).rows.map((r) => r.referenceId);
+
+    await reference(21);
+    await reference(22);
+    expect((await getTrial(db, 1, deps)).kind).toBe('unavailable');
+    expect((await pg.query(`SELECT 1 FROM "KnightsTrialRun"`)).rows).toHaveLength(1);
+
+    await reference(23);
+    await current(1);
+    const second = (
+      await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun" ORDER BY "id"`)
+    ).rows[1].itemIds;
+    const freshIds = [3, 4, 5, 6, 7, 8, 9];
+    expect(second.filter((id) => freshIds.includes(id)).sort()).toEqual([7, 8, 9]);
+    expect(second.filter((id) => metBefore.includes(id) && id > 2)).toEqual([]);
   });
 
   it('keeps one run open per player', async () => {
@@ -217,7 +246,12 @@ describe('answerTrial', () => {
 
     const wrong = await answerTrial(
       db,
-      { userId: 1, referenceId: view.item.referenceId, answer: answer === '16' ? '1' : '16' },
+      {
+        questionKey: Q,
+        userId: 1,
+        referenceId: view.item.referenceId,
+        answer: answer === '16' ? '1' : '16',
+      },
       deps
     );
     expect(wrong).toMatchObject({ status: 'recorded', correct: false, correctAnswer: answer });
@@ -235,10 +269,19 @@ describe('answerTrial', () => {
     const b = await current(2);
     expect(b.item.referenceId).toBe(a.item.referenceId);
     const right = await answerOf(a.item.referenceId);
-    await answerTrial(db, { userId: 1, referenceId: a.item.referenceId, answer: right }, deps);
     await answerTrial(
       db,
-      { userId: 2, referenceId: a.item.referenceId, answer: right === '16' ? '1' : '16' },
+      { questionKey: Q, userId: 1, referenceId: a.item.referenceId, answer: right },
+      deps
+    );
+    await answerTrial(
+      db,
+      {
+        questionKey: Q,
+        userId: 2,
+        referenceId: a.item.referenceId,
+        answer: right === '16' ? '1' : '16',
+      },
       deps
     );
     const row = (
@@ -256,18 +299,34 @@ describe('answerTrial', () => {
     const view = await current(1);
     const other = [1, 2, 3, 4, 5, 6].find((id) => id !== view.item.referenceId)!;
 
-    expect(await answerTrial(db, { userId: 1, referenceId: other, answer: '4' }, deps)).toEqual({
+    expect(
+      await answerTrial(db, { questionKey: Q, userId: 1, referenceId: other, answer: '4' }, deps)
+    ).toEqual({
       status: 'rejected',
       reason: 'not-current',
     });
     expect(
-      await answerTrial(db, { userId: 1, referenceId: view.item.referenceId, answer: '3' }, deps)
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '3' },
+        deps
+      )
     ).toEqual({ status: 'rejected', reason: 'bad-answer' });
-    await answerTrial(db, { userId: 1, referenceId: view.item.referenceId, answer: '4' }, deps);
+    await answerTrial(
+      db,
+      { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+      deps
+    );
     expect(
-      await answerTrial(db, { userId: 1, referenceId: view.item.referenceId, answer: '4' }, deps)
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+        deps
+      )
     ).toEqual({ status: 'rejected', reason: 'not-current' });
-    expect(await answerTrial(db, { userId: 2, referenceId: 1, answer: '4' }, deps)).toEqual({
+    expect(
+      await answerTrial(db, { questionKey: Q, userId: 2, referenceId: 1, answer: '4' }, deps)
+    ).toEqual({
       status: 'rejected',
       reason: 'no-run',
     });
@@ -328,6 +387,88 @@ describe('graduation', () => {
     expect(unmet).toHaveLength(4);
     expect(runs[1].itemIds).toEqual(expect.arrayContaining(unmet));
     expect(view.run.position).toBe(1);
+  });
+});
+
+describe('a run too thin to decide', () => {
+  it('closes void with no cooldown when too few fresh items could be answered, and starts afresh', async () => {
+    await player(1);
+    await standardPool();
+    seeds = [1, 2];
+    for (let i = 0; i < 4; i++) {
+      const view = await current(1);
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+        deps
+      );
+    }
+    await pg.query(
+      `UPDATE "Image" SET "ingestion"='Blocked' WHERE "id" IN (
+         SELECT "imageId" FROM "KnightsReferenceImage" r
+         WHERE "source"<>'core' AND NOT EXISTS (SELECT 1 FROM "KnightsTrialAnswer" a WHERE a."referenceId"=r."id"))`
+    );
+    for (const id of [21, 22, 23, 24]) await reference(id);
+
+    const view = await current(1);
+
+    const runs = (
+      await pg.query<{
+        id: number;
+        result: string | null;
+        score: number | null;
+        cooldownUntil: Date | null;
+      }>(`SELECT "id","result","score","cooldownUntil" FROM "KnightsTrialRun" ORDER BY "id"`)
+    ).rows;
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({ result: 'void', score: null, cooldownUntil: null });
+    expect(view.run.id).toBe(runs[1].id);
+    expect(await rank(1)).toBe('Acolyte');
+  });
+});
+
+describe('a demoted player', () => {
+  it('is not promoted again by a pass from before the reset', async () => {
+    await player(1);
+    await standardPool();
+    for (const id of [21, 22, 23, 24, 25, 26, 27, 28]) await reference(id, { answer: '8' });
+    await playOut(1);
+    expect(await rank(1)).toBe('Knight');
+
+    await pg.query(
+      `UPDATE "NewOrderPlayer" SET "rankType"='Acolyte', "startAt"=$1 WHERE "userId"=1`,
+      [new Date(T0.getTime() + 60_000).toISOString()]
+    );
+    now = new Date(T0.getTime() + 3_600_000);
+
+    expect((await getTrial(db, 1, deps)).kind).toBe('question');
+    expect(await rank(1)).toBe('Acolyte');
+  });
+});
+
+describe('answerTrial with several open runs', () => {
+  it('answers the run of the module asked about', async () => {
+    await player(1);
+    await pg.query(
+      `INSERT INTO "KnightsTrialRun" ("playerId","questionKey","seed","itemIds") VALUES (1,'other.module',1,'[]')`
+    );
+    await standardPool();
+    const view = await current(1);
+
+    expect(
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+        deps
+      )
+    ).toMatchObject({ status: 'recorded' });
+    expect(
+      await answerTrial(
+        db,
+        { questionKey: 'missing.module', userId: 1, referenceId: 1, answer: '4' },
+        deps
+      )
+    ).toEqual({ status: 'rejected', reason: 'no-run' });
   });
 });
 

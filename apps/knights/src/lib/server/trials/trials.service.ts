@@ -39,7 +39,7 @@ export type AnswerResult =
       correctLabel: string;
       explanation: string | null;
       imageKey: string;
-      finished: { result: 'passed' | 'failed'; score: number } | null;
+      finished: { result: 'passed' | 'failed' | 'void'; score: number | null } | null;
     };
 
 type Run = { id: number; questionKey: string; itemIds: number[] };
@@ -77,13 +77,16 @@ export async function promoteToKnight(db: Executor, userId: number) {
     .execute();
 }
 
+/** Passes finished since the player's last reset; an earlier pass does not outlive a demotion. */
 async function passedModules(db: Executor, userId: number): Promise<Set<string>> {
   const rows = await db
-    .selectFrom('KnightsTrialRun')
-    .select('questionKey')
+    .selectFrom('KnightsTrialRun as run')
+    .innerJoin('NewOrderPlayer as player', 'player.userId', 'run.playerId')
+    .select('run.questionKey')
     .distinct()
-    .where('playerId', '=', userId)
-    .where('result', '=', 'passed')
+    .where('run.playerId', '=', userId)
+    .where('run.result', '=', 'passed')
+    .whereRef('run.finishedAt', '>=', 'player.startAt')
     .execute();
   return new Set(rows.map((r) => r.questionKey));
 }
@@ -124,15 +127,14 @@ async function startRun(
       .execute(),
   ]);
   const seen = new Set(met.map((m) => m.referenceId));
-  const fresh = pool.filter((r) => r.source !== 'core');
-  if (fresh.length < TRIALS.minFresh) return null;
+  const freshUnseen = pool.filter((r) => r.source !== 'core' && !seen.has(r.id));
+  if (freshUnseen.length < TRIALS.minFresh) return null;
 
   const seed = deps.newSeed();
   const plan = planRun({
     seed,
     core: pool.filter((r) => r.source === 'core').map((r) => r.id),
-    freshUnseen: fresh.filter((r) => !seen.has(r.id)).map((r) => r.id),
-    freshSeen: fresh.filter((r) => seen.has(r.id)).map((r) => r.id),
+    freshUnseen: freshUnseen.map((r) => r.id),
     length: TRIALS.runLength,
     freshCount: TRIALS.freshCount,
   });
@@ -190,36 +192,41 @@ async function finishRun(db: Executor, run: Run, userId: number, now: Date) {
     .select(['a.correct', 'r.source'])
     .where('a.runId', '=', run.id)
     .execute();
-  const { score, passed } = scoreRun(
+  const { result, score } = scoreRun(
     answers.map((a) => ({ fresh: a.source !== 'core', correct: a.correct })),
-    TRIALS.passMark
+    TRIALS
   );
   const cooldownUntil = new Date(now.getTime() + TRIALS.cooldownHours * 3_600_000);
   const closed = await db
     .updateTable('KnightsTrialRun')
     .set({
       finishedAt: utc(now),
-      result: passed ? 'passed' : 'failed',
+      result,
       score,
-      cooldownUntil: passed ? null : utc(answers.length === 0 ? now : cooldownUntil),
+      cooldownUntil: result === 'failed' ? utc(cooldownUntil) : null,
     })
     .where('id', '=', run.id)
     .where('finishedAt', 'is', null)
     .executeTakeFirst();
   if (Number(closed.numUpdatedRows) === 0) return null;
 
-  if (passed) {
+  if (result === 'passed') {
     const done = await passedModules(db, userId);
     if (TRIAL_MODULES.every((key) => done.has(key))) await promoteToKnight(db, userId);
   }
-  return { result: passed ? ('passed' as const) : ('failed' as const), score };
+  return { result, score };
 }
 
-export async function getTrial(
+export function getTrial(db: Kysely<DB>, userId: number, deps: TrialDeps): Promise<TrialView> {
+  return resolveTrial(db, userId, deps, false);
+}
+
+/** `settled` means a run just closed on this call, so a second close is not followed again. */
+async function resolveTrial(
   db: Kysely<DB>,
   userId: number,
   deps: TrialDeps,
-  settled = false
+  settled: boolean
 ): Promise<TrialView> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -257,7 +264,7 @@ export async function getTrial(
   const next = await nextItem(db, run);
   if (!next) {
     await finishRun(db, run, userId, now);
-    return settled ? { kind: 'unavailable' } : getTrial(db, userId, deps, true);
+    return settled ? { kind: 'unavailable' } : resolveTrial(db, userId, deps, true);
   }
   return {
     kind: 'question',
@@ -270,10 +277,10 @@ export async function getTrial(
 
 export async function answerTrial(
   db: Kysely<DB>,
-  input: { userId: number; referenceId: number; answer: string },
+  input: { userId: number; questionKey: string; referenceId: number; answer: string },
   deps: TrialDeps
 ): Promise<AnswerResult> {
-  const { userId, referenceId, answer } = input;
+  const { userId, questionKey, referenceId, answer } = input;
   const now = deps.now();
 
   return db.transaction().execute(async (trx): Promise<AnswerResult> => {
@@ -281,6 +288,7 @@ export async function answerTrial(
       .selectFrom('KnightsTrialRun')
       .select(['id', 'questionKey', 'itemIds'])
       .where('playerId', '=', userId)
+      .where('questionKey', '=', questionKey)
       .where('finishedAt', 'is', null)
       .forUpdate()
       .executeTakeFirst();
