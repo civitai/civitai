@@ -1,9 +1,9 @@
 /** Every number that shapes progression. The level curve itself lives in `@civitai/shared/new-order-levels`. */
 export const PROGRESSION = {
   /** Flat XP paid the moment a vote is cast, whatever it is later graded as. */
-  voteXp: 5,
-  /** Bulk XP paid when a vote is graded correct. */
-  correctXp: 20,
+  voteXp: 10,
+  /** Bulk XP paid when a vote is graded correct. With voteXp, a correct vote is worth the old game's flat 100. */
+  correctXp: 90,
   /** Gold a vote is worth before the rank multiplier. */
   baseGold: 100,
   /** Fervor looks at this many of the player's most recent graded votes. */
