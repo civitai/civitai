@@ -120,14 +120,16 @@ function itemRow(over: Record<string, unknown> = {}) {
 
 const BODY = { title: 'Neon Drift', tagline: 'Arcade racer' };
 
-/** Public images and their uploaders: 51 is the owner's, 52 and 53 the creator's. */
+/** Public images and their uploaders: 51 is the owner's, 52 and 53 the creator's, 54 someone else's. */
 const OWNER_IMAGE = 51;
 const CREATOR_IMAGE = 52;
 const CREATOR_IMAGE_2 = 53;
+const STRANGER_IMAGE = 54;
 const IMAGE_OWNERS: Record<number, number> = {
   [OWNER_IMAGE]: OWNER,
   [CREATOR_IMAGE]: CREATOR,
   [CREATOR_IMAGE_2]: CREATOR,
+  [STRANGER_IMAGE]: 9999,
 };
 const notPublic = () => new TRPCError({ code: 'NOT_FOUND', message: 'No image' });
 
@@ -464,9 +466,20 @@ describe('upsertCatalogSubListing — item images', () => {
     });
   });
 
-  it('refuses an image the author did not upload, even the listing owner’s', async () => {
-    await expectError(asCreator({ ...BODY, imageId: OWNER_IMAGE }), 403, 'image_not_yours');
+  it('takes the listing owner’s image on a creator’s item, still attributed to the creator', async () => {
+    await expect(asCreator({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.create.mock.calls[0][0].data).toMatchObject({
+      authorUserId: CREATOR,
+      imageId: OWNER_IMAGE,
+    });
+  });
+
+  it('refuses an image neither the author nor the listing owner uploaded', async () => {
+    await expectError(asCreator({ ...BODY, imageId: STRANGER_IMAGE }), 403, 'image_not_yours');
     await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    await expectError(put({ ...BODY, imageId: STRANGER_IMAGE }), 403, 'image_not_yours');
     nothingWritten();
   });
 

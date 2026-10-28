@@ -434,6 +434,8 @@ model User {
   eligibilityChangedAt    DateTime?
   // Payment provider related
   customerId              String?                @unique // Stripe
+  // Legacy Stripe subscription id; the account scrub clears it.
+  subscriptionId          String?
   paddleCustomerId        String?                @unique
 
   profile              UserProfile?
@@ -1674,6 +1676,17 @@ model ModActivity {
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
   @@index([createdAt])
+}
+
+/// Which moderator is answering a Civitai Moderation thread, so two never reply at once. Expires
+/// unless renewed by a send.
+model ModThreadClaim {
+  chatId      Int      @id
+  moderatorId Int
+  claimedAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([moderatorId])
 }
 
 enum ReportReason {

@@ -56,6 +56,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { ShownRendition } from '@civitai/shared/held-media';
+import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -91,6 +93,10 @@ type EvidenceFileRecord = {
 type CsamReportImage = {
   id: number;
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
+  /** The `fileViewedByEsp` sent for this file. */
+  viewedByEsp?: boolean;
+  /** Which copy the record behind a true `viewedByEsp` says was on screen. */
+  viewRendition?: ShownRendition;
 } & CsamReportUploadProps &
   Partial<EvidenceFileRecord>;
 
@@ -1110,6 +1116,17 @@ async function reportImages(claim: SendClaim) {
       'archive-data'
     );
 
+  // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
+  let viewed: Map<number, ShownRendition>;
+  try {
+    viewed = await getViewedImageIds(
+      images.map((image) => image.id),
+      report
+    );
+  } catch (e) {
+    return logSendFailure(report, e, 'send-view-check');
+  }
+
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
   const noLongerStored =
     absent.length +
@@ -1194,12 +1211,14 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
+      const viewRendition = viewed.get(image.id);
+      const viewedByEsp = !!viewRendition;
       await cybertipClient.submitFileDetails({
         reportId: ncmecReportId,
         fileId,
         originalFileName: image.name?.split('?')[0] ?? undefined,
         locationOfFile: imageUrl,
-        fileViewedByEsp: true,
+        fileViewedByEsp: viewedByEsp,
         fileAnnotations,
       });
 
@@ -1209,6 +1228,8 @@ async function reportImages(claim: SendClaim) {
         fileAnnotations,
         fileId,
         hash,
+        viewedByEsp,
+        viewRendition,
         source: original.source,
         sha256: original.sha256,
         bytes: original.data.length,
@@ -1261,6 +1282,42 @@ async function reportImages(claim: SendClaim) {
       },
       'error'
     );
+}
+
+/** The rows that count as a moderator having seen an image: opened or selected once on screen. */
+const shownActivities = (rendition: ShownRendition) =>
+  SHOWN_ACTIONS.map((action) => shownActivity(action, rendition));
+
+/** Each image's earliest counted row stamped before now, by the database's own clock, as the
+ *  rendition it records. A CDN row counts only when the report's filer wrote it, from a day before
+ *  the filing on. `createdAt` is zoneless and in UTC. */
+async function getViewedImageIds(
+  imageIds: number[],
+  report: Pick<CsamReportProps, 'reportedById' | 'createdAt'>
+) {
+  const viewed = new Map<number, ShownRendition>();
+  if (!imageIds.length) return viewed;
+  // The primary: a replica may not have a view recorded just before the send.
+  const rows = await dbWrite.$queryRaw<{ entityId: number; activity: string }[]>`
+    SELECT DISTINCT ON ("entityId") "entityId", activity FROM "ModActivity"
+    WHERE "entityType" = 'image'
+      AND "entityId" = ANY(${imageIds}::int[])
+      AND "createdAt" < (now() AT TIME ZONE 'UTC')
+      AND (
+        activity = ANY(${shownActivities('original')}::text[])
+        OR (
+          activity = ANY(${shownActivities('cdn-450')}::text[])
+          AND "userId" = ${report.reportedById}
+          AND "createdAt" >= (${new Date(
+            report.createdAt
+          ).toISOString()}::timestamptz AT TIME ZONE 'UTC') - interval '24 hours'
+        )
+      )
+    ORDER BY "entityId", "createdAt", id
+  `;
+  for (const { entityId, activity } of rows)
+    viewed.set(entityId, activity.slice(activity.lastIndexOf(':') + 1) as ShownRendition);
+  return viewed;
 }
 
 async function reportGenerationData(claim: SendClaim) {
@@ -1338,6 +1395,7 @@ async function reportGenerationData(claim: SendClaim) {
             await cybertipClient.submitFileDetails({
               fileId,
               reportId,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
@@ -1410,7 +1468,12 @@ async function reportTrainingData(claim: SendClaim) {
           const {
             data: { fileId, hash },
           } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-          await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            originalFileName: filename,
+            fileViewedByEsp: false,
+          });
           return { filename, fileId, hash };
         });
         return { trainingData: await sending.sent };
@@ -1549,7 +1612,7 @@ async function reportExternalLink(claim: SendClaim) {
               fileId,
               originalFileName: filename,
               locationOfFile,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileAnnotations,
             });
@@ -1574,7 +1637,7 @@ async function reportExternalLink(claim: SendClaim) {
               reportId,
               fileId,
               originalFileName: filename,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileRelevance: FileRelevance.SupplementalReported,
               additionalInfo: ['Chat log screenshot / supplemental evidence'],

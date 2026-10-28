@@ -80,6 +80,8 @@ export type UserMenuItem = {
    * that costs a request is a request on every page.
    */
   badge?: number;
+  /** What the badge counts, shown on hover. */
+  badgeTooltip?: string;
 };
 
 type UserMenuItemGroup = {
@@ -139,6 +141,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Inventory',
           badge: unopenedBoxes,
+          badgeTooltip: 'Unopened mystery boxes',
         },
         {
           id: 'my-shop',
@@ -179,6 +182,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Placements',
           badge: pendingPlacements,
+          badgeTooltip: 'Placements waiting for your review',
           newUntil: new Date('2026-09-20'),
         },
         {
@@ -199,6 +203,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Collections',
           badge: pendingCollectionReviews,
+          badgeTooltip: 'Items awaiting review in your collections',
         },
         {
           id: 'liked-models',

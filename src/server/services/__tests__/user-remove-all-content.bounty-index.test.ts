@@ -119,7 +119,7 @@ beforeEach(() => {
   bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);
   // Ids distinct per table and per database, so an index fed from the wrong one is visible.
   dbMock.dbRead.bounty.findMany.mockResolvedValue([{ id: 799 }]);
-  dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 991 }]);
+  dbMock.dbWrite.collection.findMany.mockResolvedValue([{ id: 991 }]);
   // Answers only the account's own rows, and the unsettled list only for the exact unsettled filter,
   // so a query that drops either condition gets nothing back and the assertions below go red.
   dbMock.dbWrite.bounty.findMany.mockImplementation((async (args: {

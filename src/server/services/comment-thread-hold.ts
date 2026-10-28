@@ -122,8 +122,9 @@ export function heldLegacyReplyBelowSql(commentId: Prisma.Sql, markerView: boole
       SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = ${commentId}
       UNION
       SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-    )
-    SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
+    ),
+    authors AS MATERIALIZED (SELECT DISTINCT "userId" FROM below)
+    SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
   )`;
 }
 

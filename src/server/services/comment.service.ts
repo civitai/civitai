@@ -602,7 +602,9 @@ export async function deleteLegacyCommentsUnlessHeld(
   markerView: boolean
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
-  // A comment is also kept while any reply under it, at any depth, is held.
+  // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
+  // reply under it, at any depth, is held. Checked once per author: its cost grows with the number
+  // of holding reports.
   const deleted = await tx.$queryRaw<{ modelId: number }[]>`
     DELETE FROM "Comment" c
     WHERE c.id = ANY(${ids}::int[])

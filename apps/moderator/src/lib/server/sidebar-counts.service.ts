@@ -42,7 +42,7 @@ export type SidebarCounts = Record<string, number>;
  *  instead of a smaller total. */
 export type SidebarCountsResult = { counts: SidebarCounts; unavailable: string[] };
 
-const counts = createCache({ name: 'sidebar-counts:v2', fetch: fetchCounts, ttlSeconds: 60 });
+const counts = createCache({ name: 'sidebar-counts:v3', fetch: fetchCounts, ttlSeconds: 60 });
 
 /** How long a part's last landed value stands in for it; older, the part is unknown. */
 export const LAST_GOOD_MS = 15 * 60_000;

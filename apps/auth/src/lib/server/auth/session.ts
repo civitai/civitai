@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import {
   isSecureCookie,
   maybeCreateSessionSigner,
@@ -15,6 +16,7 @@ import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
+import { isRefusedModerationAccount } from './moderation-account';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -70,6 +72,14 @@ export function toSessionUser(row: {
   };
 }
 
+/** The shared Civitai Moderation account never gets a session, by any path, including impersonation. */
+export function refuseModerationAccount(
+  user: { id: number; username?: string | null },
+  source: string
+): void {
+  if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
+}
+
 /**
  * Mint the THIN ES256 session token (identity only — `sub`/`jti`/`signedAt`, NO embedded user; the rich user is
  * resolved per-request from the shared cache) + track it for invalidation. Returns the token; does NOT touch
@@ -80,6 +90,7 @@ export async function mintUserSession(
   user: SessionUser,
   opts?: { impersonatedBy?: number }
 ): Promise<string> {
+  refuseModerationAccount(user, opts?.impersonatedBy ? 'impersonate' : 'mint');
   const tokenId = randomUUID();
   const token = await getSigner().mintSessionToken(
     {
@@ -129,6 +140,7 @@ export async function establishSession(
   // accounts). Read it from the incoming cookie (not locals) so this works on every login path uniformly. Done
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
+  refuseModerationAccount(user, 'login');
   const priorUserId = await resolvePriorSessionUserId(cookies);
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub

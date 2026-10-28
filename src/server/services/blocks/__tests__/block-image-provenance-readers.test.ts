@@ -25,8 +25,11 @@ const PUBLISHED = 'BLOCK_PUBLISHED_APP_ID_META_KEY';
 const UPLOADED = 'BLOCK_UPLOADED_APP_ID_META_KEY';
 const POSTABLE = 'BLOCK_POSTABLE_APP_ID_META_KEYS';
 const POST_MARKER = 'BLOCK_POST_APP_ID_META_KEY';
-const KEY_IDENTIFIERS = new Set([PUBLISHED, UPLOADED, POSTABLE, POST_MARKER]);
-const KEY_LITERALS = new Set(['blockPublishedAppId', 'blockUploadedAppId']);
+const POST_ITEM_MARKER = 'BLOCK_POST_SUB_LISTING_ID_META_KEY';
+const KEY_IDENTIFIERS = new Set([PUBLISHED, UPLOADED, POSTABLE, POST_MARKER, POST_ITEM_MARKER]);
+// `Post.metadata` only, so not in the Image strip list (`BLOCK_PROVENANCE_METADATA_KEYS`).
+const POST_ONLY_LITERALS = ['blockPublishedSubListingId'];
+const KEY_LITERALS = new Set(['blockPublishedAppId', 'blockUploadedAppId', ...POST_ONLY_LITERALS]);
 
 type Role =
   /** Declares a key constant. */
@@ -65,9 +68,13 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds':
     'gated-reader',
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
+  'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_SUB_LISTING_ID_META_KEY':
+    'declaration',
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 'post-attribution',
   'src/server/services/post-intent/post-intent.service.ts#publishIntent': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
+  'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedSubListingId':
+    'post-attribution',
   'src/server/services/blocks/image-app-chip.service.ts#readImageAppChip': 'image-attribution',
   'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#selectCandidates': 'backfill-selector',
   // The server-owned key list `createImage` and the image input schemas strip client copies
@@ -236,7 +243,9 @@ describe('App Blocks image provenance-key sites', () => {
   it('the keys this ledger tracks are exactly the server-owned provenance keys', () => {
     // A key added to the shared list without this ledger learning it would have readers this
     // file cannot see; a key tracked here but missing from the list would not be server-owned.
-    expect([...KEY_LITERALS].sort()).toEqual([...BLOCK_PROVENANCE_METADATA_KEYS].sort());
+    expect([...KEY_LITERALS].sort()).toEqual(
+      [...BLOCK_PROVENANCE_METADATA_KEYS, ...POST_ONLY_LITERALS].sort()
+    );
   });
 
   it('sees every spelling of a read, on synthetic sources (so each branch of the derivation is exercised)', () => {
