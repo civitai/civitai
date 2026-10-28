@@ -8,7 +8,11 @@ import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { clientErrorUrl, redirectUriMatches } from '$lib/server/oauth/redirect-uri';
+import {
+  clientErrorUrl,
+  isSkipConsentRedirectUri,
+  redirectUriMatches,
+} from '$lib/server/oauth/redirect-uri';
 import { carriesNonUserScope, hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
@@ -38,7 +42,8 @@ import { parsePrompt } from '$lib/server/oauth/prompt';
 //   login          — a signed-out user signs in as usual. A signed-in one gets login_required: the hub
 //                    doesn't record when a session last signed in, so it can't make them do it again or
 //                    prove they did (OIDC Core §3.1.2.1 asks for the error when it can't).
-//   consent        — show the consent screen even when a remembered consent covers the request.
+//   consent        — show the consent screen even when a remembered consent covers the request, or the app
+//                    skips consent.
 //   select_account — show the consent screen's account picker, even when a remembered consent covers it.
 // First-party clients have no consent screen, so `consent` and `select_account` don't apply to them.
 
@@ -226,11 +231,17 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // First-party-ness is the resolved client's IDENTITY (a hub-synthesized client with no OauthClient row),
   // NOT the redirect origin — so a registered third-party client can't skip consent by claiming an owned
   // redirect host (it has a DB row → isFirstParty=false). See resolveClientLite.
-  // A registered app staff marked `skipConsent` (one Civitai runs; set on /admin/access) skips it the same way.
+  // A registered app staff marked `skipConsent` (one Civitai runs; set on /admin/access) skips it the same way,
+  // but only for an https, non-loopback redirect_uri exactly as registered, and never when the request asks
+  // for the consent screen (prompt=consent or select_account). Otherwise it gets the usual consent flow.
   const isFirstParty = client.isFirstParty;
-  // prompt=select_account still opens the consent page's account picker for a skipConsent app (a first-party
-  // spoke has no consent page, so it can't).
-  const skipsConsent = client.skipConsent && !(prompt.has('select_account') && !isFirstParty);
+  const skipsConsent = isFirstParty
+    ? client.skipConsent
+    : client.skipConsent &&
+      client.redirectUris.includes(redirectUri) &&
+      isSkipConsentRedirectUri(redirectUri) &&
+      !prompt.has('consent') &&
+      !prompt.has('select_account');
   const existingConsent = skipsConsent
     ? undefined
     : await db
