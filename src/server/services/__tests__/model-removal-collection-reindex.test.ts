@@ -426,10 +426,14 @@ describe('permaDeleteModelById — legal hold', () => {
       );
       CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
       CREATE TABLE "Thread" (
-        id serial PRIMARY KEY, "modelId" int, "reviewId" int, "postId" int, "imageId" int,
-        "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+        id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
+        "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
+        metadata jsonb NOT NULL DEFAULT '{}'
       );
-      CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
+      CREATE TABLE "CommentV2" (
+        id serial PRIMARY KEY, "userId" int NOT NULL,
+        "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+      );
       CREATE TABLE "Comment" (id serial PRIMARY KEY, "userId" int NOT NULL, "modelId" int, "parentId" int);
       CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
       CREATE TABLE "CsamReport" (
@@ -454,6 +458,7 @@ describe('permaDeleteModelById — legal hold', () => {
       deleteFails = false,
       detachFails = false as boolean | 'post',
       heldCommenter = null as number | null,
+      threadCommenter = null as number | null,
     } = {}
   ) {
     mockDbWrite.$executeRaw.mockImplementation((async (sql: Prisma.Sql) => {
@@ -462,12 +467,16 @@ describe('permaDeleteModelById — legal hold', () => {
         throw new Error('relation "EvidenceHeldUser" does not exist');
       return 0;
     }) as never);
-    await db.exec(`DELETE FROM "Model"; DELETE FROM "Comment";`);
+    await db.exec(`DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment";`);
     if (heldCommenter)
       await db.exec(
         `INSERT INTO "Comment" ("userId", "modelId") VALUES (${heldCommenter}, ${MODEL_ID})`
       );
     if (exists) await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL_ID}, ${userId})`);
+    if (exists && threadCommenter)
+      await db.exec(`
+        INSERT INTO "Thread" (id, "modelId") VALUES (700, ${MODEL_ID});
+        INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (7001, ${threadCommenter}, 700);`);
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ url: 'models/held.safetensors' }]);
     mockDbWrite.post.findMany.mockResolvedValue([{ id: POST_ID }]);
     mockDbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID }]);
@@ -552,6 +561,24 @@ describe('permaDeleteModelById — legal hold', () => {
       rolledBack: false,
     });
     expect(vi.mocked(deleteModelFileObjects)).toHaveBeenCalledWith(['models/held.safetensors']);
+  });
+
+  it("deletes the model, and keeps a held author's comment thread off it", async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: REPORTED_OWNER })).toEqual({
+      result: 'deleted',
+      left: 0,
+      rolledBack: false,
+    });
+    const { rows } = await db.query(
+      `SELECT t."modelId", t.metadata -> 'detachedFrom' AS "detachedFrom", c.id AS "commentId"
+       FROM "Thread" t JOIN "CommentV2" c ON c."threadId" = t.id`
+    );
+    expect(rows).toEqual([{ modelId: null, detachedFrom: { modelId: MODEL_ID }, commentId: 7001 }]);
+  });
+
+  it('deletes the model and its thread when no held author commented (control)', async () => {
+    await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: OWNER_ID });
+    expect((await db.query(`SELECT id FROM "CommentV2"`)).rows).toEqual([]);
   });
 
   // Its post and image deletes passed no hold check, so they must not commit either.
