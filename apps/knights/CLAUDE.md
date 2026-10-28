@@ -57,10 +57,10 @@ SQL on PGlite.
   - Once a vote commits, a failure settling it is logged and the player still gets the accepted answer; the item stays
     `Resolved` and the job retries it.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
-  own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt`. Both need
+  own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt` and settles votes on final items (`settledVotes` in its response; any failing step, or an item that could not be settled, returns 500). Both need
   `Authorization: Bearer $JOBS_TOKEN`.
 - The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
-- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, and the trial position for Acolytes). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed.
+- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed.
 
 ## Progression (`src/lib/server/progression`)
 
@@ -68,9 +68,9 @@ Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVot
 
 - A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier) as pending on the vote and in `goldPending`.
 - `settleItemVotes` pays a graded item once, only when its outcome is final (`Closed`, or `Resolved` and written back): correct = bulk XP, gold moves pending -> earned; wrong or inconclusive = gold dropped. `settledAt` plus the row lock make it idempotent. It runs in the transaction of every Knights path that finalises an item, and `POST /api/jobs/tick` sweeps (`settleFinalItems`) what other apps closed (the moderator app's rulings).
-- Fervor is recomputed for each paid player from their last `fervorWindow` settled correct/failed votes (inconclusive excluded). A payout block does not change earning; conversion and freezing are not built.
-- `/judgments`: the signed-in player's votes, paginated. `/play` shows level, fervor and gold.
-- `/dev/simulate` casts votes from other Knights players through `castVote` to resolve an item. It 404s unless SvelteKit's build-time `dev` is true (`lib/server/dev/guard.ts`), and its `/play` link is rendered only in dev.
+- Fervor is computed from the ledger (the player's last `fervorWindow` settled correct/failed votes since `startAt`, inconclusive excluded); the status line reads it from there and settle also writes the `fervor` column. A vote cast before a `startAt` reset settles without paying.
+- `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true.
+- XP is also added to the original game's Redis exp counter (`new-order:exp`, only when that player's field is present) after the commit, while both games run: its nightly reset overwrites `NewOrderPlayer.exp` from that counter, and an absent field is re-read from Postgres, which already holds the XP.
 
 ## Trials (`src/lib/server/trials`)
 

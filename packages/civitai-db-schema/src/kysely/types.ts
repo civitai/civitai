@@ -4348,7 +4348,7 @@ export type NewOrderPlayer = {
   payoutBlockedBy: number | null;
   payoutReleaseFrom: Timestamp | null;
   /**
-   * Knights of New Order v2: gold of this player's votes that are not yet graded / that were earned.
+   * Gold from votes not yet graded / already earned.
    */
   goldPending: Generated<number>;
   goldEarned: Generated<number>;
