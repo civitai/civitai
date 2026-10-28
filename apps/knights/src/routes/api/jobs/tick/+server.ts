@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
+import { settleFinalItems } from '$lib/server/progression/progression';
 import { queueDeps } from '$lib/server/queue/runtime';
 import type { RequestHandler } from './$types';
 
@@ -21,8 +22,15 @@ export const POST: RequestHandler = async ({ request }) => {
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
   );
-  if (!expired.ok || !writeBacks.ok) {
+  const progression = await settle('progression', () =>
+    settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  if (!expired.ok || !writeBacks.ok || !progression.ok || progression.value.failed > 0) {
     return json({ error: 'job failed' }, { status: 500 });
   }
-  return json({ ...expired.value, ...writeBacks.value });
+  return json({
+    ...expired.value,
+    ...writeBacks.value,
+    settledVotes: progression.value.votes,
+  });
 };

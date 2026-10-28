@@ -15,14 +15,17 @@ import {
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-const MIGRATIONS = ['20261210120000_knights_v2_queue', '20261212120000_knights_v2_trials'].map(
-  (name) =>
-    fileURLToPath(
-      new URL(
-        `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
-        import.meta.url
-      )
+const MIGRATIONS = [
+  '20261210120000_knights_v2_queue',
+  '20261212120000_knights_v2_trials',
+  '20261213120000_knights_v2_progression',
+].map((name) =>
+  fileURLToPath(
+    new URL(
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
+      import.meta.url
     )
+  )
 );
 
 const STAND_INS = `
@@ -49,6 +52,9 @@ CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
   "rankType" TEXT NOT NULL,
   "exp" INTEGER NOT NULL DEFAULT 0,
+  "fervor" INTEGER NOT NULL DEFAULT 0,
+  "payoutBlockedAt" TIMESTAMP(3),
+  "payoutBlockReason" TEXT,
   "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE "ModActivity" (
