@@ -4,7 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { publishModelById } from '~/server/services/model.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
+import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -37,6 +37,9 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
   `);
 
   const tasks = versions.map(({ id, meta: modelMeta, versionIds }, i) => async () => {
+    // Read again just before the publish: a content wipe may have kept the model since the select.
+    const current = await dbWrite.model.findUnique({ where: { id }, select: { meta: true } });
+    if (isRemovedWithOwner(current?.meta)) return;
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       modelMeta || {};
     const consoleKey = `Republishing ${i + 1} of ${versions.length}`;

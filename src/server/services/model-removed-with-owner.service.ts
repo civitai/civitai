@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import {
+  KEPT_IN_PLACE_STATUSES,
   KEPT_MODEL_STATUS,
   REMOVED_WITH_OWNER_META_KEYS,
   withoutRemovedWithOwner,
@@ -35,7 +36,8 @@ export async function restoreModelRemovedWithOwner(
       WHERE id = ${modelId}
         AND meta ->> 'removedWithOwner' = 'true' AND meta ->> 'statusBeforeRemoval' IS NOT NULL
         AND (status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
-          OR status::text = meta ->> 'statusBeforeRemoval')
+          OR (status::text = meta ->> 'statusBeforeRemoval'
+            AND status::text IN (${Prisma.join([...KEPT_IN_PLACE_STATUSES])})))
       FOR UPDATE
     ), model AS (
       UPDATE "Model" m

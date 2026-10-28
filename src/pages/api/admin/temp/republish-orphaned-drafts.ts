@@ -83,6 +83,25 @@ type Result = {
   error?: string;
 };
 
+/** Publishes the model `modelId` if it is still an undeleted draft with no content wipe's record. */
+export const publishOrphanedDraftSql = (modelId: number, publishedAt: Date) => Prisma.sql`
+        UPDATE "Model"
+        SET "status"      = 'Published',
+            "publishedAt" = CASE
+                              WHEN "publishedAt" IS NULL OR "publishedAt" > NOW()
+                                THEN ${publishedAt}
+                              ELSE "publishedAt"
+                            END,
+            "meta"        = COALESCE("meta", '{}'::jsonb)
+                              - 'unpublishedAt'
+                              - 'unpublishedReason'
+                              - 'unpublishedBy'
+        WHERE id = ${modelId}
+          AND "status" = 'Draft'
+          AND "deletedAt" IS NULL
+          AND ${notRemovedWithOwnerSql('meta')}
+      `;
+
 async function republishOne(c: Candidate): Promise<Result> {
   const publishedAt = c.postPublishedAt;
 
@@ -99,20 +118,9 @@ async function republishOne(c: Candidate): Promise<Result> {
       // candidate query already filters Model.status='Draft', but a
       // concurrent publish could race us, so the SQL guard is belt-and-
       // suspenders.
-      await tx.$executeRaw(Prisma.sql`
-        UPDATE "Model"
-        SET "status"      = 'Published',
-            "publishedAt" = CASE
-                              WHEN "publishedAt" IS NULL OR "publishedAt" > NOW()
-                                THEN ${publishedAt}
-                              ELSE "publishedAt"
-                            END,
-            "meta"        = COALESCE("meta", '{}'::jsonb)
-                              - 'unpublishedAt'
-                              - 'unpublishedReason'
-                              - 'unpublishedBy'
-        WHERE id = ${c.modelId}
-      `);
+      // The candidates come from the replica: re-check here what made each one, on the primary.
+      const flipped = await tx.$executeRaw(publishOrphanedDraftSql(c.modelId, publishedAt));
+      if (!flipped) throw new Error('No longer an orphaned draft; left as it is');
 
       // Split publishedAt off so the anti-bump guard can no-op it when the
       // version is already public. Status/availability still flip

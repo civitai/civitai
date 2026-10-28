@@ -8,6 +8,7 @@ import { bustMvCache } from '~/server/services/model-version.service';
 import type { RemovedWithOwnerMeta } from '~/server/services/model-removed-with-owner.service';
 import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { KEPT_IN_PLACE_STATUSES } from '~/server/utils/legal-hold';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
@@ -45,7 +46,10 @@ export default defineModeratorEndpoint('model.republish', {
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
     const record = model.meta as RemovedWithOwnerMeta | null;
-    const keptInPlace = !!record?.removedWithOwner && record.statusBeforeRemoval === model.status;
+    const keptInPlace =
+      !!record?.removedWithOwner &&
+      record.statusBeforeRemoval === model.status &&
+      (KEPT_IN_PLACE_STATUSES as readonly string[]).includes(model.status);
     if (model.deletedAt || (model.status !== ModelStatus.UnpublishedViolation && !keptInPlace))
       throw throwBadRequestError('Model is not unpublished as a violation');
 

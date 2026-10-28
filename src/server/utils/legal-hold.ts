@@ -35,6 +35,13 @@ export const notRemovedWithOwnerSql = (metaColumn: string) =>
  */
 export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
+/** The statuses a content wipe keeps a model in where it found it. */
+export const KEPT_IN_PLACE_STATUSES = [
+  'Draft',
+  'Training',
+  'GatherInterest',
+] as const satisfies readonly `${ModelStatus}`[];
+
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */
 export const reportHolds = (hc: string) =>
   Prisma.raw(`(

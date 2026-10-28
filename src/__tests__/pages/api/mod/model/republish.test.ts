@@ -200,6 +200,17 @@ describe('model.republish on a model a content wipe kept', () => {
     expect(sent).toMatchObject({ modelId: 42, status: 'Draft', versionIds: [] });
   });
 
+  it('refuses a recorded model back at a status the wipe moves', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Published',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Published' },
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(400);
+    expect(restoreModelRemovedWithOwner).not.toHaveBeenCalled();
+  });
+
   it('refuses a recorded model that has moved since the wipe', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       model({

@@ -832,6 +832,15 @@ describe('removeAllContent', () => {
       expect(restored).toMatchObject({ status: 'Draft', userId: CLEAN, versionIds: [] });
     });
 
+    // Only a status the wipe keeps a model in where it found it counts as kept in place.
+    it('restores nothing on a recorded model back at a status the wipe moves', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Model" (id, "userId", status, meta) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published',
+          '{"removedWithOwner": true, "statusBeforeRemoval": "Published", "versionsUnpublishedByRemoval": []}')
+      `);
+      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
+    });
+
     it('restores nothing on a recorded model that has moved since the wipe', async () => {
       await holder.db.exec(`
         INSERT INTO "Model" (id, "userId", status, meta) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Unpublished',
