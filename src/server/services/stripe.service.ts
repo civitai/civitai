@@ -1459,13 +1459,16 @@ export const getBuzzPackages = async () => {
   });
 };
 
-const futureUsageNotSupportedPaymentMethods = ['customer_balance', 'wechat_pay'];
+// Buzz is credited the moment the PaymentIntent succeeds, and a bank debit can be returned days
+// later, so the methods are fixed here rather than left to the dashboard or the client.
+// Cash App Pay only takes USD.
+const buzzPaymentMethodTypes = (currency: Currency) =>
+  currency === Currency.USD ? ['card', 'link', 'cashapp'] : ['card', 'link'];
 
 export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
   metadata,
-  paymentMethodTypes,
   customerId,
   user,
   domain,
@@ -1575,17 +1578,9 @@ export const getPaymentIntent = async ({
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
-    automatic_payment_methods:
-      !paymentMethodTypes && setupFuturePayment
-        ? {
-            enabled: true,
-          }
-        : undefined,
     customer: customerId,
     metadata: { ...(validatedMetadata as MetadataParam), buzzType },
-    payment_method_types: setupFuturePayment
-      ? paymentMethodTypes || undefined
-      : futureUsageNotSupportedPaymentMethods,
+    payment_method_types: buzzPaymentMethodTypes(currency),
     setup_future_usage: setupFuturePayment ? 'off_session' : undefined,
   });
 
