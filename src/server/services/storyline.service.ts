@@ -65,7 +65,7 @@ import {
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
-import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
@@ -851,6 +851,8 @@ export const STORYLINE_DELETE_REFUSALS = {
   appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
   paidContinuations:
     "This storyline has paid continuations that haven't settled yet. Try again once they have",
+  openReport: 'This storyline has an open report. A moderator can delete it',
+  paidChapters: 'This storyline has paid continuations. A moderator can delete it',
 } as const;
 
 /**
@@ -907,9 +909,9 @@ export async function deleteStoryline({
     // placement. Unsettled is the escrow's own reading (`sweepUnpaidLegs`,
     // `sweepUnplannedSettlements`): pending, a payout leg not yet paid, or a funded hold with no
     // payout planned.
-    const [{ unsettled }] = await tx.$queryRaw<{ unsettled: boolean }[]>`
-      SELECT EXISTS (
-        SELECT 1 FROM "Placement" p
+    const [{ unsettled, paid }] = await tx.$queryRaw<{ unsettled: boolean; paid: boolean }[]>`
+      WITH paid AS (
+        SELECT p.id, p.status FROM "Placement" p
         WHERE p.surface = 'storyline' AND NOT p.free AND p.amount > 0
           AND (
             (p."targetType" = 'post' AND p."targetId" IN (
@@ -919,7 +921,10 @@ export async function deleteStoryline({
               SELECT "placementId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "placementId" IS NOT NULL
             )
           )
-          AND (
+      )
+      SELECT EXISTS (SELECT 1 FROM paid) AS paid, EXISTS (
+        SELECT 1 FROM paid p
+        WHERE (
             p.status = 'pending'
             OR EXISTS (
               SELECT 1 FROM "PlacementTransaction" t
@@ -941,6 +946,19 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
+    // Launch rule (2026-10-28): an owner who took paid continuations cannot then delete the
+    // chapters they were paid for, and cannot delete what is under report. A moderator can.
+    if (!asModerator) {
+      if (paid) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidChapters);
+      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+          WHERE sr."storylineId" = ${id}
+            AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+        ) AS reported
+      `;
+      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.openReport);
+    }
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`
       DELETE FROM "PlacementSpace"

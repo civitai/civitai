@@ -66,7 +66,8 @@ beforeAll(async () => {
     CREATE TABLE "User" ("id" integer PRIMARY KEY);
     CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer, "nsfwLevel" integer NOT NULL DEFAULT 0,
       "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
-    CREATE TABLE "Report" ("id" integer PRIMARY KEY);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" ("id" integer PRIMARY KEY, "status" "ReportStatus" NOT NULL DEFAULT 'Pending');
     CREATE TABLE "PlacementSpace" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
       "entityType" text NOT NULL, "entityId" integer NOT NULL, "mode" text NOT NULL, "price" integer);
     CREATE TABLE "Placement" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
@@ -103,6 +104,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.pg.exec(`
     DELETE FROM "Appeal";
+    DELETE FROM "StorylineReport";
+    DELETE FROM "Report";
     DELETE FROM "PlacementTransaction";
     DELETE FROM "Placement";
     DELETE FROM "PlacementSpace";
@@ -187,10 +190,12 @@ describe('deleteStoryline', () => {
         `SELECT id, "userId", "nsfwLevel", "publishedAt", "tosViolation" FROM "Post" ORDER BY id`
       );
 
-    it('deletes it and keeps every post exactly as it was', async () => {
+    it('a moderator deletes it and every post stays exactly as it was', async () => {
       const before = await posts();
 
-      expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
+      expect(await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })).toEqual({
+        id: 1,
+      });
 
       expect(await storylineIds()).toEqual([2]);
       expect(await rows(`SELECT id FROM "StorylineChapter"`)).toEqual([]);
@@ -254,8 +259,24 @@ describe('deleteStoryline', () => {
         INSERT INTO "Placement" (id, surface, "targetType", "targetId", status, amount)
           VALUES (903, 'storyline', 'post', 502, 'pending', 0);
       `);
+      await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
+      expect(await storylineIds()).toEqual([2]);
+    });
+
+    // Launch rule (2026-10-28): an owner paid for continuations cannot delete the chapters.
+    it('is kept from its owner once a paid continuation has settled', async () => {
+      await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+        STORYLINE_DELETE_REFUSALS.paidChapters
+      );
+      expect(await storylineIds()).toEqual([1, 2]);
+    });
+
+    it('its owner deletes it, posts kept, when no continuation was paid', async () => {
+      await db.pg.exec(`DELETE FROM "Placement"`);
+      const before = await posts();
       await deleteStoryline({ id: 1, userId: OWNER });
       expect(await storylineIds()).toEqual([2]);
+      expect(await posts()).toEqual(before);
     });
 
     it("ignores another storyline's pending continuation", async () => {
@@ -266,7 +287,7 @@ describe('deleteStoryline', () => {
         INSERT INTO "Placement" (id, surface, "targetType", "targetId", status, amount)
           VALUES (902, 'storyline', 'post', 601, 'pending', 100);
       `);
-      await deleteStoryline({ id: 1, userId: OWNER });
+      await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
       expect(await storylineIds()).toEqual([2]);
     });
   });
@@ -304,6 +325,35 @@ describe('deleteStoryline', () => {
     await deleteStoryline({ id: 1, userId: OWNER, isModerator: true });
     expect(await storylineIds()).toEqual([2]);
     expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  // Launch rule (2026-10-28): nothing under an open report is deleted by its owner.
+  describe('a reported storyline', () => {
+    const report = (status: string) =>
+      db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (70, '${status}');
+        INSERT INTO "StorylineReport" ("storylineId", "reportId") VALUES (1, 70);
+      `);
+
+    it('is kept from its owner while the report is open', async () => {
+      await report('Pending');
+      await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+        STORYLINE_DELETE_REFUSALS.openReport
+      );
+      expect(await storylineIds()).toEqual([1, 2]);
+    });
+
+    it('can be deleted by a moderator while the report is open', async () => {
+      await report('Processing');
+      await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
+      expect(await storylineIds()).toEqual([2]);
+    });
+
+    it('can be deleted by its owner once the report is resolved', async () => {
+      await report('Unactioned');
+      await deleteStoryline({ id: 1, userId: OWNER });
+      expect(await storylineIds()).toEqual([2]);
+    });
   });
 
   describe('a taken-down storyline', () => {
