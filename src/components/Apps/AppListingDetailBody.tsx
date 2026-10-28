@@ -1,5 +1,6 @@
 import {
   Accordion,
+  ActionIcon,
   Alert,
   Anchor,
   Avatar,
@@ -21,6 +22,7 @@ import {
 import {
   IconApps,
   IconArrowLeft,
+  IconClock,
   IconDownload,
   IconEyeOff,
   IconFlask,
@@ -179,6 +181,8 @@ function categoryIcon(category: string): Icon {
   return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
 }
 
+const COVER_HEIGHT = { base: 220, sm: 340 };
+
 /**
  * Hero cover — the listing cover (`coverUrl`, already a CDN URL). Falls back to a
  * category-glyph placeholder over the listing's DETERMINISTIC PER-APP seeded
@@ -234,7 +238,7 @@ function HeroCover({
       <Image
         src={coverUrl}
         alt={`${name} cover image`}
-        h={260}
+        h={COVER_HEIGHT}
         fit="cover"
         radius="md"
         onError={() => setBroken(true)}
@@ -244,7 +248,7 @@ function HeroCover({
       // the store card, so one listing reads as one identity across every surface.
       <Box
         aria-hidden
-        h={260}
+        h={COVER_HEIGHT}
         className="flex items-center justify-center"
         data-listing-cover-placeholder=""
         style={{
@@ -943,127 +947,36 @@ export function AppListingDetailBody({
 
   return (
     <Stack gap="lg">
-      {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
-      {!preview && (
-        <Anchor component={Link} href="/apps/store-preview" size="sm">
-          <Group gap={4}>
-            <IconArrowLeft size={14} />
-            Back to store
-          </Group>
-        </Anchor>
-      )}
-
-      <HeroCover
-        coverUrl={detail.coverUrl}
-        category={detail.category}
-        name={detail.name}
-        slug={detail.slug}
-        launchHref={heroLaunchHref}
-      />
-
-      {/* HEADER — the model page's title block: identity + stats on the left, the
-          overflow menu on the right, the meta line underneath. */}
-      <Stack gap={4}>
-        <Group justify="space-between" align="flex-start" wrap="nowrap">
-          <Group gap="md" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
-            <Avatar
-              src={detail.iconUrl ?? undefined}
-              alt=""
-              radius="md"
-              size={64}
-              data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
-              styles={{
-                placeholder: {
-                  background: listingPlaceholderGradient({
-                    slug: detail.slug,
-                    category: detail.category,
-                    surface: 'icon',
-                  }),
-                  color: 'var(--mantine-color-white)',
-                  fontWeight: 700,
-                },
-              }}
-            >
-              {appInitial(detail.name, detail.slug)}
-            </Avatar>
-            <Stack gap={6} style={{ minWidth: 0 }}>
-              {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
-                  badge — which is where it would naturally go, and which would be wrong
-                  here. That whole Group is `!preview`-gated (its `Updated:` date is the
-                  publish request's submission time in preview, not a listing's
-                  `updated_at`), so a beta badge placed there would inherit an omission
-                  decided for a completely unrelated reason and vanish from the moderator
-                  preview. See the `preview` prop's omission ledger: the beta notice is
-                  explicitly KEPT. Here it is part of the identity block, which preview
-                  renders. */}
-              <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
-                <Title order={2} className="line-clamp-2">
-                  {detail.name}
-                </Title>
-                {detail.isBeta && (
-                  <Badge
-                    color="violet"
-                    variant="light"
-                    size="sm"
-                    style={{ flexShrink: 0 }}
-                    data-testid="apps-listing-beta-badge"
-                  >
-                    Beta
-                  </Badge>
-                )}
-                {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
-                    reason Beta is here: preview renders this block. `restrictedAudience` is
-                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
-                {visibilityBadge && (
-                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
-                    <Badge
-                      color="gray"
-                      variant="light"
-                      size="sm"
-                      leftSection={<IconEyeOff size={12} aria-hidden />}
-                      style={{ flexShrink: 0, cursor: 'help' }}
-                      data-testid="apps-listing-detail-visibility"
-                    >
-                      {visibilityBadge.label}
-                    </Badge>
-                  </Tooltip>
-                )}
-              </Group>
-              {detail.tagline && (
-                <Text c="dimmed" size="sm" className="line-clamp-2">
-                  {detail.tagline}
-                </Text>
-              )}
-              {/* FORK PROVENANCE — "Forked from …". In the identity block, and rendered in preview
-                  too: it is presentational, and the server has already decided whether the
-                  parent may be named for this viewer. Not behind the fork rollout flag. */}
-              <ListingForkAttribution forkOf={detail.forkOf} />
-              {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
-                  filtered server-side to ACCEPTED **and** `displayed` seats and projected
-                  to `{id, username, image}` — this renders it verbatim and applies no
-                  policy of its own (see ListingCollaboratorByline's header). */}
-              <ListingCollaboratorByline collaborators={detail.collaborators} />
-              {/* The creator identity lives in the right rail's CreatorCard on the live
-                  page; in preview that rail is omitted, so the lightweight chip stands
-                  in rather than leaving a moderator with no submitter at all. */}
-              {preview && <CreatorChip creator={detail.creator} />}
-              <StatChips detail={detail} preview={preview} />
-            </Stack>
-          </Group>
-
-          {/* Overflow menu — the secondary actions, collapsed. Replaces the stacked
-              full-width button column; the PRIMARY action stays a real button in the
-              right-rail action card, never buried in here.
-
-              🔴 SHARED WITH THE STORE CARD. This renders `AppListingActionsMenu`; the
-              item set, order, labels, eligibility gates and modal ownership all live
-              there. This surface's own are the trigger's geometry and `surface`.
-
-              🔴 `surface="detail"` IS WHAT KEEPS "Leave a review" AND "Report" HERE.
-              They are offered to any eligible signed-in viewer on this page and to
-              nobody on the store card — see `appListingMenuSurface.ts`. Changing this
-              string silently removes both items from the one surface whose job is to
-              offer them. */}
+      {/* The cover carries two overlaid controls: the circular back button (top-left,
+          a live-surface affordance — omitted in preview) and the `⋮` menu (top-right).
+          Both are SIBLINGS of the launch anchor inside HeroCover, never children of
+          it, so the banner nests no controls. */}
+      <Box pos="relative">
+        <HeroCover
+          coverUrl={detail.coverUrl}
+          category={detail.category}
+          name={detail.name}
+          slug={detail.slug}
+          launchHref={heroLaunchHref}
+        />
+        {!preview && (
+          <ActionIcon
+            component={Link}
+            href="/apps/store-preview"
+            aria-label="Back to store"
+            variant="filled"
+            color="dark"
+            radius="xl"
+            size="lg"
+            pos="absolute"
+            top={12}
+            left={12}
+            style={{ opacity: 0.85 }}
+          >
+            <IconArrowLeft size={18} />
+          </ActionIcon>
+        )}
+        <Box pos="absolute" top={12} right={12}>
           <AppListingActionsMenu
             listing={{
               id: detail.id,
@@ -1075,30 +988,134 @@ export function AppListingDetailBody({
             surface="detail"
             preview={preview}
           />
-        </Group>
+        </Box>
+      </Box>
 
-        {/* META LINE — `Updated: <date>` │ category, exactly as the model page renders
-            it. 🔴 There is NO TAG ROW: a listing has no tags, and inventing one from
-            the category would duplicate the badge beside it. */}
-        {!preview && (
-          <Group gap={4} data-testid="apps-listing-meta">
-            <Text size="xs" c="dimmed">
-              Updated: {formatDate(detail.updatedAt)}
-            </Text>
-            {detail.category && (
-              <>
-                <Divider orientation="vertical" />
-                {/* Plain badge, NOT a link. The model page links its category to
-                    `/tag/<name>`; the store has no category-filtered ROUTE — `/apps`
-                    holds its category filter in client state, not in the URL — so a
-                    link here would either 404 or land on an unfiltered grid. */}
-                <Badge size="sm" color="blue" data-testid="apps-listing-category">
-                  {marketplaceCategoryLabel(detail.category)}
+      {/* HEADER — the icon overlaps the cover's bottom edge; title, tagline and the
+          one-line meta row sit beneath it. */}
+      <Stack gap={4}>
+        <Stack gap="xs" style={{ minWidth: 0 }}>
+          <Avatar
+            src={detail.iconUrl ?? undefined}
+            alt=""
+            radius="md"
+            size={88}
+            style={{
+              marginTop: -44,
+              marginLeft: 16,
+              border: '4px solid var(--mantine-color-body)',
+            }}
+            data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
+            styles={{
+              placeholder: {
+                background: listingPlaceholderGradient({
+                  slug: detail.slug,
+                  category: detail.category,
+                  surface: 'icon',
+                }),
+                color: 'var(--mantine-color-white)',
+                fontWeight: 700,
+              },
+            }}
+          >
+            {appInitial(detail.name, detail.slug)}
+          </Avatar>
+          <Stack gap={6} style={{ minWidth: 0 }}>
+            {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
+                  badge — which is where it would naturally go, and which would be wrong
+                  here. That whole Group is `!preview`-gated (its `Updated:` date is the
+                  publish request's submission time in preview, not a listing's
+                  `updated_at`), so a beta badge placed there would inherit an omission
+                  decided for a completely unrelated reason and vanish from the moderator
+                  preview. See the `preview` prop's omission ledger: the beta notice is
+                  explicitly KEPT. Here it is part of the identity block, which preview
+                  renders. */}
+            <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+              <Title order={2} className="line-clamp-2">
+                {detail.name}
+              </Title>
+              {detail.isBeta && (
+                <Badge
+                  color="violet"
+                  variant="light"
+                  size="sm"
+                  style={{ flexShrink: 0 }}
+                  data-testid="apps-listing-beta-badge"
+                >
+                  Beta
                 </Badge>
+              )}
+              {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
+                    reason Beta is here: preview renders this block. `restrictedAudience` is
+                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
+              {visibilityBadge && (
+                <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+                  <Badge
+                    color="gray"
+                    variant="light"
+                    size="sm"
+                    leftSection={<IconEyeOff size={12} aria-hidden />}
+                    style={{ flexShrink: 0, cursor: 'help' }}
+                    data-testid="apps-listing-detail-visibility"
+                  >
+                    {visibilityBadge.label}
+                  </Badge>
+                </Tooltip>
+              )}
+            </Group>
+            {detail.tagline && (
+              <Text c="dimmed" size="sm" className="line-clamp-2">
+                {detail.tagline}
+              </Text>
+            )}
+            {/* FORK PROVENANCE — "Forked from …". In the identity block, and rendered in preview
+                  too: it is presentational, and the server has already decided whether the
+                  parent may be named for this viewer. Not behind the fork rollout flag. */}
+            <ListingForkAttribution forkOf={detail.forkOf} />
+            {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
+                  filtered server-side to ACCEPTED **and** `displayed` seats and projected
+                  to `{id, username, image}` — this renders it verbatim and applies no
+                  policy of its own (see ListingCollaboratorByline's header). */}
+            <ListingCollaboratorByline collaborators={detail.collaborators} />
+            {/* The creator identity lives in the right rail's CreatorCard on the live
+                  page; in preview that rail is omitted, so the lightweight chip stands
+                  in rather than leaving a moderator with no submitter at all. */}
+            {preview && <CreatorChip creator={detail.creator} />}
+          </Stack>
+
+          {/* META LINE — one row: stat chips │ date (clock glyph) │ category, so the page
+            header stays a single line under the title.
+            🔴 The `⋮` menu moved onto the cover's top-right corner; see the cover block
+            above. It is the SHARED `AppListingActionsMenu` with `surface="detail"`, and
+            that string is what keeps "Leave a review" and "Report" on this surface.
+            🔴 There is NO TAG ROW: a listing has no tags, and inventing one from the
+            category would duplicate the badge beside it. */}
+          <Group gap="sm" wrap="wrap" align="center" data-testid="apps-listing-meta">
+            <StatChips detail={detail} preview={preview} />
+            {!preview && (
+              <>
+                <Group gap={4} wrap="nowrap">
+                  <IconClock size={14} aria-hidden />
+                  <Text size="xs" c="dimmed">
+                    Updated: {formatDate(detail.updatedAt)}
+                  </Text>
+                </Group>
+                {detail.category && (
+                  <>
+                    <Divider orientation="vertical" />
+                    {/* Plain badge, NOT a link. The model page links its category to
+                      `/tag/<name>`; the store has no category-filtered ROUTE — `/apps`
+                      holds its category filter in client state, not in the URL — so a
+                      link here would either 404 or land on an unfiltered grid. */}
+                    <Badge size="sm" color="blue" data-testid="apps-listing-category">
+                      {marketplaceCategoryLabel(detail.category)}
+                    </Badge>
+                  </>
+                )}
               </>
             )}
           </Group>
-        )}
+        </Stack>
       </Stack>
 
       {/* TWO COLUMNS — spans, source order and `order={{sm}}` all copied from
@@ -1122,11 +1139,6 @@ export function AppListingDetailBody({
             {/* Action card — the primary CTA, in the rail, as a real button. */}
             {!preview && (
               <Card withBorder data-testid="apps-listing-action-card">
-                <Card.Section withBorder inheritPadding py="xs" px="sm">
-                  <Text size="sm" fw={600}>
-                    Use this app
-                  </Text>
-                </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">
                   <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
                   {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
@@ -1210,7 +1222,6 @@ export function AppListingDetailBody({
                 surface's layout choice, not part of the shared rule. */}
             {detail.description && (
               <Stack gap="xs" data-testid="apps-listing-description">
-                <Title order={4}>About</Title>
                 <ContentClamp maxHeight={460}>
                   <AppListingDescription description={detail.description} />
                 </ContentClamp>

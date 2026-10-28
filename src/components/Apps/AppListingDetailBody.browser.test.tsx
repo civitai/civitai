@@ -820,11 +820,11 @@ describe('AppListingDetailBody', () => {
     ).toHaveLength(1);
   });
 
-  test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds About', async () => {
+  test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds the description', async () => {
     const { container, within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: 'Body **text**.' })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
     const rail = container.querySelector('[data-testid="apps-listing-rail-col"]') as HTMLElement;
     const main = container.querySelector('[data-testid="apps-listing-main-col"]') as HTMLElement;
 
@@ -838,33 +838,16 @@ describe('AppListingDetailBody', () => {
 
   // ── Action-card header ─────────────────────────────────────────────────────
 
-  test('🔴 the action card is headed "Use this app"', async () => {
+  test('🔴 the action card has no "Use this app" header — the Open button leads it', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     await expect.element(within.getByText('My App')).toBeInTheDocument();
-
-    // Anchored to the CARD, never a loose page-wide text match — the CTA button
-    // labels below this header live in the same card and change independently
-    // (`getDetailPrimaryAction`), so a free-floating text query would drift onto
-    // them.
     const card = container.querySelector(
       '[data-testid="apps-listing-action-card"]'
     ) as HTMLElement | null;
-    // Positive control: without the card the header assertion below would be a
-    // claim about nothing, and a `toBeNull`-style guard on an absent element
-    // passes vacuously.
     expect(card, 'the action card must render in the non-preview arm').not.toBeNull();
-
-    // The header is the card's first section. Pin the WHOLE normalised string,
-    // not a substring — a substring guard is walkable by rewording ("Get this app
-    // to use it" would satisfy `toContain('Use this app')`).
-    const header = card!.firstElementChild as HTMLElement | null;
-    expect(header).not.toBeNull();
-    expect(header!.textContent?.trim()).toBe('Use this app');
-
-    // …and the superseded label is gone from the card entirely. Plain `toContain`
-    // on `textContent`, because `expect.element(...).not.toBeInTheDocument()` is
-    // inert in this repo (#4197) and passes for any string whatsoever.
-    expect(card!.textContent).not.toContain('Get this app');
+    // Plain `toContain` on `textContent`: `not.toBeInTheDocument()` is inert here (#4197).
+    expect(card!.textContent).not.toContain('Use this app');
+    expect(card!.firstElementChild!.querySelector('a, button')).not.toBeNull();
   });
 
   // ── Creator card ───────────────────────────────────────────────────────────
@@ -1028,7 +1011,7 @@ describe('AppListingDetailBody', () => {
     const { within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: long })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('Paragraph 0 of the description.')).toBeInTheDocument();
     const showMore = within.getByText('Show More');
     await expect.element(showMore).toBeInTheDocument();
     await userEvent.click(showMore);
@@ -1039,7 +1022,7 @@ describe('AppListingDetailBody', () => {
     const { container, within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: 'a **bold** word' })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
     // react-markdown produced a real <strong>; a raw-HTML path would not have.
     expect(container.querySelector('.markdown-content strong')?.textContent).toBe('bold');
   });
@@ -1058,7 +1041,7 @@ describe('AppListingDetailBody', () => {
     { what: 'the right-rail action card', testid: 'apps-listing-action-card' },
     { what: 'the creator card', testid: 'apps-listing-creator-card' },
     { what: 'the header stat chips', testid: 'apps-listing-stat-chips' },
-    { what: 'the header meta line', testid: 'apps-listing-meta' },
+    { what: 'the header category badge', testid: 'apps-listing-category' },
     { what: 'the related-listings rail', testid: 'apps-related-rail' },
     { what: 'the clickable hero', testid: 'apps-listing-hero-launch' },
   ];
@@ -1097,11 +1080,11 @@ describe('AppListingDetailBody', () => {
 
   test('🔴 preview omits the back-to-store link (text-level, with its control)', async () => {
     const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    await expect.element(live.within.getByText('Back to store')).toBeInTheDocument();
+    await expect.element(live.within.getByLabelText('Back to store')).toBeInTheDocument();
 
     const prev = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
     await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
-    expect(prev.within.getByText('Back to store').elements()).toHaveLength(0);
+    expect(prev.within.getByLabelText('Back to store').elements()).toHaveLength(0);
   });
 
   test('🔴 preview omits the REVIEWS / INSTALLS / UPDATED rows, keeping the others', async () => {
@@ -1142,7 +1125,7 @@ describe('AppListingDetailBody', () => {
     );
     await expect.element(within.getByText('My App')).toBeInTheDocument();
     await expect.element(within.getByText('Screenshots')).toBeInTheDocument();
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('this', { exact: false })).toBeInTheDocument();
   });
 
   test('non-preview (live) still renders comments/reviews + the primary action (regression)', async () => {
