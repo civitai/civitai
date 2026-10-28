@@ -1651,7 +1651,7 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ postId: owned('Post') })}
       DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
-    // Soft-deleted instead, as a moderator's delete does.
+    // Such a model is soft-deleted, as a moderator's delete does, rather than hard-deleted below.
     const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT m.id FROM "Model" m
       WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}`;

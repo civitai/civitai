@@ -15,7 +15,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, metrics, notify, reward } = vi.hoisted(() => ({
+const { holder, metrics, notify, reward, pointsRemoved } = vi.hoisted(() => ({
+  pointsRemoved: vi.fn(async (_comments: { userId: number; threadId: number }[]) => undefined),
   holder: { db: null as unknown as PGlite },
   metrics: {
     model: { queueUpdate: vi.fn<(id: unknown) => Promise<undefined>>() },
@@ -39,12 +40,17 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   createNotification: notify,
 }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  onCommentsRemoved: pointsRemoved,
+}));
 vi.mock('~/server/rewards', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   reportAcceptedReward: { apply: reward },
 }));
 
 import { bulkDeleteComments, deleteCommentById } from '~/server/services/comment.service';
+import { deleteComment } from '~/server/services/commentsv2.service';
 import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
@@ -81,7 +87,8 @@ const SCHEMA = `
     );
     -- A comment's reply thread; deleting the comment only unlinks it, as in production.
     CREATE TABLE "Thread" (
-      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
+      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL,
+      "parentThreadId" int, "rootThreadId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
 `;
@@ -475,6 +482,43 @@ describe('a member deleting their own legacy comment', () => {
 
   it('is not found when it does not exist', async () => {
     await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('a member deleting their own CommentV2', () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
+          .rows[0]) as never
+    );
+  });
+
+  // The author sees the same either way: the comment gone from every read they get (the reads
+  // filter ToS-hidden comments for non-moderators), the same row back, and its points taken back.
+  it.each([
+    ['is deleted', 11, CLEAN, 'gone'],
+    ['is kept, hidden, when its author is held', 21, HELD, 'hidden'],
+  ])('%s, and takes its points back as a delete does', async (_, id, author, after) => {
+    await expect(deleteComment({ id })).resolves.toMatchObject({ id, userId: author });
+    expect((await state('CommentV2'))[id] ?? 'gone').toBe(after);
+    expect(pointsRemoved).toHaveBeenCalledWith([
+      expect.objectContaining({ userId: author, threadId: author * 100 }),
+    ]);
+  });
+
+  it('is kept, hidden, while a held author replied under it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
+    `);
+    await deleteComment({ id: 11 });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 51: 'public' });
+  });
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteComment({ id: 999 })).resolves.toBeNull();
+    expect(pointsRemoved).not.toHaveBeenCalled();
   });
 });
 

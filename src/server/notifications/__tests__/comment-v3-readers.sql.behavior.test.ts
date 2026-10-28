@@ -536,6 +536,10 @@ describe('the points hook', () => {
     expect(await liveCommentsOn(10, { entityType: 'Image', entityId: 10 })).toBe(1);
     // User 6's only comment is deleted.
     expect(await liveCommentsOn(6, { entityType: 'Image', entityId: 10 })).toBe(0);
+    // User 5's on article 10 was removed for ToS (400, in the detail fetcher's rows); user 7 still
+    // has one there that is only hidden by the sweep.
+    expect(await liveCommentsOn(5, { entityType: 'Article', entityId: 10 })).toBe(0);
+    expect(await liveCommentsOn(7, { entityType: 'Article', entityId: 10 })).toBe(1);
   });
 });
 
