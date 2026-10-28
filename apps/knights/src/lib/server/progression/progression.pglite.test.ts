@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { seedImage, seedPlayer } from '../../../test/seed';
 import {
   applyPendingResolutions,
   castVote,
@@ -12,6 +13,7 @@ import {
   type QueueDeps,
 } from '../queue/queue.service';
 import { PROGRESSION } from './config';
+import { getPlayerStatus } from '../player-status';
 import { calculateFervor, settleFinalItems, settleItemVotes } from './progression';
 
 const Q = 'knights.image.nsfwLevel';
@@ -20,24 +22,15 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 let pg: PGlite;
 let db: Kysely<DB>;
 const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => ({ outcome: 'applied' }));
-const deps: QueueDeps = { applyConsensus, now: () => NOW };
+const mirrorXp = vi.fn<NonNullable<QueueDeps['mirrorXp']>>(async () => undefined);
+const depsAt = (now: Date): QueueDeps => ({ applyConsensus, now: () => now, mirrorXp });
+const deps = depsAt(NOW);
 
-async function player(userId: number, rankType = 'Knight', extra = '') {
-  await pg.query(`INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES ($1,$2)`, [
-    userId,
-    rankType,
-  ]);
-  if (extra) await pg.exec(`UPDATE "NewOrderPlayer" SET ${extra} WHERE "userId"=${userId}`);
-}
-
-async function image(id: number, nsfwLevel = 4) {
-  await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,'2020-01-01')`, [id]);
-  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,$3,$1)`, [
-    id,
-    `key-${id}`,
-    nsfwLevel,
-  ]);
-}
+const player = (userId: number, rankType = 'Knight', extra = '') =>
+  seedPlayer(pg, userId, rankType).then(() =>
+    extra ? pg.exec(`UPDATE "NewOrderPlayer" SET ${extra} WHERE "userId"=${userId}`) : undefined
+  );
+const image = (id: number, nsfwLevel = 4) => seedImage(pg, id, { nsfwLevel });
 
 const item = (imageId: number, question = Q) =>
   enqueueItem(db, { questionKey: question, imageId, source: 'test', expiresAt: null }, NOW);
@@ -61,7 +54,6 @@ const ballot = async (itemId: number, userId: number) =>
     )
   ).rows[0];
 
-/** Five Knights vote; the last `losers` of them pick the other answer. */
 async function resolve(itemId: number, firstPlayer: number, winning: string, losers = 0) {
   const other = winning === '4' ? '8' : '4';
   for (let i = 0; i < 5; i++) {
@@ -78,6 +70,9 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   applyConsensus.mockClear();
+  mirrorXp.mockReset();
+  mirrorXp.mockResolvedValue(undefined);
+  await pg.exec(`ALTER TABLE "NewOrderPlayer" DROP CONSTRAINT IF EXISTS no_gold`);
   await pg.exec(
     `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY`
   );
@@ -174,7 +169,6 @@ describe('grading', () => {
     await resolve(first, 1, '4');
     await resolve(second, 1, '8', 1);
 
-    // Player 1 got both right; player 5 agreed with the first ruling and lost the second.
     expect((await who(1)).fervor).toBe(calculateFervor({ correct: 2, graded: 2 }));
     expect((await who(5)).fervor).toBe(calculateFervor({ correct: 1, graded: 2 }));
     expect((await who(5)).fervor).toBe(50);
@@ -203,8 +197,8 @@ describe('grading', () => {
     await resolve(id, 1, '4');
     const before = await who(1);
 
-    expect(await settleItemVotes(db, id, NOW)).toBe(0);
-    expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 0, votes: 0 });
+    expect((await settleItemVotes(db, id, NOW)).votes).toBe(0);
+    expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 0, votes: 0, failed: 0 });
     await applyPendingResolutions(db, deps);
 
     expect(await who(1)).toEqual(before);
@@ -240,13 +234,12 @@ describe('grading', () => {
     const id = await item(10);
     await vote(1, id, '4');
     await vote(2, id, '8');
-    // What a moderator ruling does: close the item and grade its pending votes.
     await pg.exec(`UPDATE "KnightsQueueItem" SET status='Closed' WHERE id=${id}`);
     await pg.exec(
       `UPDATE "KnightsVote" SET verdict = CASE WHEN answer='8' THEN 'correct' ELSE 'failed' END`
     );
 
-    expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 1, votes: 2 });
+    expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 1, votes: 2, failed: 0 });
     expect(await who(2)).toMatchObject({ goldEarned: PROGRESSION.baseGold, goldPending: 0 });
     expect(await who(1)).toMatchObject({ goldEarned: 0, goldPending: 0 });
   });
@@ -259,5 +252,123 @@ describe('calculateFervor', () => {
       Math.floor(10 * PROGRESSION.fervorPerCorrect * PROGRESSION.fervorAccuracyFloor)
     );
     expect(calculateFervor({ correct: 400, graded: 500 })).toBe(32000);
+  });
+});
+
+describe('career reset (startAt)', () => {
+  const at = (iso: string) => depsAt(new Date(iso));
+
+  it('settles a vote cast before the reset without paying it', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    await pg.exec(
+      `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16', "goldPending"=0 WHERE "userId"=1`
+    );
+    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+
+    expect(await ballot(id, 1)).toMatchObject({ verdict: 'correct', gold: 0 });
+    expect((await ballot(id, 1)).settledAt).not.toBeNull();
+    expect(await who(1)).toMatchObject({
+      exp: PROGRESSION.voteXp,
+      goldEarned: 0,
+      goldPending: 0,
+      fervor: 0,
+    });
+    expect(await who(2)).toMatchObject({ goldEarned: PROGRESSION.baseGold });
+  });
+
+  it('counts only votes cast since the reset towards fervor', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    await image(11);
+    const before = await item(10);
+    const after = await item(11);
+    for (let i = 1; i <= 5; i++) {
+      await castVote(db, { userId: i, itemId: before, answer: '4' }, at('2026-12-10T10:00:00Z'));
+    }
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "startAt"='2026-12-12' WHERE "userId"=1`);
+    for (let i = 1; i <= 5; i++) {
+      await castVote(db, { userId: i, itemId: after, answer: '4' }, at('2026-12-15T10:00:00Z'));
+    }
+
+    expect((await who(1)).fervor).toBe(calculateFervor({ correct: 1, graded: 1 }));
+    expect((await who(2)).fervor).toBe(calculateFervor({ correct: 2, graded: 2 }));
+    expect((await getPlayerStatus(db, 1))?.fervor).toBe(100);
+  });
+});
+
+describe('XP mirror for the original game', () => {
+  it('reports the flat XP of a vote and the bulk of a settled one, after commit', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    await resolve(id, 1, '4', 1);
+
+    expect(mirrorXp).toHaveBeenCalledWith([{ playerId: 1, xp: PROGRESSION.voteXp }]);
+    const bulk = mirrorXp.mock.calls
+      .flatMap(([deltas]) => deltas)
+      .filter((d) => d.xp === PROGRESSION.correctXp);
+    expect(bulk.map((d) => d.playerId).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('never fails a vote because the mirror failed', async () => {
+    await player(1);
+    await image(10);
+    const id = await item(10);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mirrorXp.mockRejectedValue(new Error('redis down'));
+
+    expect(await vote(1, id, '4')).toEqual({ status: 'recorded' });
+    expect((await who(1)).exp).toBe(PROGRESSION.voteXp);
+  });
+});
+
+describe('write-back then payout', () => {
+  it('keeps appliedAt and does not write back again when the payout fails; the sweep pays later', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (let i = 1; i <= 4; i++) await vote(i, id, '8');
+    await pg.exec(`ALTER TABLE "NewOrderPlayer" ADD CONSTRAINT no_gold CHECK ("goldEarned" = 0)`);
+
+    expect(await vote(5, id, '8')).toEqual({ status: 'resolved' });
+
+    expect(
+      (await pg.query(`SELECT "appliedAt" FROM "KnightsQueueItem" WHERE id=$1`, [id])).rows[0]
+    ).not.toMatchObject({ appliedAt: null });
+    expect((await ballot(id, 1)).settledAt).toBeNull();
+
+    await pg.exec(`ALTER TABLE "NewOrderPlayer" DROP CONSTRAINT no_gold`);
+    await applyPendingResolutions(db, deps);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 5, failed: 0 });
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect((await who(1)).goldEarned).toBe(PROGRESSION.baseGold);
+  });
+});
+
+describe('settleFinalItems', () => {
+  it('logs and skips a poison item, settles the rest, and reports it', async () => {
+    for (const id of [1, 2, 98, 99]) await player(id);
+    await image(10);
+    await image(11);
+    const poison = await item(10);
+    const fine = await item(11);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await vote(99, poison, '4');
+    await vote(98, poison, '4');
+    await vote(1, fine, '4');
+    await vote(2, fine, '4');
+    await pg.exec(`UPDATE "KnightsQueueItem" SET status='Closed'`);
+    await pg.exec(`UPDATE "KnightsVote" SET verdict='correct'`);
+    await pg.exec(
+      `ALTER TABLE "NewOrderPlayer" ADD CONSTRAINT no_gold CHECK ("userId" <> 99 OR "goldEarned" = 0)`
+    );
+
+    expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 2, votes: 2, failed: 1 });
+    expect((await who(1)).goldEarned).toBe(PROGRESSION.baseGold);
+    expect((await ballot(poison, 99)).settledAt).toBeNull();
   });
 });

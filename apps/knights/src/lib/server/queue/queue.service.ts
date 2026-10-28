@@ -4,7 +4,8 @@ import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 import { goldForRank, PROGRESSION } from '../progression/config';
-import { settleItemVotes } from '../progression/progression';
+import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
+import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
 import {
   canVote,
@@ -42,6 +43,8 @@ export type QueueDeps = {
   /** A throw is transient: the item stays settled and unapplied and is retried with backoff. A returned skip is final. */
   applyConsensus: (application: ConsensusApplication) => Promise<ApplyOutcome>;
   now: () => Date;
+  /** Keeps the original game's exp counter in step; called after the Postgres commit, a failure is only logged. */
+  mirrorXp?: XpMirror;
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
@@ -258,143 +261,154 @@ export async function castVote(
   const now = deps.now();
   await ensureMonthPartition(db, { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
 
-  const { result, settledItemId } = await db
+  const { result, settledItemId, xp } = await db
     .transaction()
-    .execute(async (trx): Promise<{ result: CastVoteResult; settledItemId?: number }> => {
-      const rejected = (reason: RejectReason) => ({
-        result: { status: 'rejected', reason } as const,
-      });
+    .execute(
+      async (trx): Promise<{ result: CastVoteResult; settledItemId?: number; xp?: XpDelta[] }> => {
+        const rejected = (reason: RejectReason) => ({
+          result: { status: 'rejected', reason } as const,
+        });
 
-      // The item row lock serialises every vote on one item: it is what keeps one vote per player
-      // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
-      const locked = await trx
-        .selectFrom('KnightsQueueItem')
-        .select(['id', 'status'])
-        .where('id', '=', input.itemId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!locked || locked.status !== 'Open') return rejected('not-open');
+        // The item row lock serialises every vote on one item: it is what keeps one vote per player
+        // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
+        const locked = await trx
+          .selectFrom('KnightsQueueItem')
+          .select(['id', 'status'])
+          .where('id', '=', input.itemId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!locked || locked.status !== 'Open') return rejected('not-open');
 
-      const item = await servableItems(trx)
-        .where('i.id', '=', input.itemId)
-        .select([
-          'i.id',
-          'i.questionKey',
-          'i.imageId',
-          'i.minRank',
-          'i.votesNeeded',
-          'img.nsfwLevel as imageLevel',
-          'q.options',
-          'q.maxVotes',
-          'q.threshold',
-        ])
-        .executeTakeFirst();
-      if (!item) return rejected('unavailable');
+        const item = await servableItems(trx)
+          .where('i.id', '=', input.itemId)
+          .select([
+            'i.id',
+            'i.questionKey',
+            'i.imageId',
+            'i.minRank',
+            'i.votesNeeded',
+            'img.nsfwLevel as imageLevel',
+            'q.options',
+            'q.maxVotes',
+            'q.threshold',
+          ])
+          .executeTakeFirst();
+        if (!item) return rejected('unavailable');
 
-      const player = await trx
-        .selectFrom('NewOrderPlayer')
-        .select(['rankType', 'exp'])
-        .where('userId', '=', input.userId)
-        .executeTakeFirst();
-      if (!player) return rejected('no-player');
-      if (!isRank(player.rankType) || !canVote(player.rankType, item.minRank)) {
-        return rejected('not-eligible');
-      }
-
-      const options = item.options as QuestionOption[];
-      if (!options.some((o) => o.value === input.answer)) return rejected('bad-answer');
-
-      const already = await trx
-        .selectFrom('KnightsVote')
-        .select('playerId')
-        .where('itemId', '=', item.id)
-        .where('playerId', '=', input.userId)
-        .executeTakeFirst();
-      if (already) return rejected('already-voted');
-
-      const smites = await trx
-        .selectFrom('NewOrderSmite')
-        .select((eb) => eb.fn.countAll<string>().as('n'))
-        .where('targetPlayerId', '=', input.userId)
-        .where('cleansedAt', 'is', null)
-        .executeTakeFirstOrThrow();
-
-      // A vote that weighs nothing could still be the one that tips a split into a decision.
-      const weight = voteWeight({
-        rank: player.rankType,
-        level: levelForExp(player.exp),
-        smites: Number(smites.n),
-      });
-      if (weight <= 0) return rejected('no-weight');
-      const gold = goldForRank(player.rankType);
-
-      await trx
-        .insertInto('KnightsVote')
-        .values({
-          itemId: item.id,
-          playerId: input.userId,
-          createdAt: utc(now),
-          questionKey: item.questionKey,
-          imageId: item.imageId,
-          stage: item.minRank,
-          answer: input.answer,
-          weight,
-          xp: PROGRESSION.voteXp,
-          gold,
-        })
-        .execute();
-      await trx
-        .updateTable('NewOrderPlayer')
-        .set({
-          exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
-          goldPending: sql<number>`"goldPending" + ${gold}`,
-        })
-        .where('userId', '=', input.userId)
-        .execute();
-
-      const stageVotes: WeightedAnswer[] = await trx
-        .selectFrom('KnightsVote')
-        .select(['answer', 'weight'])
-        .where('itemId', '=', item.id)
-        .where('stage', '=', item.minRank)
-        .execute();
-
-      const decision = decideChoice(stageVotes, {
-        votesNeeded: item.votesNeeded,
-        maxVotes: item.maxVotes,
-        threshold: item.threshold,
-      });
-      if (decision.kind === 'pending') return { result: { status: 'recorded' } };
-      if (decision.kind === 'split') return { result: { status: await escalate(trx, item, now) } };
-
-      const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
-      if (writesBack) {
-        const winner = Number(decision.value);
-        if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
-          await toInquisitor(trx, item.id, now);
-          return { result: { status: 'inquisitor' } };
+        const player = await trx
+          .selectFrom('NewOrderPlayer')
+          .select(['rankType', 'exp'])
+          .where('userId', '=', input.userId)
+          .executeTakeFirst();
+        if (!player) return rejected('no-player');
+        if (!isRank(player.rankType) || !canVote(player.rankType, item.minRank)) {
+          return rejected('not-eligible');
         }
+
+        const options = item.options as QuestionOption[];
+        if (!options.some((o) => o.value === input.answer)) return rejected('bad-answer');
+
+        const already = await trx
+          .selectFrom('KnightsVote')
+          .select('playerId')
+          .where('itemId', '=', item.id)
+          .where('playerId', '=', input.userId)
+          .executeTakeFirst();
+        if (already) return rejected('already-voted');
+
+        const smites = await trx
+          .selectFrom('NewOrderSmite')
+          .select((eb) => eb.fn.countAll<string>().as('n'))
+          .where('targetPlayerId', '=', input.userId)
+          .where('cleansedAt', 'is', null)
+          .executeTakeFirstOrThrow();
+
+        // A vote that weighs nothing could still be the one that tips a split into a decision.
+        const weight = voteWeight({
+          rank: player.rankType,
+          level: levelForExp(player.exp),
+          smites: Number(smites.n),
+        });
+        if (weight <= 0) return rejected('no-weight');
+        const gold = goldForRank(player.rankType);
+
+        await trx
+          .insertInto('KnightsVote')
+          .values({
+            itemId: item.id,
+            playerId: input.userId,
+            createdAt: utc(now),
+            questionKey: item.questionKey,
+            imageId: item.imageId,
+            stage: item.minRank,
+            answer: input.answer,
+            weight,
+            xp: PROGRESSION.voteXp,
+            gold,
+          })
+          .execute();
+        await trx
+          .updateTable('NewOrderPlayer')
+          .set({
+            exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
+            goldPending: sql<number>`"goldPending" + ${gold}`,
+          })
+          .where('userId', '=', input.userId)
+          .execute();
+
+        const stageVotes: WeightedAnswer[] = await trx
+          .selectFrom('KnightsVote')
+          .select(['answer', 'weight'])
+          .where('itemId', '=', item.id)
+          .where('stage', '=', item.minRank)
+          .execute();
+
+        const decision = decideChoice(stageVotes, {
+          votesNeeded: item.votesNeeded,
+          maxVotes: item.maxVotes,
+          threshold: item.threshold,
+        });
+        const voted: XpDelta = { playerId: input.userId, xp: PROGRESSION.voteXp };
+        if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
+        if (decision.kind === 'split') {
+          return { result: { status: await escalate(trx, item, now) }, xp: [voted] };
+        }
+
+        const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
+        if (writesBack) {
+          const winner = Number(decision.value);
+          if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
+            await toInquisitor(trx, item.id, now);
+            return { result: { status: 'inquisitor' }, xp: [voted] };
+          }
+        }
+
+        await trx
+          .updateTable('KnightsQueueItem')
+          .set({
+            status: 'Resolved',
+            resolvedValue: decision.value,
+            resolvedAt: utc(now),
+            resolvedBy: input.userId,
+            resolvedFromLevel: writesBack ? item.imageLevel : null,
+            appliedAt: writesBack ? null : utc(now),
+            updatedAt: utc(now),
+          })
+          .where('id', '=', item.id)
+          .execute();
+        await gradeKnightsVotes(trx, item.id, decision.value);
+        // Not yet written back: a reroute can still regrade these votes.
+        const settled = writesBack ? undefined : await settleItemVotes(trx, item.id, now);
+
+        return {
+          result: { status: 'resolved' },
+          settledItemId: writesBack ? item.id : undefined,
+          xp: [voted, ...(settled?.xp ?? [])],
+        };
       }
+    );
 
-      await trx
-        .updateTable('KnightsQueueItem')
-        .set({
-          status: 'Resolved',
-          resolvedValue: decision.value,
-          resolvedAt: utc(now),
-          resolvedBy: input.userId,
-          resolvedFromLevel: writesBack ? item.imageLevel : null,
-          appliedAt: writesBack ? null : utc(now),
-          updatedAt: utc(now),
-        })
-        .where('id', '=', item.id)
-        .execute();
-      await gradeKnightsVotes(trx, item.id, decision.value);
-      // A rating still to be written back can be rerouted and its votes regraded, so it pays out once applied.
-      if (!writesBack) await settleItemVotes(trx, item.id, now);
-
-      return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
-    });
+  await mirrorXp(deps.mirrorXp, xp ?? []);
 
   if (settledItemId !== undefined) {
     // The vote is committed: a failure settling it must not tell the player it was lost. The item stays Resolved and unwritten, so the job retries it.
@@ -428,8 +442,14 @@ type Reroute =
   | { kind: 'inquisitor'; reason: 'attempts-exhausted' };
 
 /** Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling. */
-async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date) {
-  await db.transaction().execute(async (trx) => {
+async function reroute(
+  db: Kysely<DB>,
+  itemId: number,
+  route: Reroute,
+  now: Date,
+  mirror?: XpMirror
+) {
+  const xp = await db.transaction().execute(async (trx): Promise<XpDelta[]> => {
     const left = {
       appliedAt: null,
       nextAttemptAt: null,
@@ -452,7 +472,7 @@ async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date
         .where('id', '=', itemId)
         .execute();
       await regradeVotes(trx, itemId, 'pending');
-      return;
+      return [];
     }
 
     await trx
@@ -469,8 +489,9 @@ async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date
       itemId,
       route.kind === 'moderator' ? { correctAnswer: String(route.level) } : 'inconclusive'
     );
-    await settleItemVotes(trx, itemId, now);
+    return (await settleItemVotes(trx, itemId, now)).xp;
   });
+  await mirrorXp(mirror, xp);
 }
 
 function rerouteForSkip(
@@ -495,15 +516,19 @@ const dueForWriteback = (eb: ExpressionBuilder<DB, 'KnightsQueueItem'>, now: Dat
 
 type SettleOutcome = 'applied' | 'failed' | 'rerouted' | 'unclaimed';
 
-async function markApplied(db: Kysely<DB>, itemId: number, now: Date) {
-  await db.transaction().execute(async (trx) => {
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set({ appliedAt: utc(now), nextAttemptAt: null })
-      .where('id', '=', itemId)
-      .execute();
-    await settleItemVotes(trx, itemId, now);
-  });
+/** `appliedAt` is committed on its own: a failing payout must not undo it and re-trigger the write-back. The tick sweep pays what this misses. */
+async function markApplied(db: Kysely<DB>, itemId: number, now: Date, deps: QueueDeps) {
+  await db
+    .updateTable('KnightsQueueItem')
+    .set({ appliedAt: utc(now), nextAttemptAt: null })
+    .where('id', '=', itemId)
+    .execute();
+  await settleAndMirror(db, itemId, now, deps.mirrorXp).catch((error) =>
+    console.error('knights: could not pay out a written-back item, the job will retry it', {
+      itemId,
+      error,
+    })
+  );
 }
 
 /** One write-back try. The claim leases the item so a concurrent run cannot write it twice; only a throw is transient. */
@@ -538,11 +563,11 @@ async function settleResolved(
     resolvedValue: claimed.resolvedValue as string,
   });
   if (decision.kind === 'already-applied') {
-    await markApplied(db, itemId, deps.now());
+    await markApplied(db, itemId, deps.now(), deps);
     return 'applied';
   }
   if (decision.kind !== 'apply') {
-    await reroute(db, itemId, decision, now);
+    await reroute(db, itemId, decision, now, deps.mirrorXp);
     return 'rerouted';
   }
 
@@ -554,10 +579,10 @@ async function settleResolved(
       actorId: claimed.resolvedBy as number,
     });
     if (outcome.outcome === 'skipped') {
-      await reroute(db, itemId, rerouteForSkip(outcome), now);
+      await reroute(db, itemId, rerouteForSkip(outcome), now, deps.mirrorXp);
       return 'rerouted';
     }
-    await markApplied(db, itemId, deps.now());
+    await markApplied(db, itemId, deps.now(), deps);
     return 'applied';
   } catch (error) {
     const log = { itemId, attempt: claimed.applyAttempts, error };
@@ -566,7 +591,13 @@ async function settleResolved(
         'knights: could not write a settled answer back, handing it to the Inquisitors',
         log
       );
-      await reroute(db, itemId, { kind: 'inquisitor', reason: 'attempts-exhausted' }, now);
+      await reroute(
+        db,
+        itemId,
+        { kind: 'inquisitor', reason: 'attempts-exhausted' },
+        now,
+        deps.mirrorXp
+      );
       return 'rerouted';
     }
     console.error('knights: could not write a settled answer back, it will be retried', log);

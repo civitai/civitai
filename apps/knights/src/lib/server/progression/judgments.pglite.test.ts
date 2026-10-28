@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { seedImage } from '../../../test/seed';
 import {
   castVote,
   enqueueItem,
@@ -19,11 +20,7 @@ const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => ({ outcome
 const depsAt = (now: Date): QueueDeps => ({ applyConsensus, now: () => now });
 
 async function judge(imageId: number, at: Date, userId = 1) {
-  await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,'2020-01-01')`, [imageId]);
-  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,4,$1)`, [
-    imageId,
-    `key-${imageId}`,
-  ]);
+  await seedImage(pg, imageId);
   const id = await enqueueItem(
     db,
     { questionKey: 'knights.image.nsfwLevel', imageId, source: 'test', expiresAt: null },
@@ -83,11 +80,22 @@ describe('listJudgments', () => {
   it('hides the thumbnail of an image that is no longer servable and maps the verdicts', async () => {
     const id = await judge(10, NOW);
     await pg.exec(`UPDATE "Image" SET "blockedFor"='x'`);
-    await pg.exec(`UPDATE "KnightsVote" SET verdict='failed' WHERE "itemId"=${id}`);
+    await pg.exec(
+      `UPDATE "KnightsVote" SET verdict='failed', "settledAt"=now() WHERE "itemId"=${id}`
+    );
 
     const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
 
     expect(row.imageKey).toBeNull();
     expect(row.status).toBe('wrong');
+  });
+
+  it('shows a vote as pending until it is settled, even once graded', async () => {
+    const id = await judge(10, NOW);
+    await pg.exec(`UPDATE "KnightsVote" SET verdict='correct' WHERE "itemId"=${id}`);
+    expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('pending');
+
+    await pg.exec(`UPDATE "KnightsVote" SET "settledAt"=now() WHERE "itemId"=${id}`);
+    expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('correct');
   });
 });

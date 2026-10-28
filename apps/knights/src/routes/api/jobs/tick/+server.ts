@@ -22,8 +22,10 @@ export const POST: RequestHandler = async ({ request }) => {
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
   );
-  const progression = await settle('progression', () => settleFinalItems(db, { now: new Date() }));
-  if (!expired.ok || !writeBacks.ok || !progression.ok) {
+  const progression = await settle('progression', () =>
+    settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  if (!expired.ok || !writeBacks.ok || !progression.ok || progression.value.failed > 0) {
     return json({ error: 'job failed' }, { status: 500 });
   }
   return json({

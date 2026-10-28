@@ -5,7 +5,7 @@ const applyPendingResolutions = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
+vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
 vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendingResolutions }));
 
@@ -20,7 +20,7 @@ beforeEach(() => {
   escalateExpired.mockReset();
   applyPendingResolutions.mockReset();
   settleFinalItems.mockReset();
-  settleFinalItems.mockResolvedValue({ items: 0, votes: 0 });
+  settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -64,5 +64,13 @@ describe('POST /api/jobs/tick', () => {
 
     expect(settleFinalItems).toHaveBeenCalled();
     expect(response.status).toBe(500);
+  });
+
+  it('answers 500 when an item could not be paid out, after sweeping the rest', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    settleFinalItems.mockResolvedValue({ items: 2, votes: 1, failed: 1 });
+
+    expect((await run()).status).toBe(500);
   });
 });

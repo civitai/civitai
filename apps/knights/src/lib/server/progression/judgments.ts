@@ -27,7 +27,6 @@ export const statusOf = (verdict: string): JudgmentStatus =>
     ? 'inconclusive'
     : 'pending';
 
-/** The player's votes, newest first. `hasMore` is read from one extra row. */
 export async function listJudgments(
   db: Kysely<DB>,
   userId: number,
@@ -42,6 +41,7 @@ export async function listJudgments(
       'v.itemId',
       'v.answer',
       'v.verdict',
+      'v.settledAt',
       'v.xp',
       'v.gold',
       'v.createdAt',
@@ -49,7 +49,7 @@ export async function listJudgments(
       'q.options',
       'img.url as imageKey',
     ])
-    .select((eb) => servableImage(eb as never).as('servable'))
+    .select((eb) => servableImage(eb).as('servable'))
     .where('v.playerId', '=', userId)
     .orderBy('v.createdAt', 'desc')
     .orderBy('v.itemId', 'desc')
@@ -66,7 +66,7 @@ export async function listJudgments(
         imageKey: r.servable && r.imageKey ? r.imageKey : null,
         prompt: r.prompt,
         answerLabel: options.find((o) => o.value === r.answer)?.label ?? r.answer,
-        status: statusOf(r.verdict),
+        status: r.settledAt ? statusOf(r.verdict) : 'pending',
         xp: r.xp,
         gold: r.gold ?? 0,
         at: r.createdAt,

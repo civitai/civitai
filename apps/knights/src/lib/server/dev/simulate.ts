@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { applyPendingResolutions, castVote, type QueueDeps } from '../queue/queue.service';
 import { settleFinalItems } from '../progression/progression';
+import { isFinalItem } from '../queue/item-state';
 import { canVote } from '../queue/ranks';
 
 /** Safety stop: an item cannot need more votes than this across all its stages. */
@@ -18,7 +19,6 @@ export type SimulatableItem = {
   votedByMe: boolean;
 };
 
-/** Open items, those the caller already judged first. */
 export async function listSimulatableItems(
   db: Kysely<DB>,
   callerId: number,
@@ -63,23 +63,20 @@ export async function listSimulatableItems(
 }
 
 export type SimulationResult = {
+  itemId: number;
   cast: number;
   itemStatus: string | null;
-  /** Whether the item is paid out; false while its rating still has to be written back. */
   settled: boolean;
 };
 
-/**
- * Casts votes for one open item from other Knights players, through the normal `castVote`, until the
- * item leaves Open or no other eligible player is left. Then runs the write-back and the payout the
- * tick job would run.
- */
+/** Casts votes through the normal castVote until the item leaves Open, then runs the tick job's write-back and payout. */
 export async function simulateOtherVoters(
   db: Kysely<DB>,
   input: { callerId: number; itemId: number; answer: string },
   deps: QueueDeps
 ): Promise<SimulationResult> {
   let cast = 0;
+  const skipped = new Set<number>();
   while (cast < MAX_SIMULATED_VOTES) {
     const item = await db
       .selectFrom('KnightsQueueItem')
@@ -107,7 +104,9 @@ export async function simulateOtherVoters(
       .orderBy('p.userId', 'asc')
       .limit(CANDIDATES_PER_ROUND)
       .execute();
-    const voter = candidates.find((c) => canVote(c.rankType, item.minRank));
+    const voter = candidates.find(
+      (c) => !skipped.has(c.userId) && canVote(c.rankType, item.minRank)
+    );
     if (!voter) break;
 
     const result = await castVote(
@@ -115,13 +114,15 @@ export async function simulateOtherVoters(
       { userId: voter.userId, itemId: input.itemId, answer: input.answer },
       deps
     );
-    // A voter who cannot vote (no weight, ineligible) would be picked forever: stop instead of looping.
-    if (result.status === 'rejected') break;
+    if (result.status === 'rejected') {
+      skipped.add(voter.userId);
+      continue;
+    }
     cast++;
   }
 
   await applyPendingResolutions(db, deps);
-  await settleFinalItems(db, { now: deps.now() });
+  await settleFinalItems(db, { now: deps.now(), mirror: deps.mirrorXp });
 
   const after = await db
     .selectFrom('KnightsQueueItem')
@@ -129,9 +130,9 @@ export async function simulateOtherVoters(
     .where('id', '=', input.itemId)
     .executeTakeFirst();
   return {
+    itemId: input.itemId,
     cast,
     itemStatus: after?.status ?? null,
-    settled:
-      after?.status === 'Closed' || (after?.status === 'Resolved' && after.appliedAt !== null),
+    settled: after ? isFinalItem(after) : false,
   };
 }

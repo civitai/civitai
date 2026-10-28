@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import {
   castVote,
@@ -19,11 +20,8 @@ const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => ({ outcome
 const deps: QueueDeps = { applyConsensus, now: () => NOW };
 
 async function seed(players: number) {
-  for (let i = 1; i <= players; i++) {
-    await pg.query(`INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES ($1,'Knight')`, [i]);
-  }
-  await pg.exec(`INSERT INTO "Post" ("id","publishedAt") VALUES (10,'2020-01-01')`);
-  await pg.exec(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES (10,'key-10',4,10)`);
+  for (let i = 1; i <= players; i++) await seedPlayer(pg, i);
+  await seedImage(pg, 10);
   return enqueueItem(
     db,
     { questionKey: 'knights.image.nsfwLevel', imageId: 10, source: 'test', expiresAt: null },
@@ -59,7 +57,7 @@ describe('simulateOtherVoters', () => {
 
     const result = await simulateOtherVoters(db, { callerId: 1, itemId: id, answer: '4' }, deps);
 
-    expect(result).toEqual({ cast: 4, itemStatus: 'Resolved', settled: true });
+    expect(result).toEqual({ itemId: id, cast: 4, itemStatus: 'Resolved', settled: true });
     expect(await player(1)).toMatchObject({
       exp: PROGRESSION.voteXp + PROGRESSION.correctXp,
       goldEarned: PROGRESSION.baseGold,
@@ -83,6 +81,7 @@ describe('simulateOtherVoters', () => {
     await castVote(db, { userId: 1, itemId: id, answer: '4' }, deps);
 
     expect(await simulateOtherVoters(db, { callerId: 1, itemId: id, answer: '4' }, deps)).toEqual({
+      itemId: id,
       cast: 2,
       itemStatus: 'Open',
       settled: false,
@@ -107,5 +106,19 @@ describe('simulateOtherVoters', () => {
       [other, true, 1],
       [id, false, 0],
     ]);
+  });
+
+  it('skips a voter who cannot vote and tries the next one', async () => {
+    const id = await seed(8);
+    await castVote(db, { userId: 1, itemId: id, answer: '4' }, deps);
+    // Smites bring a voter's weight to 0, so castVote refuses them.
+    await pg.exec(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT 2 FROM generate_series(1, 12)`
+    );
+
+    const result = await simulateOtherVoters(db, { callerId: 1, itemId: id, answer: '4' }, deps);
+
+    expect(result).toMatchObject({ cast: 4, itemStatus: 'Resolved' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=2`)).rows).toHaveLength(0);
   });
 });
