@@ -40,6 +40,7 @@ import { useStorylineContinueTerms } from '~/components/Storyline/storyline.quer
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { EntityType } from '~/shared/utils/prisma/enums';
@@ -142,6 +143,7 @@ function StorylineHeader({
   lastPostId: number | null;
   terms: ContinueTerms;
 }) {
+  const currentUser = useCurrentUser();
   return (
     <header
       className={clsx(
@@ -234,7 +236,7 @@ function StorylineHeader({
               Continue the story
             </Button>
           )}
-          {storyline.viewerRole === 'owner' && (
+          {(storyline.viewerRole === 'owner' || currentUser?.isModerator) && (
             <ActionIcon
               variant="default"
               size={50}

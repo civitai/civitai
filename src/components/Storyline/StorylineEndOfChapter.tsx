@@ -26,6 +26,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   useStorylineChildren,
@@ -85,6 +86,7 @@ export function StorylineEndOfChapter({
   isOwner?: boolean;
   layout?: 'overlay' | 'section';
 }) {
+  const currentUser = useCurrentUser();
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
   const tracking = useStorylineTracking();
@@ -238,36 +240,36 @@ export function StorylineEndOfChapter({
               {parentPostId && (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                   {isOwner ? (
-                    <>
-                      <Anchor
-                        component="button"
-                        type="button"
-                        size="sm"
-                        onClick={() =>
-                          openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
-                        }
-                        data-testid="storyline-add-own-chapter"
-                      >
-                        or use a post you already made
-                      </Anchor>
-                      <Anchor
-                        component="button"
-                        type="button"
-                        size="sm"
-                        onClick={() =>
-                          openStorylineContinueModal({
-                            parentPostId,
-                            parentChapterId: chapterId,
-                            mode: 'join',
-                          })
-                        }
-                        data-testid="storyline-join-existing-chapter"
-                      >
-                        Join an existing chapter
-                      </Anchor>
-                    </>
+                    <Anchor
+                      component="button"
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+                      }
+                      data-testid="storyline-add-own-chapter"
+                    >
+                      or use a post you already made
+                    </Anchor>
                   ) : (
                     <StorylineContinueWithPost parentPostId={parentPostId} />
+                  )}
+                  {(isOwner || currentUser?.isModerator) && (
+                    <Anchor
+                      component="button"
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        openStorylineContinueModal({
+                          parentPostId,
+                          parentChapterId: chapterId,
+                          mode: 'join',
+                        })
+                      }
+                      data-testid="storyline-join-existing-chapter"
+                    >
+                      Join an existing chapter
+                    </Anchor>
                   )}
                 </div>
               )}

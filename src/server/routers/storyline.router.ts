@@ -294,7 +294,6 @@ export const storylineRouter = router({
         storylineId: input.storylineId,
         targetUserId: input.userId,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
       })
     ),
 
