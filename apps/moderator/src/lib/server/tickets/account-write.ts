@@ -16,9 +16,8 @@ export type LinkedUser =
 export type AccountWriteDeps = {
   /** The Civitai user the ticket is linked to, after checking the ticket is one this page may act on. */
   linkedUser: (ticketId: string) => Promise<LinkedUser>;
-  /** The shared enforcement actions; each keeps its own grant check. */
   inner: { setBanned: Action; setMuted: Action };
-  /** The `/users` page grant, which the actions below gate on exactly as User Lookup does. */
+  /** The `/users` page grant, checked as the User Lookup actions do. */
   canAct: (user: App.Locals['user']) => boolean;
   revokeTimedMute: (input: { userId: number; moderatorId: number }) => Promise<ActionResult>;
   resolveRestriction: (input: {
@@ -30,7 +29,6 @@ export type AccountWriteDeps = {
     moderatorId: number;
   }) => Promise<ActionResult>;
   restrictionOf: (id: number) => Promise<{ userId: number; type: string; status: string } | null>;
-  /** A private note on the ticket, as plain text. */
   note: (ticketId: string, text: string) => Promise<WriteResult>;
 };
 
@@ -51,16 +49,12 @@ const succeeded = (result: unknown): boolean =>
   (result as { success?: unknown }).success === true;
 
 /**
- * Lifting a ban, a mute or a restriction from a ticket: the account actions of User Lookup, reached through
- * the ticket that links the account.
- *
  * 🔴 THE ACCOUNT ACTED ON IS THE TICKET'S, NEVER THE FORM'S. The posted `userId` must equal the user the
  * ticket links to, and a restriction must belong to that user, or a forged post would act on anyone
  * through a page whose grant says nothing about that account. Grants are not widened: each action keeps
  * the grant it needs in User Lookup.
  *
- * After the change a private note names the moderator. The change has already happened by then, so a
- * failed note is a `warning` on a success, never a failure.
+ * A failed note after the change is a `warning` on a success, never a failure.
  */
 export function createTicketAccountActions(deps: AccountWriteDeps) {
   async function checked(event: RequestEvent) {
@@ -101,7 +95,6 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
     };
   }
 
-  /** Runs a shared action and, only when it succeeded, adds the note. */
   async function viaInner(
     event: RequestEvent,
     action: Action,

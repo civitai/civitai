@@ -334,7 +334,7 @@ export async function searchTickets(expression: string, page: number): Promise<T
   };
 }
 
-/** Tickets per page of the changed-since list: Freshdesk's maximum. */
+/** Freshdesk's maximum page size for the changed-since list. */
 export const CHANGED_PAGE_SIZE = 100;
 
 /** A ticket of any status from the changed-since list. `gone`: deleted or spam. */
@@ -348,10 +348,7 @@ export type ChangedPage =
   | { status: 'ok'; tickets: ChangedTicket[]; hasMore: boolean }
   | Unavailable;
 
-/**
- * One page of `GET /tickets?updated_since=`, newest change first, of every status, with each requester.
- * Two or three calls a minute keep a snapshot current; it is too heavy to list everything with.
- */
+/** One page of `GET /tickets?updated_since=`, newest change first, every status, with requester. Includes closed tickets, so it follows changes but cannot list live ones. */
 export async function listTicketsUpdatedSince(
   sinceIso: string,
   page: number

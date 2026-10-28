@@ -60,10 +60,7 @@ async function checkTicket(view: TicketView, ticketId: string) {
   return (await readTicketForWrite(view, ticketId)).refused ?? null;
 }
 
-/**
- * After a write: the success payload, noting if the change moved the ticket out of this view. The ticket
- * is re-read once, so the snapshot shows what the moderator just did instead of waiting for the next delta.
- */
+/** Success payload, with `moved` set when the write took the ticket out of this view. Patches the snapshot from a fresh read so the list shows the write before the next delta. */
 async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome) {
   if (!outcome.ok) return fail(outcome.notConfigured ? 503 : 502, { error: outcome.message });
   let moved: TicketView | null = outcome.movedTo ?? null;
@@ -83,7 +80,7 @@ async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome
   };
 }
 
-/** `?/reply`, `?/status` and (moderation only) `?/escalate`, each posting a `ticketId` field. All return `fail()` rather than throwing so the typed text survives a refusal. */
+/** Actions return `fail()` rather than throwing so the typed text survives a refusal. */
 export function ticketActions(view: TicketView): Actions {
   return {
     reply: requiresGrant('tickets.reply', async ({ request, locals }) => {

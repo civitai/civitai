@@ -3,11 +3,7 @@ import { isFreshdeskId } from '../freshdesk.service';
 import { loadTicketPage, parseTicketQuery } from './list';
 import type { TicketView } from '$lib/tickets/routing';
 
-/**
- * The load of both views' triage pages: one filtered page from the snapshot, and the ticket named by
- * `?ticket=` when it belongs to the view but is not on that page. The conversation is not here; the open
- * ticket's detail is fetched when it is selected.
- */
+/** Load for both views' triage pages. The open ticket's detail is fetched by the pane on selection, not here. */
 export async function ticketTriageLoad(
   view: TicketView,
   { url, locals }: { url: URL; locals: App.Locals }
@@ -31,8 +27,7 @@ export async function ticketTriageLoad(
     selectedMissing,
     canReply: !!locals.grants['tickets.reply'],
     canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
-    // The account actions keep the grants they need in User Lookup: the `/users` page for mutes and
-    // restrictions, `user.ban` for an unban. They are on the moderation view only.
+    // Grants as User Lookup requires them: the `/users` page for mutes and restrictions, `user.ban` for an unban.
     canAccountAct: view === 'moderation' && canAccess(locals.user, '/users'),
     canUnban: view === 'moderation' && !!locals.grants['user.ban'],
     fullBleed: true,

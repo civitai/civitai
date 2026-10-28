@@ -14,18 +14,13 @@ export type DetailResult =
   | { ok: true; payload: TicketPayload; stale: string | null }
   | { ok: false; message: string };
 
-/** Moving through the list with J/K passes many tickets a second; only the one that settles is read. */
+/** Moving through the list with J/K selects many tickets a second; only the one that settles is read. */
 export const DETAIL_SETTLE_MS = 300;
 
 const errorMessage = (e: unknown) =>
   e instanceof Error ? e.message : 'Freshdesk could not be read.';
 
-/**
- * Reads ticket details for one pane. The first read, and a read of a different ticket than the last, waits
- * `settleMs` and is dropped if another read or `cancel` comes first; a re-read of the same ticket (after a
- * write) starts at once. The list remounts the pane per selected ticket, so `cancel` on destroy is what
- * stops a ticket the moderator already moved past from being read.
- */
+/** The first read, or a read of a different ticket, waits `settleMs` and is dropped if another read or `cancel` comes first; a re-read of the same ticket starts at once. The list remounts the pane per ticket, so `cancel` on destroy stops a ticket the moderator moved past from being read. */
 export function createDetailLoader(
   fetchPayload: (id: string, view: TicketView) => Promise<TicketPayload> = fetchTicketPayload,
   settleMs: number = DETAIL_SETTLE_MS

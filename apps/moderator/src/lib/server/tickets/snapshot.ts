@@ -8,14 +8,11 @@ import type { TicketRecord } from '$lib/tickets/snapshot';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/**
- * The one shared snapshot of live tickets. The router is asked without the address, as everywhere else:
- * the address column is selected only for a caller holding the PII grant.
- */
 export const ticketSnapshot = createSnapshotService({
   store: createRedisSnapshotStore(getRedis),
   fullRead: () => readLive(searchTickets, today()),
   deltaRead: (since) => readChanged(listTicketsUpdatedSince, since),
+  // false: omit the address column; it is selected only for a caller with the PII grant.
   enrich: async (ids) => {
     const context = await getRoutedTicketContext(ids, false);
     return new Map(

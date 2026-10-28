@@ -56,9 +56,9 @@ withheld — so it is the one that cannot be spotted without ticking it and comp
 - [ ] `csam.report.file` — *File a CSAM report*
       → `/audit/training-data/<versionId>`.
 - [ ] `tickets.reply` — *Reply to and change the status of a support ticket*
-      → `/tickets/<view>/<id>`, the Reply panel.
+      → `/tickets/<view>?ticket=<id>`, the Reply panel.
 - [ ] `tickets.escalate` — *Send a moderation ticket to support*
-      → `/tickets/moderation/<id>`, the Send to support panel.
+      → `/tickets/moderation?ticket=<id>`, the Send to support panel.
 
 ## 3. Tick the page grants
 

@@ -1,7 +1,6 @@
 import { routeTicket, type TicketView } from './routing';
 import type { Snapshot } from './snapshot';
 
-/** The sidebar count key of each view's nav item. */
 export const TICKET_COUNT_KEYS: Record<TicketView, string> = {
   moderation: 'ticketsModeration',
   support: 'ticketsSupport',

@@ -25,8 +25,7 @@
   const uid = $props.id();
   const selected = $derived(options.filter((o) => o.active).map((o) => o.value));
 
-  // The ticks are a draft that only Apply commits: Escape or a click outside discards it, and one
-  // navigation covers the whole menu, not one per checkbox.
+  // The ticks are a draft; only Apply commits, so Escape or a click outside discards them.
   let open = $state(false);
   let draft = $state<string[]>([]);
 

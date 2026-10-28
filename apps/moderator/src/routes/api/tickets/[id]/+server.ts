@@ -18,7 +18,6 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 
   const res = await loadTicketPayload(view, params.id, {
     canSeeEmail: !!locals.grants['decisions.support.pii'],
-    // The account card is User Lookup's data, so it needs User Lookup's page grant.
     canViewAccount: canAccess(locals.user, '/retool/user-lookup'),
   });
   if (res.status === 'refused') error(res.code, res.message);

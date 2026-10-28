@@ -7,7 +7,7 @@ export const NO_VALUE_LABEL = 'None';
 
 export type FilterOption = { value: string; label: string; count: number; active: boolean };
 
-/** Every live status in status order. An empty one stays listed (dimmed by the control) so the set reads the same each time. */
+/** Every live status in status order. An empty one stays listed so the set does not change under the moderator. */
 export function statusOptions(
   selected: readonly number[],
   counts: Readonly<Record<string, number>>
@@ -20,11 +20,7 @@ export function statusOptions(
   }));
 }
 
-/**
- * Feature or topic values, most common first. A value the view holds none of is still listed (the
- * facets name every value the view has) and so is a selected one, so a filter that matches nothing can
- * be turned off. `NONE` is the bucket for tickets without one.
- */
+/** Feature or topic values, most common first. Selected values stay listed even at zero, so a filter that matches nothing can be turned off. `NONE` is the bucket for tickets without one. */
 export function valueOptions(
   selected: readonly string[],
   counts: Readonly<Record<string, number>>,
@@ -50,16 +46,13 @@ export type FilterKey = 'status' | 'feature' | 'topic' | 'sent';
 export const visibleFilters = (view: TicketView): FilterKey[] =>
   view === 'support' ? ['status', 'feature', 'topic', 'sent'] : ['status'];
 
-/** "Status", or "Status · 2" with two selected. */
 export const triggerText = (label: string, selected: number): string =>
   selected > 0 ? `${label} · ${selected}` : label;
 
-/** "Waiting on Mod Lead 131". */
 export const optionText = (o: { label: string; count: number }): string => `${o.label} ${o.count}`;
 
 export type SentOption = { value: '' | 'only' | 'exclude'; label: string; count: number };
 
-/** The sent-to-support choices; "All" is the sum, since the two halves partition the view. */
 export function sentOptions(counts: { only: number; exclude: number }): SentOption[] {
   return [
     { value: '', label: 'All', count: counts.only + counts.exclude },
@@ -109,7 +102,6 @@ export function clearFiltersHref(url: URL, dropOnChange: readonly string[]): str
   return next.pathname + next.search;
 }
 
-/** "just now" / "4m ago" / "3h ago", for how fresh the snapshot is. */
 export function syncedAgo(syncedAt: number, now: number): string {
   const minutes = Math.floor((now - syncedAt) / 60_000);
   if (minutes < 1) return 'just now';

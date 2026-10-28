@@ -4,7 +4,7 @@
 
   let { status, label }: { status: number; label: string } = $props();
 
-  // A status someone is waiting on us for reads warmer than one waiting on the customer.
+  // Amber: parked with a mod lead or dev. Blue: needs an agent now.
   const TONE: Record<number, string> = {
     [STATUS.open]: 'border-blue-400 text-blue-300',
     [STATUS.customerResponded]: 'border-blue-400 text-blue-300',

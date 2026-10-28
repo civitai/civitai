@@ -38,21 +38,17 @@
     onleave: (id: string) => void;
   } = $props();
 
-  // Bumped by a write, so the conversation is read again to show what was just sent.
+  // Bumped by a write to re-read the detail.
   let version = $state(0);
-  // The list is read again after every write and hands over a new `row` object for the same ticket;
-  // a derived of the id alone passes on only a real change, so the detail is fetched once per (ticket, version).
+  // Depend on the id alone: every write re-reads the list and hands over a new `row` object, which would refetch the detail each time. `keepLast` holds the last read through a refetch so a write does not blank the pane or unmount the Account card.
   const id = $derived(row.id);
-  // Fetched when a ticket opens, not with the list: it is a Freshdesk call per ticket, so the loader waits
-  // for the selection to settle. `keepLast` (the sanctioned exception to derive-the-promise) holds the
-  // last read through a refetch, so a write does not blank the pane or unmount the Account card.
   const loader = createDetailLoader();
   const detail = keepLast(() => {
     void version;
     return browser ? loader.load(id, view) : null;
   });
   $effect(() => loader.cancel);
-  // The last read belongs to the open ticket only: the pane is remounted per ticket, but never show another's.
+  // The pane is remounted per ticket; still never show another ticket's read.
   const read = $derived(
     detail.value?.ok && detail.value.payload.ticket.id === row.id ? detail.value : null
   );
@@ -75,7 +71,7 @@
     else toast.success(what);
   }
 
-  // An account change leaves the ticket where it is: only the detail is read again, to show the new status.
+  // An account change never moves the ticket, so only the detail is re-read.
   function accountDone(what: string, data: Record<string, unknown> | undefined) {
     version += 1;
     const warning = typeof data?.warning === 'string' ? data.warning : null;
@@ -166,8 +162,7 @@
   </section>
 {/snippet}
 
-<!-- The row already has everything but the tags, so the cards do not wait on the conversation. What the
-     detail read knows better (the linked account, the requester) replaces the row's, once it arrives. -->
+<!-- Cards render from the row until the detail read arrives, then from the read. -->
 {#snippet info()}
   {#if read}
     {@render cards(
@@ -199,7 +194,7 @@
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
       <dt class="text-dark-2">Name</dt>
       <dd class="m-0 min-w-0 break-words text-white">{requesterLabel({ requesterName, civitaiUserId })}</dd>
-      <!-- Read live with the ticket, never from the list or a cache; present only for a viewer with the PII grant. -->
+      <!-- Read live with the ticket, never from the list or a cache; only for a viewer with the PII grant. -->
       {#if requesterEmail !== undefined}
         <dt class="text-dark-2">Email</dt>
         <dd class="m-0 min-w-0 break-all text-white">{requesterEmail ?? '—'}</dd>

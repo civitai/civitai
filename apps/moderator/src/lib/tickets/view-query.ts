@@ -10,14 +10,14 @@ export const NONE = '__none';
 export const TICKET_PAGE_SIZE = 50;
 export const TICKET_PAGE_MAX = 100;
 
-/** Keys that repeat in the URL; the third argument of `parseQuery`. */
+/** Keys that repeat in the URL. */
 export const TICKET_QUERY_MULTI_KEYS = ['status', 'feature', 'topic'];
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
 const strings = z.array(z.string()).catch([]);
 
-/** Every field falls back to its default, so a hand-edited URL never throws. Extend it for page-specific keys. */
+/** Every field falls back to its default, so a hand-edited URL never throws. */
 export const ticketListQuerySchema = z.object({
   q: z.string().trim().max(200).catch(''),
   status: strings.transform((v) =>
@@ -42,7 +42,6 @@ export const ticketListQuerySchema = z.object({
 
 export type TicketListQuery = z.infer<typeof ticketListQuerySchema>;
 
-/** One row of a view. */
 export type TicketItem = {
   id: string;
   subject: string;
@@ -151,7 +150,6 @@ function toItem(t: TicketRecord): TicketItem {
   };
 }
 
-/** Every ticket of the view that passes the filters and the search, sorted, with the facet counts. Unpaged. */
 export function selectTickets(
   records: readonly TicketRecord[],
   query: TicketListQuery,
@@ -174,7 +172,6 @@ export function selectTickets(
   };
 }
 
-/** One ticket of the view as a row, or null when the snapshot lacks it or it routes to the other view. */
 export function findTicket(
   records: readonly TicketRecord[],
   id: string,
@@ -218,7 +215,6 @@ export function paginate<T>(all: readonly T[], page: number, limit: number): Pag
 
 export type TicketPage = Page<TicketItem> & { facets: TicketFacets };
 
-/** A page of a view for a parsed URL: what a list page's load returns. */
 export function queryTickets(
   records: readonly TicketRecord[],
   query: TicketListQuery,

@@ -15,10 +15,7 @@ export type RestrictionRuling = {
   internalNotes: string | undefined;
 };
 
-/**
- * A restriction ruling form, with the reason and note checked for the verdict. The caller still reads the
- * row and refuses what it cannot be ruled on (`unwiredRulingReason`, owner, status): those need the row.
- */
+/** Parses and validates a ruling form. Checks that need the row (`unwiredRulingReason`, owner, status) stay with the caller. */
 export function parseRestrictionRuling(
   form: FormData
 ): ({ ok: true } & RestrictionRuling) | { ok: false; error: string } {

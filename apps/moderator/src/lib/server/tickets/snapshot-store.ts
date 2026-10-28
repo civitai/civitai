@@ -6,10 +6,7 @@ import type { BuildFailure, SnapshotStore } from './snapshot-service';
 export const SNAPSHOT_TTL_SECONDS = 24 * 60 * 60;
 /** Long enough to outlive the retry interval, short enough that a fixed outage is not remembered. */
 export const BUILD_FAILURE_TTL_SECONDS = 15 * 60;
-/**
- * Longer than a full rebuild can take in the worst case: its 80-call budget at the 8s Freshdesk
- * timeout is 640s, so a live refresh never loses its lock. A crashed holder blocks refreshes for at most this long.
- */
+/** Must exceed a worst-case full rebuild (`FULL_CALL_BUDGET` × the Freshdesk timeout, plus enrichment), or a live refresh loses its lock. A crashed holder blocks refreshes for this long. */
 export const LOCK_TTL_SECONDS = 660;
 
 const SNAPSHOT_KEY = prefixCacheKey('mod:tickets:snapshot:v2') as RedisKeyTemplateCache;

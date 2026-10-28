@@ -5,10 +5,7 @@ export const ACCOUNT_TOPICS: readonly string[] = ['account-issue'];
 
 export type AccountPanel = 'panel' | 'unlinked' | 'hidden';
 
-/**
- * What the account section of a ticket shows. Only moderation-view tickets that are about an account
- * qualify; of those, one without a linked Civitai user gets a one-line note instead of a panel.
- */
+/** Only moderation-view tickets about an account qualify; one with no linked user gets a note, not a panel. */
 export function accountPanelFor(ticket: {
   view: TicketView;
   cfFeature: string | null | undefined;

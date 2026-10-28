@@ -60,9 +60,9 @@ is its own page grant. Acting on a ticket is a separate permission:
   Router topic, a Sent to support select, and a Sort select. In the moderation view Feature and Router topic
   define the queue, so their controls are hidden; their URL params still apply. Each option shows its facet
   count, and an option with none is dimmed.
-- A menu is a draft until it closes: ticking boxes changes nothing, and closing it (Apply, Escape or a click
-  outside) writes one URL. The URL stays the only state; any change resets the page and drops `ticket`.
-  The filter menus and selects need JavaScript.
+- A menu is a draft until Apply: ticking boxes changes nothing, and only Apply writes one URL. Escape or a
+  click outside discards the draft. The URL stays the only state; any change resets the page and drops
+  `ticket`. The filter menus and selects need JavaScript.
 - The sidebar badges for Moderation tickets and Support tickets count live tickets per view from the stored
   Redis snapshot only (`peek`). They never trigger a Freshdesk read: with no snapshot, or Redis unreachable,
   there is no badge. The nav items take their count from the keys `ticketsModeration` and `ticketsSupport`

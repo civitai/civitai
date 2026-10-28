@@ -19,15 +19,10 @@ export type TicketRow = TicketItem & {
   sentBy: SentBy | null;
 };
 
-/** The query string of a list page, with every bad value replaced by its default. */
 export const parseTicketQuery = (url: URL): TicketListQuery =>
   parseQuery(url, ticketListQuerySchema, TICKET_QUERY_MULTI_KEYS);
 
-/**
- * Adds what is not in the snapshot: the Freshdesk link and who sent a ticket to support. The lookup is
- * best-effort: when it fails the rows show no "Sent by" and the page says so, instead of failing the list.
- * The requester's address is never part of a row; the open ticket's detail carries it for those who may see it.
- */
+/** Adds the Freshdesk link and "sent by". The sent-by lookup is best-effort: on failure rows show none and the page warns. The requester's address is never part of a row. */
 async function decorator(items: TicketItem[]) {
   let sentBy = new Map<string, SentBy>();
   const tagged = items.filter((t) => t.sentToSupport).map((t) => t.id);
@@ -54,7 +49,6 @@ export type TicketPageResult =
   | {
       status: 'ok';
       items: TicketRow[];
-      /** The ticket named by `pinnedId` when it belongs to the view but is not on this page. */
       pinned: TicketRow | null;
       total: number;
       page: number;
@@ -62,7 +56,6 @@ export type TicketPageResult =
       hasMore: boolean;
       limit: number;
       facets: TicketFacets;
-      /** The query as parsed, defaults applied, for the controls to show. */
       query: TicketListQuery;
       /** Parts of the data that are incomplete or degraded, to be shown above the list. */
       warnings: string[];

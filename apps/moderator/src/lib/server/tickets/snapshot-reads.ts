@@ -9,7 +9,7 @@ import { statusQuery } from '$lib/tickets/queries';
 import type { ChangedTicket } from '$lib/tickets/snapshot';
 import { LIVE_STATUSES, statusLabel } from '$lib/tickets/statuses';
 
-/** Freshdesk calls one full rebuild may make. The account's rate limit is 100 a minute, shared with other integrations. */
+/** Freshdesk calls one full rebuild may make; the account's rate limit is shared with other integrations. */
 export const FULL_CALL_BUDGET = 80;
 
 /** Pages of 100 read by one delta. More than this changed since the last sync means a rebuild is the better read. */

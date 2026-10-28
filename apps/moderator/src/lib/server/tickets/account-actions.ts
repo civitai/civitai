@@ -45,10 +45,7 @@ export async function linkedUser(ticketId: string): Promise<LinkedUser> {
   return { status: 'ok', userId };
 }
 
-/**
- * `?/accountUnban`, `?/accountUnmute`, `?/accountLiftTimedMute` and `?/accountResolveRestriction` for the
- * moderation list page. Lifting only: banning, new restrictions and strikes are not offered from a ticket.
- */
+/** Lifting bans and mutes and ruling on restrictions only; banning, new restrictions and strikes are not offered from a ticket. */
 export const ticketAccountActions = createTicketAccountActions({
   linkedUser,
   inner: accountEnforcementActions,

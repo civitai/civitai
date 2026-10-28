@@ -1,6 +1,6 @@
 import { LIVE_STATUSES } from './statuses';
 
-/** One live ticket as the snapshot keeps it: what routing, sorting and search need, never a body. */
+/** One live ticket as the snapshot keeps it, never with a body. */
 export type TicketRecord = {
   id: string;
   subject: string;
@@ -9,15 +9,12 @@ export type TicketRecord = {
   tags: string[];
   createdAt: string | null;
   updatedAt: string | null;
-  /**
-   * Only tickets that came through a delta or a detail read carry the requester's name. The address is
-   * deliberately absent: personal data does not belong in a shared cache for a search nobody uses yet.
-   */
+  /** Only tickets from a delta or a detail read carry the name (full reads don't), so name search misses the rest. The address is never stored: personal data stays out of the shared cache. */
   requesterName?: string | null;
   /** Router topic; `undefined` until the router was asked, `null` when it had none. */
   routerTopic?: string | null;
   civitaiUserId?: number | null;
-  /** Epoch ms of the router lookup that set `routerTopic`. */
+  /** Epoch ms of the router lookup. */
   enrichedAt?: number;
   /** Consecutive short full reads that did not list this ticket; at `maxMissedFulls` it is dropped. */
   missedFulls?: number;
@@ -35,7 +32,7 @@ export type Snapshot = {
   fullAt: number;
   /** A delta overflowed or a full read came back short: rebuild once the retry interval has passed. */
   needsFull: boolean;
-  /** Epoch ms of the newest failed full rebuild; throttles the next one while deltas keep running. Cleared by a successful full read. */
+  /** Newest failed full rebuild; holds off the next one while deltas continue. Cleared by a successful full read. */
   fullFailedAt?: number;
   /** What the last full read could not list, to show above the views. */
   readWarnings: string[];
@@ -48,7 +45,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 
 export const SNAPSHOT_TIMING = {
-  /** Status searches are the only way to list every live ticket, and cost 30+ calls of a shared 100/minute. */
+  /** Status searches are the only way to list every live ticket, and spend many calls of the shared Freshdesk rate limit. */
   fullRebuildMs: 6 * HOUR,
   deltaMinMs: MIN,
   /** Freshdesk's search index and clocks lag a little; a ticket changed in this gap is read twice, never missed. */
@@ -66,7 +63,6 @@ export const isLiveStatus = (status: number): boolean => LIVE_STATUSES.includes(
 
 export type RefreshKind = 'full' | 'delta' | 'none';
 
-/** What a read should trigger. Pure, so the intervals are testable without a clock. */
 export function decideRefresh(snapshot: Snapshot | null, now: number): RefreshKind {
   if (!snapshot) return 'full';
   const sinceAttempt = now - snapshot.attemptedAt;
@@ -83,16 +79,12 @@ export function decideRefresh(snapshot: Snapshot | null, now: number): RefreshKi
   return 'delta';
 }
 
-/** The `updated_since` value for a delta after a sync that started at `syncedAt`. */
 export const deltaSince = (syncedAt: number): string =>
   new Date(syncedAt - SNAPSHOT_TIMING.deltaOverlapMs).toISOString();
 
 const REMEMBERED = ['requesterName', 'routerTopic', 'civitaiUserId', 'enrichedAt'] as const;
 
-/**
- * A ticket as the snapshot keeps it: exactly the record's fields, so anything else a read carried (the
- * requester's address on the changed-since list) never reaches the cache.
- */
+/** Only the record's own fields, so anything else a read carried (the requester's address on the changed-since list) never reaches the cache. */
 function pickRecord(t: TicketRecord): TicketRecord {
   const out: TicketRecord = {
     id: t.id,
@@ -109,7 +101,7 @@ function pickRecord(t: TicketRecord): TicketRecord {
   return out;
 }
 
-/** `fresh` with whatever `previous` knew that a fresh read does not carry. */
+/** `read` plus whatever `previous` knew that a read does not carry. */
 function withMemory(previous: TicketRecord | undefined, read: TicketRecord): TicketRecord {
   const fresh = pickRecord(read);
   if (!previous) return fresh;
@@ -121,7 +113,6 @@ function withMemory(previous: TicketRecord | undefined, read: TicketRecord): Tic
   return out;
 }
 
-/** Applies a changed-since read: updates, drops what is no longer live, adds what is new. */
 export function mergeDelta(
   current: readonly TicketRecord[],
   changed: readonly ChangedTicket[]
@@ -139,10 +130,7 @@ export function mergeDelta(
   return [...byId.values()];
 }
 
-/**
- * A full read that came back short: it updates and adds what it lists but cannot say what closed, so a
- * ticket it did not list is kept until `maxMissedFulls` reads in a row have missed it.
- */
+/** A short full read cannot say what closed: unlisted tickets are kept until `maxMissedFulls` reads in a row miss them. */
 export function mergeShortRead(
   current: readonly TicketRecord[],
   read: readonly TicketRecord[]
@@ -157,7 +145,7 @@ export function mergeShortRead(
   return [...kept, ...read.map((t) => withMemory(before.get(t.id), t))];
 }
 
-/** A fresh full read with the enrichment of the previous snapshot, so a rebuild does not re-ask the router. */
+/** A full read, keeping what the previous snapshot knew (enrichment, requester name). */
 export function carryOver(
   previous: readonly TicketRecord[],
   fresh: readonly TicketRecord[]
@@ -166,18 +154,14 @@ export function carryOver(
   return fresh.map((t) => withMemory(before.get(t.id), t));
 }
 
-/**
- * The router matters twice: for the account link of every ticket, and for the topic of a ticket with
- * no feature. Silence on either is retried on the retry interval, since a router that has not seen a
- * new ticket yet will.
- */
+/** Settled once the router gave a topic (or the ticket has a feature) and an account link; until then it is asked again every `enrichRetryMs`, because the router may not have seen a new ticket yet. */
 export function needsEnrichment(record: TicketRecord, now: number): boolean {
   if (record.enrichedAt === undefined) return true;
   if ((record.routerTopic || record.cfFeature) && record.civitaiUserId != null) return false;
   return now - record.enrichedAt >= SNAPSHOT_TIMING.enrichRetryMs;
 }
 
-/** Whether `record`'s topic can be trusted without asking the router again. */
+/** Whether the router need not be asked again for `record`: it answered fully, or was asked within `enrichRetryMs`. */
 export const topicIsKnown = (record: TicketRecord | undefined, now: number): boolean =>
   !!record && !needsEnrichment(record, now);
 
@@ -194,7 +178,6 @@ export function applyEnrichment(
   };
 }
 
-/** What the operator should be told about the snapshot's health, to show above the views. */
 export function snapshotWarnings(snapshot: Snapshot, now: number): string[] {
   const out = [...snapshot.readWarnings];
   if (snapshot.routerFailed)

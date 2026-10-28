@@ -21,7 +21,6 @@
     label: string;
     confirmText: string;
     doneLabel: string;
-    /** False renders the button disabled, with `why`. */
     enabled: boolean;
     why: string;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;

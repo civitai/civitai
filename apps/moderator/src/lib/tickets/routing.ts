@@ -4,14 +4,14 @@ export type TicketView = 'moderation' | 'support';
 
 export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' || v === 'support';
 
+export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
+
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move
  * a bucket between the views; nothing else encodes the rule.
  *
  * Uncertain buckets (Content Related Issue, User Report, abuse-report, account-issue) stay in support.
  */
-export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
-
 export const TICKET_ROUTING = {
   /** Freshdesk `cf_feature` values that mean a moderator handles the ticket. */
   moderationFeatures: [ACCOUNT_RESTRICTION_FEATURE, 'Moderation Decision'],

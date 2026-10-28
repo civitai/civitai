@@ -1,13 +1,12 @@
 type Requester = { requesterName: string | null; civitaiUserId: number | null };
 
-/** Who wrote in: the requester's name, else the linked account, else "Unknown". */
 export function requesterLabel({ requesterName, civitaiUserId }: Requester): string {
   const name = requesterName?.trim();
   if (name) return name;
   return civitaiUserId ? `User #${civitaiUserId}` : 'Unknown';
 }
 
-/** The label a list row shows: the ticket's feature, else the router's topic (`inferred`). */
+/** `inferred` marks a router guess, not the ticket's own feature. */
 export function rowChip(t: {
   cfFeature: string | null;
   routerTopic: string | null;
@@ -17,7 +16,6 @@ export function rowChip(t: {
   return null;
 }
 
-/** "Sent by alice", or just "Sent to support" when no moderator was recorded; null for any other ticket. */
 export function sentByText(t: {
   sentToSupport: boolean;
   sentBy: { moderatorId: number | null; username: string | null } | null;

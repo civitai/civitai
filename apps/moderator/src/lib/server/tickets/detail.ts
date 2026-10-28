@@ -78,7 +78,6 @@ type Refused = { status: 'refused'; code: 404 | 503; message: string };
 /**
  * One ticket read live from Freshdesk, accepted only when it routes to `view`. 🔴 The page grant is per
  * view, so a ticket served under the wrong view would show it to a role that may not open that view.
- * The snapshot takes the fresh copy; what it held before supplies the router answer.
  */
 async function readTicketForView(
   view: TicketView,
@@ -118,16 +117,13 @@ const CONVERSATION_UNAVAILABLE = {
   reason: 'Freshdesk could not be read.',
 };
 
-/**
- * What the open ticket's detail pane shows: the ticket with its description, and the conversation. Never
- * throws; a refusal carries the status the endpoint should answer with.
- */
+/** Never throws; a refusal carries the status the endpoint should answer with. */
 export async function loadTicketPayload(
   view: TicketView,
   ticketId: string,
   { canSeeEmail, canViewAccount }: { canSeeEmail: boolean; canViewAccount: boolean }
 ) {
-  // Started with the ticket read: the two are independent, and a ticket refused below costs one wasted call.
+  // Started before the ticket read so the two run in parallel; wasted if the ticket is refused.
   const conversation: Promise<TicketConversationResult> = isFreshdeskId(ticketId)
     ? getTicketConversation(ticketId).catch(() => CONVERSATION_UNAVAILABLE)
     : Promise.resolve(CONVERSATION_UNAVAILABLE);
@@ -169,7 +165,6 @@ export async function loadTicketPayload(
       sentToSupport,
       sentBy,
     },
-    // Present only for an account ticket whose viewer may open User Lookup; absent otherwise.
     ...(account ? { account } : {}),
     conversation: await conversation,
   };

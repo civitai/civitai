@@ -22,7 +22,6 @@
     ticketId: string;
     userId: number;
     restrictionId: number;
-    /** False renders the controls disabled, with `why`. */
     enabled: boolean;
     why: string;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;

@@ -21,7 +21,7 @@ export type SnapshotStore = {
   lock(token: string): Promise<boolean>;
   /** Releases the lock only if `token` still holds it. */
   unlock(token: string): Promise<void>;
-  /** The newest failed attempt to build the first snapshot, so that attempts are spaced out across requests and processes. */
+  /** Newest failed first build, shared so attempts are spaced across processes. */
   readBuildFailure(): Promise<BuildFailure | null>;
   writeBuildFailure(failure: BuildFailure): Promise<void>;
 };
@@ -68,14 +68,7 @@ const PATCH_POLL_MS = 200;
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const unavailable = (reason: string): Unavailable => ({ status: 'unavailable', reason });
 
-/**
- * The shared snapshot of live tickets and how it is kept current.
- *
- * Reads never wait on Freshdesk once a snapshot exists: a due refresh runs behind the response
- * (stale-while-revalidate, safe because the app runs on a long-lived Node server), under a Redis lock
- * so only one process refreshes at a time and the rest serve what is stored. Only the very first
- * build is awaited. A refresh that fails keeps the old tickets and records why.
- */
+/** Refreshes run behind the response under a Redis lock (stale-while-revalidate; safe only because the app is a long-lived Node server). Only the first build is awaited. */
 export function createSnapshotService(deps: SnapshotDeps) {
   const { store, fullRead, deltaRead, enrich } = deps;
   const now = deps.now ?? Date.now;
@@ -92,7 +85,7 @@ export function createSnapshotService(deps: SnapshotDeps) {
     }
   };
 
-  /** Asks the router about the tickets that need it. A failure leaves them to the next refresh. */
+  /** A router failure leaves the tickets unenriched for the next refresh. */
   async function enrichAll(tickets: TicketRecord[], at: number) {
     const ids = tickets.filter((t) => needsEnrichment(t, at)).map((t) => t.id);
     if (ids.length === 0) return { tickets, routerFailed: false };
@@ -126,8 +119,6 @@ export function createSnapshotService(deps: SnapshotDeps) {
         },
       };
     }
-    // A short read cannot say what closed: it adds and updates, and drops a ticket only after several
-    // short reads in a row have missed it.
     const read =
       res.complete || !current
         ? carryOver(current?.tickets ?? [], res.tickets)
@@ -185,7 +176,7 @@ export function createSnapshotService(deps: SnapshotDeps) {
     };
   }
 
-  /** Takes the refresh lock, trying again until `waitMs` has passed. Throws when the store cannot be reached. */
+  /** Throws when the store cannot be reached. */
   async function acquire(token: string, waitMs: number, pollMs: number): Promise<boolean> {
     const deadline = now() + waitMs;
     while (!(await store.lock(token))) {
@@ -212,7 +203,6 @@ export function createSnapshotService(deps: SnapshotDeps) {
     );
   }
 
-  /** One refresh under the lock; `busy` when another process holds it. Always releases the lock. */
   async function refresh(): Promise<Refreshed> {
     const token = newToken();
     let held: boolean;
@@ -228,7 +218,6 @@ export function createSnapshotService(deps: SnapshotDeps) {
       const current = await store.read();
       const kind = decideRefresh(current, now());
       if (kind === 'none' && current) return { status: 'ok', snapshot: current };
-      // With no snapshot, a build that just failed is not repeated by every request.
       if (!current) {
         const recent = await recentBuildFailure();
         if (recent) return recent;
@@ -288,18 +277,18 @@ export function createSnapshotService(deps: SnapshotDeps) {
   }
 
   return {
-    /** The snapshot with the warnings to show above it. Awaits Freshdesk only when there is none yet. */
     /** The stored snapshot as it is, with no refresh and no Freshdesk call; null when there is none. */
     peek(): Promise<Snapshot | null> {
       return store.read();
     },
 
+    /** The snapshot with warnings. Awaits Freshdesk only when none is stored yet. */
     async get(): Promise<SnapshotRead> {
       let snapshot: Snapshot | null;
       try {
         snapshot = await store.read();
       } catch (e) {
-        // Not "fail open": building without the cache or its lock would spend the shared rate limit on every read.
+        // No fallback to building: without the cache or its lock every read would spend the shared Freshdesk rate limit.
         console.error('[tickets] snapshot read failed', e);
         return unavailable('The ticket cache could not be read.');
       }
@@ -312,15 +301,9 @@ export function createSnapshotService(deps: SnapshotDeps) {
       return built.status === 'busy' ? waitForFirstBuild() : built;
     },
 
-    /** Awaited refresh, for callers that need the outcome. */
     refresh,
 
-    /**
-     * Brings one ticket up to date after the app changed or read it, or drops it once it is no longer
-     * live. Returns what the snapshot held for it before. Best-effort: the write happens under the refresh
-     * lock, so it cannot overwrite a refresh that landed in between. When the lock stays busy the patch is
-     * skipped, since the next delta reads the ticket again (it changed after that refresh started).
-     */
+    /** Returns the ticket's previous record. Writes under the refresh lock so it cannot overwrite a refresh that landed in between; if the lock stays busy for `PATCH_WAIT_MS` the patch is skipped and the next delta picks the ticket up. */
     async patch(ticket: TicketRecord): Promise<TicketRecord | undefined> {
       const token = newToken();
       let held = false;

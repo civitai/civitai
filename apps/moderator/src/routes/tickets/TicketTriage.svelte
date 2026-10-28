@@ -45,7 +45,7 @@
   const failure = $derived(data.result.status === 'unavailable' ? data.result.reason : null);
   const query = $derived(ok?.query);
 
-  // Set on the client only: a clock read during SSR would differ from the one at hydration.
+  // Client-only: a clock read during SSR would differ from the one at hydration.
   let now = $state<number | null>(null);
   // A refusal that never ran through enhance (no JS) is shown here; with JS each form shows its own.
   let hydrated = $state(false);
@@ -64,11 +64,8 @@
         query.sent !== undefined ||
         query.q !== '')
   );
-  // Every filter, the search and the sort live in the query string, so the bare path clears them all.
   const clearHref = $derived(page.url.pathname);
 
-  // Moving on after the open ticket left the list (it changed view, or was resolved): the next one,
-  // else the one before, with the list read again so the ticket is gone from it.
   function leave(id: string) {
     const rows = ok ? [...ok.items, ...(ok.pinned ? [ok.pinned] : [])] : [];
     const at = rows.findIndex((r) => r.id === id);

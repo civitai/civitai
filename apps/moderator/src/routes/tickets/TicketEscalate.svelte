@@ -12,7 +12,6 @@
     ondone,
   }: {
     ticketId: string;
-    /** False renders the controls disabled, with the reason. */
     canEscalate: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
   } = $props();

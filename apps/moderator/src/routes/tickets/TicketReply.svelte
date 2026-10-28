@@ -18,7 +18,6 @@
     currentStatus: number;
     /** False renders the controls disabled, with the reason: an absent form reads as the page having none. */
     canReply: boolean;
-    /** What a successful write reports: what was done, what the action returned, the status it set. */
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
   } = $props();
 
