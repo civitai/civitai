@@ -108,4 +108,18 @@ describe('FooterStrips', () => {
     expect(button.bottom).toBeLessThanOrEqual(footer.bottom);
     expect(footer.height).toBeGreaterThan(button.height);
   });
+
+  test('an alert kept in full shows whole, however tall, rather than scrolling in the stack', async () => {
+    renderWithProviders(
+      <FooterStrips>
+        <div data-testid="full" data-strip-full style={{ height: '60dvh' }}>
+          A choice to make before generating
+        </div>
+      </FooterStrips>
+    );
+    const full = page.getByTestId('full');
+    await expect.element(full).toBeInTheDocument();
+    const stack = full.element().parentElement as HTMLElement;
+    expect(stack.scrollHeight).toBeLessThanOrEqual(stack.clientHeight);
+  });
 });

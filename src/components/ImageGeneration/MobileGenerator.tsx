@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useField } from 'form-graph/react';
-import type { CSSProperties, PointerEvent, ReactNode, RefObject } from 'react';
+import type { CSSProperties, PointerEvent, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
@@ -22,6 +22,7 @@ import {
 import { GenerationResults } from '~/components/ImageGeneration/GenerationResults';
 import { QueueSlots } from '~/components/ImageGeneration/QueueSnackbar';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 import { useHistoryLayer } from '~/hooks/useHistoryLayer';
 import { useVisualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -36,6 +37,11 @@ import {
   MobileGeneratorSlots,
   RenderTitleActions,
 } from '~/components/ImageGeneration/mobile-generator-slots';
+
+/** Fields that bring up the on-screen keyboard. */
+const TEXT_ENTRY =
+  'textarea:not([readonly]), [contenteditable="true"], input:not([readonly], [type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="range"], [type="file"])';
+const isTextEntry = (el: EventTarget | null) => el instanceof Element && el.matches(TEXT_ENTRY);
 
 const OPEN_DRAG = 24;
 const CLOSE_DRAG = 60;
@@ -80,7 +86,7 @@ export function MobileGenerator({ form, onClose, closeLabel }: Props) {
   const keyboardInset = useVisualViewportBottomInset();
   const challenges = !!useFeatureFlags().challengePlatform;
   const selecting = useSelectedCount() > 0;
-  const headerHidden = useHideOnScroll(resultsRef, resultsView) && !selecting;
+  const headerHidden = useHideOnScroll(resultsRef, { resetKey: resultsView }) && !selecting;
 
   return (
     // The header and the form share one queue state.
@@ -153,6 +159,8 @@ function FormSheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ startY: number; dy: number; pointerId: number; captured?: boolean }>();
   const [dragging, setDragging] = useState(false);
+  // While a field takes typing, the footer steps aside so the keyboard leaves the field room.
+  const [typing, setTyping] = useState(false);
 
   // First run: pending → shown when the sheet first closes (the chevron nudges, a hint shows); done
   // once it is opened from the bar.
@@ -219,6 +227,7 @@ function FormSheet({
       className={classes.sheet}
       data-expanded={expanded || undefined}
       data-dragging={dragging || undefined}
+      data-typing={typing || undefined}
       aria-label="Generation form"
     >
       {!expanded && hint === 'shown' && (
@@ -269,7 +278,12 @@ function FormSheet({
           </UnstyledButton>
         )}
       </div>
-      <div className={classes.body} {...inert(!expanded)}>
+      <div
+        className={classes.body}
+        {...inert(!expanded)}
+        onFocus={(e) => setTyping(isTextEntry(e.target))}
+        onBlur={(e) => setTyping(isTextEntry(e.relatedTarget))}
+      >
         {children}
       </div>
     </section>
@@ -308,35 +322,6 @@ function DensityToggle({ value }: { value: GenerationResultsView }) {
       <Icon size={20} />
     </LegacyActionIcon>
   );
-}
-
-const HIDE_AFTER = 8;
-
-/**
- * True while the results scroll down, false once they scroll back up or near the top, so the header
- * can make room. Listens in the capture phase, since the scrolling element is inside the results.
- */
-function useHideOnScroll(ref: RefObject<HTMLElement>, resetKey: unknown) {
-  const [hidden, setHidden] = useState(false);
-  useEffect(() => {
-    setHidden(false);
-    const root = ref.current;
-    if (!root) return;
-    let lastY = 0;
-    const onScroll = (e: Event) => {
-      const y = (e.target as HTMLElement).scrollTop ?? 0;
-      if (y < 56) {
-        setHidden(false);
-        lastY = y;
-      } else if (Math.abs(y - lastY) > HIDE_AFTER) {
-        setHidden(y > lastY);
-        lastY = y;
-      }
-    };
-    root.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => root.removeEventListener('scroll', onScroll, { capture: true });
-  }, [ref, resetKey]);
-  return hidden;
 }
 
 function QueueCount() {

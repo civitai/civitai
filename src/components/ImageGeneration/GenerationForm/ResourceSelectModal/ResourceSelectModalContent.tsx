@@ -9,7 +9,7 @@ import {
   IconSettings,
   IconStack2,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
   ResourceSelectFiltersDropdown,
@@ -23,6 +23,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -47,6 +48,12 @@ export function ResourceSelectModalContent() {
   const features = useFeatureFlags();
 
   const [search, setSearch] = useState('');
+  // On a phone the toolbar folds away while the results scroll down, and stays while it has focus
+  // (typing a search).
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const [toolbarFocused, setToolbarFocused] = useState(false);
+  const scrolledDown = useHideOnScroll(resultsRef, { resetKey: tab });
+  const toolbarHidden = isMobile && scrolledDown && !toolbarFocused;
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const pasted = useMemo(() => parseResourceLookup(debouncedSearch), [debouncedSearch]);
 
@@ -122,34 +129,44 @@ export function ResourceSelectModalContent() {
             the whole column — not any one element in it — spills past the
             modal's right edge on a narrow viewport. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex flex-none flex-col gap-2.5 p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <CatalogTabs tabs={allowedTabs} value={tab} onChange={setTab} />
-              {tab !== 'featured' && <ResourceSelectSort />}
-              <ResourceSelectFiltersDropdown />
-              <GenerationSettingsPopover>
-                <LegacyActionIcon>
-                  <IconSettings />
-                </LegacyActionIcon>
-              </GenerationSettingsPopover>
-              <TextInput
-                value={search}
-                onChange={(e) => setSearch(e.currentTarget.value)}
-                leftSection={<IconSearch size={16} />}
-                placeholder="Search models or paste a link"
-                size="xs"
-                className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-40"
-                // Autofocus opens the on-screen keyboard over half the catalog
-                // before anything has been browsed.
-                autoFocus={!isMobile}
-                // React's autoFocus alone loses the race: Mantine's focus trap
-                // runs a tick after mount and focuses the first focusable node —
-                // the close button — unless something claims data-autofocus.
-                data-autofocus={!isMobile ? true : undefined}
-              />
-            </div>
+          <div
+            data-hidden={toolbarHidden || undefined}
+            className="grid flex-none transition-[grid-template-rows] duration-200"
+            style={{ gridTemplateRows: toolbarHidden ? '0fr' : '1fr' }}
+            onFocus={() => setToolbarFocused(true)}
+            onBlur={(e) => setToolbarFocused(e.currentTarget.contains(e.relatedTarget))}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="flex flex-col gap-2.5 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CatalogTabs tabs={allowedTabs} value={tab} onChange={setTab} />
+                  {tab !== 'featured' && <ResourceSelectSort />}
+                  <ResourceSelectFiltersDropdown />
+                  <GenerationSettingsPopover>
+                    <LegacyActionIcon>
+                      <IconSettings />
+                    </LegacyActionIcon>
+                  </GenerationSettingsPopover>
+                  <TextInput
+                    value={search}
+                    onChange={(e) => setSearch(e.currentTarget.value)}
+                    leftSection={<IconSearch size={16} />}
+                    placeholder="Search models or paste a link"
+                    size="xs"
+                    className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-40"
+                    // Autofocus opens the on-screen keyboard over half the catalog
+                    // before anything has been browsed.
+                    autoFocus={!isMobile}
+                    // React's autoFocus alone loses the race: Mantine's focus trap
+                    // runs a tick after mount and focuses the first focusable node —
+                    // the close button — unless something claims data-autofocus.
+                    data-autofocus={!isMobile ? true : undefined}
+                  />
+                </div>
 
-            <CategoryTagFilters />
+                <CategoryTagFilters />
+              </div>
+            </div>
           </div>
 
           {/* `overflow-y-scroll`, not `auto`: the gutter is reserved whether or
@@ -157,14 +174,16 @@ export function ResourceSelectModalContent() {
               tall enough to need a scrollbar — `auto` toggles it on and off,
               which changes the pane width, which re-flows the grid, which
               changes the height again. */}
-          <ScrollArea
-            id="resource-select-modal"
-            scrollRestore={{ key: 'resource-select-modal', enabled: false }}
-            className="flex-1 overflow-y-scroll"
-          >
-            {pasted && <ResourceLookupResult lookup={pasted.lookup} />}
-            {!pasted?.isLink && <ResourceHitList key={tab} query={debouncedSearch} />}
-          </ScrollArea>
+          <div ref={resultsRef} className="flex min-h-0 flex-1 flex-col">
+            <ScrollArea
+              id="resource-select-modal"
+              scrollRestore={{ key: 'resource-select-modal', enabled: false }}
+              className="flex-1 overflow-y-scroll"
+            >
+              {pasted && <ResourceLookupResult lookup={pasted.lookup} />}
+              {!pasted?.isLink && <ResourceHitList key={tab} query={debouncedSearch} />}
+            </ScrollArea>
+          </div>
         </div>
       </div>
 

@@ -104,6 +104,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     // On a phone the generator fills the viewport, so this bar is the viewport bottom — hence
     // the safe-area padding.
     <div
+      data-generator-footer
       className={clsx(
         'shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 pb-[max(0.5rem,var(--safe-area-inset-bottom))] dark:bg-dark-7',
         mobileGenerator && footerStripsFrame

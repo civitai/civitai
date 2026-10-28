@@ -116,6 +116,12 @@
   -webkit-user-select: none;
 }
 
+// The generator footer (GenerationLayout) hides while a field is being typed in. Its Tailwind `flex`
+// is unlayered and outranks this module, hence the !important.
+.sheet[data-typing] :global([data-generator-footer]) {
+  display: none !important;
+}
+
 .body {
   flex: 1;
   min-height: 0;

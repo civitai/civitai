@@ -32,6 +32,12 @@
   overscroll-behavior: none;
   touch-action: pan-y;
 
+  // The cap keeps folded strips from pushing Generate off screen. An alert kept in full is one that
+  // stops Generate, so it shows whole rather than scrolling inside the stack.
+  &:has(> [data-strip-full]) {
+    max-height: none;
+  }
+
   &:empty {
     display: none;
   }

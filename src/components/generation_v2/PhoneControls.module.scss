@@ -11,6 +11,13 @@
     font-size: 16px;
   }
 
+  // The prompt editor is ProseMirror, not a Mantine input, and sets 14px with an unlayered Tailwind
+  // utility. Zoomed in, iOS also stops the generator tracking the keyboard, so its footer sits under
+  // the keyboard.
+  :global(.tiptap-textarea-editor) {
+    font-size: 16px !important;
+  }
+
   :global(.mantine-SegmentedControl-label) {
     display: flex;
     min-height: 44px;

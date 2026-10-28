@@ -331,6 +331,14 @@ Built:
   component, `SheetOption` (`src/components/Drawer/`), shared with the site's sort menu.
 - Tapping a checkbox's or radio's description toggles it, site-wide (`choice-label.module.scss` in
   the theme). Switch already did.
+- On a phone the resource picker's toolbar (tabs, sort, filters, search, categories) folds away while
+  its results scroll down, and returns on the way up; it stays while the search field has focus.
+  Not behind the flag. `useHideOnScroll` (`src/hooks/`) is the one hide-on-scroll rule: the
+  generator header, the picker toolbar, the site's `SubNav` and the comics reader header all use
+  it (shown near the top; hidden after 100px down since the last turn, back after 100px up).
+- While a text field in the form has focus (the keyboard is up), the footer hides so the field
+  has the room; it returns when the field loses focus. The prompt editor is 16px in the mobile
+  generator, as the Mantine inputs are, so iOS does not zoom the page on focus.
 - Strips fold only what informs. What stops Generate stays in full (`data-strip-full`): the terms,
   the generation status and self-hosted blocks, and the footer's blocking alerts (missing field,
   mature source, trial blocked, cost estimate failed, submit error, not enough Buzz). The footer

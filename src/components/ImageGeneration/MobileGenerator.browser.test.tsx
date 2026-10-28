@@ -140,7 +140,7 @@ describe('MobileGenerator', () => {
 
     scrollTo(400);
     await expect.element(header).toHaveAttribute('data-hidden');
-    scrollTo(300);
+    scrollTo(250);
     await expect.element(header).not.toHaveAttribute('data-hidden');
     scrollTo(800);
     await expect.element(header).toHaveAttribute('data-hidden');
@@ -286,5 +286,32 @@ describe('MobileGenerator', () => {
     await expect
       .element(page.getByRole('button', { name: 'Reset', exact: true }))
       .toBeInTheDocument();
+  });
+
+  test('while a field is typed in, the footer steps aside for the keyboard', async () => {
+    renderWithProviders(
+      <MobileGenerator
+        form={
+          <>
+            <textarea aria-label="Prompt" />
+            <input type="checkbox" aria-label="Raw mode" />
+            <div data-generator-footer style={{ display: 'flex' }}>
+              Generate row
+            </div>
+          </>
+        }
+        onClose={vi.fn()}
+        closeLabel="Go back"
+      />
+    );
+    const footer = page.getByText('Generate row');
+    await expect.element(footer).toBeVisible();
+
+    (page.getByRole('textbox', { name: 'Prompt' }).element() as HTMLElement).focus();
+    await expect.element(footer).not.toBeVisible();
+
+    // A control that brings up no keyboard leaves the footer where it is.
+    (page.getByRole('checkbox', { name: 'Raw mode' }).element() as HTMLElement).focus();
+    await expect.element(footer).toBeVisible();
   });
 });
