@@ -395,7 +395,8 @@ describe("a held author's comment on a review the version takes with it", () => 
       reviewId: 1,
       versionId: sourceVersionIds[0],
       reviewer: 9,
-      commenter: REPORTED,
+      // Both legs of the hold: a pending report, and the marker.
+      commenter: n === 0 ? REPORTED : MARKED,
     });
     await seedReviewThread(db, { reviewId: 2, versionId: keeper, reviewer: 9, commenter: CLEAN });
 

@@ -307,6 +307,13 @@ type ChallengeCardRow = {
 
 // SELECT + FROM/JOINs for a challenge card. Callers append their own WHERE/ORDER BY/LIMIT. Shared by
 // the infinite feed and the daily row so both render identical ChallengeCard data.
+/**
+ * A challenge's top-level comments that count: not deleted, nor hidden for ToS, which is also how an
+ * author's delete keeps one for a hold, so a kept comment leaves the count as a deleted one does.
+ */
+export const countedChallengeCommentSql = (v: Prisma.Sql) =>
+  Prisma.sql`${v}."entityType" = 'challenge' AND ${v}."parentId" IS NULL AND ${v}."deletedAt" IS NULL AND NOT ${v}."tosViolation"`;
+
 const challengeCardQuery = Prisma.sql`
     SELECT
       c.id,
@@ -321,7 +328,9 @@ const challengeCardQuery = Prisma.sql`
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedChallengeCommentSql(
+        Prisma.raw('v')
+      )} AND v."entityId" = c.id) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",
@@ -489,7 +498,9 @@ export async function getMyChallenges({
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
            c.status, c.source, c."buzzType", c."prizePool",
            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') AS "entryCount",
-           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) AS "commentCount",
+           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedChallengeCommentSql(
+             Prisma.raw('v')
+           )} AND v."entityId" = c.id) AS "commentCount",
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
@@ -3533,9 +3544,10 @@ export async function getActiveEvents(
     const counts = await dbRead.$queryRaw<
       Array<{ challengeId: number; commentCount: number }>
     >`SELECT "entityId" AS "challengeId", COUNT(*)::int AS "commentCount"
-       FROM "CommentV3"
-       WHERE "entityType" = 'challenge' AND "parentId" IS NULL AND "deletedAt" IS NULL
-         AND "entityId" IN (${Prisma.join(allChallengeIds)})
+       FROM "CommentV3" v
+       WHERE ${countedChallengeCommentSql(Prisma.raw('v'))} AND "entityId" IN (${Prisma.join(
+      allChallengeIds
+    )})
        GROUP BY "entityId"`;
     for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
   }
@@ -4213,7 +4225,9 @@ export async function getCompletedChallengesWithWinners(
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedChallengeCommentSql(
+        Prisma.raw('v')
+      )} AND v."entityId" = c.id) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",

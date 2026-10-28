@@ -45,6 +45,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
   '~/server/services/bot-account-detection/cohort'
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
+const { countedChallengeCommentSql } = await import('~/server/services/challenge.service');
 const { getThreadMuted } = await import('~/server/services/commentsv2.service');
 
 const db = { pg: null as unknown as PGlite };
@@ -547,6 +548,27 @@ describe('the points hook', () => {
     // has one there that is only hidden by the sweep.
     expect(await liveCommentsOn(5, { entityType: 'Article', entityId: 10 })).toBe(0);
     expect(await liveCommentsOn(7, { entityType: 'Article', entityId: 10 })).toBe(1);
+  });
+});
+
+describe('the challenge comment count', () => {
+  it('counts live top-level comments only: not replies, deleted ones, or ones hidden for ToS', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Challenge" (id) VALUES (60);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('challenge', 60);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "deletedAt") VALUES
+        (600, 'challenge', 60, 4, 'live', false, NULL),
+        (601, 'challenge', 60, 5, 'kept for a hold', true, NULL),
+        (602, 'challenge', 60, 6, '', false, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
+        (603, 'challenge', 60, 7, 'a reply', 600);
+    `);
+    const where = countedChallengeCommentSql(Prisma.raw('v'));
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 60`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });
 
