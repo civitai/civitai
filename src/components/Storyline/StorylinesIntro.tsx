@@ -81,7 +81,6 @@ function StorylinesIntroHero({ video }: { video: typeof STORYLINES_INTRO_VIDEO }
           aria-label={`Watch the ${video.title} video`}
           className="group absolute inset-0 flex flex-col items-center justify-center gap-2"
         >
-          {/* As the birthday hero's play button (ScoredEventHero). */}
           <span className="flex size-20 items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110 group-focus-visible:scale-110">
             <IconPlayerPlayFilled size={32} />
           </span>
@@ -136,7 +135,6 @@ export function StorylinesIntro({
             Stories told in images, one chapter at a time, by more than one creator. Read one from
             the start, or pick it up where it ends and write what happens next.
           </Text>
-          {/* The hero art, which carries the play button, is desktop only. */}
           {STORYLINES_INTRO_VIDEO && (
             <Button
               variant="light"

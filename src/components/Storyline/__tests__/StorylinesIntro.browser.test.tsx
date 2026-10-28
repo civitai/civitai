@@ -139,8 +139,6 @@ describe('StorylinesIntro', () => {
     expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);
   });
 
-  // Launch decision (2026-10-28): the film ships with the page. Setting STORYLINES_INTRO_VIDEO to
-  // null removes both buttons and fails this on purpose.
   test('the podium play button (desktop) and "Watch the video" (phone) both open the film in a modal', async () => {
     const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
     renderWithProviders(<StorylinesIntro />);

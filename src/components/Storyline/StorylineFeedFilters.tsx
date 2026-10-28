@@ -1,6 +1,5 @@
 import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
-import { useRouter } from 'next/router';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import {
@@ -8,6 +7,8 @@ import {
   StorylineFiltersDropdown,
 } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import * as z from 'zod';
 
 export const STORYLINE_FEED_SORTS = [
   { value: 'newest', label: 'Newest' },
@@ -16,29 +17,32 @@ export const STORYLINE_FEED_SORTS = [
 
 export type StorylineFeedSort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
 
+// Each field falls back on its own, so one unknown value does not drop the other.
+const storylineFeedParamsSchema = z.object({
+  sort: z
+    .enum(STORYLINE_FEED_SORTS.map((s) => s.value) as [StorylineFeedSort, ...StorylineFeedSort[]])
+    .optional()
+    .catch(undefined),
+  filter: z
+    .enum(
+      STORYLINE_FEED_FILTERS.map((f) => f.value) as [StorylineFeedFilter, ...StorylineFeedFilter[]]
+    )
+    .optional()
+    .catch(undefined),
+});
+
 /**
  * The feed's sort and filter, kept in the URL so the sub-nav's menus and the page's feed share
- * them. A value the URL does not name is the default.
+ * them. A default is left out of the URL.
  */
 export function useStorylineFeedParams() {
-  const router = useRouter();
-  const sort: StorylineFeedSort =
-    STORYLINE_FEED_SORTS.find((s) => s.value === router.query.sort)?.value ?? 'newest';
-  const filter: StorylineFeedFilter =
-    STORYLINE_FEED_FILTERS.find((f) => f.value === router.query.filter)?.value ?? 'all';
-
-  const setParam = (key: 'sort' | 'filter', value: string, fallback: string) => {
-    const query = { ...router.query };
-    if (value === fallback) delete query[key];
-    else query[key] = value;
-    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
-  };
-
+  const { query, replace } = useZodRouteParams(storylineFeedParamsSchema);
   return {
-    sort,
-    filter,
-    setSort: (next: StorylineFeedSort) => setParam('sort', next, 'newest'),
-    setFilter: (next: StorylineFeedFilter) => setParam('filter', next, 'all'),
+    sort: query.sort ?? 'newest',
+    filter: query.filter ?? 'all',
+    setSort: (sort: StorylineFeedSort) => replace({ sort: sort === 'newest' ? undefined : sort }),
+    setFilter: (filter: StorylineFeedFilter) =>
+      replace({ filter: filter === 'all' ? undefined : filter }),
   };
 }
 

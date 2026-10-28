@@ -165,8 +165,7 @@ describe('the storylines feed', () => {
     ]);
   });
 
-  // Launch decision (2026-10-28): a moderator browsing /storylines saw every taken-down storyline.
-  // Taken down is out of the feed for everyone; its owner and moderators open it by its URL.
+  // Out of the feed for everyone; its owner and moderators still open it by its URL.
   describe('a taken-down storyline', () => {
     const setTakenDown = (takenDown: boolean) =>
       db.pg.exec(

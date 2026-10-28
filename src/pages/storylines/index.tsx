@@ -23,7 +23,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function StorylinesPage() {
-  // Picked in the sub-nav (`StorylineFeedFilters`).
   const { filter, sort } = useStorylineFeedParams();
   const [introDismissed, dismissIntro, restoreIntro] = useIntroDismissed(
     STORYLINES_INTRO_DISMISSED_KEY
