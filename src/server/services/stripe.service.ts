@@ -1620,38 +1620,55 @@ export const getPaymentIntentsForBuzz = async ({
       unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
   });
 
-  const filteredPayments = paymentIntents.data.filter(
+  const pendingPayments = paymentIntents.data.filter(
     (intent) =>
       intent.status === 'succeeded' &&
       intent.metadata.type === 'buzzPurchase' &&
       !intent.metadata.transactionId
   );
-  const batches = chunk(filteredPayments, 10);
+  // Without a recorded buyer there is no one to verify the credit against, so these are left to
+  // an engineer rather than credited to whoever the query names.
+  const legacyPaymentIntentIds = pendingPayments
+    .filter((intent) => !intent.metadata.userId)
+    .map((intent) => intent.id);
+  for (const stripePaymentIntentId of legacyPaymentIntentIds) {
+    logToAxiom(
+      {
+        name: 'buzz-purchase-completion-rejected',
+        type: 'warning',
+        reason: 'legacy purchase without userId',
+        userId,
+        stripePaymentIntentId,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+  const batches = chunk(
+    pendingPayments.filter((intent) => intent.metadata.userId),
+    10
+  );
 
   const processedPurchases: Array<{ transactionId: string }> = [];
+  const failedPaymentIntentIds: string[] = [];
   for (const batch of batches) {
-    const processed = await Promise.all(
+    const results = await Promise.allSettled(
       batch.map((intent) => {
         const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
 
         return completeStripeBuzzTransaction({
-          amount: metadata.buzzAmount ?? intent.amount * 10,
+          amount: metadata.buzzAmount,
           stripePaymentIntentId: intent.id,
-          details: {
-            userId,
-            unitAmount: intent.amount,
-            buzzAmount: intent.amount * 10,
-            type: 'buzzPurchase',
-            ...intent.metadata,
-          },
-          userId: metadata.userId ?? userId,
+          userId: metadata.userId,
         });
       })
     );
-    processedPurchases.concat(processed);
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') processedPurchases.push(result.value);
+      else failedPaymentIntentIds.push(batch[i].id);
+    });
   }
 
-  return processedPurchases;
+  return { processed: processedPurchases, legacyPaymentIntentIds, failedPaymentIntentIds };
 };
 
 export const getSetupIntent = async ({

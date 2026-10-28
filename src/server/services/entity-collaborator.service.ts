@@ -3,6 +3,12 @@ import { ChatMessageType, EntityType, EntityCollaboratorStatus } from '~/shared/
 import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readPostCollaboratorsViaKysely,
+  readPostCollaboratorsViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import type {
   GetEntityCollaboratorsInput,
   RemoveEntityCollaboratorInput,
@@ -168,25 +174,15 @@ export const getEntityCollaborators = async ({
       // checks). A bare `findUnique` fetched every Post column, which on this
       // read path meant three `new Date()` and a `JSON.parse` of `metadata`
       // per call, all discarded.
-      const entity = await dbRead.post.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
-      if (!entity) {
+      // `kysely-hot-reads-5` on: the owner and the collaborator rows in one statement, on the
+      // same replica (a post's collaborators' users still read through Prisma, same select).
+      const read = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+        ? await readPostCollaboratorsViaKysely((await loadKyselyDb()).kyselyRead, dbRead, entityId)
+        : await readPostCollaboratorsViaPrisma(dbRead, entityId);
+      if (!read) {
         return [];
       }
-
-      const collaborators = await dbRead.entityCollaborator.findMany({
-        where: { entityId, entityType },
-        select: {
-          user: {
-            select: userWithCosmeticsSelect,
-          },
-          entityId: true,
-          entityType: true,
-          status: true,
-        },
-      });
+      const { entity, collaborators } = read;
 
       return collaborators.filter((collaborator) => {
         if (collaborator.status === EntityCollaboratorStatus.Approved) {
