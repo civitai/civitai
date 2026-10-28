@@ -10,7 +10,6 @@ import { servableImage } from '../servable-image';
 import { HARVEST, type HarvestConfig } from './config';
 import { poolFor } from './plan';
 
-/** The moderator action that makes a reference answer. */
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
 const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
@@ -18,10 +17,7 @@ const DAY_MS = 86_400_000;
 
 export type HarvestResult = { scanned: number; added: number; retired: number };
 
-/**
- * Takes new moderator rating rulings into the Trials and hidden-check pools. Reads `ModActivity`
- * past a cursor and keeps an image only while that ruling is still what holds it.
- */
+/** Idempotent; safe to re-run. */
 export async function harvestRulings(
   db: Kysely<DB>,
   { now, config = HARVEST }: { now: Date; config?: HarvestConfig }

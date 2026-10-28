@@ -75,7 +75,7 @@ export async function promoteToKnight(db: Executor, userId: number) {
     .execute();
 }
 
-/** Passes finished since the player's last reset; an earlier pass does not outlive a demotion. */
+/** A pass before the player's last reset (`startAt`) does not count. */
 async function passedModules(db: Executor, userId: number): Promise<Set<string>> {
   const rows = await db
     .selectFrom('KnightsTrialRun as run')
@@ -225,12 +225,12 @@ export function getTrial(db: Kysely<DB>, userId: number, deps: TrialDeps): Promi
   return resolveTrial(db, userId, deps, false);
 }
 
-/** `settled` means a run just closed on this call, so a second close is not followed again. */
+/** `justClosed`: re-entry after closing a run; do not recurse into another close. */
 async function resolveTrial(
   db: Kysely<DB>,
   userId: number,
   deps: TrialDeps,
-  settled: boolean
+  justClosed: boolean
 ): Promise<TrialView> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -268,7 +268,7 @@ async function resolveTrial(
   const next = await nextItem(db, run);
   if (!next) {
     await finishRun(db, run, userId, now);
-    return settled ? { kind: 'unavailable' } : resolveTrial(db, userId, deps, true);
+    return justClosed ? { kind: 'unavailable' } : resolveTrial(db, userId, deps, true);
   }
   return {
     kind: 'question',

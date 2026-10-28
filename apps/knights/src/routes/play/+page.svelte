@@ -14,7 +14,7 @@
     return async ({ result, update }) => {
       try {
         await update();
-        // A refused answer leaves `load` data as it was, so the item that was refused would stay on screen.
+        // A refused answer doesn't re-run `load`; refetch or the refused item stays on screen.
         if (result.type === 'failure') await invalidateAll();
       } finally {
         submitting = false;

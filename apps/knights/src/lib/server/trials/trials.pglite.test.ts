@@ -97,7 +97,6 @@ const answerOf = async (referenceId: number) =>
     )
   ).rows[0].answer;
 
-/** Plays the run out; `wrongOn` lists reference ids to answer wrongly. */
 async function playOut(userId: number, wrongOn: number[] = []) {
   let last;
   for (let guard = 0; guard < 40; guard++) {

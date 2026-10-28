@@ -8086,7 +8086,7 @@ model KnightsVote {
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
 model KnightsReferenceImage {
   id            Int                  @id @default(autoincrement())
-  imageId       Int                  @unique // across modules on purpose: one known answer per image, in one pool (trials or hiddenCheck), never both
+  imageId       Int                  @unique
   questionKey   String               @default("knights.image.nsfwLevel")
   pool          String // trials | hiddenCheck
   answer        String
@@ -8114,7 +8114,7 @@ model KnightsTrialRun {
   itemIds       Json
   startedAt     DateTime             @default(now())
   finishedAt    DateTime?
-  result        String? // passed | failed
+  result        String? // passed | failed | void
   score         Float?
   cooldownUntil DateTime?
   trialAnswers  KnightsTrialAnswer[]

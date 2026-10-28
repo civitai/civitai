@@ -30,13 +30,12 @@ const FRESH_SEED_SALT = 0x51ed;
 export type RunPlanInput = {
   seed: number;
   core: readonly number[];
-  /** Fresh items the player has never answered; an answered one may not count toward a score again. */
+  /** Fresh items this player has not answered. */
   freshUnseen: readonly number[];
   length: number;
   freshCount: number;
 };
 
-/** Core items first, then fresh ones. Same input, same plan. */
 export function planRun({ seed, core, freshUnseen, length, freshCount }: RunPlanInput) {
   const sorted = (ids: readonly number[]) => [...ids].sort((a, b) => a - b);
   const fresh = seededShuffle(sorted(freshUnseen), seed ^ FRESH_SEED_SALT).slice(0, freshCount);
@@ -47,13 +46,13 @@ export function planRun({ seed, core, freshUnseen, length, freshCount }: RunPlan
   };
 }
 
+/** `fresh` is false for core items: the core set teaches and is not scored. */
 export type ScoredAnswer = { fresh: boolean; correct: boolean };
 
 export type RunScore =
   | { result: 'void'; score: null }
   | { result: 'passed' | 'failed'; score: number };
 
-/** Only fresh items count: the core set teaches. Fewer than `minFresh` of them decide nothing. */
 export function scoreRun(
   answers: readonly ScoredAnswer[],
   { passMark, minFresh }: { passMark: number; minFresh: number }

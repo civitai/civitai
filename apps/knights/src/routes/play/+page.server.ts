@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { imageUrl } from '$lib/server/image-url';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { getPlayerStatus, statusFrom } from '$lib/server/player-status';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { trialDeps } from '$lib/server/trials/runtime';
@@ -25,9 +25,9 @@ const TRIAL_REJECTION_TEXT = {
 } as const;
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const status = await getPlayerStatus(db, locals.user.id);
+  const status = (await getPlayerStatus(db, locals.user.id)) ?? statusFrom('Acolyte', 0);
 
-  if (status?.rank === 'Acolyte') {
+  if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
     if (trial.kind !== 'not-acolyte') {
       return {
