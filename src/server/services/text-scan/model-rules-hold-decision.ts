@@ -209,7 +209,6 @@ async function keepModelDown(
   if (!isLive(model)) return dropFromNeedsReview(hold.entityId);
   await unpublishForModelRules({
     entityId: hold.entityId,
-    meta: (model.meta ?? {}) as ModelMeta,
     modelRules: literalModelRules(ruleIds, hold.textHash),
     userId: actor.id,
     needsReview: false,
