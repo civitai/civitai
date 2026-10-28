@@ -58,6 +58,7 @@ beforeEach(() => {
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
   mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -121,7 +122,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   });
 
   it('throws BAD_REQUEST when a request is already under review', async () => {
-    mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Pending', resolvedAt: null });
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 7, context: null } as never);
 
     await expect(
       createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
@@ -137,8 +138,14 @@ describe('createEntityAppealHandler — Model re-request', () => {
 
     const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
-    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: EntityType.Model, entityId: 2186217, userId: 602767 })
+    expect(dbMock.dbRead.appeal.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: EntityType.Model,
+          entityId: 2186217,
+          userId: 602767,
+        }),
+      })
     );
     expect(mockReopenAppeal).toHaveBeenCalledWith({
       id: 7,

@@ -111,8 +111,24 @@ export function latestModelAppealOfKind({
       ...(lockReview ? lockReviewKind : flagAppealKind),
     },
     orderBy: { id: 'desc' },
-    select: { id: true, status: true },
+    select: { id: true, status: true, resolvedAt: true },
   });
+}
+
+/** The owner's pending in-app appeal on the model, of either kind: there is at most one, but it need
+ *  not be their newest row. */
+export async function pendingModelAppeal({ modelId, userId }: { modelId: number; userId: number }) {
+  const appeal = await dbWrite.appeal.findFirst({
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      userId,
+      category: null,
+      status: AppealStatus.Pending,
+    },
+    select: { id: true, context: true },
+  });
+  return appeal && { id: appeal.id, lockReview: !!parseLockReviewContext(appeal.context) };
 }
 
 /** Turns the owner's pending lock review into their flag appeal; refused if it changed meanwhile. */
@@ -123,14 +139,6 @@ export async function takeOverLockReview({ id, message }: { id: number; message:
   });
   if (!count) throw throwBadRequestError('Your review request changed meanwhile. Try again.');
   return { id, status: AppealStatus.Pending };
-}
-
-export async function isLockReview(appealId: number) {
-  const appeal = await dbWrite.appeal.findUnique({
-    where: { id: appealId },
-    select: { context: true },
-  });
-  return !!parseLockReviewContext(appeal?.context);
 }
 
 export async function assertLockReviewAllowed({

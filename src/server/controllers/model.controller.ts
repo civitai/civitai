@@ -160,7 +160,7 @@ import {
   closeAppealsOnDeletedModel,
 } from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestAppeal } from '~/server/services/report.service';
+import { latestModelAppealOfKind } from '~/server/services/lock-review.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -573,11 +573,12 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
+    // The flag appeal only: a lock review on the same model says nothing about the flag.
     const minorAppeal = isOwner
-      ? await getLatestAppeal({
-          entityType: EntityType.Model,
-          entityId: model.id,
+      ? await latestModelAppealOfKind({
+          modelId: model.id,
           userId: model.user.id,
+          lockReview: false,
         })
       : null;
 
@@ -1038,9 +1039,9 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
-    // The owner's own delete closes the appeal with a notice. A permanent delete leaves no row to
-    // read `deletedBy` from. Any other delete, including a moderator's earlier one that this call
-    // repeats, closes it quietly.
+    // The owner's own delete closes the appeal as deleted by its owner. A permanent delete leaves no
+    // row to read `deletedBy` from. Any other delete, including a moderator's earlier one that this
+    // call repeats, closes it quietly.
     const deletedByCaller =
       permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
     if (model.userId === ctx.user.id && deletedByCaller)

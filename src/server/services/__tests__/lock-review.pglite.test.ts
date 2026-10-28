@@ -181,6 +181,7 @@ beforeEach(() => {
   mocks.getLatestAppeal.mockResolvedValue(null);
   mocks.isAccountUnderLegalHold.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
 });
 
 describe('approving a lock review', () => {
@@ -318,6 +319,23 @@ describe('rejecting a lock review', () => {
     expect(mocks.reopenAppeal).not.toHaveBeenCalled();
   });
 
+  it('keeps the cooldown when a newer flag-appeal row exists', async () => {
+    const resolvedAt = new Date();
+    ownModel();
+    dbMock.dbRead.appeal.findFirst.mockImplementation(((args: { where: object }) =>
+      Promise.resolve(
+        'context' in args.where
+          ? {
+              status: AppealStatus.Rejected,
+              resolvedAt,
+              context: { kind: 'lock-review', locks: ['nsfw'] },
+            }
+          : { status: AppealStatus.Approved, resolvedAt, context: null }
+      )) as never);
+
+    expect((await getLockReviewState({ modelId: MODEL, userId: OWNER }))?.reopensAt).not.toBeNull();
+  });
+
   it('ends the cooldown once 30 days have passed', async () => {
     ownModel();
     dbMock.dbRead.appeal.findFirst.mockResolvedValue({
@@ -409,6 +427,7 @@ describe("an owner's request", () => {
       expect.objectContaining({ id: 9, context: { kind: 'lock-review', locks: ['nsfw'] } })
     );
 
+    dbMock.dbWrite.appeal.update.mockResolvedValue({ id: 9 } as never);
     await actualReport.reopenAppeal({
       id: 9,
       message: 'again',
@@ -484,8 +503,8 @@ describe("an owner's request", () => {
 describe('a flag landing while a lock review is open', () => {
   it('lets the owner appeal the flag on the same row', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
-    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({
+      id: 9,
       context: { kind: 'lock-review', locks: ['nsfw'] },
     } as never);
     dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 1 } as never);
@@ -502,8 +521,8 @@ describe('a flag landing while a lock review is open', () => {
 
   it('refuses the takeover when the lock review was ruled on meanwhile', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
-    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({
+      id: 9,
       context: { kind: 'lock-review', locks: ['nsfw'] },
     } as never);
     dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 0 } as never);
@@ -513,10 +532,20 @@ describe('a flag landing while a lock review is open', () => {
     );
   });
 
+  it('refuses a request while an older row is pending behind a newer resolved one', async () => {
+    ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
+    mocks.getLatestAppeal.mockResolvedValue({ id: 12, status: AppealStatus.Rejected });
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 4, context: null } as never);
+
+    await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
+      /already under review/
+    );
+    expect(mocks.reopenAppeal).not.toHaveBeenCalled();
+  });
+
   it('still refuses a second flag appeal', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
-    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({ context: null } as never);
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 9, context: null } as never);
 
     await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
       /already under review/

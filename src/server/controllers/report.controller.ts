@@ -12,8 +12,8 @@ import type {
 import { getImageById } from '~/server/services/image.service';
 import {
   assertLockReviewAllowed,
-  isLockReview,
   latestModelAppealOfKind,
+  pendingModelAppeal,
   takeOverLockReview,
 } from '~/server/services/lock-review.service';
 import type { LockReviewContext } from '@civitai/shared/lock-review';
@@ -155,13 +155,12 @@ export async function createEntityAppealHandler({
           // Legacy flags carry no snapshot and are deliberately excluded.
           throw throwBadRequestError('This model has no automated flag to review');
 
-        // Either kind, since a model holds one pending in-app appeal at a time.
-        const latest = await getLatestAppeal({ ...input, userId });
-        if (latest?.status === AppealStatus.Pending) {
+        const pending = await pendingModelAppeal({ modelId: input.entityId, userId });
+        if (pending) {
           // A flag that landed on a model with a lock review open takes the row over: the review can
           // only be rejected now, and the flag must not go undisputed while it waits.
-          if (!context && (await isLockReview(latest.id)))
-            return await takeOverLockReview({ id: latest.id, message: input.message });
+          if (!context && pending.lockReview)
+            return await takeOverLockReview({ id: pending.id, message: input.message });
           throw throwBadRequestError('Your review request for this model is already under review');
         }
 

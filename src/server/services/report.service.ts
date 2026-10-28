@@ -809,7 +809,7 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenAppeal({
+export async function reopenAppeal({
   id,
   message,
   context,
@@ -819,26 +819,32 @@ export function reopenAppeal({
   /** null clears the stored context; omitted leaves it. */
   context?: LockReviewContext | null;
 }) {
-  return dbWrite.appeal.update({
-    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
-    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
-    where: { id, entityType: { not: EntityType.Image }, category: null },
-    data: {
-      status: AppealStatus.Pending,
-      appealMessage: message,
-      // The moderator queue sorts and displays on createdAt, so leaving the
-      // original request's stamp puts a months-old row ahead of fresh ones under
-      // a date that describes a request nobody is being asked to review.
-      createdAt: new Date(),
-      resolvedAt: null,
-      resolvedBy: null,
-      resolvedMessage: null,
-      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
-      resolvedReason: null,
-      internalNotes: null,
-      ...(context !== undefined && { context: context ?? Prisma.DbNull }),
-    },
-  });
+  try {
+    return await dbWrite.appeal.update({
+      // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+      // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+      where: { id, entityType: { not: EntityType.Image }, category: null },
+      data: {
+        status: AppealStatus.Pending,
+        appealMessage: message,
+        // The moderator queue sorts and displays on createdAt, so leaving the
+        // original request's stamp puts a months-old row ahead of fresh ones under
+        // a date that describes a request nobody is being asked to review.
+        createdAt: new Date(),
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedMessage: null,
+        // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+        resolvedReason: null,
+        internalNotes: null,
+        ...(context !== undefined && { context: context ?? Prisma.DbNull }),
+      },
+    });
+  } catch (error) {
+    // Another of the owner's rows went Pending meanwhile: one may be pending at a time.
+    if (isPrismaUniqueViolation(error)) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
+    throw error;
+  }
 }
 
 const lockReviewWhere = {
@@ -1392,7 +1398,7 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
 /**
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
- * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
+ * refunded, and is told unless it was a model. Any other deleted model closes quietly; a removed image stays Pending,
  * stamped `entityRemovedAt`, for review, and its owner is told. Some appeals are closed
  * defensively without a notice.
  */
