@@ -228,7 +228,9 @@ server.on('listening', async () => {
 
     // --- 5. route modules -----------------------------------------------------------------------
     for (const page of SERVED_PAGES) {
-      const mod = require(path.join(distDir, 'server', pagesManifest[page]));
+      // Awaited, as Next's NodeModuleLoader does: a route whose graph has top-level await is
+      // compiled as an async module, and `require` then returns a promise of its exports.
+      const mod = await require(path.join(distDir, 'server', pagesManifest[page]));
       if (typeof mod.handler !== 'function') {
         throw new Error(`[trpc-server] ${page} has no exported handler(req, res, ctx)`);
       }
