@@ -295,11 +295,10 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  // Region block (451), default response headers and the verified-crawler request header: what
-  // the proxy middlewares do on /api/trpc, applied here too so this route does not depend on the
-  // proxy matcher. Idempotent when the proxy already ran; see `applyApiRequestPolicy`.
+  // Region block (451), default response headers and the verified-crawler request header: the
+  // API policy the proxy middlewares apply on `/api/v1`. `/api/trpc` is not in the proxy matcher,
+  // so this call is the ONLY place tRPC gets it; `trpc-route-api-policy.test.ts` pins that.
   if (applyApiRequestPolicy(req, res)) {
-    // Only reachable when the proxy did not already answer the 451, i.e. the flag soak.
     recordTrpcRouteRegionBlock();
     return;
   }

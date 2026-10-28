@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { isGlobalFliptFlagOn } from '~/server/flipt/global-sync';
 
 /**
- * The proxy reads `trpc-skip-proxy-middleware` through this. Anything but a definite "on" from the
- * shared client must read as off, because off is the proxy's existing behaviour.
+ * The proxy-safe Flipt read (no caller today; it read `trpc-skip-proxy-middleware` until that
+ * branch left the proxy). Anything but a definite "on" from the shared client must read as off,
+ * so a proxy flag defaults to the proxy's existing behaviour.
  */
 
 type PinnedClient = NonNullable<typeof globalThis.__civitaiFliptClient>;
