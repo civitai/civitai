@@ -9,6 +9,7 @@ export default defineModeratorEndpoint('collection.setItemTag', {
   returns: '{ count }',
   notes: [
     'Every item must already be in the collection, or nothing is changed.',
+    '`count` below the number of items means an entry gained a system tag mid-call and was left as it was.',
     '`tagId` must be one of the collection’s category tags; `null` clears it.',
     'Entries holding a system tag (challenge judging or review state) are refused.',
   ],
@@ -29,7 +30,12 @@ export default defineModeratorEndpoint('collection.setItemTag', {
     const { count, collectionItemIds } = await setCollectionItemsTag(input);
     return {
       count,
-      affected: { collectionIds: [input.collectionId], collectionItemIds, tagId: input.tagId },
+      affected: {
+        collectionIds: [input.collectionId],
+        collectionItemIds,
+        tagId: input.tagId,
+        count,
+      },
     };
   },
 });
