@@ -4156,3 +4156,79 @@ export async function removeEntityFromAllCollections(
     where: whereClause,
   });
 }
+
+const collectionItemEntityColumn = {
+  image: 'imageId',
+  model: 'modelId',
+  post: 'postId',
+  article: 'articleId',
+} as const satisfies Record<CollectionEntityType, string>;
+
+/**
+ * Moderator correction of an entry's category tag. Every item must already be in the collection,
+ * so a wrong id fails the whole call instead of silently tagging fewer entries than asked.
+ * Only an untagged entry or one holding a category tag may change: challenges keep judging and
+ * paid-review state in `tagId` with tags that are `filterableOnly` or not on the collection at all.
+ */
+export async function setCollectionItemsTag({
+  collectionId,
+  items,
+  tagId,
+}: {
+  collectionId: number;
+  items: { type: 'collectionItem' | CollectionEntityType; ids: number[] };
+  tagId: number | null;
+}) {
+  const collection = await dbWrite.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, tags: { select: { tagId: true, filterableOnly: true } } },
+  });
+  if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
+
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.tagId);
+  if (tagId !== null && !categoryTagIds.includes(tagId))
+    throw throwBadRequestError(`Tag ${tagId} is not one of this collection's category tags`);
+
+  const column = items.type === 'collectionItem' ? 'id' : collectionItemEntityColumn[items.type];
+  const ids = [...new Set(items.ids)];
+  const found = await dbWrite.collectionItem.findMany({
+    where: { collectionId, [column]: { in: ids } },
+    select: { id: true, imageId: true, modelId: true, postId: true, articleId: true, tagId: true },
+  });
+  const foundKeys = new Set(found.map((item) => item[column]));
+  const missing = ids.filter((id) => !foundKeys.has(id));
+  if (missing.length)
+    throw throwBadRequestError(
+      `Not in collection ${collectionId} (${items.type}): ${missing.join(', ')}`
+    );
+
+  const changeable = { OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }] };
+  const systemTagged = found.filter(
+    (item) => item.tagId !== null && !categoryTagIds.includes(item.tagId)
+  );
+  if (systemTagged.length)
+    throw throwBadRequestError(
+      `Carries a system tag, not a category (collectionItem): ${systemTagged
+        .map((item) => item.id)
+        .join(', ')}`
+    );
+
+  const collectionItemIds = found.map((item) => item.id);
+  // `changeable` again in the write: a judging run can tag an entry after the check above.
+  const { count } = await dbWrite.collectionItem.updateMany({
+    where: { collectionId, id: { in: collectionItemIds }, ...changeable },
+    data: { tagId },
+  });
+
+  // The write has committed; a failed bust must not make the audit row record it as an error.
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'collection-set-items-tag-cache-bust',
+      message: (error as Error).message,
+      collectionId,
+    }).catch(() => undefined)
+  );
+
+  return { count, collectionItemIds };
+}

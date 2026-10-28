@@ -16,6 +16,12 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+// '' keeps the purge urls relative, as asserted below. Pinned, not left unset: importing
+// @prisma/client loads the root `.env`, which fills unset keys.
+vi.hoisted(() => {
+  process.env.NEXT_PUBLIC_IMAGE_LOCATION = '';
+});
+
 /**
  * The takedown CDN sync end to end on an in-process Postgres: the committed triggers queue the
  * writes the real takedown and restore paths make, and the real drain and reconciler turn the queue
