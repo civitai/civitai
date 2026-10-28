@@ -8031,7 +8031,7 @@ model KnightsQuestion {
   items          KnightsQueueItem[]
 }
 
-/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Closed.
+/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed. Ruling is an Inquisitor's short claim: resolvedBy holds it and nextAttemptAt is the lease end.
 model KnightsQueueItem {
   id                Int             @id @default(autoincrement())
   questionKey       String

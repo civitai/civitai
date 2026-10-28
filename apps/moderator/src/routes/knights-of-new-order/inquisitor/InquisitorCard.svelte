@@ -38,6 +38,9 @@
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <a href={imageLookupUrl(item.imageId)} class="font-medium {LINK_CLASS}">Image #{item.imageId}</a>
       <span class="text-sm text-dark-2">Currently {getBrowsingLevelLabel(item.currentLevel)}</span>
+      {#if item.blocked}
+        <Badge variant="destructive">Blocked{item.blockedFor ? ` (${item.blockedFor})` : ''}</Badge>
+      {/if}
       {#if item.locked}<Badge variant="secondary">Rating locked</Badge>{/if}
       {#if item.reason}<Badge variant="outline">{item.reason}</Badge>{/if}
     </div>
@@ -69,6 +72,13 @@
       </table>
     {/if}
 
+    {#if item.blocked}
+      <p class="text-sm text-amber-300">
+        This image is blocked and rating it does not unblock it. Rule Blocked, or restore it from the
+        image queue first.
+      </p>
+    {/if}
+
     {#if rule.error}
       <p class="text-sm text-red-300">{rule.error}</p>
     {/if}
@@ -83,7 +93,7 @@
           value={level}
           size="sm"
           variant={level === item.currentLevel ? 'secondary' : 'outline'}
-          disabled={rule.submitting}>{getBrowsingLevelLabel(level)}</Button
+          disabled={rule.submitting || item.blocked}>{getBrowsingLevelLabel(level)}</Button
         >
       {/each}
       {#if confirmingBlocked}

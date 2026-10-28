@@ -15,8 +15,7 @@ const { dbHandle, setLevel } = vi.hoisted(() => ({
 
 vi.mock('../../db', () => ({
   get dbRead() {
-    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
-    return dbHandle.current;
+    throw new Error('the Inquisitor queue must read from the primary, not the replica');
   },
   get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -25,7 +24,9 @@ vi.mock('../../db', () => ({
 }));
 vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
 
-const { getInquisitorQueue, ruleOnInquisitorItem } = await import('../inquisitor.service');
+const { getInquisitorQueue, ruleOnInquisitorItem, RULING_LEASE_MS } = await import(
+  '../inquisitor.service'
+);
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -85,7 +86,8 @@ beforeAll(async () => {
   db = await freshPglite();
   await db.exec(`CREATE TABLE "Image" (
     "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
+    "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
   );`);
   await db.exec(migration('20261210120000_knights_v2_queue'));
   await db.exec(migration('20261211120000_knights_v2_sources'));
@@ -144,6 +146,24 @@ describe('getInquisitorQueue', () => {
     await insertItem(3, 3, 'Inquisitor', Q, 2);
 
     expect((await getInquisitorQueue()).map((i) => i.id)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('getInquisitorQueue block markers', () => {
+  it('marks an image that is blocked or carries a block reason', async () => {
+    await db.query(`UPDATE "Image" SET "ingestion"='Blocked', "blockedFor"='tos' WHERE id=1`);
+    await db.query(`UPDATE "Image" SET "blockedFor"='csam' WHERE id=2`);
+    await insertItem(1, 1, 'Inquisitor');
+    await insertItem(2, 2, 'Inquisitor');
+    await insertItem(3, 3, 'Inquisitor');
+
+    const queue = await getInquisitorQueue();
+
+    expect(queue.map((i) => [i.id, i.blocked, i.blockedFor])).toEqual([
+      [1, true, 'tos'],
+      [2, true, 'csam'],
+      [3, false, null],
+    ]);
   });
 });
 
@@ -217,5 +237,91 @@ describe('ruleOnInquisitorItem', () => {
 
     expect((await item(1)).status).toBe('Inquisitor');
     expect((await verdicts(1))[0].verdict).toBe('pending');
+  });
+
+  it('refuses a second moderator while the first ruling is still being applied, before any rating write', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    let finish: () => void = () => undefined;
+    setLevel.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+
+    const first = ruleOnInquisitorItem(1, 8, MOD);
+    await vi.waitFor(() => expect(setLevel).toHaveBeenCalledTimes(1));
+    const second = await ruleOnInquisitorItem(1, 2, MOD + 1);
+
+    expect(second).toEqual({ ok: false, error: expect.stringContaining('Another moderator') });
+    expect(setLevel).toHaveBeenCalledTimes(1);
+
+    finish();
+    expect(await first).toEqual({ ok: true });
+    expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '8', resolvedBy: MOD });
+  });
+
+  it('lets a ruling retry once the claim of a ruling that never finished has lapsed', async () => {
+    await insertItem(1, 1, 'Ruling');
+    const claimedAt = new Date('2030-01-01T00:00:00Z');
+    await db.query(
+      `UPDATE "KnightsQueueItem" SET "resolvedBy" = 99, "nextAttemptAt" = $1::timestamp WHERE id = 1`,
+      [new Date(claimedAt.getTime() + RULING_LEASE_MS).toISOString()]
+    );
+
+    expect((await ruleOnInquisitorItem(1, 4, MOD, claimedAt)).ok).toBe(false);
+    expect(setLevel).not.toHaveBeenCalled();
+
+    const later = new Date(claimedAt.getTime() + RULING_LEASE_MS + 1);
+    expect(await ruleOnInquisitorItem(1, 4, MOD, later)).toEqual({ ok: true });
+    expect(await item(1)).toMatchObject({ status: 'Closed', resolvedBy: MOD });
+  });
+
+  it('releases the claim when the rating cannot be set, so another moderator can rule', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    setLevel.mockRejectedValueOnce(new Error('Image not found'));
+
+    await expect(ruleOnInquisitorItem(1, 8, MOD)).rejects.toThrow('Image not found');
+
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
+    expect(await ruleOnInquisitorItem(1, 8, MOD + 1)).toEqual({ ok: true });
+  });
+
+  it('says the rating was applied when the item cannot be closed, and the same level can be ruled again', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '8', 1);
+    await db.exec(`
+      CREATE FUNCTION refuse_close() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'close failed'; END $$;
+      CREATE TRIGGER refuse_close BEFORE UPDATE ON "KnightsQueueItem"
+        FOR EACH ROW WHEN (NEW."status" = 'Closed') EXECUTE FUNCTION refuse_close();
+    `);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const outcome = await ruleOnInquisitorItem(1, 8, MOD);
+
+      expect(outcome).toEqual({
+        ok: false,
+        error: expect.stringContaining('The rating was applied but the item was not closed'),
+      });
+      expect(setLevel).toHaveBeenCalledTimes(1);
+      expect(await item(1)).toMatchObject({ status: 'Inquisitor' });
+      expect((await verdicts(1))[0].verdict).toBe('pending');
+    } finally {
+      await db.exec(
+        `DROP TRIGGER refuse_close ON "KnightsQueueItem"; DROP FUNCTION refuse_close();`
+      );
+    }
+
+    expect(await ruleOnInquisitorItem(1, 8, MOD)).toEqual({ ok: true });
+    expect(setLevel).toHaveBeenCalledTimes(2);
+    expect((await verdicts(1))[0].verdict).toBe('correct');
+  });
+
+  it('refuses a rating below Blocked on a block-marked image and leaves it with the Inquisitors', async () => {
+    await db.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+
+    const outcome = await ruleOnInquisitorItem(1, 4, MOD);
+
+    expect(outcome).toEqual({ ok: false, error: expect.stringContaining('blocked') });
+    expect(setLevel).not.toHaveBeenCalled();
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
+
+    expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
   });
 });
